@@ -1,0 +1,7 @@
+llama-index-core>=0.10.0
+llama-index-llms-ollama>=0.1.0
+llama-index-llms-anthropic>=0.1.0
+llama-index-llms-openai>=0.1.0
+sqlalchemy>=2.0.0
+streamlit>=1.30.0
+pytest>=8.0.0
