@@ -6,6 +6,7 @@ Env vars:
   LLM_PROVIDER    ollama (default) | claude | openai
   OLLAMA_MODEL        (default: gemma4:31b-cloud)
   OLLAMA_EMBED_MODEL  (default: gemma4:31b-cloud)
+  OLLAMA_BASE_URL     (default: http://localhost:11434)
   CLAUDE_MODEL        (default: claude-haiku-4-5-20251001)
   OPENAI_MODEL        (default: gpt-4o-mini)
 """
@@ -29,8 +30,9 @@ def configure_llm() -> None:
         from llama_index.embeddings.ollama import OllamaEmbedding
         model = os.getenv("OLLAMA_MODEL", "gemma4:31b-cloud")
         embed_model = os.getenv("OLLAMA_EMBED_MODEL", "gemma4:31b-cloud")
-        Settings.llm = Ollama(model=model, request_timeout=120.0)
-        Settings.embed_model = OllamaEmbedding(model_name=embed_model)
+        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        Settings.llm = Ollama(model=model, base_url=base_url, request_timeout=120.0)
+        Settings.embed_model = OllamaEmbedding(model_name=embed_model, base_url=base_url)
 
     elif provider == "claude":
         from llama_index.llms.anthropic import Anthropic

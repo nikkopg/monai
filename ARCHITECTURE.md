@@ -75,9 +75,10 @@ question to a tool, the app says so rather than fabricate a number.
 ## Approach C — Stack (vertical slice, in progress)
 
 ```
-docker-compose.yml      # Postgres 16 (host port 5434 — 5432/5433 taken by other projects)
+docker-compose.yml      # 3 services: db, backend, frontend
 backend/                # FastAPI
-  config.py             # DATABASE_URL + LLM provider (ollama gemma default)
+  Dockerfile            # python:3.12-slim image
+  config.py             # DATABASE_URL + LLM provider (ollama gemma default) + OLLAMA_BASE_URL
   db.py                 # SQLAlchemy engine/session, schema bootstrap, date_helpers view
   models.py             # Account, Transaction (Numeric money, real timestamp)
   schemas.py            # Pydantic request/response
@@ -86,27 +87,35 @@ backend/                # FastAPI
   query.py              # LLM tool router
   main.py               # FastAPI app: /health /accounts /transactions /import /query
   tests/                # 21 tests (tool SQL invariants + router JSON parsing)
-ui/                     # Next.js 14 (host port 3001 — 3000 taken)
+ui/                     # Next.js 14
+  Dockerfile            # multi-stage node:20-alpine build → next start
   app/page.tsx          # query box + transaction entry form + recent list
   next.config.js        # /api/* proxy → backend (one browser origin)
 ```
 
-**Run it locally (dev):**
+**Run the whole stack (containerized):**
 ```bash
-docker compose up -d db                                  # Postgres on :5434
-# backend
-uv venv .venv-backend && . .venv-backend/bin/activate
-uv pip install -r backend/requirements.txt
-python3 -c "from backend.db import init_db; init_db()"   # create schema
-python3 -c "from backend.db import SessionLocal; from backend.importer import import_csv_text; import_csv_text(SessionLocal(), open('report_YYYY-MM-DD.csv',encoding='utf-8-sig').read())"
-uvicorn backend.main:app --port 8001
-# frontend (separate shell)
-cd ui && npm install && npm run dev                       # http://localhost:3001
+docker compose up -d --build     # db + backend + frontend
+# → frontend at http://localhost:3001, backend at :8001, Postgres at :5434
 ```
+Schema is auto-created on backend startup. Load history once via the `/import`
+endpoint (multipart CSV upload) or the UI. Data persists in the `monai_pgdata` volume.
+
+**Networking:** `db` runs on the default bridge network with its port published on
+`5434`. `backend` and `frontend` run on the **host network** (`network_mode: host`)
+so the backend reaches the host's Ollama daemon (`127.0.0.1:11434`) and the db's
+published port directly — without forcing Ollama to rebind to `0.0.0.0`. Linux-only;
+on Mac/Windows switch backend to bridge networking with
+`OLLAMA_BASE_URL=http://host.docker.internal:11434` and add `extra_hosts:
+host.docker.internal:host-gateway`.
 
 **Ports:** this machine already runs another project (`oldlegs`) on 5432/5433/3000/8000,
 so monai uses Postgres `5434`, backend `8001`, frontend `3001`. Override via
-`DATABASE_URL` / `MONAI_API` env vars.
+`DATABASE_URL` / `MONAI_API` / `OLLAMA_BASE_URL` env vars in the compose file.
+
+**Dev mode (no containers for app code):** run `docker compose up -d db`, then
+`uvicorn backend.main:app --port 8001` in a venv and `cd ui && npm run dev` — same
+ports, hot reload.
 
 ## Wallet by BudgetBakers CSV Schema
 
