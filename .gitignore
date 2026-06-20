@@ -1,1 +1,26 @@
-*.db\n__pycache__/\n*.pyc\n.pytest_cache/\n.gstack/
+# Python
+*.db
+*.db-shm
+*.db-wal
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv*/
+*.egg-info/
+
+# Node / Next.js
+node_modules/
+.next/
+next-env.d.ts
+*.tsbuildinfo
+
+# Env / secrets
+.env
+.env.local
+
+# Personal financial data — NEVER commit real exports
+report_*.csv
+*.export.csv
+
+# gstack
+.gstack/

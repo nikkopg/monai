@@ -1,0 +1,20 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: monai-db
+    environment:
+      POSTGRES_USER: monai
+      POSTGRES_PASSWORD: monai
+      POSTGRES_DB: monai
+    ports:
+      - "5434:5432"
+    volumes:
+      - monai_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U monai"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  monai_pgdata:

@@ -33,6 +33,81 @@ monai/
 **Approach A data is throwaway.** Start Approach C on fresh PostgreSQL using the schema
 documented here as input. Do not migrate the SQLite file.
 
+### Validation results (2026-06-20) — GATE CLEARED ✅
+
+Full history loaded and all 10 test questions passed.
+
+| Metric | Result | Implication for Approach C |
+|--------|--------|----------------------------|
+| Rows loaded | 5608 | AI query layer holds at real scale, not just the 52-row sample |
+| Rows skipped | **0** | Single-currency (IDR) confirmed at full scale — multi-currency is a non-issue |
+| Test questions | **10/10** | Exceeds 7/10 threshold; relative dates, aggregations, top-N all reliable |
+
+**Decision impact:** `base_currency` + `fx_rate` columns drop from the v1 Approach C
+schema. Add them only if a foreign-currency account is ever introduced. v1 stays
+single-currency.
+
+## Approach C — Query Layer Pivot (2026-06-20)
+
+**Finding during the vertical-slice build:** naive `NLSQLTableQueryEngine` +
+`gemma4:31b-cloud` writes *wrong SQL* on the real 5-year dataset — it hardcoded
+the wrong year (2024 instead of 2026, ignoring injected date + `date_helpers`),
+counted income (Salary) as spending (`ORDER BY SUM(amount)` without `amount < 0`),
+and confused the `type` column with `category`. All three returned confident wrong
+numbers — the worst failure mode for a money app. The PoC's 10/10 passed only
+because the 52-row sample was a single recent month, so these traps never fired.
+
+**Decision: tool router, correct by construction.** The LLM no longer writes SQL.
+It picks one of a fixed set of parameterized tools (`backend/tools.py`) and fills
+typed arguments; the SQL is hand-written and tested, and relative dates resolve in
+Python via named periods (`this_month`, `last_year`, ...). If the model can't map a
+question to a tool, the app says so rather than fabricate a number.
+
+- `backend/tools.py` — spending_total, income_total, net_total, spending_by_category,
+  spending_in_category, transaction_count, largest_transactions, average_daily_spending,
+  list_categories. Each returns a structured dict; `format_answer` renders it with the
+  correct currency.
+- `backend/query.py` — LLM router: question → `{tool, args}` JSON → execute → format.
+- This is the eng-review-anticipated "FunctionTool wrappers" direction, applied to
+  basic aggregations (not just correlation queries) because plain NL2SQL proved
+  unreliable here.
+
+## Approach C — Stack (vertical slice, in progress)
+
+```
+docker-compose.yml      # Postgres 16 (host port 5434 — 5432/5433 taken by other projects)
+backend/                # FastAPI
+  config.py             # DATABASE_URL + LLM provider (ollama gemma default)
+  db.py                 # SQLAlchemy engine/session, schema bootstrap, date_helpers view
+  models.py             # Account, Transaction (Numeric money, real timestamp)
+  schemas.py            # Pydantic request/response
+  importer.py           # Wallet CSV parse + bulk insert (self-contained, not poc/)
+  tools.py              # parameterized SQL tools (correct by construction)
+  query.py              # LLM tool router
+  main.py               # FastAPI app: /health /accounts /transactions /import /query
+  tests/                # 21 tests (tool SQL invariants + router JSON parsing)
+ui/                     # Next.js 14 (host port 3001 — 3000 taken)
+  app/page.tsx          # query box + transaction entry form + recent list
+  next.config.js        # /api/* proxy → backend (one browser origin)
+```
+
+**Run it locally (dev):**
+```bash
+docker compose up -d db                                  # Postgres on :5434
+# backend
+uv venv .venv-backend && . .venv-backend/bin/activate
+uv pip install -r backend/requirements.txt
+python3 -c "from backend.db import init_db; init_db()"   # create schema
+python3 -c "from backend.db import SessionLocal; from backend.importer import import_csv_text; import_csv_text(SessionLocal(), open('report_YYYY-MM-DD.csv',encoding='utf-8-sig').read())"
+uvicorn backend.main:app --port 8001
+# frontend (separate shell)
+cd ui && npm install && npm run dev                       # http://localhost:3001
+```
+
+**Ports:** this machine already runs another project (`oldlegs`) on 5432/5433/3000/8000,
+so monai uses Postgres `5434`, backend `8001`, frontend `3001`. Override via
+`DATABASE_URL` / `MONAI_API` env vars.
+
 ## Wallet by BudgetBakers CSV Schema
 
 Source: `report_*.csv` exported from the Android app (Settings → Others → Export → CSV).
