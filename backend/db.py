@@ -5,6 +5,8 @@ and the _DATE_HELPERS_VIEW SQL string have been removed — schema bootstrap now
 happens via `alembic upgrade head` in the Docker entrypoint (D-04, D-02).
 """
 
+from contextlib import contextmanager
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -17,6 +19,22 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 
 def get_session():
     """FastAPI dependency — yields a session, always closes it."""
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@contextmanager
+def get_session_sync():
+    """Sync context manager for use in non-async tools (not a FastAPI dependency).
+
+    Usage:
+        with get_session_sync() as db:
+            db.add(obj)
+            db.commit()
+    """
     db = SessionLocal()
     try:
         yield db
