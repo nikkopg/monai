@@ -95,13 +95,46 @@ Which phases cover which requirements. Populated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| (filled by roadmapper) | — | Pending |
+| FND-01 | Phase 1: Schema Foundation + Auth | Pending |
+| FND-02 | Phase 1: Schema Foundation + Auth | Pending |
+| FND-03 | Phase 1: Schema Foundation + Auth | Pending |
+| CHAT-01 | Phase 2: Agentic Loop + Confirm-Before-Write | Pending |
+| CHAT-02 | Phase 2: Agentic Loop + Confirm-Before-Write | Pending |
+| CHAT-04 | Phase 2: Agentic Loop + Confirm-Before-Write | Pending |
+| CHAT-05 | Phase 2: Agentic Loop + Confirm-Before-Write | Pending |
+| CHAT-06 | Phase 2: Agentic Loop + Confirm-Before-Write | Pending |
+| CHAT-07 | Phase 2: Agentic Loop + Confirm-Before-Write | Pending |
+| CHAT-08 | Phase 2: Agentic Loop + Confirm-Before-Write | Pending |
+| UI-01 | Phase 3: Multi-Page UI Shell + Settings | Pending |
+| UI-02 | Phase 3: Multi-Page UI Shell + Settings | Pending |
+| UI-03 | Phase 3: Multi-Page UI Shell + Settings | Pending |
+| UI-04 | Phase 3: Multi-Page UI Shell + Settings | Pending |
+| CASH-01 | Phase 4: Cashflow Dashboard + CRUD | Pending |
+| CASH-02 | Phase 4: Cashflow Dashboard + CRUD | Pending |
+| CASH-03 | Phase 4: Cashflow Dashboard + CRUD | Pending |
+| CASH-04 | Phase 4: Cashflow Dashboard + CRUD | Pending |
+| CASH-05 | Phase 4: Cashflow Dashboard + CRUD | Pending |
+| CASH-06 | Phase 4: Cashflow Dashboard + CRUD | Pending |
+| CASH-07 | Phase 4: Cashflow Dashboard + CRUD | Pending |
+| CASH-08 | Phase 4: Cashflow Dashboard + CRUD | Pending |
+| INV-01 | Phase 5: Investment Subsystem | Pending |
+| INV-02 | Phase 5: Investment Subsystem | Pending |
+| INV-03 | Phase 5: Investment Subsystem | Pending |
+| INV-04 | Phase 5: Investment Subsystem | Pending |
+| INV-05 | Phase 5: Investment Subsystem | Pending |
+| INV-06 | Phase 5: Investment Subsystem | Pending |
+| INV-07 | Phase 5: Investment Subsystem | Pending |
+| CHAT-03 | Phase 5: Investment Subsystem | Pending |
+| MCP-01 | Phase 6: MCP Server | Pending |
+| MCP-02 | Phase 6: MCP Server | Pending |
+| MCP-03 | Phase 6: MCP Server | Pending |
+| MCP-04 | Phase 6: MCP Server | Pending |
 
 **Coverage:**
 - v1 requirements: 30 total
-- Mapped to phases: (pending roadmap)
-- Unmapped: (pending roadmap)
+- Mapped to phases: 30
+- Unmapped: 0
 
 ---
 *Requirements defined: 2026-06-21*
-*Last updated: 2026-06-21 after initial definition*
+*Last updated: 2026-06-21 — traceability populated after roadmap creation*
