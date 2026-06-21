@@ -29,6 +29,7 @@ data without your say-so.
 - ✓ Multi-provider LLM config (Ollama / Claude / OpenAI) — existing
 - ✓ Full Docker Compose stack (Postgres + FastAPI + Next.js) — existing
 - ✓ Honest-refusal failure philosophy (refuse > confident wrong number) — existing
+- ✓ Alembic-managed schema (non-destructive on live data) + 5 forward-looking tables (audit_log, proposals, holdings, portfolio_events, price_cache) + Decimal money type + API-key auth on write endpoints with server-side Next.js proxy — validated in Phase 1 (FND-01/02/03)
 
 ### Active
 
@@ -126,4 +127,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-20 after initialization*
+*Last updated: 2026-06-21 — Phase 1 (Schema Foundation + Auth) complete*
