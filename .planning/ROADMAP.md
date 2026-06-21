@@ -50,7 +50,7 @@
   6. When a question cannot be answered with available tools, the agent responds with an honest "I can't compute that" rather than fabricating a number
 **Plans**: 3 plans
 - [x] 02-01-PLAN.md — Async test infra + FunctionAgent multi-step read loop (CHAT-01/02/08)
-- [ ] 02-02-PLAN.md — propose_* write tools + confirm/reject/list endpoints with atomic write, audit, token guards (CHAT-04/05/06/07, D-06)
+- [x] 02-02-PLAN.md — propose_* write tools + confirm/reject/list endpoints with atomic write, audit, token guards (CHAT-04/05/06/07, D-06)
 - [ ] 02-03-PLAN.md — SSE /query-stream + proxy passthrough + inline ProposalCard UI with progressive steps, trace, diff, expiry (CHAT-01/04 surfacing)
 
 ### Phase 3: Multi-Page UI Shell + Settings
@@ -115,7 +115,7 @@
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Schema Foundation + Auth | 3/3 | Complete   | 2026-06-21 |
-| 2. Agentic Loop + Confirm-Before-Write | 1/3 | In Progress|  |
+| 2. Agentic Loop + Confirm-Before-Write | 2/3 | In Progress|  |
 | 3. Multi-Page UI Shell + Settings | 0/? | Not started | - |
 | 4. Cashflow Dashboard + CRUD | 0/? | Not started | - |
 | 5. Investment Subsystem | 0/? | Not started | - |
