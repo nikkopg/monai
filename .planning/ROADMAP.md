@@ -48,7 +48,10 @@
   4. Confirming a proposal via `POST /proposals/{id}/confirm` with the correct token executes the write, writes an `audit_log` row, and marks the proposal confirmed; a second confirm with the same token is rejected
   5. Rejecting or letting a proposal expire leaves the database unchanged
   6. When a question cannot be answered with available tools, the agent responds with an honest "I can't compute that" rather than fabricating a number
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 02-01-PLAN.md — Async test infra + FunctionAgent multi-step read loop (CHAT-01/02/08)
+- [ ] 02-02-PLAN.md — propose_* write tools + confirm/reject/list endpoints with atomic write, audit, token guards (CHAT-04/05/06/07, D-06)
+- [ ] 02-03-PLAN.md — SSE /query-stream + proxy passthrough + inline ProposalCard UI with progressive steps, trace, diff, expiry (CHAT-01/04 surfacing)
 
 ### Phase 3: Multi-Page UI Shell + Settings
 **Goal**: Users can navigate between all pages of the app and configure it from the browser
@@ -112,7 +115,7 @@
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Schema Foundation + Auth | 3/3 | Complete   | 2026-06-21 |
-| 2. Agentic Loop + Confirm-Before-Write | 0/? | Not started | - |
+| 2. Agentic Loop + Confirm-Before-Write | 0/3 | Planned | - |
 | 3. Multi-Page UI Shell + Settings | 0/? | Not started | - |
 | 4. Cashflow Dashboard + CRUD | 0/? | Not started | - |
 | 5. Investment Subsystem | 0/? | Not started | - |
@@ -173,4 +176,4 @@ All 30 v1 requirements mapped. No orphans.
 
 ---
 *Roadmap created: 2026-06-21*
-*Last updated: 2026-06-21 after initial creation*
+*Last updated: 2026-06-21 after Phase 2 planning*
