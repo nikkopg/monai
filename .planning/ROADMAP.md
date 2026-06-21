@@ -10,7 +10,7 @@
 
 ## Phases
 
-- [ ] **Phase 1: Schema Foundation + Auth** - Alembic migrations, new tables, API key auth — unblocks everything downstream
+- [x] **Phase 1: Schema Foundation + Auth** - Alembic migrations, new tables, API key auth — unblocks everything downstream (completed 2026-06-21)
 - [ ] **Phase 2: Agentic Loop + Confirm-Before-Write** - Multi-step agent replaces single-shot router; write proposals with human approval gate
 - [ ] **Phase 3: Multi-Page UI Shell + Settings** - Four-page navigation, Settings page; users can navigate and configure the app
 - [ ] **Phase 4: Cashflow Dashboard + CRUD** - Spending/income dashboard with charts; full transaction/account/category management in UI
@@ -33,7 +33,7 @@
   4. `Base.metadata.create_all()` has been removed from `db.py`; schema is fully Alembic-managed
 **Plans**: 3 plans
 - [x] 01-01-PLAN.md — Alembic introduction (baseline + stamp), 5 new tables + date_helpers view, Decimal storage, remove create_all
-- [ ] 01-02-PLAN.md — MONAI_API_KEY auth on write routes + server-side Next.js proxy injecting the key
+- [x] 01-02-PLAN.md — MONAI_API_KEY auth on write routes + server-side Next.js proxy injecting the key
 - [x] 01-03-PLAN.md — MoneyDecimal type: Decimal-as-JSON-number serialization for transaction amounts
 
 ### Phase 2: Agentic Loop + Confirm-Before-Write
@@ -111,7 +111,7 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Schema Foundation + Auth | 2/3 | In Progress|  |
+| 1. Schema Foundation + Auth | 3/3 | Complete   | 2026-06-21 |
 | 2. Agentic Loop + Confirm-Before-Write | 0/? | Not started | - |
 | 3. Multi-Page UI Shell + Settings | 0/? | Not started | - |
 | 4. Cashflow Dashboard + CRUD | 0/? | Not started | - |
