@@ -912,7 +912,7 @@ function useAgentStream(question: string | null) {
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
 1. **DB session access in write tools (sync context)**
    - What we know: `backend/db.py` has `get_session()` as a FastAPI dependency (yields
@@ -931,6 +931,8 @@ function useAgentStream(question: string | null) {
    - Recommendation: Agent should call a `find_transactions(merchant, category, period, limit)`
      read tool first to surface candidates, then ask the user to confirm which one if multiple
      match. Add `find_transactions` as a new read tool. Planner should include this.
+   - RESOLVED: The agent uses the most-recent matching transaction when the reference is vague —
+     acceptable per CONTEXT.md "Claude's Discretion"; no `find_transactions` tool is added this phase.
 
 3. **GET /proposals endpoint for pending proposals on page load**
    - What we know: CONTEXT.md mentions "a GET /proposals?status=pending for the card".
