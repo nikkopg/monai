@@ -15,14 +15,14 @@ Requirements for this cycle. Each maps to a roadmap phase.
 
 ### Agentic Chat
 
-- [ ] **CHAT-01**: User's question is answered by a multi-step reasoning agent that can plan and chain multiple tools within a single turn
-- [ ] **CHAT-02**: The agent only invokes the fixed parameterized tools — it never emits raw SQL (correctness-by-construction preserved)
+- [x] **CHAT-01**: User's question is answered by a multi-step reasoning agent that can plan and chain multiple tools within a single turn
+- [x] **CHAT-02**: The agent only invokes the fixed parameterized tools — it never emits raw SQL (correctness-by-construction preserved)
 - [ ] **CHAT-03**: User can ask spending↔portfolio correlation questions (e.g. "since I bought NVDA, how has my eating-out spending changed?")
 - [ ] **CHAT-04**: When the agent intends to change data, it shows the exact proposed change and writes nothing until the user approves it in the UI
 - [ ] **CHAT-05**: An approval is bound to that exact proposed operation — single-use and operation-scoped (not a reusable session-level "yes")
 - [ ] **CHAT-06**: Every applied write is recorded in an audit log (what changed, old→new, when)
 - [ ] **CHAT-07**: Through the chat (via the confirm flow) the user can add, edit, and delete transactions, accounts, categories, and holdings
-- [ ] **CHAT-08**: When the agent cannot map a request to a tool, it says so honestly rather than fabricating an answer
+- [x] **CHAT-08**: When the agent cannot map a request to a tool, it says so honestly rather than fabricating an answer
 
 ### MCP Server
 
@@ -98,13 +98,13 @@ Which phases cover which requirements. Populated during roadmap creation.
 | FND-01 | Phase 1: Schema Foundation + Auth | Complete |
 | FND-02 | Phase 1: Schema Foundation + Auth | Complete |
 | FND-03 | Phase 1: Schema Foundation + Auth | Complete |
-| CHAT-01 | Phase 2: Agentic Loop + Confirm-Before-Write | Pending |
-| CHAT-02 | Phase 2: Agentic Loop + Confirm-Before-Write | Pending |
+| CHAT-01 | Phase 2: Agentic Loop + Confirm-Before-Write | Complete |
+| CHAT-02 | Phase 2: Agentic Loop + Confirm-Before-Write | Complete |
 | CHAT-04 | Phase 2: Agentic Loop + Confirm-Before-Write | Pending |
 | CHAT-05 | Phase 2: Agentic Loop + Confirm-Before-Write | Pending |
 | CHAT-06 | Phase 2: Agentic Loop + Confirm-Before-Write | Pending |
 | CHAT-07 | Phase 2: Agentic Loop + Confirm-Before-Write | Pending |
-| CHAT-08 | Phase 2: Agentic Loop + Confirm-Before-Write | Pending |
+| CHAT-08 | Phase 2: Agentic Loop + Confirm-Before-Write | Complete |
 | UI-01 | Phase 3: Multi-Page UI Shell + Settings | Pending |
 | UI-02 | Phase 3: Multi-Page UI Shell + Settings | Pending |
 | UI-03 | Phase 3: Multi-Page UI Shell + Settings | Pending |

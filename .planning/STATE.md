@@ -3,14 +3,14 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Phase 2 context gathered
-last_updated: "2026-06-21T16:41:11.584Z"
-last_activity: 2026-06-21 -- Phase 02 planning complete
+stopped_at: Completed Phase 02 Plan 01 — FunctionAgent multi-step loop
+last_updated: "2026-06-21T16:50:36.673Z"
+last_activity: 2026-06-21
 progress:
   total_phases: 6
   completed_phases: 1
   total_plans: 6
-  completed_plans: 3
+  completed_plans: 4
   percent: 17
 ---
 
@@ -21,16 +21,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-21)
 
 **Core value:** You can understand and manage your entire financial life — spending and investments — by talking to a trustworthy AI that never fabricates a number and never changes your data without your say-so.
-**Current focus:** Phase 2 — agentic loop + confirm before write
+**Current focus:** Phase 02 — agentic-loop-confirm-before-write
 
 ## Current Position
 
-Phase: 2
-Plan: Not started
+Phase: 02 (agentic-loop-confirm-before-write) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-06-21 -- Phase 02 planning complete
+Last activity: 2026-06-21
 
-Progress: [██████████] 100%
+Progress: [███████░░░] 67%
 
 ## Performance Metrics
 
@@ -54,6 +54,7 @@ Progress: [██████████] 100%
 *Updated after each plan completion*
 | Phase 01-schema-foundation-auth P03 | 4 | 1 tasks | 4 files |
 | Phase 01 P02 | 337 | 3 tasks | 6 files |
+| Phase 02-agentic-loop-confirm-before-write P01 | 303 | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -67,6 +68,9 @@ Recent decisions affecting current work:
 - Pre-roadmap: `tools.py` is the single source of truth shared by agent AND MCP server — no logic duplication
 - Pre-roadmap: `portfolio_events` (INV-07) ships in Phase 5 before correlation queries (CHAT-03, also Phase 5)
 - Pre-roadmap: Price layer uses pluggable adapters + `fetched_at`/staleness from day one; reksadana = manual fallback
+- [Phase ?]: FunctionAgent chosen over ReActAgent — gemma4:31b-cloud confirmed tools capability in research
+- [Phase ?]: agent() sync wrapper uses ThreadPoolExecutor bridge when event loop already running (pytest-asyncio compatibility)
+- [Phase ?]: ask() thin shim preserves POST /query handler contract — no main.py changes required in plan 02-01
 
 ### Pending Todos
 
@@ -90,6 +94,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-21T11:58:41.641Z
-Stopped at: Phase 2 context gathered
-Resume file: .planning/phases/02-agentic-loop-confirm-before-write/02-CONTEXT.md
+Last session: 2026-06-21T16:50:36.652Z
+Stopped at: Completed Phase 02 Plan 01 — FunctionAgent multi-step loop
+Resume file: None
