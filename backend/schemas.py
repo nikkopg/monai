@@ -1,5 +1,6 @@
 """Pydantic request/response models for the API."""
 
+import uuid as _uuid
 from datetime import datetime
 from decimal import Decimal
 from typing import Annotated
@@ -69,3 +70,28 @@ class ImportResponse(BaseModel):
     inserted: int
     skipped: int
     currency: str
+
+
+class ProposalOut(BaseModel):
+    """Proposal serialized for API responses.
+
+    NOTE: the `token` field is DELIBERATELY EXCLUDED — it is never returned
+    in GET /proposals or any list/read path (T-02-07). The token is surfaced
+    only in the agent_stream SSE answer event to the originating chat session.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: _uuid.UUID
+    operation: str
+    payload: dict
+    status: str
+    expires_at: datetime
+    created_at: datetime
+    confirmed_at: datetime | None
+
+
+class ConfirmRequest(BaseModel):
+    """Body for POST /proposals/{id}/confirm."""
+
+    token: str
