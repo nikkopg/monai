@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
+from backend.auth import require_api_key
 from backend.db import get_session
 from backend.importer import _get_or_create_account, import_csv_text
 from backend.models import Account, Transaction
@@ -70,7 +71,7 @@ def list_transactions(limit: int = 50, db: Session = Depends(get_session)):
     )
 
 
-@app.post("/transactions", response_model=TransactionOut, status_code=201)
+@app.post("/transactions", response_model=TransactionOut, status_code=201, dependencies=[Depends(require_api_key)])
 def create_transaction(payload: TransactionCreate, db: Session = Depends(get_session)):
     acc = _get_or_create_account(db, payload.account, payload.currency)
     tx = Transaction(
@@ -93,7 +94,7 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_ses
     return tx
 
 
-@app.post("/import", response_model=ImportResponse)
+@app.post("/import", response_model=ImportResponse, dependencies=[Depends(require_api_key)])
 async def import_csv(file: UploadFile = File(...), db: Session = Depends(get_session)):
     raw = await file.read()
     try:
