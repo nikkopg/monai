@@ -11,7 +11,7 @@ Requirements for this cycle. Each maps to a roadmap phase.
 
 - [ ] **FND-01**: Database schema changes are applied via Alembic migrations, preserving existing data (no destructive `create_all` on populated tables)
 - [ ] **FND-02**: All API endpoints require a configurable API key (`MONAI_API_KEY`); requests without a valid key are rejected
-- [ ] **FND-03**: New write paths and money math use `Decimal` end-to-end (no float in transit for amounts they touch)
+- [x] **FND-03**: New write paths and money math use `Decimal` end-to-end (no float in transit for amounts they touch)
 
 ### Agentic Chat
 
@@ -97,7 +97,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 |-------------|-------|--------|
 | FND-01 | Phase 1: Schema Foundation + Auth | Pending |
 | FND-02 | Phase 1: Schema Foundation + Auth | Pending |
-| FND-03 | Phase 1: Schema Foundation + Auth | Pending |
+| FND-03 | Phase 1: Schema Foundation + Auth | Complete |
 | CHAT-01 | Phase 2: Agentic Loop + Confirm-Before-Write | Pending |
 | CHAT-02 | Phase 2: Agentic Loop + Confirm-Before-Write | Pending |
 | CHAT-04 | Phase 2: Agentic Loop + Confirm-Before-Write | Pending |
