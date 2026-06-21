@@ -1,9 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Proxy API calls to the FastAPI backend so the browser hits one origin.
-  async rewrites() {
-    const backend = process.env.MONAI_API || "http://127.0.0.1:8001";
-    return [{ source: "/api/:path*", destination: `${backend}/:path*` }];
-  },
+  // The /api/* proxy is handled by the server-side catch-all route handler at
+  // ui/app/api/[...proxy]/route.ts, which injects the MONAI_API_KEY header
+  // server-side. The rewrites() block is intentionally removed — the route
+  // handler now owns /api/* routing (D-07, T-01-06).
 };
 module.exports = nextConfig;
