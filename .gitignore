@@ -24,3 +24,4 @@ report_*.csv
 
 # gstack
 .gstack/
+backup_pre_alembic.sql

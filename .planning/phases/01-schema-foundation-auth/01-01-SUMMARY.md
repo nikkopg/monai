@@ -37,7 +37,7 @@ decisions:
 metrics:
   duration: "~45 min (continuation from prior session)"
   completed: "2026-06-21"
-  tasks_completed: 3
+  tasks_completed: 4
   tasks_total: 4
   files_created: 6
   files_modified: 6
@@ -49,7 +49,7 @@ metrics:
 
 ## What Was Built
 
-Tasks 1-3 of plan 01-01 are complete. Task 4 (live DB migration) is a BLOCKING human-verify checkpoint — the operator must run `alembic stamp` then `alembic upgrade head` against the live monai_pgdata volume.
+All 4 tasks of plan 01-01 are complete. Tasks 1-3 built the Alembic foundation; Task 4 (the live-DB migration, a human-verify checkpoint) was applied and verified by the operator — see "Checkpoint — Task 4" below.
 
 ### Task 1 — Alembic env wiring and two migration files (commit c3edb14)
 
@@ -104,6 +104,17 @@ None beyond what is already in the plan's threat model. No new network endpoints
 
 ## Self-Check: PASSED
 
-## Checkpoint — Task 4 (blocking human-verify)
+## Checkpoint — Task 4 (human-verify): COMPLETE ✓
 
-Task 4 requires a human operator to apply the migration to the live monai_pgdata volume (5,609 transactions, 3 accounts). This cannot be automated. See plan Task 4 `<how-to-verify>` for exact commands. The runbook is in `README.md` "Database migrations" section.
+The operator applied the migration to the live monai_pgdata volume on 2026-06-21:
+took a `pg_dump` backup (`backup_pre_alembic.sql`, 391K), then ran
+`alembic stamp 3a1f8c2d9e04` (→ current = 3a1f8c2d9e04) and `alembic upgrade head`
+(→ current = 7b4e9f1a6c52, head).
+
+**Verified — no data loss:** `transactions` = 5609 (unchanged), `accounts` = 3
+(unchanged), the 5 new tables created, and the `date_helpers` view present.
+Success Criterion #1 satisfied.
+
+**Follow-up:** rebuild the backend image so the running app picks up the new code
+(`docker compose build backend && docker compose up -d backend`); the entrypoint's
+`alembic upgrade head` is now a safe no-op (already at head).
