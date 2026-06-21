@@ -3,8 +3,8 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: executing
-stopped_at: Completed Phase 02 Plan 01 — FunctionAgent multi-step loop
-last_updated: "2026-06-21T17:03:54.994Z"
+stopped_at: "02-03 Tasks 1-2 done (proxy SSE passthrough + streaming chat page); Task 3 awaiting human browser verification"
+last_updated: "2026-06-22T21:19:38Z"
 last_activity: 2026-06-21
 progress:
   total_phases: 6
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-06-21)
 
 Phase: 02 (agentic-loop-confirm-before-write) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
-Last activity: 2026-06-21
+Status: Tasks 1-2 committed; Task 3 (checkpoint:human-verify) pending browser verification
+Last activity: 2026-06-22
 
 Progress: [████████░░] 83%
 
@@ -55,6 +55,7 @@ Progress: [████████░░] 83%
 | Phase 01-schema-foundation-auth P03 | 4 | 1 tasks | 4 files |
 | Phase 01 P02 | 337 | 3 tasks | 6 files |
 | Phase 02-agentic-loop-confirm-before-write P01 | 303 | 2 tasks | 4 files |
+| Phase 02-agentic-loop-confirm-before-write P03 | 8 | 2 tasks (Task 3 pending human) | 2 files |
 
 ## Accumulated Context
 
@@ -71,6 +72,8 @@ Recent decisions affecting current work:
 - [Phase ?]: FunctionAgent chosen over ReActAgent — gemma4:31b-cloud confirmed tools capability in research
 - [Phase ?]: agent() sync wrapper uses ThreadPoolExecutor bridge when event loop already running (pytest-asyncio compatibility)
 - [Phase ?]: ask() thin shim preserves POST /query handler contract — no main.py changes required in plan 02-01
+- [02-03]: expires_at for ProposalCard computed client-side as Date.now()+15min — cosmetic only, server enforces on confirm (410)
+- [02-03]: SSE proxy passthrough: isStream gate before upstream.arrayBuffer(); export const dynamic = "force-dynamic"
 
 ### Pending Todos
 
@@ -94,6 +97,6 @@ None yet.
 
 ## Session Continuity
 
-Last session: 2026-06-21T17:03:54.974Z
-Stopped at: Completed Phase 02 Plan 01 — FunctionAgent multi-step loop
-Resume file: None
+Last session: 2026-06-22T21:19:38Z
+Stopped at: "02-03 Tasks 1-2 done (proxy SSE passthrough + streaming chat page); Task 3 awaiting human browser verification"
+Resume file: .planning/phases/02-agentic-loop-confirm-before-write/02-03-SUMMARY.md

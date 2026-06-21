@@ -51,7 +51,7 @@
 **Plans**: 3 plans
 - [x] 02-01-PLAN.md — Async test infra + FunctionAgent multi-step read loop (CHAT-01/02/08)
 - [x] 02-02-PLAN.md — propose_* write tools + confirm/reject/list endpoints with atomic write, audit, token guards (CHAT-04/05/06/07, D-06)
-- [ ] 02-03-PLAN.md — SSE /query-stream + proxy passthrough + inline ProposalCard UI with progressive steps, trace, diff, expiry (CHAT-01/04 surfacing)
+- [ ] 02-03-PLAN.md — SSE /query-stream + proxy passthrough + inline ProposalCard UI with progressive steps, trace, diff, expiry (CHAT-01/04 surfacing) [Tasks 1-2 committed; Task 3 awaiting human browser verification]
 
 ### Phase 3: Multi-Page UI Shell + Settings
 **Goal**: Users can navigate between all pages of the app and configure it from the browser
