@@ -32,7 +32,7 @@
   3. Any new transaction, holding, or price amount flowing through the API is stored and returned as `Decimal` (no float rounding visible in responses)
   4. `Base.metadata.create_all()` has been removed from `db.py`; schema is fully Alembic-managed
 **Plans**: 3 plans
-- [ ] 01-01-PLAN.md — Alembic introduction (baseline + stamp), 5 new tables + date_helpers view, Decimal storage, remove create_all
+- [x] 01-01-PLAN.md — Alembic introduction (baseline + stamp), 5 new tables + date_helpers view, Decimal storage, remove create_all
 - [ ] 01-02-PLAN.md — MONAI_API_KEY auth on write routes + server-side Next.js proxy injecting the key
 - [x] 01-03-PLAN.md — MoneyDecimal type: Decimal-as-JSON-number serialization for transaction amounts
 
@@ -111,7 +111,7 @@
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Schema Foundation + Auth | 1/3 | In Progress|  |
+| 1. Schema Foundation + Auth | 2/3 | In Progress|  |
 | 2. Agentic Loop + Confirm-Before-Write | 0/? | Not started | - |
 | 3. Multi-Page UI Shell + Settings | 0/? | Not started | - |
 | 4. Cashflow Dashboard + CRUD | 0/? | Not started | - |
