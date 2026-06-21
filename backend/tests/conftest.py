@@ -2,8 +2,9 @@
 Shared pytest fixtures for the monai backend test suite.
 
 Provides:
-  client    — FastAPI TestClient for all HTTP-level tests
-  api_key   — sets MONAI_API_KEY env var for tests that exercise write endpoints
+  client       — FastAPI TestClient for all HTTP-level tests (sync)
+  async_client — httpx.AsyncClient for async endpoint tests (query-stream, proposals)
+  api_key      — sets MONAI_API_KEY env var for tests that exercise write endpoints
 
 Import-time note:
   backend.auth reads _CONFIGURED_KEY = os.environ.get("MONAI_API_KEY", "") at import
@@ -14,7 +15,9 @@ Import-time note:
   so it works regardless of import order.
 """
 
+import httpx
 import pytest
+import pytest_asyncio
 from fastapi.testclient import TestClient
 
 from backend.main import app
@@ -28,6 +31,20 @@ from backend.main import app
 def client() -> TestClient:
     """Return a TestClient wrapping the monai FastAPI app."""
     return TestClient(app)
+
+
+# ---------------------------------------------------------------------------
+# Async fixture: httpx.AsyncClient for async endpoint tests
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture()
+async def async_client():
+    """httpx AsyncClient for testing async endpoints (query-stream, proposals)."""
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as ac:
+        yield ac
 
 
 # ---------------------------------------------------------------------------
