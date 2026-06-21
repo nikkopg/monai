@@ -46,9 +46,20 @@ RULES:
 3. If a question cannot be answered by any available tool, say honestly:
    "I can't compute that reliably with my current tools — I can total spending or income, \
 break spending down by category, count transactions, find your largest transactions, or compute \
-average daily spending — over any period."
+average daily spending — over any period. I can also add, edit, or delete transactions, \
+accounts, categories, and holdings."
 4. Never fabricate a number. If a tool returns zero, say zero.
 5. Do not run raw SQL queries — only invoke the named tools provided.
+6. For write requests (add/edit/delete a transaction, account, category, or holding), \
+use the propose_* tools. These create a proposal for user approval — they do NOT \
+change any data. The user approves or declines through the chat UI, not via the agent.
+7. For a "fix all X" or batch request (e.g. recategorize all Gojek transactions), \
+build a SINGLE batch proposal — do not call propose_* once per row.
+8. For deletes of accounts with dependent transactions, the propose_delete_account tool \
+will refuse and return an error — relay that refusal honestly: explain the dependent count \
+and suggest the user reassign or remove those transactions first.
+9. Never add an approval or declination tool — the user acts on proposals through the \
+HTTP endpoint in the UI, not through the agent.
 """.strip()
 
 
@@ -71,15 +82,21 @@ def _get_agent_workflow():
         from llama_index.core.agent import AgentWorkflow, FunctionAgent
         from llama_index.core.tools import FunctionTool
         from backend.tools import (
+            # Read tools
             spending_total, income_total, net_total,
             spending_by_category, spending_in_category,
             transaction_count, largest_transactions,
             average_daily_spending, list_categories,
+            # Write tools (proposal-producers — never mutate directly)
+            propose_add_transaction, propose_edit_transaction, propose_delete_transaction,
+            propose_add_account, propose_edit_account, propose_delete_account,
+            propose_rename_category, propose_merge_category,
+            propose_add_holding, propose_edit_holding, propose_delete_holding,
         )
 
         llm = _get_llm()
 
-        tools = [
+        read_tools = [
             FunctionTool.from_defaults(fn=spending_total),
             FunctionTool.from_defaults(fn=income_total),
             FunctionTool.from_defaults(fn=net_total),
@@ -91,12 +108,27 @@ def _get_agent_workflow():
             FunctionTool.from_defaults(fn=list_categories),
         ]
 
+        # Write tools — proposal-producers (CHAT-07, D-04 single source of truth)
+        write_tools = [
+            FunctionTool.from_defaults(fn=propose_add_transaction),
+            FunctionTool.from_defaults(fn=propose_edit_transaction),
+            FunctionTool.from_defaults(fn=propose_delete_transaction),
+            FunctionTool.from_defaults(fn=propose_add_account),
+            FunctionTool.from_defaults(fn=propose_edit_account),
+            FunctionTool.from_defaults(fn=propose_delete_account),
+            FunctionTool.from_defaults(fn=propose_rename_category),
+            FunctionTool.from_defaults(fn=propose_merge_category),
+            FunctionTool.from_defaults(fn=propose_add_holding),
+            FunctionTool.from_defaults(fn=propose_edit_holding),
+            FunctionTool.from_defaults(fn=propose_delete_holding),
+        ]
+
         system_prompt = _SYSTEM_PROMPT.format(
             today=datetime.date.today().isoformat()
         )
 
         agent = FunctionAgent(
-            tools=tools,
+            tools=read_tools + write_tools,
             llm=llm,
             system_prompt=system_prompt,
             verbose=False,
@@ -106,7 +138,7 @@ def _get_agent_workflow():
 
 
 # ---------------------------------------------------------------------------
-# Proposal ID extraction from tool trace
+# Proposal field extraction from tool trace
 # ---------------------------------------------------------------------------
 
 def _extract_proposal_id(tool_trace: list) -> str | None:
@@ -115,6 +147,20 @@ def _extract_proposal_id(tool_trace: list) -> str | None:
         result = step.get("result")
         if isinstance(result, dict) and "proposal_id" in result:
             return result["proposal_id"]
+    return None
+
+
+def _extract_proposal_token(tool_trace: list) -> str | None:
+    """Return the first proposal_token found in the tool trace, or None.
+
+    The token is extracted here and surfaced ONLY in the SSE answer event payload
+    to the originating chat session — it is never emitted inside the trace itself
+    (T-02-07: token must not appear in the persisted/visible tool-call log).
+    """
+    for step in tool_trace:
+        result = step.get("result")
+        if isinstance(result, dict) and "proposal_token" in result:
+            return result["proposal_token"]
     return None
 
 
@@ -150,12 +196,27 @@ async def agent_stream(question: str):
                     result_dict = json.loads(content)
                 except Exception:
                     result_dict = {"raw": content}
+
+                # T-02-07: strip proposal_token out of the trace-visible result dict
+                # so it never appears in the persisted/collapsible tool-call log.
+                # It will be surfaced as a dedicated top-level field in the answer event.
+                trace_result = {k: v for k, v in result_dict.items()
+                                if k != "proposal_token"} if isinstance(result_dict, dict) \
+                    else result_dict
+
                 step = {
                     "tool": event.tool_name,
                     "args": event.tool_kwargs,
-                    "result": result_dict,
+                    "result": trace_result,
                 }
-                tool_trace.append(step)
+                # Keep the full result_dict (with token) in tool_trace so the
+                # _extract_proposal_token helper can find it.
+                tool_trace.append({
+                    "tool": event.tool_name,
+                    "args": event.tool_kwargs,
+                    "result": result_dict,  # full dict — used for token extraction only
+                    "_trace_result": trace_result,  # token-stripped — used in answer trace
+                })
                 yield f"data: {json.dumps({'type': 'tool_result', 'step': step})}\n\n"
 
             elif isinstance(event, StopEvent):
@@ -163,11 +224,24 @@ async def agent_stream(question: str):
                 final = event.result
                 answer_text = str(final) if final is not None else ""
                 proposal_id = _extract_proposal_id(tool_trace)
+                # proposal_token surfaces ONLY here — to the originating chat session
+                # via the SSE answer event (T-02-07, single-use 15-min TTL).
+                proposal_token = _extract_proposal_token(tool_trace)
+                # Build the public trace using token-stripped results (T-02-07)
+                public_trace = [
+                    {
+                        "tool": s["tool"],
+                        "args": s["args"],
+                        "result": s.get("_trace_result", s["result"]),
+                    }
+                    for s in tool_trace
+                ]
                 payload = {
                     "type": "answer",
                     "text": answer_text,
-                    "trace": tool_trace,
+                    "trace": public_trace,
                     "proposal_id": proposal_id,
+                    "proposal_token": proposal_token,
                 }
                 yield f"data: {json.dumps(payload)}\n\n"
 
@@ -179,6 +253,7 @@ async def agent_stream(question: str):
             "text": f"I couldn't process that question reliably ({e}). Try rephrasing.",
             "trace": [],
             "proposal_id": None,
+            "proposal_token": None,
         }
         yield f"data: {json.dumps(error_payload)}\n\n"
         yield "data: [DONE]\n\n"
