@@ -11,6 +11,10 @@ COPY backend/ ./backend/
 
 EXPOSE 8001
 
-# 0.0.0.0 so the port is reachable; host networking is used in compose but this
-# keeps the image usable under bridge networking too.
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8001"]
+# Copy and make the entrypoint executable — runs migrations before uvicorn.
+COPY backend/entrypoint.sh ./backend/entrypoint.sh
+RUN chmod +x backend/entrypoint.sh
+
+# Entrypoint runs `alembic upgrade head` then starts uvicorn.
+# docker-compose depends_on with service_healthy ensures Postgres is ready.
+CMD ["./backend/entrypoint.sh"]
