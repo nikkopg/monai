@@ -1,13 +1,28 @@
 """Pydantic request/response models for the API."""
 
 from datetime import datetime
+from decimal import Decimal
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
+
+# ---------------------------------------------------------------------------
+# Shared money type
+# ---------------------------------------------------------------------------
+
+# Validates as Decimal (preserving precision on the Python side), serializes
+# as a JSON number (float) instead of the Pydantic v2 default string.
+# Use for all amount/price/quantity fields across all schemas (D-14, D-15).
+# Ref: Pydantic v2 Pitfall 4 — Decimal serializes as string without this.
+MoneyDecimal = Annotated[
+    Decimal,
+    PlainSerializer(lambda x: float(x), return_type=float, when_used="json"),
+]
 
 
 class TransactionCreate(BaseModel):
     date: datetime
-    amount: float = Field(..., description="Signed: negative = expense, positive = income")
+    amount: MoneyDecimal = Field(..., description="Signed: negative = expense, positive = income")
     currency: str = "IDR"
     category: str | None = None
     merchant: str | None = None
@@ -21,7 +36,7 @@ class TransactionOut(BaseModel):
 
     id: int
     date: datetime
-    amount: float
+    amount: MoneyDecimal
     currency: str
     category: str | None
     raw_category: str | None
