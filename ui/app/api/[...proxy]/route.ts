@@ -8,7 +8,15 @@
  * IMPORTANT: Never expose the key via a NEXT_PUBLIC_ prefixed env var — that
  * prefix bakes the value into the browser bundle. This file must remain a
  * server component (no "use client" directive).
+ *
+ * SSE passthrough: /query-stream bypasses arrayBuffer() buffering and
+ * passes upstream.body (ReadableStream) directly to NextResponse. All
+ * other routes use the original buffer path (Pitfall 2 — RESEARCH.md).
  */
+
+// Force dynamic rendering — prevents Next.js from statically optimising the
+// route in a way that would buffer the SSE stream (Assumption A4 — RESEARCH.md).
+export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 
@@ -29,6 +37,11 @@ async function forwardRequest(
   const path = segments.join("/");
   const search = req.nextUrl.search;
   const targetUrl = `${BACKEND}/${path}${search}`;
+
+  // Determine if this is the SSE streaming endpoint BEFORE reading body or
+  // touching arrayBuffer — the isStream flag gates which response path we take.
+  // Must be computed here so we can pass upstream.body through without consuming it.
+  const isStream = path === "query-stream";
 
   // Copy incoming request headers and inject the API key
   const headers = new Headers(req.headers);
@@ -51,7 +64,17 @@ async function forwardRequest(
     redirect: "manual",
   });
 
-  // Stream response body back to the client
+  // SSE passthrough — pass ReadableStream directly without calling arrayBuffer().
+  // Calling arrayBuffer() on a stream consumes it and blocks SSE delivery until
+  // the agent finishes, defeating progressive step events (Pitfall 2 — RESEARCH.md).
+  if (isStream && upstream.body) {
+    return new NextResponse(upstream.body, {
+      status: upstream.status,
+      headers: upstream.headers,
+    });
+  }
+
+  // Non-streaming: original buffer path (all other routes unchanged)
   const responseBody = await upstream.arrayBuffer();
   const responseHeaders = new Headers(upstream.headers);
 
