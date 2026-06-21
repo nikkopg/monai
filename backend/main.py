@@ -21,7 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
 
-from backend.db import get_session, init_db
+from backend.db import get_session
 from backend.importer import _get_or_create_account, import_csv_text
 from backend.models import Account, Transaction
 from backend.schemas import (
@@ -48,10 +48,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-@app.on_event("startup")
-def _startup():
-    init_db()
 
 
 @app.get("/health")
