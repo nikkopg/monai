@@ -730,17 +730,15 @@ def downgrade() -> None:
 
 ---
 
-## Open Questions
+## Open Questions (RESOLVED)
 
-1. **alembic.ini location — project root vs backend/**
+1. **alembic.ini location — project root vs backend/** — RESOLVED
    - What we know: `alembic init` creates `alembic/` and `alembic.ini` at the directory where it's run. The project runs backend from the `monai/` root (`uvicorn backend.main:app`).
-   - What's unclear: Whether to run `alembic init` from project root (makes `alembic/` a sibling of `backend/`) or from `backend/`.
-   - Recommendation: Run from project root. This keeps `alembic.ini` at root and `alembic/` alongside `backend/`, matching how Alembic is typically configured in FastAPI projects. The `env.py` imports `from backend.models import Base` which works from root.
+   - Resolution: Run `alembic init` from the project root. This keeps `alembic.ini` at root and `alembic/` alongside `backend/`, matching how Alembic is typically configured in FastAPI projects. The `env.py` imports `from backend.models import Base` which works from root. Implemented in plan 01-01 Task 1.
 
-2. **`MONAI_API_KEY` generation guidance**
+2. **`MONAI_API_KEY` generation guidance** — RESOLVED
    - What we know: D-08 specifies a single static key from env. The research does not specify key format/entropy.
-   - What's unclear: Should the runbook recommend a specific key generation command?
-   - Recommendation: Document `python3 -c "import secrets; print(secrets.token_hex(32))"` in the runbook. 32 bytes = 256-bit entropy.
+   - Resolution: Document `python3 -c "import secrets; print(secrets.token_hex(32))"` in the runbook (32 bytes = 256-bit entropy). Implemented in plan 01-01 Task 3 runbook.
 
 ---
 
