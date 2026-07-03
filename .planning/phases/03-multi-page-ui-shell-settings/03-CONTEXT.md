@@ -78,6 +78,19 @@ holdings/prices/P&L (Phase 5); MCP server (Phase 6).
 - Server settings are the source of truth; the Settings page fetches
   `GET /api/settings` on load. No client-side settings cache beyond component state.
 
+### Resolved Open Questions (user-approved 2026-07-03, from 03-RESEARCH.md)
+- `PUT /settings` writes an `AuditLog` row (`entity="settings"`) on every accepted
+  update, storing **masked** values only (never raw API keys) — consistent with every
+  other write path.
+- Price data source values are a locked enum stored exactly as `coingecko` |
+  `yfinance` | `manual` — Phase 5's price adapters consume these literal strings; no
+  rename or data migration later.
+- Add a minimal Playwright smoke test for UI-01/UI-02 (routes render without error,
+  nav links navigate client-side, active link highlights). Dev-dependency-only
+  (`@playwright/test` in ui/devDependencies); keep it to one spec file so the
+  dependency surface stays small. This closes the "manual-browser-only" verification
+  gap that slowed Phase 2.
+
 ### Claude's Discretion
 - Exact visual styling of the nav (spacing, colors) within the existing aesthetic.
 - Settings key naming scheme inside `app_settings`.
