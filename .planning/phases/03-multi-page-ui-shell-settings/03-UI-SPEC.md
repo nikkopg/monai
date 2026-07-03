@@ -27,24 +27,28 @@ created: 2026-07-03
 
 **shadcn gate resolution:** `components.json` not found in `ui/`. Tech stack is Next.js (App Router), which would normally trigger the shadcn init prompt — but `03-CONTEXT.md` § Deferred Ideas explicitly excludes "Any styling re-platform (Tailwind/shadcn) — stays inline-styles this cycle." Per the pre-authorized decision, shadcn is **not** initialized this phase. Registry safety section below is not applicable.
 
-**Code structure (from CONTEXT.md, locked):** Extract the four shared style constants (`card`, `input`, `btn`, `label`) from `ui/app/page.tsx` verbatim into `ui/app/styles.ts` for reuse across `/chat`, `/cashflow`, `/investments`, `/settings`, and the shared `<Nav/>`. Do not restyle them — they are the established visual baseline.
+**Code structure (from CONTEXT.md, locked):** Extract the four shared style constants (`card`, `input`, `btn`, `label`) from `ui/app/page.tsx` into `ui/app/styles.ts` for reuse across `/chat`, `/cashflow`, `/investments`, `/settings`, and the shared `<Nav/>`. They are the established visual baseline and are not restyled — with one deliberate exception: on extraction, any spacing value that is not a multiple of 4 is normalized to the nearest standard token (see Spacing Scale below). This is a minor, intentional visual change limited to spacing; colors, typography, and layout are otherwise unchanged.
 
 ---
 
 ## Spacing Scale
 
-Declared values, extracted from the shipped `card`/`input`/`btn` constants and `main` page padding in `ui/app/page.tsx` (all multiples of 4):
+Standard 8-point scale only: **4, 8, 16, 24, 32, 48, 64** — every value below is one of these, no exceptions. Where the currently shipped `ui/app/page.tsx` constants use an off-scale value, extraction into `ui/app/styles.ts` normalizes it to the nearest standard token below. This is a deliberate, minor visual change (a few px of padding/margin) made once, at extraction time.
 
 | Token | Value | Usage |
 |-------|-------|-------|
 | xs | 4px | Icon-to-text gaps (e.g. `›` step marker), checkbox right-margin, label bottom-margin |
 | sm | 8px | Button row gap, input-to-button gap, nav link internal gap |
 | md | 16px | Form grid gaps (`gridTemplateColumns` rows), nav-link-to-nav-link spacing |
-| lg | 20px | Card padding (`card.padding`), card bottom-margin (`card.marginBottom`) — preserved as-is from existing `card` constant, do not round to 24 |
-| xl | 28px | Page title bottom-margin (existing `h1` block spacing) |
-| 2xl | 40px | Page outer padding (`main` horizontal/vertical padding) |
+| lg | 24px | Card padding (`card.padding`), card bottom-margin (`card.marginBottom`) — normalized from the shipped 20px value on extraction into `ui/app/styles.ts` |
+| xl | 32px | Page title bottom-margin (existing `h1` block spacing) — normalized from the shipped 28px value on extraction |
+| 2xl | 48px | Page outer padding (`main` horizontal/vertical padding) — normalized from the shipped 40px value on extraction |
 
-Exceptions: the existing `input` (`padding: "10px 12px"`) and `btn` (`padding: "10px 18px"`) constants use 10px/12px/18px, which are pre-existing shipped values being extracted into `ui/app/styles.ts` unchanged — not redesigned this phase. New Phase 3 elements (Nav bar, Settings page sections) must use only the token scale above; do not introduce further off-scale values.
+Legacy value normalization: the existing `input` and `btn` constants use off-scale padding (`input: "10px 12px"`, `btn: "10px 18px"`). On extraction into `ui/app/styles.ts` these are rounded to the nearest multiples of 4:
+- `input` padding: `10px 12px` → **`8px 12px`**
+- `btn` padding: `10px 18px` → **`8px 16px`**
+
+There is no verbatim/unchanged carve-out for spacing — every constant moved into `ui/app/styles.ts` must land on the standard scale. New Phase 3 elements (Nav bar, Settings page sections) must also use only the token scale above; do not introduce further off-scale values.
 
 **Nav-specific:** horizontal nav bar height 56px (multiple of 4), 24px horizontal outer padding, 24px gap between the four nav links, sticky at top (`position: sticky; top: 0`) with the card border color as its bottom border (see Color).
 
@@ -140,10 +144,10 @@ These are not part of the template's fixed sections but are load-bearing for imp
 - Sticky top, `zIndex` above page content, bottom border `1px solid #2a2e37`, background Secondary (`#1a1d23`) to visually separate from the page's Dominant background.
 
 **Page skeletons:**
-- `/chat` — existing ask box + SSE streaming + ProposalCard + tool trace section from current `page.tsx`, moved intact (no visual changes).
-- `/cashflow` — existing manual-entry form + recent-transactions table sections from current `page.tsx`, moved intact as interim content (full dashboard is Phase 4).
-- `/investments` — new skeleton: page Display heading "Investments are coming in Phase 5" inside a single `card`, with the empty-state body copy beneath it. No table, no form — this is intentionally sparse per CONTEXT.md ("real skeleton page," not a stub route).
-- `/settings` — new page: Display heading "Settings", then three `card` sections in order: "LLM Provider & Model" (provider dropdown + model text input + Save Provider button), "API Keys" (masked password-type inputs per configured provider + Save Keys button), "Preferences" (base currency input/select + price data source dropdown + Save Preferences button). Each section has its own inline success/error message per the Copywriting Contract.
+- `/chat` — existing ask box + SSE streaming + ProposalCard + tool trace section from current `page.tsx`, moved intact (no visual changes). Focal point: the ask box — it sits first, is the only input control above the fold, and is where the eye should land on page load.
+- `/cashflow` — existing manual-entry form + recent-transactions table sections from current `page.tsx`, moved intact as interim content (full dashboard is Phase 4). Focal point: the recent-transactions card — it carries the most data density and is the primary reason to visit this page today.
+- `/investments` — new skeleton: page Display heading "Investments are coming in Phase 5" inside a single `card`, with the empty-state body copy beneath it. No table, no form — this is intentionally sparse per CONTEXT.md ("real skeleton page," not a stub route). Focal point: the skeleton headline card itself — with no competing content on the page, it is the only thing to focus on.
+- `/settings` — new page: Display heading "Settings", then three `card` sections in order: "LLM Provider & Model" (provider dropdown + model text input + Save Provider button), "API Keys" (masked password-type inputs per configured provider + Save Keys button), "Preferences" (base currency input/select + price data source dropdown + Save Preferences button). Each section has its own inline success/error message per the Copywriting Contract. Focal point: the "LLM Provider & Model" card — it is first in reading order and the setting most users come to this page to change.
 - Root `/` — redirect to `/chat` (server-side `redirect()` in `app/page.tsx`, per CONTEXT.md discretion note; a server-component redirect is simpler than a `next.config.js` rewrite and keeps routing logic colocated with the App Router).
 
 **Settings form field types (from CONTEXT.md, locked):**
