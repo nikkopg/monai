@@ -32,13 +32,21 @@ def _make_agent_input_event():
 
 
 def _make_tool_result_event(tool_name: str, tool_kwargs: dict, result_dict: dict):
-    """Fake ToolCallResult event — represents one tool execution."""
+    """Fake ToolCallResult event — represents one tool execution.
+
+    Mirrors real LlamaIndex: ToolOutput.raw_output is the untouched dict the tool
+    function returned, while ToolOutput.content is a Python-repr STRING of that
+    dict (single-quoted keys) — NOT valid JSON. json.loads(content) would raise,
+    which is exactly the bug this fixture pins down (see
+    test_agent_stream_surfaces_proposal_fields).
+    """
     from llama_index.core.agent.workflow.workflow_events import ToolCallResult
     evt = MagicMock(spec=ToolCallResult)
     evt.tool_name = tool_name
     evt.tool_kwargs = tool_kwargs
     output = MagicMock()
-    output.content = json.dumps(result_dict)
+    output.content = str(result_dict)
+    output.raw_output = result_dict
     evt.tool_output = output
     return evt
 
@@ -208,3 +216,83 @@ def test_honest_refusal_enumerates_capabilities(monkeypatch):
     for pat in fabricated_patterns:
         assert not re.search(pat, answer, re.IGNORECASE), \
             f"Answer may contain fabricated weather data (pattern {pat!r}): {answer!r}"
+
+
+# ---------------------------------------------------------------------------
+# Regression: agent_stream() must use tool_output.raw_output verbatim so
+# proposal_id/proposal_token actually survive to the SSE answer event.
+#
+# The old logic called json.loads(event.tool_output.content), but .content is
+# a Python-repr STRING (single-quoted keys) of the tool's dict return — never
+# valid JSON — so json.loads() ALWAYS raised and result_dict collapsed to
+# {"raw": content} for every tool call, silently dropping proposal_id and
+# proposal_token for every write action. This test fails against that old
+# logic and passes once agent_stream() prefers tool_output.raw_output.
+# ---------------------------------------------------------------------------
+
+
+async def _fake_stream_events_propose_edit():
+    """Async generator: one write-tool call producing a proposal, then stop."""
+    yield _make_agent_input_event()
+    yield _make_tool_result_event(
+        "propose_edit_transaction",
+        {"transaction_id": 42, "amount": 150000},
+        {
+            "tool": "propose_edit_transaction",
+            "proposal_id": "prop-abc123",
+            "proposal_token": "tok-secret-xyz",
+            "message": "Proposal created — approve to apply.",
+        },
+    )
+    yield _make_stop_event("I've proposed editing transaction 42. Approve to apply.")
+
+
+def test_agent_stream_surfaces_proposal_fields(monkeypatch):
+    """
+    A write-tool ToolCallResult whose raw_output dict carries proposal_id and
+    proposal_token must have both fields reach the SSE "answer" event, and
+    proposal_token must never appear inside the public trace results (T-02-07).
+    """
+    import asyncio
+    from backend.query import agent_stream
+
+    mock_handler = MagicMock()
+    mock_handler.stream_events = lambda: _fake_stream_events_propose_edit()
+
+    mock_workflow = MagicMock()
+    mock_workflow.run = MagicMock(return_value=mock_handler)
+
+    monkeypatch.setattr("backend.query._agent_workflow", mock_workflow)
+
+    async def _collect():
+        lines = []
+        async for line in agent_stream("edit transaction 42 to 150000"):
+            lines.append(line)
+        return lines
+
+    lines = asyncio.run(_collect())
+
+    answer_payload = None
+    for line in lines:
+        if not line.startswith("data: "):
+            continue
+        raw = line[len("data: "):].strip()
+        if raw == "[DONE]":
+            continue
+        payload = json.loads(raw)
+        if payload.get("type") == "answer":
+            answer_payload = payload
+            break
+
+    assert answer_payload is not None, f"No answer event found in stream: {lines}"
+    assert answer_payload["proposal_id"] == "prop-abc123", \
+        f"proposal_id did not survive to answer event: {answer_payload}"
+    assert answer_payload["proposal_token"] == "tok-secret-xyz", \
+        f"proposal_token did not survive to answer event: {answer_payload}"
+
+    # T-02-07: proposal_token must never appear inside the public trace results
+    for step in answer_payload["trace"]:
+        result = step.get("result")
+        if isinstance(result, dict):
+            assert "proposal_token" not in result, \
+                f"proposal_token leaked into public trace: {step}"
