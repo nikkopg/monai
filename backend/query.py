@@ -192,11 +192,19 @@ async def agent_stream(question: str):
                 yield f"data: {json.dumps({'type': 'step', 'msg': 'thinking…'})}\n\n"
 
             elif isinstance(event, ToolCallResult):
-                content = event.tool_output.content
-                try:
-                    result_dict = json.loads(content)
-                except Exception:
-                    result_dict = {"raw": content}
+                # Prefer the untouched dict LlamaIndex's FunctionTool.call() sets on
+                # ToolOutput.raw_output — event.tool_output.content is a Python-repr
+                # STRING of that dict, so json.loads(content) always raises and would
+                # silently drop proposal_id/proposal_token on every write-tool call.
+                raw_output = getattr(event.tool_output, "raw_output", None)
+                if isinstance(raw_output, dict):
+                    result_dict = raw_output
+                else:
+                    content = event.tool_output.content
+                    try:
+                        result_dict = json.loads(content)
+                    except Exception:
+                        result_dict = {"raw": content}
 
                 # T-02-07: strip proposal_token out of the trace-visible result dict
                 # so it never appears in the persisted/collapsible tool-call log.
