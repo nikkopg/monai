@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-21)
 Phase: 02 (agentic-loop-confirm-before-write) — EXECUTING
 Plan: 3 of 3
 Status: Tasks 1-2 committed; Task 3 (checkpoint:human-verify) pending browser verification
-Last activity: 2026-07-03 - Completed quick task 260703-f5b: Patch flat-commands manifest resolution bug in capability-state.cjs (gsd-core#1858)
+Last activity: 2026-07-03 - Completed quick task 260703-fwr: Fix backend/Dockerfile missing alembic.ini/alembic/ COPY (fixes docker compose backend crash-loop, unblocks Phase 2 Plan 03 Task 3 human verification)
 
 Progress: [████████░░] 83%
 
@@ -90,6 +90,7 @@ None yet.
 | # | Description | Date | Commit | Directory |
 |---|-------------|------|--------|-----------|
 | 260703-f5b | Patch flat-commands manifest resolution bug in capability-state.cjs (gsd-core#1858) | 2026-07-03 | 33f4cd7 | [260703-f5b-patch-flat-commands-manifest-resolution-](./quick/260703-f5b-patch-flat-commands-manifest-resolution-/) |
+| 260703-fwr | Fix backend/Dockerfile: COPY alembic.ini and alembic/ into backend image so alembic upgrade head can find script_location at container startup | 2026-07-03 | 4615a5b | [260703-fwr-fix-backend-dockerfile-copy-alembic-ini-](./quick/260703-fwr-fix-backend-dockerfile-copy-alembic-ini-/) |
 
 ## Deferred Items
 
