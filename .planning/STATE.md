@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-21)
 Phase: 02 (agentic-loop-confirm-before-write) — EXECUTING
 Plan: 3 of 3
 Status: Tasks 1-2 committed; Task 3 (checkpoint:human-verify) pending browser verification
-Last activity: 2026-06-22
+Last activity: 2026-07-03 - Completed quick task 260703-f5b: Patch flat-commands manifest resolution bug in capability-state.cjs (gsd-core#1858)
 
 Progress: [████████░░] 83%
 
@@ -84,6 +84,12 @@ None yet.
 - **Phase 2 open question:** Ollama function-calling support — if user's local model (e.g. gemma4) lacks native tool calling, must use `ReActAgent` instead of `FunctionAgent`. Verify before Phase 2 planning.
 - **Phase 2 open question:** SSE vs WebSocket for streaming agent events to the Next.js frontend. Recommendation: start with SSE. Decide before Phase 2 backend is built.
 - **Phase 5 open question:** Sectors.app free tier coverage for user's specific IDX tickers — requires direct verification before Phase 5 planning.
+
+### Quick Tasks Completed
+
+| # | Description | Date | Commit | Directory |
+|---|-------------|------|--------|-----------|
+| 260703-f5b | Patch flat-commands manifest resolution bug in capability-state.cjs (gsd-core#1858) | 2026-07-03 | 33f4cd7 | [260703-f5b-patch-flat-commands-manifest-resolution-](./quick/260703-f5b-patch-flat-commands-manifest-resolution-/) |
 
 ## Deferred Items
 
