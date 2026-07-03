@@ -45,7 +45,7 @@ const configLoaderMod = require("./config-loader.cjs");
 const { loadConfig } = configLoaderMod;
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const installProfilesMod = require("./install-profiles.cjs");
-const { readActiveProfile, loadSkillsManifest, resolveProfile, parseRequires } = installProfilesMod;
+const { readActiveProfile, loadSkillsManifest, resolveProfile, parseRequires, parseCallsAgents } = installProfilesMod;
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const surfaceMod = require("./surface.cjs");
 const { resolveSurface } = surfaceMod;
@@ -283,22 +283,90 @@ function _loadInstalledSkillsManifest(configDir) {
     return manifest;
 }
 /**
+ * Build a skill dependency manifest from a FLAT commands directory of
+ * `gsd-<stem>.md` files (fixes #1858 — flat command layout, e.g. Claude Code's
+ * `.claude/commands/gsd-<stem>.md` with no nested `gsd/` subfolder).
+ *
+ * Unlike `_loadInstalledSkillsManifest` (which reads installed SKILL.md stubs
+ * with no recoverable agent refs), the flat `.md` files here ARE the real
+ * command bodies — same as the source-tree `commands/gsd/*.md` files consumed
+ * by `loadSkillsManifest`. So both `requires:` and body-scanned agent refs are
+ * recoverable, and this mirrors `loadSkillsManifest` exactly (not
+ * `_loadInstalledSkillsManifest`).
+ *
+ * Stem extraction: `gsd-<stem>.md` → `<stem>` (strips leading `gsd-`, 4 chars,
+ * and trailing `.md`, 3 chars). Only files (not directories) whose name starts
+ * with `gsd-` and ends with `.md` are included, so non-gsd user files are never
+ * pulled in.
+ *
+ * Returns an empty Map when `commandsDir` does not exist or cannot be read.
+ */
+function _loadFlatCommandsManifest(commandsDir) {
+    const manifest = new Map();
+    if (!node_fs_1.default.existsSync(commandsDir))
+        return manifest;
+    let entries;
+    try {
+        entries = node_fs_1.default.readdirSync(commandsDir, { withFileTypes: true });
+    }
+    catch {
+        return manifest;
+    }
+    for (const entry of entries) {
+        if (!entry.isFile())
+            continue;
+        if (!entry.name.startsWith('gsd-'))
+            continue;
+        if (!entry.name.endsWith('.md'))
+            continue;
+        // Strip leading 'gsd-' (4 chars) and trailing '.md' (3 chars).
+        const stem = entry.name.slice(4, -3);
+        if (!stem)
+            continue;
+        try {
+            const content = node_fs_1.default.readFileSync(node_path_1.default.join(commandsDir, entry.name), 'utf8');
+            manifest.set(stem, parseRequires(content));
+            // The flat files ARE the real command bodies, so agent refs are
+            // recoverable here — parity with loadSkillsManifest, unlike
+            // _loadInstalledSkillsManifest which always emits [].
+            manifest.set(`_calls_agents_${stem}`, parseCallsAgents(content));
+        }
+        catch {
+            manifest.set(stem, []);
+            manifest.set(`_calls_agents_${stem}`, []);
+        }
+    }
+    return manifest;
+}
+/**
  * Resolve the skill dependency manifest for capability-state resolution.
  *
- * Resolution order (fixes #1160 — installed-runtime capability surface):
+ * Resolution order:
  *   1. If commandsGsdDir exists, load from source (repo-checkout behavior).
- *   2. Otherwise, fall back to installed skills at configDir/skills/gsd-[stem]/SKILL.md.
+ *   2. Otherwise, fall back to installed skills at configDir/skills/gsd-[stem]/SKILL.md
+ *      (fixes #1160 — installed-runtime capability surface).
+ *   3. Otherwise (both above empty), fall back to a flat commands directory of
+ *      `gsd-<stem>.md` files — e.g. Claude Code's `.claude/commands/` with no
+ *      nested `gsd/` subfolder (fixes #1858 — flat command layout).
  *
  * In an installed runtime the commands/gsd source tree is absent; only the
  * skills/ layout exists. Returning an empty manifest caused resolveSurface to
  * materialise the full-sentinel to an empty Set, making every capability appear
  * unsurfaced even when the skill was physically installed.
+ *
+ * The third branch is purely additive and only reached when BOTH prior
+ * layouts are empty — it never changes behavior when either existing layout
+ * is present.
  */
 function _resolveManifest(commandsGsdDir, configDir) {
     if (node_fs_1.default.existsSync(commandsGsdDir)) {
         return loadSkillsManifest(commandsGsdDir);
     }
-    return _loadInstalledSkillsManifest(configDir);
+    const installed = _loadInstalledSkillsManifest(configDir);
+    if (installed.size > 0) {
+        return installed;
+    }
+    return _loadFlatCommandsManifest(node_path_1.default.dirname(commandsGsdDir));
 }
 /**
  * Command entry point: resolve install profile, surface, and config; compute
@@ -491,6 +559,7 @@ module.exports = {
     // Exported for tests
     _resolveCommandsGsdDir,
     _loadInstalledSkillsManifest,
+    _loadFlatCommandsManifest,
     _resolveManifest,
     _isSafePropKey,
 };
