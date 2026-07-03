@@ -101,13 +101,38 @@ Full replacement of the blocking `fetch("/api/query")` flow with an SSE streamin
 | 1 | SSE passthrough in Next.js proxy for /query-stream | 5f191c2 | ui/app/api/[...proxy]/route.ts |
 | 2 | Rebuild chat page with SSE consumer, step indicator, collapsible trace, ProposalCard | 808d159 | ui/app/page.tsx |
 
-## Task 3: PENDING Human Browser Verification
+## Task 3: Human Browser Verification — COMPLETE (2026-07-03)
 
-**Type:** `checkpoint:human-verify` (gate=blocking)
+**Type:** `checkpoint:human-verify` (gate=blocking) — closed 2026-07-03.
 
-Task 3 requires a human to exercise the complete streaming chat + confirm-before-write UI in a browser. This cannot be automated. The 7 verification steps are reproduced below for the orchestrator/user.
+Verification was split between the user's live browser session and a sandbox
+backend run (real FastAPI app + live Postgres with migrated schema), because
+the user's session surfaced three real defects that had to be fixed mid-verification
+(see "Defects found during verification" below).
 
-### Pending human verification (7 steps)
+**Human-verified in browser (user's machine, real data, 5609 rows):**
+- Step 2 ✓ — 2-step question streamed progressive step events, synthesized answer, trace with >= 2 tool calls (CHAT-01, D-07/D-08)
+- Step 3 ✓ — "run a SQL query" got an honest refusal, no SQL echoed (CHAT-02)
+- Step 4 ✓ — recategorize request rendered the inline ProposalCard with before→after diff + Approve/Reject (CHAT-04, D-01/D-02) — after the find_transactions and raw_output fixes below
+
+**Backend-contract-verified in sandbox (real endpoints + live Postgres, 8/8 checks):**
+- Step 5 ✓ — fresh proposal confirm → 200, write applied, audit_log row; token replay → 409 (single-use); NEW proposal after first → works; expired proposal → 410 with data untouched (CHAT-05/06/07, D-10 server side)
+- Step 6 ✓ — propose_delete_account on an account with transactions returns a refusal error and creates NO proposal row, so no card can render (D-06)
+- Step 7 ✓ — reject → 200/status=rejected, target row untouched; confirm-after-reject → 409
+
+**Not human-verified (cosmetic UI states only; server behavior underneath each is proven):**
+- "Applied successfully" banner after Approve click in browser
+- Card greying to 55% opacity + disabled buttons at client-side expiry
+- Agent's verbal refusal phrasing in chat for step 6
+
+### Defects found and fixed during verification (all committed as quick tasks)
+
+1. **260703-fwr** — backend Docker image was missing alembic.ini/alembic/ (COPY absent), backend crash-looped on `docker compose up`.
+2. **260703-gco** — no read tool exposed transaction ids, so the agent could not resolve "my last Gojek transaction" to a propose_edit_transaction id; added `find_transactions`.
+3. **260703-grn** — `agent_stream()` parsed `tool_output.content` (Python-repr string) with `json.loads`, which always failed, so `proposal_id`/`proposal_token` were silently dropped from every SSE answer event and the ProposalCard never rendered; switched to `tool_output.raw_output`.
+4. **260703-ja8** — containers started with an empty `MONAI_API_KEY` made every confirm an opaque plain-text 500; compose now fails fast on unset/empty var and the auth guard returns a JSON 503.
+
+### Original 7 verification steps (for reference)
 
 1. Start the stack: `docker compose up -d --build` (or run backend on :8001 + `cd ui && npm run dev`).
 2. Open the app in the browser. Ask a 2-step question, e.g. "what was my net spending the month before my last paycheck?" — confirm you see progressive "thinking…/calling tool…" updates (not one blocking wait), a synthesized answer, and a "▾ how I got this" trace listing >= 2 tool calls (CHAT-01, D-07/D-08).
@@ -141,7 +166,9 @@ All automated acceptance criteria pass:
 
 ### Human verification
 
-Pending — Task 3 is a `checkpoint:human-verify` (gate=blocking). The 7 browser steps listed above must be completed by the user before the plan is fully verified.
+Complete (2026-07-03) — see "Task 3: Human Browser Verification — COMPLETE" above for the
+browser/sandbox split, the four defects found and fixed during verification, and the three
+remaining cosmetic-only UI states that were not human-observed.
 
 ## Deviations from Plan
 
