@@ -26,5 +26,8 @@ report_*.csv
 .gstack/
 backup_pre_alembic.sql
 
+# GSD isolated-execution worktrees (transient — merged and removed automatically)
+.claude/worktrees/
+
 # graphify build cache (regenerate via `graphify update .`; canonical copy lives in .planning/graphs/)
 graphify-out/
