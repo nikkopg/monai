@@ -7,6 +7,7 @@ Tests:
   (c) POST /transactions with correct key → not 401 (422 from body validation, proves key accepted)
   (d) GET /accounts without key → 200 (public)
   (e) POST /query without key → not 401 (public)
+  (h) POST /transactions with empty _CONFIGURED_KEY → 503 JSON error (fail-closed misconfiguration)
 
 Note on test (c): We POST with an incomplete body to trigger 422 from body validation rather
 than writing to the live DB. A valid key yields 422 (body rejected before DB), while a wrong
@@ -119,3 +120,29 @@ def test_post_import_wrong_key_returns_401(client, api_key):
         headers={"MONAI_API_KEY": "wrong-key"},
     )
     assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# (h) Empty _CONFIGURED_KEY (server misconfigured) → 503 JSON error
+# ---------------------------------------------------------------------------
+
+
+def test_empty_configured_key_returns_503(client, monkeypatch):
+    """
+    Server misconfigured (MONAI_API_KEY unset/empty) → require_api_key raises
+    HTTPException(503) with a JSON detail, not an opaque text/plain 500.
+
+    Needs no DB: the empty-key guard is the FIRST check in require_api_key
+    and rejects the request before any route handler or DB access runs.
+    """
+    import backend.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "_CONFIGURED_KEY", "")
+
+    resp = client.post(
+        "/transactions",
+        json={},
+        headers={"MONAI_API_KEY": "anything"},
+    )
+    assert resp.status_code == 503
+    assert "misconfigured" in resp.json()["detail"].lower()
