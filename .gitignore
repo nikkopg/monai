@@ -31,3 +31,4 @@ backup_pre_alembic.sql
 
 # graphify build cache (regenerate via `graphify update .`; canonical copy lives in .planning/graphs/)
 graphify-out/
+.planning/research/.cache/
