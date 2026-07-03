@@ -1,16 +1,16 @@
 # Graph Report - monai  (2026-07-03)
 
 ## Corpus Check
-- 480 files · ~542,205 words
+- 484 files · ~924,404 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 3673 nodes · 3710 edges · 452 communities (395 shown, 57 thin omitted)
-- Extraction: 97% EXTRACTED · 3% INFERRED · 0% AMBIGUOUS · INFERRED: 98 edges (avg confidence: 0.68)
+- 3978 nodes · 4012 edges · 456 communities (399 shown, 57 thin omitted)
+- Extraction: 98% EXTRACTED · 2% INFERRED · 0% AMBIGUOUS · INFERRED: 98 edges (avg confidence: 0.68)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `09a14806`
+- Built from commit: `66cac257`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -346,18 +346,21 @@
 - [[_COMMUNITY_package.json|package.json]]
 - [[_COMMUNITY_extraction-spec|extraction-spec.md]]
 - [[_COMMUNITY_next.config.js|next.config.js]]
+- [[_COMMUNITY_Communities (452 total, 57 thin omitted)|Communities (452 total, 57 thin omitted)]]
+- [[_COMMUNITY_Quick Task 260703-f5b Patch flat-commands manifest resolution Summary|Quick Task 260703-f5b: Patch flat-commands manifest resolution Summary]]
+- [[_COMMUNITY_Graph Report - monai  (2026-07-03)|Graph Report - monai  (2026-07-03)]]
 
 ## God Nodes (most connected - your core abstractions)
-1. `command: "npx eslint --fix $FILE 2>/dev/null || true"` - 58 edges
-2. `command: "npx eslint --fix $FILE 2>/dev/null || true"` - 31 edges
-3. `command: "npx eslint --fix $FILE 2>/dev/null || true"` - 27 edges
-4. `Transaction` - 26 edges
-5. `Proposal` - 26 edges
-6. `_get_agent_workflow()` - 24 edges
-7. `command: "npx eslint --fix $FILE 2>/dev/null || true"` - 23 edges
-8. `resolve_period()` - 22 edges
-9. `parse()` - 22 edges
-10. `Phase 1: Schema Foundation + Auth — Research` - 20 edges
+1. `Communities (452 total, 57 thin omitted)` - 275 edges
+2. `command: "npx eslint --fix $FILE 2>/dev/null || true"` - 58 edges
+3. `command: "npx eslint --fix $FILE 2>/dev/null || true"` - 31 edges
+4. `command: "npx eslint --fix $FILE 2>/dev/null || true"` - 27 edges
+5. `Transaction` - 26 edges
+6. `Proposal` - 26 edges
+7. `_get_agent_workflow()` - 24 edges
+8. `command: "npx eslint --fix $FILE 2>/dev/null || true"` - 23 edges
+9. `resolve_period()` - 22 edges
+10. `parse()` - 22 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `list_accounts()` --indirect_call--> `Account`  [INFERRED]
@@ -374,7 +377,7 @@
 ## Import Cycles
 - None detected.
 
-## Communities (452 total, 57 thin omitted)
+## Communities (456 total, 57 thin omitted)
 
 ### Community 0 - "main.py"
 Cohesion: 0.05
@@ -841,8 +844,8 @@ Cohesion: 0.18
 Nodes (10): Anti-patterns / Notable Deviations, Architectural Pattern, Architecture, Data Flow, Entry Points, Key Abstractions, Layers, Overview (+2 more)
 
 ### Community 116 - "Project State"
-Cohesion: 0.18
-Nodes (10): Accumulated Context, Blockers/Concerns, Current Position, Decisions, Deferred Items, Pending Todos, Performance Metrics, Project Reference (+2 more)
+Cohesion: 0.17
+Nodes (11): Accumulated Context, Blockers/Concerns, Current Position, Decisions, Deferred Items, Pending Todos, Performance Metrics, Project Reference (+3 more)
 
 ### Community 117 - "_extract_json"
 Cohesion: 0.33
@@ -1472,25 +1475,37 @@ Nodes (3): Baseline Migration (hand-verified against live schema), Code Examples
 Cohesion: 0.67
 Nodes (3): Applicable ASVS Categories, Known Threat Patterns, Security Domain
 
+### Community 452 - "Communities (452 total, 57 thin omitted)"
+Cohesion: 0.01
+Nodes (275): Communities (452 total, 57 thin omitted), Community 0 - "main.py", Community 100 - "profile-user.md", Community 101 - "Phase 01 Plan 02: API-Key Auth and Server-Side Proxy Summary", Community 102 - "Phase 1 Plan 03: MoneyDecimal Type and Decimal Serialization Tests Summary", Community 103 - "monai", Community 104 - "gsd-integration-checker.md", Community 105 - "Context Budget Rules" (+267 more)
+
+### Community 453 - "Quick Task 260703-f5b: Patch flat-commands manifest resolution Summary"
+Cohesion: 0.12
+Nodes (16): Accomplishments, AFTER (post-patch), BEFORE (repro, prior to patch), Decisions Made, Dependency graph, Deviations from Plan, Files Created/Modified, Issues Encountered (+8 more)
+
+### Community 454 - "Graph Report - monai  (2026-07-03)"
+Cohesion: 0.18
+Nodes (10): Community Hubs (Navigation), Corpus Check, God Nodes (most connected - your core abstractions), Graph Freshness, Graph Report - monai  (2026-07-03), Import Cycles, Knowledge Gaps, Suggested Questions (+2 more)
+
 ## Knowledge Gaps
-- **2446 isolated node(s):** `_runtime-launcher.snippet.sh script`, `fs`, `path`, `{ isSemverNewer }`, `{ checkLatestVersion }` (+2441 more)
+- **2744 isolated node(s):** `_runtime-launcher.snippet.sh script`, `fs`, `path`, `{ isSemverNewer }`, `{ checkLatestVersion }` (+2739 more)
   These have ≤1 connection - possible missing edges or undocumented components.
 - **57 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
+- **Why does `Communities (452 total, 57 thin omitted)` connect `Communities (452 total, 57 thin omitted)` to `Graph Report - monai  (2026-07-03)`?**
+  _High betweenness centrality (0.004) - this node is a cross-community bridge._
 - **Why does `Transaction` connect `Proposal` to `main.py`, `models.py`, `tools.py`, `test_write_tools.py`?**
   _High betweenness centrality (0.002) - this node is a cross-community bridge._
-- **Why does `Proposal` connect `Proposal` to `main.py`, `models.py`, `tools.py`, `test_write_tools.py`?**
-  _High betweenness centrality (0.001) - this node is a cross-community bridge._
 - **Are the 13 inferred relationships involving `Transaction` (e.g. with `list_transactions()` and `test_audit_on_confirm()`) actually correct?**
   _`Transaction` has 13 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 17 inferred relationships involving `Proposal` (e.g. with `confirm_proposal()` and `list_proposals()`) actually correct?**
-  _`Proposal` has 17 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `_runtime-launcher.snippet.sh script`, `fs`, `path` to the rest of the system?**
-  _2568 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _2866 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `main.py` be split into smaller, more focused modules?**
   _Cohesion score 0.052403846153846155 - nodes in this community are weakly interconnected._
 - **Should `parse` be split into smaller, more focused modules?**
   _Cohesion score 0.06634615384615385 - nodes in this community are weakly interconnected._
+- **Should `command: "npx eslint --fix $FILE 2>/dev/null || true"` be split into smaller, more focused modules?**
+  _Cohesion score 0.034482758620689655 - nodes in this community are weakly interconnected._
