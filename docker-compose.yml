@@ -32,7 +32,7 @@ services:
       OLLAMA_BASE_URL: http://localhost:11434
       OLLAMA_MODEL: gemma4:31b-cloud
       OLLAMA_EMBED_MODEL: gemma4:31b-cloud
-      MONAI_API_KEY: ${MONAI_API_KEY}
+      MONAI_API_KEY: ${MONAI_API_KEY:?MONAI_API_KEY must be set - add it to .env}
     depends_on:
       db:
         condition: service_healthy
@@ -48,7 +48,7 @@ services:
       # Next.js route handler at ui/app/api/[...proxy]/route.ts proxies /api/* to
       # the backend and injects MONAI_API_KEY server-side (key never in the JS bundle).
       MONAI_API: http://localhost:8001
-      MONAI_API_KEY: ${MONAI_API_KEY}
+      MONAI_API_KEY: ${MONAI_API_KEY:?MONAI_API_KEY must be set - add it to .env}
     depends_on:
       - backend
     restart: unless-stopped
