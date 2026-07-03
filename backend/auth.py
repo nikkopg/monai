@@ -4,8 +4,8 @@ Backend authentication — API-key guard for state-changing endpoints.
 Env vars:
   MONAI_API_KEY   Required. Static API key that write endpoints validate against.
                   Must be set (non-empty) before starting the server; if unset,
-                  require_api_key raises RuntimeError (fail-closed — no silent
-                  open writes are possible with a misconfigured deployment).
+                  require_api_key raises HTTPException(503) (fail-closed — no
+                  silent open writes are possible with a misconfigured deployment).
 
 Usage:
   Attach to write routes via dependencies=[Depends(require_api_key)].
@@ -32,16 +32,19 @@ def require_api_key(api_key: str | None = Security(_API_KEY_HEADER)) -> None:
     FastAPI dependency that enforces API-key authentication on write endpoints.
 
     Raises:
-        RuntimeError: if MONAI_API_KEY env var is unset/empty (fail-closed guard).
+        HTTPException(503): if MONAI_API_KEY env var is unset/empty (fail-closed guard).
         HTTPException(401): if the header is absent or the value does not match.
 
     Returns None on success (side-effect only; callers do not use the return value).
     """
     if not _CONFIGURED_KEY:
-        raise RuntimeError(
-            "MONAI_API_KEY env var is not set. "
-            "Generate one with: python3 -c \"import secrets; print(secrets.token_hex(32))\" "
-            "and set it in your environment / docker-compose before starting the server."
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Server misconfigured: MONAI_API_KEY env var is not set — "
+                "generate one with: python3 -c \"import secrets; print(secrets.token_hex(32))\" "
+                "and set it before starting the server"
+            ),
         )
 
     if api_key is None or not hmac.compare_digest(api_key, _CONFIGURED_KEY):
