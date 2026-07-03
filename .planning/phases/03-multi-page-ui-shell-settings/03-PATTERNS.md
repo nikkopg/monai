@@ -22,7 +22,7 @@
 | `backend/main.py` (add `GET/PUT /settings`) | controller/route | request-response | `backend/main.py` `GET/POST /transactions` (lines 69-104) | exact |
 | `backend/config.py` (extend `configure_llm`) | config | transform | `backend/config.py` `configure_llm()` (existing, being extended in place) | exact |
 | `alembic/versions/003_app_settings.py` | migration | batch | `alembic/versions/002_new_tables.py` | exact |
-| `ui/tests/nav.spec.ts` (Playwright smoke test) | test | request-response | none — first frontend test file in repo | no-analog |
+| `ui/e2e/smoke.spec.ts` (Playwright smoke test) | test | request-response | none — first frontend test file in repo | no-analog |
 
 ## Pattern Assignments
 
@@ -401,7 +401,7 @@ Current head revision is `7b4e9f1a6c52` (from `002_new_tables.py`) — confirm n
 | File | Role | Data Flow | Reason |
 |------|------|-----------|--------|
 | `ui/app/page.tsx` (root redirect, rewritten) | route | request-response | First redirect-only page in the repo; use RESEARCH.md's Next.js-documented `redirect()` pattern directly (no codebase precedent needed — official API). |
-| `ui/tests/nav.spec.ts` (Playwright smoke test) | test | request-response | First frontend test file in the repo (`ui/package.json` has no test runner today); no analog to copy from — planner should scaffold `@playwright/test` config from scratch per CONTEXT.md's locked decision (one spec file, dev-dependency only). |
+| `ui/e2e/smoke.spec.ts` (Playwright smoke test) | test | request-response | First frontend test file in the repo (`ui/package.json` has no test runner today); no analog to copy from — planner should scaffold `@playwright/test` config from scratch per CONTEXT.md's locked decision (one spec file, dev-dependency only). |
 | `ui/app/components/Nav.tsx` (usePathname logic itself) | component | event-driven | No existing client component uses `usePathname`/`next/link` for nav; only the surrounding style/hook *conventions* have analogs (documented above) — the routing logic itself follows RESEARCH.md's Next.js-official pattern. |
 
 ## Metadata
