@@ -86,7 +86,7 @@ def _get_agent_workflow():
             spending_total, income_total, net_total,
             spending_by_category, spending_in_category,
             transaction_count, largest_transactions,
-            average_daily_spending, list_categories,
+            average_daily_spending, list_categories, find_transactions,
             # Write tools (proposal-producers — never mutate directly)
             propose_add_transaction, propose_edit_transaction, propose_delete_transaction,
             propose_add_account, propose_edit_account, propose_delete_account,
@@ -106,6 +106,7 @@ def _get_agent_workflow():
             FunctionTool.from_defaults(fn=largest_transactions),
             FunctionTool.from_defaults(fn=average_daily_spending),
             FunctionTool.from_defaults(fn=list_categories),
+            FunctionTool.from_defaults(fn=find_transactions),
         ]
 
         # Write tools — proposal-producers (CHAT-07, D-04 single source of truth)

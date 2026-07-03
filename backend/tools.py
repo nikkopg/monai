@@ -240,6 +240,50 @@ def list_categories() -> dict:
     return {"tool": "list_categories", "rows": rows}
 
 
+def find_transactions(
+    merchant: str | None = None,
+    category: str | None = None,
+    period="all_time",
+    start_date=None,
+    end_date=None,
+    kind="all",
+    limit=10,
+) -> dict:
+    """Search/filter individual transactions and return their ids, dates, amounts,
+    categories, merchants, and account ids, so the agent can resolve a merchant or
+    category (e.g. "my last Gojek transaction") to a concrete transaction id before
+    calling propose_edit_transaction or propose_delete_transaction. amount is signed
+    (negative=expense, positive=income); kind: all | expense | income. Transfers are
+    always excluded (is_transfer = false), matching the other read tools. Rows are
+    ordered most-recent-first, so rows[0] is "my last X".
+    """
+    s, e = resolve_period(period, start_date, end_date)
+    p: dict = {"lim": max(1, min(int(limit), 50))}
+    clauses = ["is_transfer = false"]
+    if merchant is not None:
+        clauses.append("merchant ILIKE :merchant")
+        p["merchant"] = f"%{merchant}%"
+    if category is not None:
+        clauses.append("category = :category")
+        p["category"] = category
+    sign = {"expense": "amount < 0", "income": "amount > 0"}.get(kind)
+    if sign:
+        clauses.append(sign)
+    sql = (
+        "SELECT id, date, amount, category, merchant, account_id FROM transactions WHERE "
+        + " AND ".join(clauses) + _date_clause(s, e, p) +
+        " ORDER BY date DESC LIMIT :lim"
+    )
+    with engine.connect() as c:
+        rows = [
+            {"id": r[0], "date": r[1].date().isoformat(), "amount": float(r[2]),
+             "category": r[3], "merchant": r[4], "account_id": r[5]}
+            for r in c.execute(text(sql), p).fetchall()
+        ]
+    return {"tool": "find_transactions", "rows": rows, "kind": kind,
+            "period": _period_label(period, s, e)}
+
+
 # Registry: name -> callable (read tools)
 TOOLS = {
     "spending_total": spending_total,
@@ -251,6 +295,7 @@ TOOLS = {
     "largest_transactions": largest_transactions,
     "average_daily_spending": average_daily_spending,
     "list_categories": list_categories,
+    "find_transactions": find_transactions,
 }
 
 
