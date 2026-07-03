@@ -65,5 +65,8 @@
   "agent_skills": {},
   "features": {},
   "mode": "yolo",
-  "granularity": "standard"
+  "granularity": "standard",
+  "graphify": {
+    "enabled": true
+  }
 }
