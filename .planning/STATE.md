@@ -28,7 +28,7 @@ See: .planning/PROJECT.md (updated 2026-06-21)
 Phase: 02 (agentic-loop-confirm-before-write) — EXECUTING
 Plan: 3 of 3
 Status: Tasks 1-2 committed; Task 3 (checkpoint:human-verify) pending browser verification
-Last activity: 2026-07-03 - Completed quick task 260703-fwr: Fix backend/Dockerfile missing alembic.ini/alembic/ COPY (fixes docker compose backend crash-loop, unblocks Phase 2 Plan 03 Task 3 human verification)
+Last activity: 2026-07-03 - Completed quick task 260703-gco: Added find_transactions read tool (agent can now resolve merchant names to transaction ids for edit/delete proposals), gap found during Phase 2 Plan 03 Task 3 human verification
 
 Progress: [████████░░] 83%
 
@@ -77,7 +77,7 @@ Recent decisions affecting current work:
 
 ### Pending Todos
 
-None yet.
+- Analogous gap for accounts: no read tool exposes account `id` (`propose_edit_account`/`propose_delete_account` both require `account_id: int`, but there's no `find_accounts`/list-with-id tool). Likely to block Phase 2 verification step 6 ("delete my BCA account") the same way `find_transactions` was needed for step 4. Deferred — surfaced during live verification 2026-07-03, not yet actioned.
 
 ### Blockers/Concerns
 
@@ -91,6 +91,7 @@ None yet.
 |---|-------------|------|--------|-----------|
 | 260703-f5b | Patch flat-commands manifest resolution bug in capability-state.cjs (gsd-core#1858) | 2026-07-03 | 33f4cd7 | [260703-f5b-patch-flat-commands-manifest-resolution-](./quick/260703-f5b-patch-flat-commands-manifest-resolution-/) |
 | 260703-fwr | Fix backend/Dockerfile: COPY alembic.ini and alembic/ into backend image so alembic upgrade head can find script_location at container startup | 2026-07-03 | 4615a5b | [260703-fwr-fix-backend-dockerfile-copy-alembic-ini-](./quick/260703-fwr-fix-backend-dockerfile-copy-alembic-ini-/) |
+| 260703-gco | Add find_transactions read tool so the agent can resolve merchant names to transaction ids before propose_edit_transaction/propose_delete_transaction | 2026-07-03 | 076aae8 | [260703-gco-add-find-transactions-read-tool-so-the-a](./quick/260703-gco-add-find-transactions-read-tool-so-the-a/) |
 
 ## Deferred Items
 
