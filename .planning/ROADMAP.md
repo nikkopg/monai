@@ -63,7 +63,10 @@
   2. A shared navigation component appears on every page and lets the user switch between all four pages without a full page reload
   3. The Settings page lets the user select an LLM provider and model, enter API keys (masked in display), and save the configuration — subsequent chat requests use the new provider
   4. The Settings page lets the user set base currency and the preferred price data source; the selection persists across browser sessions
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 03-01-PLAN.md — Nav shell + route split (/chat, /cashflow, /investments, /settings) + Playwright smoke (UI-01, UI-02) [wave 1]
+- [ ] 03-02-PLAN.md — Settings persistence backend: app_settings migration, GET/PUT /settings, runtime LLM reconfigure, masked keys, audit (UI-03, UI-04) [wave 1]
+- [ ] 03-03-PLAN.md — Settings page UI: three-card form, GET-on-load, per-card partial PUT (UI-03, UI-04) [wave 2, depends 03-01+03-02]
 **UI hint**: yes
 
 ### Phase 4: Cashflow Dashboard + CRUD
@@ -116,7 +119,7 @@
 |-------|----------------|--------|-----------|
 | 1. Schema Foundation + Auth | 3/3 | Complete   | 2026-06-21 |
 | 2. Agentic Loop + Confirm-Before-Write | 2/3 | In Progress|  |
-| 3. Multi-Page UI Shell + Settings | 0/? | Not started | - |
+| 3. Multi-Page UI Shell + Settings | 0/3 | Planned | - |
 | 4. Cashflow Dashboard + CRUD | 0/? | Not started | - |
 | 5. Investment Subsystem | 0/? | Not started | - |
 | 6. MCP Server | 0/? | Not started | - |
