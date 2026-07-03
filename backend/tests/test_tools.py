@@ -121,3 +121,54 @@ class TestToolSQL:
         mags = [r["amount"] for r in rows]
         assert mags == sorted(mags, reverse=True)
         assert all(m > 0 for m in mags)  # reported as positive magnitude
+
+    def test_find_transactions_rows_include_id(self, db_available):
+        from backend.tools import find_transactions
+        rows = find_transactions(limit=5)["rows"]
+        for row in rows:
+            assert "id" in row and isinstance(row["id"], int)
+            assert "date" in row
+            assert "amount" in row
+            assert "category" in row
+            assert "merchant" in row
+            assert "account_id" in row
+
+    def test_find_transactions_most_recent_first(self, db_available):
+        from backend.tools import find_transactions
+        rows = find_transactions(limit=20)["rows"]
+        dates = [r["date"] for r in rows]
+        assert dates == sorted(dates, reverse=True)
+
+    def test_find_transactions_limit_clamping(self, db_available):
+        from backend.tools import find_transactions
+        rows = find_transactions(limit=999)["rows"]
+        assert len(rows) <= 50
+        rows_zero = find_transactions(limit=0)["rows"]
+        assert len(rows_zero) >= 0  # clamp floor is 1, call must not raise
+
+    def test_find_transactions_kind_filter(self, db_available):
+        from backend.tools import find_transactions
+        expense_rows = find_transactions(kind="expense", limit=20)["rows"]
+        assert all(r["amount"] < 0 for r in expense_rows)
+        income_rows = find_transactions(kind="income", limit=20)["rows"]
+        assert all(r["amount"] > 0 for r in income_rows)
+
+    def test_find_transactions_category_exact_match(self, db_available):
+        from backend.tools import list_categories, find_transactions
+        cats = list_categories()["rows"]
+        if not cats:
+            return
+        category_name = cats[0][0]
+        rows = find_transactions(category=category_name, limit=20)["rows"]
+        for row in rows:
+            assert row["category"] == category_name
+
+    def test_find_transactions_merchant_partial_match(self, db_available):
+        from backend.tools import find_transactions
+        seed_rows = find_transactions(limit=1)["rows"]
+        if not seed_rows or not seed_rows[0]["merchant"]:
+            return
+        merchant = seed_rows[0]["merchant"]
+        substring = merchant.lower()[: max(1, len(merchant) // 2)]
+        rows = find_transactions(merchant=substring, limit=20)["rows"]
+        assert any(substring in (r["merchant"] or "").lower() for r in rows)
