@@ -46,7 +46,12 @@ def configure_llm(overrides: dict | None = None) -> None:
 
     elif provider == "claude":
         from llama_index.llms.anthropic import Anthropic
-        Settings.embed_model = "local"
+        from llama_index.core.embeddings import MockEmbedding
+        # Claude has no embeddings API and no embedding-based retrieval is used
+        # by this app's tool-router agent (D-06 preserved); MockEmbedding avoids
+        # requiring an extra llama-index-embeddings-* package or an OpenAI key
+        # just to satisfy the Settings.embed_model singleton.
+        Settings.embed_model = MockEmbedding(embed_dim=1)
         model = overrides.get("llm_model") or os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
         api_key = overrides.get("anthropic_api_key") or os.getenv("ANTHROPIC_API_KEY")
         Settings.llm = Anthropic(model=model, api_key=api_key)
