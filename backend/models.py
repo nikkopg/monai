@@ -163,7 +163,11 @@ class AppSetting(Base):
     __tablename__ = "app_settings"
 
     key: Mapped[str] = mapped_column(Text, primary_key=True)
-    value: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    # Column is JSONB (see migration 003) but every setting stored here is a
+    # bare scalar string (provider/model names, raw keys, currency codes) —
+    # JSONB stores those as JSON string scalars. Annotation matches actual
+    # usage; keeping JSONB avoids a migration.
+    value: Mapped[str] = mapped_column(JSONB, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default="now()", nullable=False
     )
