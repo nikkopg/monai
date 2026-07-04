@@ -156,3 +156,9 @@ None - no external service configuration required. The live-backend manual check
 ---
 *Phase: 03-multi-page-ui-shell-settings*
 *Completed: 2026-07-04*
+
+## Self-Check: PASSED
+
+Both created/modified files (`ui/app/settings/page.tsx`, `ui/e2e/settings.spec.ts`)
+verified present on disk; all 3 commits (`9e6e437`, `35d26f7`, `d99ec23`) verified
+present in git log.
