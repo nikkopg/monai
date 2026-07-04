@@ -22,10 +22,20 @@ type Tx = {
 // Interim content for Phase 3 (full dashboard ships in Phase 4).
 // ---------------------------------------------------------------------------
 
+// Format a Date as a `datetime-local`-compatible string using LOCAL wall-clock
+// components. Using toISOString() here would emit UTC, which the input then
+// re-parses as local time — shifting the value by the user's UTC offset (WR-06).
+function toLocalDatetimeInputValue(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
+    d.getHours()
+  )}:${pad(d.getMinutes())}`;
+}
+
 export default function CashflowPage() {
   // Entry form state
   const [form, setForm] = useState({
-    date: new Date().toISOString().slice(0, 16),
+    date: toLocalDatetimeInputValue(new Date()),
     amount: "",
     category: "",
     merchant: "",
@@ -34,6 +44,7 @@ export default function CashflowPage() {
     is_transfer: false,
   });
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [txs, setTxs] = useState<Tx[]>([]);
 
@@ -52,6 +63,7 @@ export default function CashflowPage() {
   async function addTx(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
+    setError(null);
     try {
       const body = {
         date: new Date(form.date).toISOString(),
@@ -70,7 +82,19 @@ export default function CashflowPage() {
       if (r.ok) {
         setForm({ ...form, amount: "", category: "", merchant: "", notes: "" });
         loadTxs();
+      } else {
+        // Surface non-2xx responses instead of silently no-op'ing (WR-05).
+        let detail = `HTTP ${r.status}`;
+        try {
+          const errBody = await r.json();
+          detail = errBody?.detail ?? detail;
+        } catch {
+          // keep the status-based detail
+        }
+        setError(`Couldn't save transaction: ${detail}`);
       }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Network error");
     } finally {
       setSaving(false);
     }
@@ -166,9 +190,14 @@ export default function CashflowPage() {
               </label>
             </div>
           </div>
-          <button style={btn} type="submit" disabled={saving}>
-            {saving ? "Saving…" : "Add transaction"}
-          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <button style={btn} type="submit" disabled={saving}>
+              {saving ? "Saving…" : "Add transaction"}
+            </button>
+            {error && (
+              <span style={{ color: "#f87171", fontSize: 12 }}>{error}</span>
+            )}
+          </div>
         </form>
       </section>
 
