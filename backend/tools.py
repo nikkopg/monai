@@ -105,7 +105,12 @@ def _period_label(period, start, end) -> str:
 # --------------------------------------------------------------------------
 
 def spending_total(period="all_time", start_date=None, end_date=None) -> dict:
-    """Total money spent (expenses only, transfers excluded) in a period."""
+    """Total money spent (expenses only, transfers excluded) in a period.
+
+    period: named (all_time/this_month/last_month/this_year/last_year/
+      last_30_days/last_90_days) or "custom" with ISO start_date/end_date
+      (end inclusive). Use custom for a specific month, year, or date range.
+    """
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {}
     sql = (
@@ -118,7 +123,11 @@ def spending_total(period="all_time", start_date=None, end_date=None) -> dict:
 
 
 def income_total(period="all_time", start_date=None, end_date=None) -> dict:
-    """Total money received (income only, transfers excluded) in a period."""
+    """Total money received (income only, transfers excluded) in a period.
+
+    period: named or "custom" with ISO start_date/end_date (end inclusive).
+    Use custom for a specific month, year, or date range.
+    """
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {}
     sql = (
@@ -131,7 +140,11 @@ def income_total(period="all_time", start_date=None, end_date=None) -> dict:
 
 
 def net_total(period="all_time", start_date=None, end_date=None) -> dict:
-    """Net cash flow (income minus expenses, transfers excluded)."""
+    """Net cash flow (income minus expenses, transfers excluded).
+
+    period: named or "custom" with ISO start_date/end_date (end inclusive).
+    Use custom for a specific month, year, or date range.
+    """
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {}
     sql = (
@@ -144,7 +157,12 @@ def net_total(period="all_time", start_date=None, end_date=None) -> dict:
 
 
 def spending_by_category(period="all_time", start_date=None, end_date=None, limit=5) -> dict:
-    """Top spending categories (expenses only) in a period."""
+    """Top spending categories (expenses only) in a period.
+
+    period: one of all_time, this_month, last_month, this_year, last_year,
+      last_30_days, last_90_days, or "custom". For a specific month/year/range
+      pass period="custom" with ISO start_date/end_date (end_date inclusive).
+    """
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {"lim": max(1, min(int(limit), 50))}
     sql = (
@@ -158,7 +176,15 @@ def spending_by_category(period="all_time", start_date=None, end_date=None, limi
 
 
 def spending_in_category(category: str, period="all_time", start_date=None, end_date=None) -> dict:
-    """Total spent in a specific category (substring match on category/raw_category)."""
+    """Total spent in a specific category (substring match on category/raw_category).
+
+    period: one of all_time, this_month, last_month, this_year, last_year,
+      last_30_days, last_90_days, or "custom". For a specific month/year/range
+      (e.g. "food in June 2026") pass period="custom" with start_date and
+      end_date as ISO YYYY-MM-DD; end_date is inclusive. Leaving period at the
+      "all_time" default when the user asked about a specific month sums every
+      year on record and returns a wrong, inflated total.
+    """
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {"cat": f"%{category}%"}
     sql = (
@@ -173,7 +199,11 @@ def spending_in_category(category: str, period="all_time", start_date=None, end_
 
 
 def transaction_count(period="all_time", start_date=None, end_date=None, kind="all") -> dict:
-    """Count transactions in a period. kind: all | expense | income."""
+    """Count transactions in a period. kind: all | expense | income.
+
+    period: named or "custom" with ISO start_date/end_date (end inclusive).
+    Use custom for a specific month, year, or date range.
+    """
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {}
     sign = {"expense": " AND amount < 0", "income": " AND amount > 0", "all": ""}.get(kind, "")
@@ -188,7 +218,11 @@ def transaction_count(period="all_time", start_date=None, end_date=None, kind="a
 
 
 def largest_transactions(period="all_time", start_date=None, end_date=None, limit=5, kind="expense") -> dict:
-    """Largest individual transactions by magnitude. kind: expense | income."""
+    """Largest individual transactions by magnitude. kind: expense | income.
+
+    period: named or "custom" with ISO start_date/end_date (end inclusive).
+    Use custom for a specific month, year, or date range.
+    """
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {"lim": max(1, min(int(limit), 50))}
     sign = "amount < 0" if kind == "expense" else "amount > 0"
@@ -209,7 +243,11 @@ def largest_transactions(period="all_time", start_date=None, end_date=None, limi
 
 
 def average_daily_spending(period="this_month", start_date=None, end_date=None) -> dict:
-    """Average spending per day over the period."""
+    """Average spending per day over the period.
+
+    period: named or "custom" with ISO start_date/end_date (end inclusive).
+    Use custom for a specific month, year, or date range.
+    """
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {}
     total_sql = (
