@@ -1,9 +1,9 @@
 ---
 phase: 3
 slug: multi-page-ui-shell-settings
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: approved
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-07-03
 ---
 
@@ -36,11 +36,19 @@ created: 2026-07-03
 
 ## Per-Task Verification Map
 
-*To be filled by the planner — one row per task, mapping UI-01..UI-04 to automated commands per the Phase Requirements → Test Map in 03-RESEARCH.md.*
+Backfilled at phase close-out (2026-07-04) from executed plans; all rows verified green in the post-merge gate and 03-VERIFICATION.md.
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| — | — | — | UI-01..UI-04 | — | — | — | — | ❌ W0 | ⬜ pending |
+| 03-01-01 | 01 | 1 | UI-01/02 | T-03-SC | @playwright/test legitimacy verified (Microsoft-published) | checkpoint | npm ls @playwright/test | ✅ | ✅ green |
+| 03-01-02 | 01 | 1 | UI-01/02 | — | — | e2e (RED) | cd ui && npx playwright test e2e/smoke.spec.ts | ✅ | ✅ green |
+| 03-01-03 | 01 | 1 | UI-02 | — | — | build | cd ui && npx tsc --noEmit | ✅ | ✅ green |
+| 03-01-04 | 01 | 1 | UI-01/02 | — | proxy route.ts unchanged (SSE blast radius) | e2e (GREEN) | cd ui && npx playwright test e2e/smoke.spec.ts (10/10) | ✅ | ✅ green |
+| 03-02-01 | 02 | 1 | UI-03/04 | — | — | unit (RED) | pytest backend/tests/test_settings.py | ✅ | ✅ green |
+| 03-02-02 | 02 | 1 | UI-03/04 | T-03-12 | blank key never clobbers stored key | unit+migration | alembic upgrade head; pytest backend/tests/test_settings.py | ✅ | ✅ green |
+| 03-02-03 | 02 | 1 | UI-03/04 | T-03-10/11/13 | masked-only GET; PUT auth-gated; reset_engine on LLM change | integration (GREEN) | pytest backend/tests -q (58 passed) | ✅ | ✅ green |
+| 03-03-01 | 03 | 2 | UI-03/04 | — | — | e2e (RED) | cd ui && npx playwright test e2e/settings.spec.ts | ✅ | ✅ green |
+| 03-03-02 | 03 | 2 | UI-03/04 | T-03-20/21 | masked placeholder; blank-keeps-current hint | e2e (GREEN) | cd ui && npx playwright test (15/15) | ✅ | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
@@ -48,9 +56,9 @@ created: 2026-07-03
 
 ## Wave 0 Requirements
 
-- [ ] `backend/tests/test_settings.py` — stubs for UI-03/UI-04 (GET/PUT round-trip, masking, keep-existing-key, reset_engine trigger, persistence)
-- [ ] `ui/e2e/smoke.spec.ts` (or similar) — Playwright smoke for UI-01/UI-02 (routes render, nav navigates client-side, active link highlights)
-- [ ] `@playwright/test` devDependency in `ui/package.json` — no frontend test framework exists today
+- [x] `backend/tests/test_settings.py` — 7 tests covering UI-03/UI-04 (GET/PUT round-trip, masking, keep-existing-key, reset_engine trigger, persistence)
+- [x] `ui/e2e/smoke.spec.ts` — 10 Playwright smoke tests for UI-01/UI-02 (+ `ui/e2e/settings.spec.ts`, 5 tests)
+- [x] `@playwright/test@1.61.1` devDependency in `ui/package.json` (legitimacy checkpoint passed)
 
 ---
 
@@ -64,11 +72,11 @@ created: 2026-07-03
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 60s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 60s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** approved 2026-07-04 (backfilled at phase close-out per plan-checker warning 3)
