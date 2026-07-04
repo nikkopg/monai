@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
 
 # ---------------------------------------------------------------------------
 # Shared money type
@@ -95,3 +95,60 @@ class ConfirmRequest(BaseModel):
     """Body for POST /proposals/{id}/confirm."""
 
     token: str
+
+
+# ---------------------------------------------------------------------------
+# Settings (UI-03, UI-04) — locked enums per app_settings design
+# ---------------------------------------------------------------------------
+
+_VALID_PROVIDERS = {"ollama", "claude", "openai"}
+_VALID_PRICE_SOURCES = {"coingecko", "yfinance", "manual"}
+
+
+class SettingsOut(BaseModel):
+    """Effective settings response — built from a plain dict
+    (get_effective_settings), never from an ORM row, so no from_attributes.
+    Raw key values NEVER appear here, only their masked derived forms.
+    """
+
+    llm_provider: str
+    llm_model: str
+    anthropic_api_key_masked: str | None = None
+    openai_api_key_masked: str | None = None
+    base_currency: str
+    price_data_source: str
+
+
+class SettingsUpdate(BaseModel):
+    """Partial-update body for PUT /settings — all fields Optional.
+
+    A None or blank/empty-string value for any field means "keep existing"
+    (enforced server-side in backend.settings.upsert_settings).
+    """
+
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    anthropic_api_key: str | None = None
+    openai_api_key: str | None = None
+    base_currency: str | None = None
+    price_data_source: str | None = None
+
+    @field_validator("llm_provider")
+    @classmethod
+    def _validate_llm_provider(cls, v: str | None) -> str | None:
+        # None/"" both mean "keep existing" (upsert_settings filters these out);
+        # only a non-empty, non-member value is rejected here.
+        if v and v not in _VALID_PROVIDERS:
+            raise ValueError(
+                f"Invalid llm_provider={v!r}. Valid: {sorted(_VALID_PROVIDERS)}"
+            )
+        return v
+
+    @field_validator("price_data_source")
+    @classmethod
+    def _validate_price_data_source(cls, v: str | None) -> str | None:
+        if v and v not in _VALID_PRICE_SOURCES:
+            raise ValueError(
+                f"Invalid price_data_source={v!r}. Valid: {sorted(_VALID_PRICE_SOURCES)}"
+            )
+        return v

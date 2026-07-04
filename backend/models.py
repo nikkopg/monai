@@ -157,6 +157,18 @@ class PortfolioEvent(Base):
     price: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
 
 
+class AppSetting(Base):
+    """Key-value settings store — DB overrides env-var defaults (Phase 3)."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
+    )
+
+
 class PriceCache(Base):
     """Last known price for an instrument.
 
