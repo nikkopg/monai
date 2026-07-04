@@ -12,7 +12,7 @@
 
 - [x] **Phase 1: Schema Foundation + Auth** - Alembic migrations, new tables, API key auth — unblocks everything downstream (completed 2026-06-21)
 - [x] **Phase 2: Agentic Loop + Confirm-Before-Write** - Multi-step agent replaces single-shot router; write proposals with human approval gate (completed 2026-07-03)
-- [ ] **Phase 3: Multi-Page UI Shell + Settings** - Four-page navigation, Settings page; users can navigate and configure the app
+- [x] **Phase 3: Multi-Page UI Shell + Settings** - Four-page navigation, Settings page; users can navigate and configure the app (completed 2026-07-04)
 - [ ] **Phase 4: Cashflow Dashboard + CRUD** - Spending/income dashboard with charts; full transaction/account/category management in UI
 - [ ] **Phase 5: Investment Subsystem** - Holdings CRUD, live prices, P&L display, portfolio events, and spending-correlation queries
 - [ ] **Phase 6: MCP Server** - FastMCP server co-mounted in FastAPI; read-only tools exposed to external clients
@@ -74,7 +74,7 @@
   3. The Settings page lets the user select an LLM provider and model, enter API keys (masked in display), and save the configuration — subsequent chat requests use the new provider
   4. The Settings page lets the user set base currency and the preferred price data source; the selection persists across browser sessions
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 **Wave 1**
 
 - [x] 03-01-PLAN.md — Nav shell + route split (/chat, /cashflow, /investments, /settings) + Playwright smoke (UI-01, UI-02) [wave 1]
@@ -82,7 +82,7 @@
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 03-03-PLAN.md — Settings page UI: three-card form, GET-on-load, per-card partial PUT (UI-03, UI-04) [wave 2, depends 03-01+03-02]
+- [x] 03-03-PLAN.md — Settings page UI: three-card form, GET-on-load, per-card partial PUT (UI-03, UI-04) [wave 2, depends 03-01+03-02]
 
 **UI hint**: yes
 
@@ -145,7 +145,7 @@
 |-------|----------------|--------|-----------|
 | 1. Schema Foundation + Auth | 3/3 | Complete   | 2026-06-21 |
 | 2. Agentic Loop + Confirm-Before-Write | 2/3 | In Progress|  |
-| 3. Multi-Page UI Shell + Settings | 2/3 | In Progress|  |
+| 3. Multi-Page UI Shell + Settings | 3/3 | Complete   | 2026-07-04 |
 | 4. Cashflow Dashboard + CRUD | 0/? | Not started | - |
 | 5. Investment Subsystem | 0/? | Not started | - |
 | 6. MCP Server | 0/? | Not started | - |
