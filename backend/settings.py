@@ -112,7 +112,7 @@ def get_effective_settings(db: Session, raw_keys: bool = False) -> dict:
     }
 
 
-def upsert_settings(db: Session, patch: dict) -> bool:
+def upsert_settings(db: Session, patch: dict, commit: bool = True) -> bool:
     """Upsert the given key/value patch into app_settings.
 
     Skips any value that is None or an empty string — "keep existing"
@@ -120,7 +120,18 @@ def upsert_settings(db: Session, patch: dict) -> bool:
     stored key with a blank field. Returns True iff any LLM-relevant key
     (provider/model/either API key) was written, signalling the caller
     should re-run configure_llm() + reset_engine().
+
+    Pass commit=False to defer the commit to the caller so the settings write
+    can be transactionally grouped with, e.g., an audit-log row.
     """
+    # A provider switch that arrives without an explicit model would otherwise
+    # leave the previous provider's llm_model in effect (e.g. switch to openai
+    # while a claude model string is still stored). Reset the model to the new
+    # provider's default so effective settings stay coherent.
+    provider = patch.get(KEY_LLM_PROVIDER)
+    if provider and not patch.get(KEY_LLM_MODEL):
+        patch = {**patch, KEY_LLM_MODEL: _model_env_default(provider)}
+
     changed_llm = False
     for key, value in patch.items():
         if key not in ALL_KEYS:
@@ -134,5 +145,6 @@ def upsert_settings(db: Session, patch: dict) -> bool:
         if key in _LLM_RELEVANT_KEYS:
             changed_llm = True
 
-    db.commit()
+    if commit:
+        db.commit()
     return changed_llm
