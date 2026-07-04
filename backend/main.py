@@ -16,6 +16,8 @@ Endpoints:
     GET  /proposals             list pending proposals (public)
     POST /proposals/{id}/confirm  apply a pending proposal (requires API key)
     POST /proposals/{id}/reject   reject a pending proposal (requires API key)
+    GET  /settings              effective settings, keys masked (public)
+    PUT  /settings              partial-update settings (requires API key)
 """
 
 import hmac
@@ -40,8 +42,17 @@ from backend.schemas import (
     ProposalOut,
     QueryRequest,
     QueryResponse,
+    SettingsOut,
+    SettingsUpdate,
     TransactionCreate,
     TransactionOut,
+)
+from backend.settings import (
+    KEY_ANTHROPIC_API_KEY,
+    KEY_OPENAI_API_KEY,
+    get_effective_settings,
+    mask_key,
+    upsert_settings,
 )
 
 logging.basicConfig(level=logging.INFO)
@@ -102,6 +113,38 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_ses
     from backend.query import reset_engine
     reset_engine()
     return tx
+
+
+@app.get("/settings", response_model=SettingsOut)
+def read_settings(db: Session = Depends(get_session)):
+    """Effective settings (DB overrides env defaults). Public — keys masked (UI-03)."""
+    return get_effective_settings(db)
+
+
+@app.put("/settings", response_model=SettingsOut, dependencies=[Depends(require_api_key)])
+def write_settings(patch: SettingsUpdate, db: Session = Depends(get_session)):
+    """Partial-update settings (auth-protected). Blank/absent key fields keep the
+    existing stored value (UI-03, UI-04). Re-runs configure_llm() + reset_engine()
+    when an LLM-relevant field changed, so the next chat request uses it."""
+    changed_llm = upsert_settings(db, patch.model_dump(exclude_none=True))
+
+    # Audit trail: masked-only, never the raw key values (T-03-14).
+    audit_after = patch.model_dump(exclude_none=True)
+    if KEY_ANTHROPIC_API_KEY in audit_after:
+        audit_after[KEY_ANTHROPIC_API_KEY] = mask_key(audit_after[KEY_ANTHROPIC_API_KEY])
+    if KEY_OPENAI_API_KEY in audit_after:
+        audit_after[KEY_OPENAI_API_KEY] = mask_key(audit_after[KEY_OPENAI_API_KEY])
+    db.add(AuditLog(entity="settings", entity_id=None, operation="update",
+                    before=None, after=audit_after))
+    db.commit()
+
+    if changed_llm:
+        from backend.config import configure_llm
+        from backend.query import reset_engine
+        configure_llm(overrides=get_effective_settings(db, raw_keys=True))
+        reset_engine()
+
+    return get_effective_settings(db)
 
 
 @app.post("/import", response_model=ImportResponse, dependencies=[Depends(require_api_key)])
