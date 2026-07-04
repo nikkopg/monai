@@ -156,6 +156,64 @@ def test_preferences_persist(client, api_key):
 # ---------------------------------------------------------------------------
 
 
+def test_provider_switch_without_model_resets_model(client, api_key):
+    """Switching llm_provider without sending llm_model must reset the model to
+    the new provider's default, not leave the old provider's model in effect
+    (WR-03)."""
+    # First pin a claude model.
+    first = client.put(
+        "/settings",
+        json={"llm_provider": "claude", "llm_model": "claude-haiku-4-5-20251001"},
+        headers={"MONAI_API_KEY": api_key},
+    )
+    assert first.status_code == 200
+    assert first.json()["llm_model"] == "claude-haiku-4-5-20251001"
+
+    # Now switch provider only — no llm_model field. The stale claude model
+    # must not carry over into the openai provider.
+    second = client.put(
+        "/settings",
+        json={"llm_provider": "openai"},
+        headers={"MONAI_API_KEY": api_key},
+    )
+    assert second.status_code == 200
+    body = second.json()
+    assert body["llm_provider"] == "openai"
+    assert body["llm_model"] != "claude-haiku-4-5-20251001"
+
+    get_resp = client.get("/settings")
+    assert get_resp.json()["llm_model"] != "claude-haiku-4-5-20251001"
+
+
+def test_blank_key_put_audit_omits_key_field(client, api_key):
+    """A blank 'keep existing' key on PUT must not be recorded as a cleared key
+    (mask_key("") -> null) in the audit log — the field is omitted (WR-04)."""
+    from backend.db import SessionLocal
+    from backend.models import AuditLog
+
+    resp = client.put(
+        "/settings",
+        json={"anthropic_api_key": "", "base_currency": "IDR"},
+        headers={"MONAI_API_KEY": api_key},
+    )
+    assert resp.status_code == 200
+
+    db = SessionLocal()
+    try:
+        latest = (
+            db.query(AuditLog)
+            .filter(AuditLog.entity == "settings")
+            .order_by(AuditLog.id.desc())
+            .first()
+        )
+    finally:
+        db.close()
+
+    assert latest is not None
+    # The blank key must be absent entirely, never present as null.
+    assert "anthropic_api_key" not in (latest.after or {})
+
+
 def test_llm_change_resets_engine(client, api_key, monkeypatch):
     """reset_engine() is called exactly once on an LLM-field PUT, never on
     a preferences-only PUT."""

@@ -126,14 +126,20 @@ def write_settings(patch: SettingsUpdate, db: Session = Depends(get_session)):
     """Partial-update settings (auth-protected). Blank/absent key fields keep the
     existing stored value (UI-03, UI-04). Re-runs configure_llm() + reset_engine()
     when an LLM-relevant field changed, so the next chat request uses it."""
-    changed_llm = upsert_settings(db, patch.model_dump(exclude_none=True))
+    # Defer the settings commit so it lands in the same transaction as the
+    # audit row below — a crash between the two must not leave a persisted
+    # settings change with no audit trail.
+    changed_llm = upsert_settings(db, patch.model_dump(exclude_none=True), commit=False)
 
-    # Audit trail: masked-only, never the raw key values (T-03-14).
+    # Audit trail: masked-only, never the raw key values (T-03-14). A blank
+    # key field means "keep existing" (upsert skips it), so omit it from the
+    # audit rather than record a misleading mask_key("") -> null.
     audit_after = patch.model_dump(exclude_none=True)
-    if KEY_ANTHROPIC_API_KEY in audit_after:
-        audit_after[KEY_ANTHROPIC_API_KEY] = mask_key(audit_after[KEY_ANTHROPIC_API_KEY])
-    if KEY_OPENAI_API_KEY in audit_after:
-        audit_after[KEY_OPENAI_API_KEY] = mask_key(audit_after[KEY_OPENAI_API_KEY])
+    for key_field in (KEY_ANTHROPIC_API_KEY, KEY_OPENAI_API_KEY):
+        if audit_after.get(key_field):
+            audit_after[key_field] = mask_key(audit_after[key_field])
+        else:
+            audit_after.pop(key_field, None)
     db.add(AuditLog(entity="settings", entity_id=None, operation="update",
                     before=None, after=audit_after))
     db.commit()
