@@ -85,7 +85,7 @@ export default function SettingsPage() {
   async function putSettings(
     body: Record<string, string>,
     setState: (s: SaveState) => void
-  ) {
+  ): Promise<boolean> {
     setState({ status: "saving" });
     try {
       const r = await fetch("/api/settings", {
@@ -102,14 +102,16 @@ export default function SettingsPage() {
           // ignore body-parse failure, keep the status-based detail
         }
         setState({ status: "error", message: detail });
-        return;
+        return false;
       }
       setState({ status: "success" });
+      return true;
     } catch (e) {
       setState({
         status: "error",
         message: e instanceof Error ? e.message : "network error",
       });
+      return false;
     }
   }
 
@@ -128,9 +130,13 @@ export default function SettingsPage() {
     const body: Record<string, string> = {};
     if (anthropicKey) body.anthropic_api_key = anthropicKey;
     if (openaiKey) body.openai_api_key = openaiKey;
-    await putSettings(body, setKeysState);
-    setAnthropicKey("");
-    setOpenaiKey("");
+    const ok = await putSettings(body, setKeysState);
+    // Only clear the inputs on success — otherwise the user would have to
+    // retype the whole key after a transient failure (WR-01).
+    if (ok) {
+      setAnthropicKey("");
+      setOpenaiKey("");
+    }
   }
 
   async function savePreferences(e: React.FormEvent) {
