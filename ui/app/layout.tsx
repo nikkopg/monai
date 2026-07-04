@@ -1,3 +1,5 @@
+import Nav from "./components/Nav";
+
 export const metadata = {
   title: "monai",
   description: "Personal wealth intelligence",
@@ -15,6 +17,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           color: "#e6e8eb",
         }}
       >
+        <Nav />
         {children}
       </body>
     </html>
