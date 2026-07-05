@@ -114,7 +114,7 @@
 
 **Wave 3** *(depends 04-03)*
 
-- [ ] 04-04-PLAN.md — Frontend dashboard: Recharts install, 3 charts, summary/per-account/period-selector on /cashflow (CASH-01/02/03, D-04/07) [wave 3]
+- [x] 04-04-PLAN.md — Frontend dashboard: Recharts install, 3 charts, summary/per-account/period-selector on /cashflow (CASH-01/02/03, D-04/07) [wave 3]
 
 **Wave 4** *(depends 04-03 + 04-04)*
 
@@ -164,7 +164,7 @@
 | 1. Schema Foundation + Auth | 3/3 | Complete   | 2026-06-21 |
 | 2. Agentic Loop + Confirm-Before-Write | 2/3 | In Progress|  |
 | 3. Multi-Page UI Shell + Settings | 3/3 | Complete   | 2026-07-04 |
-| 4. Cashflow Dashboard + CRUD | 3/5 | In Progress|  |
+| 4. Cashflow Dashboard + CRUD | 4/5 | In Progress|  |
 | 5. Investment Subsystem | 0/? | Not started | - |
 | 6. MCP Server | 0/? | Not started | - |
 
