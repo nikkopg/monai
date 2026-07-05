@@ -48,3 +48,24 @@ export const label: React.CSSProperties = {
   marginBottom: 4,
   display: "block",
 };
+
+// Destructive variant of `btn` — delete/merge-confirm buttons (Phase 4,
+// 04-UI-SPEC.md § Color). Spreads `btn` so it never duplicates the button
+// base; only the background changes to the Destructive token.
+export const dangerBtn: React.CSSProperties = {
+  ...btn,
+  background: "#f87171",
+};
+
+// Fixed 6-color categorical palette for the spending-by-category donut
+// (Phase 4, 04-UI-SPEC.md § Color — "Chart categorical palette"). Cycle via
+// chartColors[i % chartColors.length] for >6 categories. Used ONLY for
+// category-donut slices, never for buttons or UI chrome.
+export const chartColors = [
+  "#3b82f6",
+  "#f87171",
+  "#4ade80",
+  "#fbbf24",
+  "#a78bfa",
+  "#22d3ee",
+];
