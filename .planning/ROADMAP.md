@@ -105,8 +105,8 @@
 
 **Wave 1** *(parallel — no file overlap)*
 
-- [ ] 04-01-PLAN.md — Shared write helpers (backend/writes.py) + refactor _execute_proposal_payload to dispatch, regression-guarded (D-02) [wave 1]
-- [ ] 04-02-PLAN.md — Dashboard read aggregations (monthly_trend, account_balances) + new schemas + test scaffold (CASH-01/02/03) [wave 1]
+- [x] 04-01-PLAN.md — Shared write helpers (backend/writes.py) + refactor _execute_proposal_payload to dispatch, regression-guarded (D-02) [wave 1]
+- [x] 04-02-PLAN.md — Dashboard read aggregations (monthly_trend, account_balances) + new schemas + test scaffold (CASH-01/02/03) [wave 1]
 
 **Wave 2** *(depends 04-01 + 04-02)*
 
@@ -164,7 +164,7 @@
 | 1. Schema Foundation + Auth | 3/3 | Complete   | 2026-06-21 |
 | 2. Agentic Loop + Confirm-Before-Write | 2/3 | In Progress|  |
 | 3. Multi-Page UI Shell + Settings | 3/3 | Complete   | 2026-07-04 |
-| 4. Cashflow Dashboard + CRUD | 0/5 | Not started | - |
+| 4. Cashflow Dashboard + CRUD | 2/5 | In Progress|  |
 | 5. Investment Subsystem | 0/? | Not started | - |
 | 6. MCP Server | 0/? | Not started | - |
 
