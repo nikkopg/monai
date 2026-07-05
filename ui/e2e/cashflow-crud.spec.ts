@@ -88,10 +88,10 @@ test.describe("transaction create/edit/delete", () => {
     page,
   }) => {
     await mockDashboard(page);
-    let createCalled = false;
+    let postedCategory: unknown = "__unset__";
     await page.route("**/api/transactions", async (route) => {
       if (route.request().method() === "POST") {
-        createCalled = true;
+        postedCategory = route.request().postDataJSON().category;
         await route.fulfill({
           status: 201,
           contentType: "application/json",
@@ -115,14 +115,27 @@ test.describe("transaction create/edit/delete", () => {
     await page.getByRole("button", { name: "Add transaction", exact: true }).click();
     await expect(page.getByText("Add transaction").first()).toBeVisible();
 
+    // The category control is now a <select> populated from GET /api/categories.
+    // Its presence with the mocked names proves the modal consumed the fetch.
+    const categorySelect = page
+      .locator("form")
+      .filter({ hasText: "Add transaction" })
+      .locator("select")
+      .filter({ hasText: "(no category)" });
+    await expect(categorySelect.locator("option", { hasText: "Food & Drinks" })).toHaveCount(1);
+    await expect(categorySelect.locator("option", { hasText: "Transport" })).toHaveCount(1);
+
     await page.getByPlaceholder("-25000").fill("-10000");
+    // Selecting an existing name submits it byte-identically — the mechanism
+    // that structurally prevents case-variant duplicates.
+    await categorySelect.selectOption("Transport");
     await page
       .locator("form")
       .filter({ hasText: "Add transaction" })
       .getByRole("button", { name: "Add transaction", exact: true })
       .click();
 
-    await expect.poll(() => createCalled).toBe(true);
+    await expect.poll(() => postedCategory).toBe("Transport");
   });
 
   test("row Edit action opens the modal pre-filled and PUTs the update", async ({
@@ -148,8 +161,91 @@ test.describe("transaction create/edit/delete", () => {
     await expect(page.getByText("Edit transaction")).toBeVisible();
     await expect(page.getByRole("button", { name: "Save changes" })).toBeVisible();
 
+    // Pre-fill contract: the category select is seeded from the fixture row's
+    // category ("Food & Drinks"), which is also in the fetched list. The edit
+    // form's submit button reads "Save changes", so filter on that (the
+    // "Edit transaction" title is an <h2> outside the <form>).
+    const editCategorySelect = page
+      .locator("form")
+      .filter({ hasText: "Save changes" })
+      .locator("select")
+      .filter({ hasText: "(no category)" });
+    await expect(editCategorySelect).toHaveValue("Food & Drinks");
+
     await page.getByRole("button", { name: "Save changes" }).click();
     await expect.poll(() => putCalled).toBe(true);
+  });
+
+  test("choosing + New category… reveals a text input and POSTs the typed name", async ({
+    page,
+  }) => {
+    await mockDashboard(page);
+    let postedCategory: unknown = "__unset__";
+    await page.route("**/api/transactions", async (route) => {
+      if (route.request().method() === "POST") {
+        postedCategory = route.request().postDataJSON().category;
+        await route.fulfill({
+          status: 201,
+          contentType: "application/json",
+          body: JSON.stringify({ ...txFixture()[0], id: 999, category: "Groceries" }),
+        });
+        return;
+      }
+      await route.fallback();
+    });
+
+    await page.goto("/cashflow");
+    await page.getByRole("button", { name: "Add transaction", exact: true }).click();
+    await expect(page.getByText("Add transaction").first()).toBeVisible();
+
+    const form = page.locator("form").filter({ hasText: "Add transaction" });
+    const categorySelect = form.locator("select").filter({ hasText: "(no category)" });
+
+    // Deliberate add-new affordance: no text input until the sentinel is chosen.
+    await expect(form.getByPlaceholder("New category name")).toHaveCount(0);
+    await categorySelect.selectOption({ label: "+ New category…" });
+    const newCategoryInput = form.getByPlaceholder("New category name");
+    await expect(newCategoryInput).toBeVisible();
+    await newCategoryInput.fill("Groceries");
+
+    await page.getByPlaceholder("-25000").fill("-10000");
+    await form
+      .getByRole("button", { name: "Add transaction", exact: true })
+      .click();
+
+    await expect.poll(() => postedCategory).toBe("Groceries");
+  });
+
+  test("choosing (no category) POSTs a null category", async ({ page }) => {
+    await mockDashboard(page);
+    let posted: { category?: unknown; called?: boolean } = {};
+    await page.route("**/api/transactions", async (route) => {
+      if (route.request().method() === "POST") {
+        posted = { called: true, category: route.request().postDataJSON().category };
+        await route.fulfill({
+          status: 201,
+          contentType: "application/json",
+          body: JSON.stringify({ ...txFixture()[0], id: 999, category: null }),
+        });
+        return;
+      }
+      await route.fallback();
+    });
+
+    await page.goto("/cashflow");
+    await page.getByRole("button", { name: "Add transaction", exact: true }).click();
+    await expect(page.getByText("Add transaction").first()).toBeVisible();
+
+    const form = page.locator("form").filter({ hasText: "Add transaction" });
+    // (no category) is the default empty-value option; select it explicitly.
+    await form.locator("select").filter({ hasText: "(no category)" }).selectOption("");
+    await page.getByPlaceholder("-25000").fill("-10000");
+    await form
+      .getByRole("button", { name: "Add transaction", exact: true })
+      .click();
+
+    await expect.poll(() => posted.called).toBe(true);
+    expect(posted.category).toBeNull();
   });
 
   test("row Delete action opens ConfirmDialog and DELETEs on confirm", async ({
