@@ -33,14 +33,14 @@ Requirements for this cycle. Each maps to a roadmap phase.
 
 ### Cashflow Tracker
 
-- [ ] **CASH-01**: Dashboard shows a spending/income overview (totals, spending-by-category, income vs expense) with charts
-- [ ] **CASH-02**: Dashboard shows a month-over-month spending trend
-- [ ] **CASH-03**: Dashboard shows per-account balances
-- [ ] **CASH-04**: User can create, edit, and delete transactions in the UI
-- [ ] **CASH-05**: User can create, edit, and delete accounts in the UI
-- [ ] **CASH-06**: User can rename a category, remapping the affected transactions
-- [ ] **CASH-07**: User can merge one category into another
-- [ ] **CASH-08**: User can upload a Wallet CSV from the UI and see the import result (parsed/inserted/skipped)
+- [x] **CASH-01**: Dashboard shows a spending/income overview (totals, spending-by-category, income vs expense) with charts
+- [x] **CASH-02**: Dashboard shows a month-over-month spending trend
+- [x] **CASH-03**: Dashboard shows per-account balances
+- [x] **CASH-04**: User can create, edit, and delete transactions in the UI
+- [x] **CASH-05**: User can create, edit, and delete accounts in the UI
+- [x] **CASH-06**: User can rename a category, remapping the affected transactions
+- [x] **CASH-07**: User can merge one category into another
+- [x] **CASH-08**: User can upload a Wallet CSV from the UI and see the import result (parsed/inserted/skipped)
 
 ### Investments
 
@@ -109,14 +109,14 @@ Which phases cover which requirements. Populated during roadmap creation.
 | UI-02 | Phase 3: Multi-Page UI Shell + Settings | Pending |
 | UI-03 | Phase 3: Multi-Page UI Shell + Settings | Pending |
 | UI-04 | Phase 3: Multi-Page UI Shell + Settings | Pending |
-| CASH-01 | Phase 4: Cashflow Dashboard + CRUD | Pending |
-| CASH-02 | Phase 4: Cashflow Dashboard + CRUD | Pending |
-| CASH-03 | Phase 4: Cashflow Dashboard + CRUD | Pending |
-| CASH-04 | Phase 4: Cashflow Dashboard + CRUD | Pending |
-| CASH-05 | Phase 4: Cashflow Dashboard + CRUD | Pending |
-| CASH-06 | Phase 4: Cashflow Dashboard + CRUD | Pending |
-| CASH-07 | Phase 4: Cashflow Dashboard + CRUD | Pending |
-| CASH-08 | Phase 4: Cashflow Dashboard + CRUD | Pending |
+| CASH-01 | Phase 4: Cashflow Dashboard + CRUD | Complete |
+| CASH-02 | Phase 4: Cashflow Dashboard + CRUD | Complete |
+| CASH-03 | Phase 4: Cashflow Dashboard + CRUD | Complete |
+| CASH-04 | Phase 4: Cashflow Dashboard + CRUD | Complete |
+| CASH-05 | Phase 4: Cashflow Dashboard + CRUD | Complete |
+| CASH-06 | Phase 4: Cashflow Dashboard + CRUD | Complete |
+| CASH-07 | Phase 4: Cashflow Dashboard + CRUD | Complete |
+| CASH-08 | Phase 4: Cashflow Dashboard + CRUD | Complete |
 | INV-01 | Phase 5: Investment Subsystem | Pending |
 | INV-02 | Phase 5: Investment Subsystem | Pending |
 | INV-03 | Phase 5: Investment Subsystem | Pending |
