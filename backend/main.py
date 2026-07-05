@@ -118,6 +118,89 @@ def list_accounts(db: Session = Depends(get_session)):
     return db.query(Account).order_by(Account.name).all()
 
 
+@app.post("/accounts", response_model=AccountOut, status_code=201, dependencies=[Depends(require_api_key)])
+def create_account(payload: AccountCreate, db: Session = Depends(get_session)):
+    """Create an account (CASH-05). Routed through apply_add_account (audited)."""
+    acc = apply_add_account(db, payload.model_dump(mode="json"))
+    db.commit()
+    db.refresh(acc)
+    from backend.query import reset_engine
+    reset_engine()
+    return acc
+
+
+@app.put("/accounts/{account_id}", response_model=AccountOut, dependencies=[Depends(require_api_key)])
+def update_account(account_id: int, payload: AccountUpdate, db: Session = Depends(get_session)):
+    """Partial-update an account (CASH-05). Only supplied fields change."""
+    acc = db.get(Account, account_id)
+    if acc is None:
+        raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
+    before = {"id": acc.id, "name": acc.name, "type": acc.type, "currency": acc.currency}
+    try:
+        apply_edit_account(db, account_id, payload.model_dump(mode="json", exclude_none=True), before)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(acc)
+    from backend.query import reset_engine
+    reset_engine()
+    return acc
+
+
+@app.delete("/accounts/{account_id}", dependencies=[Depends(require_api_key)])
+def delete_account(
+    account_id: int,
+    reassign_to: int | None = None,
+    db: Session = Depends(get_session),
+):
+    """Delete an account with reassign-then-delete (CASH-05, D-05/D-06).
+
+    - No transactions → plain audited delete.
+    - Has transactions and no reassign_to → 422 with affected_count (D-06); the
+      exact detail shape the UI copy consumes.
+    - reassign_to set → the transactions are reassigned to the target account and
+      the source is deleted in ONE audited helper call (apply_delete_account
+      writes the single AuditLog row capturing the reassignment target + count);
+      the reassignment is NOT an inline bulk update here (WARNING 1 fix).
+
+    The reassignment DECISION lives here; the reassignment WRITE lives in the
+    audited helper (Open Question 2 — propose_delete_account stays block-only).
+    """
+    acc = db.get(Account, account_id)
+    if acc is None:
+        raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
+    before = {"id": acc.id, "name": acc.name, "type": acc.type, "currency": acc.currency}
+
+    tx_count = int(
+        db.execute(
+            text("SELECT COUNT(*) FROM transactions WHERE account_id = :aid"),
+            {"aid": account_id},
+        ).scalar()
+        or 0
+    )
+
+    if tx_count > 0:
+        if reassign_to is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": f"{tx_count} transactions use this account — reassign or delete them first",
+                    "affected_count": tx_count,
+                },
+            )
+        target = db.get(Account, reassign_to)
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"Reassign target account {reassign_to} not found")
+        reassigned = apply_delete_account(db, account_id, before, reassign_to=reassign_to)
+    else:
+        reassigned = apply_delete_account(db, account_id, before)
+
+    db.commit()
+    from backend.query import reset_engine
+    reset_engine()
+    return {"status": "deleted", "reassigned": reassigned}
+
+
 @app.get("/transactions", response_model=list[TransactionOut])
 def list_transactions(limit: int = 50, db: Session = Depends(get_session)):
     return (
