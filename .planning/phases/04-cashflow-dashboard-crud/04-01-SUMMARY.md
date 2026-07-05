@@ -105,3 +105,11 @@ None - no external service configuration required.
 ---
 *Phase: 04-cashflow-dashboard-crud*
 *Completed: 2026-07-05*
+
+## Self-Check: PASSED
+
+- FOUND: backend/writes.py
+- FOUND: .planning/phases/04-cashflow-dashboard-crud/04-01-SUMMARY.md
+- FOUND: 74fee8b (Task 1 commit)
+- FOUND: 86414dc (Task 2 commit)
+- FOUND: 2ed9ffc (docs/summary commit)
