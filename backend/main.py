@@ -35,6 +35,16 @@ from backend.auth import require_api_key
 from backend.db import get_session
 from backend.importer import _get_or_create_account, import_csv_text
 from backend.models import Account, AuditLog, Holding, Proposal, Transaction
+from backend.writes import (
+    apply_add_account,
+    apply_add_transaction,
+    apply_delete_account,
+    apply_delete_transaction,
+    apply_edit_account,
+    apply_edit_transaction,
+    apply_merge_category,
+    apply_rename_category,
+)
 from backend.schemas import (
     AccountOut,
     ConfirmRequest,
@@ -201,9 +211,6 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
     endpoint's single db.commit() — never commits independently (CHAT-06).
     All SQL is parameterized (correctness-by-construction mandate).
     """
-    from sqlalchemy import text as _text
-    from backend.importer import _get_or_create_account
-
     payload = proposal.payload
     operation = payload.get("operation", "")
     rows = payload.get("rows", [])
@@ -213,103 +220,28 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
         after = row.get("after")
 
         if operation == "add_transaction":
-            # Resolve or create the account by name
-            account_name = after.get("account", "Unknown")
-            currency = after.get("currency", "IDR")
-            acc = _get_or_create_account(db, account_name, currency)
-            tx = Transaction(
-                date=datetime.fromisoformat(after["date"]) if after.get("date") else datetime.now(timezone.utc),
-                amount=after["amount"],
-                currency=currency,
-                category=after.get("category"),
-                raw_category=after.get("category"),
-                merchant=after.get("merchant"),
-                notes=after.get("notes"),
-                account_id=acc.id,
-                is_transfer=after.get("is_transfer", False),
-            )
-            db.add(tx)
-            db.flush()
-            db.add(AuditLog(entity="transaction", entity_id=tx.id, operation="add",
-                            before=None, after=after))
+            apply_add_transaction(db, after)
 
         elif operation == "edit_transaction":
-            tx_id = row.get("id")
-            tx = db.get(Transaction, tx_id)
-            if tx is None:
-                raise ValueError(f"Transaction {tx_id} not found during confirm")
-            if after.get("category") is not None:
-                tx.category = after["category"]
-            if after.get("merchant") is not None:
-                tx.merchant = after["merchant"]
-            if after.get("amount") is not None:
-                from decimal import Decimal as _D
-                tx.amount = _D(str(after["amount"]))
-            if after.get("notes") is not None:
-                tx.notes = after["notes"]
-            db.add(AuditLog(entity="transaction", entity_id=tx_id, operation="edit",
-                            before=before, after=after))
+            apply_edit_transaction(db, row.get("id"), after, before)
 
         elif operation == "delete_transaction":
-            tx_id = row.get("id")
-            tx = db.get(Transaction, tx_id)
-            if tx is not None:
-                db.delete(tx)
-            db.add(AuditLog(entity="transaction", entity_id=tx_id, operation="delete",
-                            before=before, after=None))
+            apply_delete_transaction(db, row.get("id"), before)
 
         elif operation == "add_account":
-            acc = Account(
-                name=after["name"],
-                type=after.get("type"),
-                currency=after.get("currency"),
-            )
-            db.add(acc)
-            db.flush()
-            db.add(AuditLog(entity="account", entity_id=acc.id, operation="add",
-                            before=None, after=after))
+            apply_add_account(db, after)
 
         elif operation == "edit_account":
-            acc_id = row.get("id")
-            acc = db.get(Account, acc_id)
-            if acc is None:
-                raise ValueError(f"Account {acc_id} not found during confirm")
-            if after.get("name") is not None:
-                acc.name = after["name"]
-            if after.get("type") is not None:
-                acc.type = after["type"]
-            if after.get("currency") is not None:
-                acc.currency = after["currency"]
-            db.add(AuditLog(entity="account", entity_id=acc_id, operation="edit",
-                            before=before, after=after))
+            apply_edit_account(db, row.get("id"), after, before)
 
         elif operation == "delete_account":
-            acc_id = row.get("id")
-            acc = db.get(Account, acc_id)
-            if acc is not None:
-                db.delete(acc)
-            db.add(AuditLog(entity="account", entity_id=acc_id, operation="delete",
-                            before=before, after=None))
+            apply_delete_account(db, row.get("id"), before)
 
         elif operation == "rename_category":
-            old_name = row.get("old_name")
-            new_name = row.get("new_name")
-            db.execute(
-                _text("UPDATE transactions SET category = :new WHERE category = :old"),
-                {"new": new_name, "old": old_name},
-            )
-            db.add(AuditLog(entity="category", entity_id=None, operation="rename",
-                            before={"category": old_name}, after={"category": new_name}))
+            apply_rename_category(db, row.get("old_name"), row.get("new_name"))
 
         elif operation == "merge_category":
-            from_name = row.get("from_name")
-            into_name = row.get("into_name")
-            db.execute(
-                _text("UPDATE transactions SET category = :into WHERE category = :from"),
-                {"into": into_name, "from": from_name},
-            )
-            db.add(AuditLog(entity="category", entity_id=None, operation="merge",
-                            before={"category": from_name}, after={"category": into_name}))
+            apply_merge_category(db, row.get("from_name"), row.get("into_name"))
 
         elif operation == "add_holding":
             from decimal import Decimal as _D
