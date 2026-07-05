@@ -47,6 +47,7 @@ from backend.writes import (
 )
 from backend.schemas import (
     AccountOut,
+    CashflowSummary,
     ConfirmRequest,
     ImportResponse,
     ProposalOut,
@@ -56,6 +57,15 @@ from backend.schemas import (
     SettingsUpdate,
     TransactionCreate,
     TransactionOut,
+)
+from backend.tools import (
+    account_balances,
+    income_total,
+    monthly_trend,
+    net_total,
+    resolve_period,
+    spending_by_category,
+    spending_total,
 )
 from backend.settings import (
     KEY_ANTHROPIC_API_KEY,
@@ -100,6 +110,32 @@ def list_transactions(limit: int = 50, db: Session = Depends(get_session)):
         .limit(min(limit, 500))
         .all()
     )
+
+
+@app.get("/cashflow/summary", response_model=CashflowSummary)
+def cashflow_summary(
+    period: str = "this_month",
+    start_date: str | None = None,
+    end_date: str | None = None,
+    db: Session = Depends(get_session),
+):
+    """Single aggregate dashboard payload (D-08, CASH-01/02/03).
+
+    Resolves the period exactly once and composes existing tools.py
+    aggregations + account_balances/monthly_trend (Plan 02). trend always
+    covers >=6 months regardless of the selected period (Pitfall 4). This is
+    an open read (no require_api_key), matching existing GET reads.
+    """
+    s, e = resolve_period(period, start_date, end_date)
+    totals = {
+        "income": income_total(period, start_date, end_date)["total"],
+        "expense": spending_total(period, start_date, end_date)["total"],
+        "net": net_total(period, start_date, end_date)["net"],
+    }
+    by_category = spending_by_category(period, start_date, end_date, limit=10)["rows"]
+    accounts = account_balances(s, e)["rows"]
+    trend = monthly_trend(6)["rows"]
+    return CashflowSummary(totals=totals, by_category=by_category, accounts=accounts, trend=trend)
 
 
 @app.post("/transactions", response_model=TransactionOut, status_code=201, dependencies=[Depends(require_api_key)])

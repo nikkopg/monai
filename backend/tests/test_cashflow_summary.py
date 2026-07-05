@@ -253,3 +253,60 @@ def test_summary_totals_shape(db_session):
         if acc:
             db_session.delete(acc)
             db_session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Plan 03: GET /cashflow/summary HTTP endpoint (D-08, CASH-01/02/03)
+# ---------------------------------------------------------------------------
+
+def test_get_cashflow_summary_endpoint(client, db_session):
+    """GET /cashflow/summary returns 200 with totals/accounts/by_category/trend,
+    trend has >=6 rows, accounts rows carry current_balance + period_net.
+    """
+    acc_id = _make_account(db_session, "SummaryEndpointCFS")
+    seeded_ids = []
+    try:
+        seeded_ids.append(_make_transaction(db_session, amount=300000, account_id=acc_id))
+        seeded_ids.append(_make_transaction(db_session, amount=-50000, account_id=acc_id))
+
+        resp = client.get("/cashflow/summary?period=this_month")
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+
+        assert set(("totals", "accounts", "by_category", "trend")) <= set(body.keys())
+        assert set(("income", "expense", "net")) <= set(body["totals"].keys())
+        assert len(body["trend"]) >= 6, f"Expected >=6 trend rows, got {len(body['trend'])}"
+
+        row = next((r for r in body["accounts"] if r["id"] == acc_id), None)
+        assert row is not None
+        assert "current_balance" in row and "period_net" in row
+    finally:
+        from backend.models import Transaction, Account
+        for tx_id in seeded_ids:
+            tx = db_session.get(Transaction, tx_id)
+            if tx:
+                db_session.delete(tx)
+        db_session.commit()
+        acc = db_session.get(Account, acc_id)
+        if acc:
+            db_session.delete(acc)
+            db_session.commit()
+
+
+def test_cashflow_summary_no_auth_required(client):
+    """GET /cashflow/summary is an open read — no API key needed (matches
+    existing GET /accounts, GET /transactions)."""
+    resp = client.get("/cashflow/summary?period=all_time")
+    assert resp.status_code == 200
+
+
+def test_cashflow_summary_resolve_period_called_once():
+    """resolve_period is called exactly once in the handler body (grep guard)."""
+    import inspect
+    from backend.main import cashflow_summary
+
+    src = inspect.getsource(cashflow_summary)
+    assert src.count("resolve_period(") == 1, (
+        f"Expected exactly one resolve_period( call in cashflow_summary body, "
+        f"found {src.count('resolve_period(')}"
+    )
