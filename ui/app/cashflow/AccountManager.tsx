@@ -15,7 +15,10 @@ import ConfirmDialog from "./ConfirmDialog";
 //   4. On confirming the destination, re-issue DELETE with ?reassign_to=.
 // ---------------------------------------------------------------------------
 
-export type Account = { id: number; name: string; type: string | null; currency: string | null };
+// Only id/name are needed here — accepts either the plain /api/accounts
+// shape or the richer per-account balance rows from GET /cashflow/summary
+// (current_balance/period_net are simply ignored by this component).
+export type Account = { id: number; name: string };
 
 type Props = {
   accounts: Account[];
