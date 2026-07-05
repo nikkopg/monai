@@ -266,6 +266,72 @@ def average_daily_spending(period="this_month", start_date=None, end_date=None) 
             "total": total, "period": _period_label(period, s, e)}
 
 
+def monthly_trend(months: int = 6) -> dict:
+    """Month-over-month income/expense/net for the last N months (CASH-02).
+
+    months: clamped to a minimum of 6 (>=6-month rolling window, not a
+      calendar-year bound — early-in-the-year calls still return a full
+      trailing window). Transfers excluded.
+    """
+    months = max(months, 6)
+    p: dict = {"months": months}
+    sql = (
+        "SELECT date_trunc('month', date) AS month, "
+        "COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0) AS income, "
+        "COALESCE(SUM(-amount) FILTER (WHERE amount < 0), 0) AS expense "
+        "FROM transactions "
+        "WHERE is_transfer = false "
+        "AND date >= date_trunc('month', CURRENT_DATE) - (:months || ' months')::interval "
+        "GROUP BY 1 ORDER BY 1"
+    )
+    with engine.connect() as c:
+        rows = [
+            {
+                "month": r[0].date().isoformat()[:7],
+                "income": float(r[1]),
+                "expense": float(r[2]),
+                "net": float(r[1]) - float(r[2]),
+            }
+            for r in c.execute(text(sql), p).fetchall()
+        ]
+    return {"tool": "monthly_trend", "rows": rows}
+
+
+def account_balances(period_start=None, period_end=None) -> dict:
+    """Per-account current_balance (all-time) + period_net (scoped) — CASH-03/D-04.
+
+    period_start/period_end: an already-resolved [start_inclusive, end_exclusive)
+    tuple, e.g. from resolve_period() called once by the caller (Plan 03 endpoint).
+    This function does NOT call resolve_period itself. current_balance sums ALL
+    of an account's non-transfer transactions regardless of period; period_net
+    sums only the in-period ones. Accounts with zero transactions appear with
+    0/0 (LEFT JOIN). Transfers excluded from both sums.
+    """
+    p: dict = {}
+    period_parts = []
+    if period_start is not None:
+        period_parts.append("t.date >= :period_start")
+        p["period_start"] = period_start.isoformat()
+    if period_end is not None:
+        period_parts.append("t.date < :period_end")
+        p["period_end"] = period_end.isoformat()
+    period_predicate = (" AND " + " AND ".join(period_parts)) if period_parts else ""
+    sql = (
+        "SELECT a.id, a.name, "
+        "COALESCE(SUM(t.amount), 0) AS current_balance, "
+        f"COALESCE(SUM(t.amount) FILTER (WHERE true{period_predicate}), 0) AS period_net "
+        "FROM accounts a "
+        "LEFT JOIN transactions t ON t.account_id = a.id AND t.is_transfer = false "
+        "GROUP BY a.id, a.name ORDER BY a.name"
+    )
+    with engine.connect() as c:
+        rows = [
+            {"id": r[0], "name": r[1], "current_balance": float(r[2]), "period_net": float(r[3])}
+            for r in c.execute(text(sql), p).fetchall()
+        ]
+    return {"tool": "account_balances", "rows": rows}
+
+
 def list_categories() -> dict:
     """List distinct expense categories with their total spend (helps map vague terms)."""
     sql = (
@@ -334,6 +400,8 @@ TOOLS = {
     "average_daily_spending": average_daily_spending,
     "list_categories": list_categories,
     "find_transactions": find_transactions,
+    "monthly_trend": monthly_trend,
+    "account_balances": account_balances,
 }
 
 

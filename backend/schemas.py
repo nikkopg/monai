@@ -56,6 +56,64 @@ class AccountOut(BaseModel):
     currency: str | None
 
 
+class CashflowSummary(BaseModel):
+    """Single composed payload for GET /cashflow/summary (D-08)."""
+
+    totals: dict  # {income, expense, net} as floats
+    by_category: list  # rows from spending_by_category
+    accounts: list  # rows from account_balances (id/name/current_balance/period_net)
+    trend: list  # rows from monthly_trend (month/income/expense/net)
+
+
+class TransactionUpdate(BaseModel):
+    """Partial-update body for editing a transaction — all fields Optional.
+
+    None means "keep existing", matching the after.get(...) is not None
+    semantics used by the shared write-tool helpers / propose_edit_transaction.
+    """
+
+    date: str | None = None
+    amount: MoneyDecimal | None = None
+    category: str | None = None
+    merchant: str | None = None
+    account: str | None = None
+    notes: str | None = None
+    is_transfer: bool | None = None
+
+
+class AccountCreate(BaseModel):
+    name: str
+    type: str | None = None
+    currency: str | None = "IDR"
+
+
+class AccountUpdate(BaseModel):
+    """Partial-update body for editing an account — all fields Optional."""
+
+    name: str | None = None
+    type: str | None = None
+    currency: str | None = None
+
+
+class CategoryRenameRequest(BaseModel):
+    old_name: str
+    new_name: str
+
+
+class CategoryMergeRequest(BaseModel):
+    from_name: str
+    into_name: str
+
+
+class AffectedCountResponse(BaseModel):
+    """Response shape for the category affected-count read and rename/merge
+    responses, so the UI can show the count actually applied (D-09).
+    """
+
+    category: str
+    affected_count: int
+
+
 class QueryRequest(BaseModel):
     question: str
 
