@@ -225,7 +225,13 @@ def cashflow_summary(
     covers >=6 months regardless of the selected period (Pitfall 4). This is
     an open read (no require_api_key), matching existing GET reads.
     """
-    s, e = resolve_period(period, start_date, end_date)
+    try:
+        s, e = resolve_period(period, start_date, end_date)
+    except ValueError as exc:
+        # Same mapping as the sibling write endpoints (update_account, etc.):
+        # an unrecognized/malformed period is a client error, never a raw 500.
+        # Named `exc` (not `e`) so it can't shadow the end-bound `e` above.
+        raise HTTPException(status_code=422, detail=str(exc))
     totals = {
         "income": income_total(period, start_date, end_date)["total"],
         "expense": spending_total(period, start_date, end_date)["total"],
