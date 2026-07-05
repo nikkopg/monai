@@ -110,7 +110,7 @@
 
 **Wave 2** *(depends 04-01 + 04-02)*
 
-- [ ] 04-03-PLAN.md — Backend REST: GET /cashflow/summary, tx/account CRUD, reassign-then-delete, category rename/merge (CASH-01..07, D-01/05/06/08) [wave 2]
+- [x] 04-03-PLAN.md — Backend REST: GET /cashflow/summary, tx/account CRUD, reassign-then-delete, category rename/merge (CASH-01..07, D-01/05/06/08) [wave 2]
 
 **Wave 3** *(depends 04-03)*
 
@@ -164,7 +164,7 @@
 | 1. Schema Foundation + Auth | 3/3 | Complete   | 2026-06-21 |
 | 2. Agentic Loop + Confirm-Before-Write | 2/3 | In Progress|  |
 | 3. Multi-Page UI Shell + Settings | 3/3 | Complete   | 2026-07-04 |
-| 4. Cashflow Dashboard + CRUD | 2/5 | In Progress|  |
+| 4. Cashflow Dashboard + CRUD | 3/5 | In Progress|  |
 | 5. Investment Subsystem | 0/? | Not started | - |
 | 6. MCP Server | 0/? | Not started | - |
 
