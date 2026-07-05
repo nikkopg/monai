@@ -13,7 +13,7 @@
 - [x] **Phase 1: Schema Foundation + Auth** - Alembic migrations, new tables, API key auth — unblocks everything downstream (completed 2026-06-21)
 - [x] **Phase 2: Agentic Loop + Confirm-Before-Write** - Multi-step agent replaces single-shot router; write proposals with human approval gate (completed 2026-07-03)
 - [x] **Phase 3: Multi-Page UI Shell + Settings** - Four-page navigation, Settings page; users can navigate and configure the app (completed 2026-07-04)
-- [ ] **Phase 4: Cashflow Dashboard + CRUD** - Spending/income dashboard with charts; full transaction/account/category management in UI
+- [x] **Phase 4: Cashflow Dashboard + CRUD** - Spending/income dashboard with charts; full transaction/account/category management in UI (completed 2026-07-05)
 - [ ] **Phase 5: Investment Subsystem** - Holdings CRUD, live prices, P&L display, portfolio events, and spending-correlation queries
 - [ ] **Phase 6: MCP Server** - FastMCP server co-mounted in FastAPI; read-only tools exposed to external clients
 
@@ -118,7 +118,7 @@
 
 **Wave 4** *(depends 04-03 + 04-04)*
 
-- [ ] 04-05-PLAN.md — Frontend CRUD: TransactionModal, ConfirmDialog, AccountManager, CategoryManager, CsvUpload + refetch wiring (CASH-04..08, D-03/09/10) [wave 4]
+- [x] 04-05-PLAN.md — Frontend CRUD: TransactionModal, ConfirmDialog, AccountManager, CategoryManager, CsvUpload + refetch wiring (CASH-04..08, D-03/09/10) [wave 4]
 
 **UI hint**: yes
 
@@ -164,7 +164,7 @@
 | 1. Schema Foundation + Auth | 3/3 | Complete   | 2026-06-21 |
 | 2. Agentic Loop + Confirm-Before-Write | 2/3 | In Progress|  |
 | 3. Multi-Page UI Shell + Settings | 3/3 | Complete   | 2026-07-04 |
-| 4. Cashflow Dashboard + CRUD | 4/5 | In Progress|  |
+| 4. Cashflow Dashboard + CRUD | 5/5 | Complete   | 2026-07-05 |
 | 5. Investment Subsystem | 0/? | Not started | - |
 | 6. MCP Server | 0/? | Not started | - |
 
