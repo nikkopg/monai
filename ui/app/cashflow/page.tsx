@@ -2,10 +2,15 @@
 
 import { useEffect, useState } from "react";
 
-import { card, input, btn, label } from "../styles";
+import { card, btn, label } from "../styles";
 import CategoryDonut from "./charts/CategoryDonut";
 import IncomeExpenseBar from "./charts/IncomeExpenseBar";
 import TrendChart from "./charts/TrendChart";
+import TransactionModal, { type Tx as ModalTx } from "./TransactionModal";
+import ConfirmDialog from "./ConfirmDialog";
+import AccountManager from "./AccountManager";
+import CategoryManager from "./CategoryManager";
+import CsvUpload from "./CsvUpload";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -17,6 +22,8 @@ type Tx = {
   amount: number;
   category: string | null;
   merchant: string | null;
+  account_id: number | null;
+  notes: string | null;
   is_transfer: boolean;
 };
 
@@ -51,20 +58,11 @@ const PERIOD_OPTIONS: { value: Period; label: string }[] = [
 
 // ---------------------------------------------------------------------------
 // Cashflow page — dashboard (totals, per-account balances, charts, trend)
-// plus the interim manual transaction entry + recent transactions list from
-// Phase 3. CRUD (edit/delete, account/category management, CSV upload) ships
-// in Plan 05, which refactors the entry form into a modal on this same page.
+// plus full CRUD (Plan 05): TransactionModal (create/edit), ConfirmDialog
+// (destructive confirmations), AccountManager, CategoryManager, and
+// CsvUpload. Every write refetches both the transactions list and the
+// summary (refreshAll, Pattern 5) so nothing requires a page reload.
 // ---------------------------------------------------------------------------
-
-// Format a Date as a `datetime-local`-compatible string using LOCAL wall-clock
-// components. Using toISOString() here would emit UTC, which the input then
-// re-parses as local time — shifting the value by the user's UTC offset (WR-06).
-function toLocalDatetimeInputValue(d: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(
-    d.getHours()
-  )}:${pad(d.getMinutes())}`;
-}
 
 export default function CashflowPage() {
   // Dashboard state
@@ -72,20 +70,13 @@ export default function CashflowPage() {
   const [summary, setSummary] = useState<CashflowSummary | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
 
-  // Entry form state
-  const [form, setForm] = useState({
-    date: toLocalDatetimeInputValue(new Date()),
-    amount: "",
-    category: "",
-    merchant: "",
-    account: "Cash",
-    notes: "",
-    is_transfer: false,
-  });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
   const [txs, setTxs] = useState<Tx[]>([]);
+
+  // Transaction modal (create/edit, D-10) + delete confirm state
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editingTx, setEditingTx] = useState<ModalTx | null>(null);
+  const [deletingTx, setDeletingTx] = useState<Tx | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   async function loadSummary(p: Period) {
     try {
@@ -110,6 +101,13 @@ export default function CashflowPage() {
     if (r.ok) setTxs(await r.json());
   }
 
+  // Refetch BOTH the transactions list and the summary after every write, so
+  // the recent-transactions list AND the dashboard totals/per-account
+  // balances update immediately with no page reload (Pattern 5, D-08).
+  async function refreshAll() {
+    await Promise.all([loadTxs(), loadSummary(period)]);
+  }
+
   useEffect(() => {
     loadTxs();
   }, []);
@@ -119,34 +117,20 @@ export default function CashflowPage() {
   }, [period]);
 
   // ---------------------------------------------------------------------------
-  // Transaction form
+  // Transaction delete
   // ---------------------------------------------------------------------------
 
-  async function addTx(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true);
-    setError(null);
+  async function confirmDeleteTx() {
+    if (!deletingTx) return;
+    setDeleteError(null);
     try {
-      const body = {
-        date: new Date(form.date).toISOString(),
-        amount: parseFloat(form.amount),
-        category: form.category || null,
-        merchant: form.merchant || null,
-        account: form.account,
-        notes: form.notes || null,
-        is_transfer: form.is_transfer,
-      };
-      const r = await fetch("/api/transactions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+      const r = await fetch(`/api/transactions/${deletingTx.id}`, {
+        method: "DELETE",
       });
       if (r.ok) {
-        setForm({ ...form, amount: "", category: "", merchant: "", notes: "" });
-        loadTxs();
-        loadSummary(period);
+        setDeletingTx(null);
+        await refreshAll();
       } else {
-        // Surface non-2xx responses instead of silently no-op'ing (WR-05).
         let detail = `HTTP ${r.status}`;
         try {
           const errBody = await r.json();
@@ -154,12 +138,14 @@ export default function CashflowPage() {
         } catch {
           // keep the status-based detail
         }
-        setError(`Couldn't save transaction: ${detail}`);
+        setDeleteError(`Couldn't save transaction: ${detail}. Nothing was changed.`);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Network error");
-    } finally {
-      setSaving(false);
+      setDeleteError(
+        `Couldn't save transaction: ${
+          e instanceof Error ? e.message : "Network error"
+        }. Nothing was changed.`
+      );
     }
   }
 
@@ -382,139 +368,147 @@ export default function CashflowPage() {
         </>
       )}
 
-      {/* Add transaction */}
-      <section style={card}>
-        <label style={label}>Log a transaction</label>
-        <form onSubmit={addTx}>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "1fr 1fr",
-              gap: 10,
-              marginBottom: 10,
-            }}
-          >
-            <div>
-              <label style={label}>Date</label>
-              <input
-                style={input}
-                type="datetime-local"
-                value={form.date}
-                onChange={(e) => setForm({ ...form, date: e.target.value })}
-              />
-            </div>
-            <div>
-              <label style={label}>Amount (negative = expense)</label>
-              <input
-                style={input}
-                type="number"
-                step="any"
-                required
-                value={form.amount}
-                placeholder="-25000"
-                onChange={(e) =>
-                  setForm({ ...form, amount: e.target.value })
-                }
-              />
-            </div>
-            <div>
-              <label style={label}>Category</label>
-              <input
-                style={input}
-                value={form.category}
-                placeholder="Food & Drinks"
-                onChange={(e) =>
-                  setForm({ ...form, category: e.target.value })
-                }
-              />
-            </div>
-            <div>
-              <label style={label}>Merchant / note</label>
-              <input
-                style={input}
-                value={form.merchant}
-                placeholder="warung sate"
-                onChange={(e) =>
-                  setForm({ ...form, merchant: e.target.value })
-                }
-              />
-            </div>
-            <div>
-              <label style={label}>Account</label>
-              <input
-                style={input}
-                value={form.account}
-                onChange={(e) =>
-                  setForm({ ...form, account: e.target.value })
-                }
-              />
-            </div>
-            <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
-              <label style={{ ...label, marginBottom: 10 }}>
-                <input
-                  type="checkbox"
-                  checked={form.is_transfer}
-                  onChange={(e) =>
-                    setForm({ ...form, is_transfer: e.target.checked })
-                  }
-                  style={{ marginRight: 6 }}
-                />
-                Transfer
-              </label>
-            </div>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button style={btn} type="submit" disabled={saving}>
-              {saving ? "Saving…" : "Add transaction"}
-            </button>
-            {error && (
-              <span style={{ color: "#f87171", fontSize: 12 }}>{error}</span>
-            )}
-          </div>
-        </form>
-      </section>
-
       {/* Recent transactions */}
       <section style={card}>
-        <label style={label}>Recent transactions</label>
-        <table
-          style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 8,
+          }}
         >
-          <tbody>
-            {txs.map((t) => (
-              <tr key={t.id} style={{ borderTop: "1px solid #2a2e37" }}>
-                <td
-                  style={{
-                    padding: "8px 4px",
-                    color: "#9aa0a6",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {t.date.slice(0, 10)}
-                </td>
-                <td style={{ padding: "8px 4px" }}>
-                  {t.category || "—"}
-                  {t.is_transfer ? " (transfer)" : ""}
-                  {t.merchant ? (
-                    <span style={{ color: "#9aa0a6" }}> · {t.merchant}</span>
-                  ) : null}
-                </td>
-                <td
-                  style={{
-                    padding: "8px 4px",
-                    textAlign: "right",
-                    color: t.amount < 0 ? "#f87171" : "#4ade80",
-                    fontVariantNumeric: "tabular-nums",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {fmt(t.amount)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+          <label style={{ ...label, marginBottom: 0 }}>Recent transactions</label>
+          <button
+            type="button"
+            style={{ ...btn, padding: "4px 12px", fontSize: 12 }}
+            onClick={() => {
+              setEditingTx(null);
+              setModalOpen(true);
+            }}
+          >
+            Add transaction
+          </button>
+        </div>
+
+        {txs.length === 0 ? (
+          <div>
+            <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>
+              No transactions yet.
+            </div>
+            <div style={{ color: "#9aa0a6", fontSize: 14 }}>
+              Add your first transaction above, or upload a Wallet CSV export
+              to get started.
+            </div>
+          </div>
+        ) : (
+          <table
+            style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}
+          >
+            <tbody>
+              {txs.map((t) => (
+                <tr key={t.id} style={{ borderTop: "1px solid #2a2e37" }}>
+                  <td
+                    style={{
+                      padding: "8px 4px",
+                      color: "#9aa0a6",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {t.date.slice(0, 10)}
+                  </td>
+                  <td style={{ padding: "8px 4px" }}>
+                    {t.category || "—"}
+                    {t.is_transfer ? " (transfer)" : ""}
+                    {t.merchant ? (
+                      <span style={{ color: "#9aa0a6" }}> · {t.merchant}</span>
+                    ) : null}
+                  </td>
+                  <td
+                    style={{
+                      padding: "8px 4px",
+                      textAlign: "right",
+                      color: t.amount < 0 ? "#f87171" : "#4ade80",
+                      fontVariantNumeric: "tabular-nums",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {fmt(t.amount)}
+                  </td>
+                  <td
+                    style={{
+                      padding: "8px 4px",
+                      textAlign: "right",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    <span
+                      role="button"
+                      onClick={() => {
+                        setEditingTx(t);
+                        setModalOpen(true);
+                      }}
+                      style={{
+                        color: "#9aa0a6",
+                        cursor: "pointer",
+                        marginRight: 12,
+                        fontSize: 12,
+                      }}
+                    >
+                      Edit
+                    </span>
+                    <span
+                      role="button"
+                      onClick={() => setDeletingTx(t)}
+                      style={{ color: "#f87171", cursor: "pointer", fontSize: 12 }}
+                    >
+                      Delete
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </section>
+
+      {/* Account manager */}
+      <AccountManager
+        accounts={summary?.accounts ?? []}
+        onChanged={refreshAll}
+      />
+
+      {/* Category manager */}
+      <CategoryManager onChanged={refreshAll} />
+
+      {/* CSV upload — last section per UI-SPEC page structure */}
+      <CsvUpload onImported={refreshAll} />
+
+      {modalOpen && (
+        <TransactionModal
+          editingTx={editingTx}
+          accounts={summary?.accounts ?? []}
+          onClose={() => {
+            setModalOpen(false);
+            setEditingTx(null);
+          }}
+          onSaved={refreshAll}
+        />
+      )}
+
+      {deletingTx && (
+        <ConfirmDialog
+          message="Delete this transaction? This can't be undone."
+          confirmLabel="Delete"
+          onCancel={() => setDeletingTx(null)}
+          onConfirm={confirmDeleteTx}
+        />
+      )}
+      {deleteError && (
+        <div style={{ color: "#f87171", fontSize: 12, marginTop: 8 }}>
+          {deleteError}
+        </div>
+      )}
     </main>
   );
 }
