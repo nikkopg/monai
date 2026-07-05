@@ -101,7 +101,7 @@
   5. A user can rename a category (all affected transactions remapped) and merge one category into another from the UI
   6. A user can upload a Wallet CSV file from the UI and see the count of rows parsed, inserted, and skipped
 
-**Plans**: 5 plans
+**Plans**: 7 plans (2 gap-closure)
 
 **Wave 1** *(parallel — no file overlap)*
 
@@ -119,6 +119,11 @@
 **Wave 4** *(depends 04-03 + 04-04)*
 
 - [x] 04-05-PLAN.md — Frontend CRUD: TransactionModal, ConfirmDialog, AccountManager, CategoryManager, CsvUpload + refetch wiring (CASH-04..08, D-03/09/10) [wave 4]
+
+**Wave 5** *(gap closure from 04-UAT.md — parallel, no file overlap)*
+
+- [ ] 04-06-PLAN.md — Gap 1 (major): add this_week/last_week to PERIODS + resolve_period, ValueError→422 on /cashflow/summary, backend tests (CASH-01/02/03) [wave 5]
+- [ ] 04-07-PLAN.md — Gap 2 (minor): TransactionModal category becomes a select from GET /categories with deliberate "+ New category…" affordance, e2e updates (CASH-04/06) [wave 5]
 
 **UI hint**: yes
 
