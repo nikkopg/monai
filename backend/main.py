@@ -7,9 +7,19 @@ Run (dev):
 
 Endpoints:
     GET  /health
+    GET  /cashflow/summary       aggregate dashboard payload (D-08)
     GET  /accounts
+    POST /accounts               create an account (requires API key)
+    PUT  /accounts/{id}          edit an account (requires API key)
+    DELETE /accounts/{id}        delete (reassign-then-delete via ?reassign_to=) (requires API key)
     GET  /transactions?limit=50
     POST /transactions          create one (logs new spending)
+    PUT  /transactions/{id}     partial-update a transaction (requires API key)
+    DELETE /transactions/{id}   delete a transaction (requires API key)
+    GET  /categories            distinct category names (public)
+    GET  /categories/{name}/affected-count  count of transactions in a category (public)
+    POST /categories/rename     rename a category across all transactions (requires API key)
+    POST /categories/merge      merge one category into another (requires API key)
     POST /import                multipart CSV upload (Wallet export)
     POST /query                 natural-language question over your data
     POST /query-stream          streaming SSE agent response
@@ -28,7 +38,7 @@ from datetime import datetime, timezone
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from sqlalchemy import desc
+from sqlalchemy import desc, text
 from sqlalchemy.orm import Session
 
 from backend.auth import require_api_key
@@ -46,7 +56,13 @@ from backend.writes import (
     apply_rename_category,
 )
 from backend.schemas import (
+    AccountCreate,
     AccountOut,
+    AccountUpdate,
+    AffectedCountResponse,
+    CashflowSummary,
+    CategoryMergeRequest,
+    CategoryRenameRequest,
     ConfirmRequest,
     ImportResponse,
     ProposalOut,
@@ -56,6 +72,16 @@ from backend.schemas import (
     SettingsUpdate,
     TransactionCreate,
     TransactionOut,
+    TransactionUpdate,
+)
+from backend.tools import (
+    account_balances,
+    income_total,
+    monthly_trend,
+    net_total,
+    resolve_period,
+    spending_by_category,
+    spending_total,
 )
 from backend.settings import (
     KEY_ANTHROPIC_API_KEY,
@@ -92,6 +118,89 @@ def list_accounts(db: Session = Depends(get_session)):
     return db.query(Account).order_by(Account.name).all()
 
 
+@app.post("/accounts", response_model=AccountOut, status_code=201, dependencies=[Depends(require_api_key)])
+def create_account(payload: AccountCreate, db: Session = Depends(get_session)):
+    """Create an account (CASH-05). Routed through apply_add_account (audited)."""
+    acc = apply_add_account(db, payload.model_dump(mode="json"))
+    db.commit()
+    db.refresh(acc)
+    from backend.query import reset_engine
+    reset_engine()
+    return acc
+
+
+@app.put("/accounts/{account_id}", response_model=AccountOut, dependencies=[Depends(require_api_key)])
+def update_account(account_id: int, payload: AccountUpdate, db: Session = Depends(get_session)):
+    """Partial-update an account (CASH-05). Only supplied fields change."""
+    acc = db.get(Account, account_id)
+    if acc is None:
+        raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
+    before = {"id": acc.id, "name": acc.name, "type": acc.type, "currency": acc.currency}
+    try:
+        apply_edit_account(db, account_id, payload.model_dump(mode="json", exclude_none=True), before)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(acc)
+    from backend.query import reset_engine
+    reset_engine()
+    return acc
+
+
+@app.delete("/accounts/{account_id}", dependencies=[Depends(require_api_key)])
+def delete_account(
+    account_id: int,
+    reassign_to: int | None = None,
+    db: Session = Depends(get_session),
+):
+    """Delete an account with reassign-then-delete (CASH-05, D-05/D-06).
+
+    - No transactions → plain audited delete.
+    - Has transactions and no reassign_to → 422 with affected_count (D-06); the
+      exact detail shape the UI copy consumes.
+    - reassign_to set → the transactions are reassigned to the target account and
+      the source is deleted in ONE audited helper call (apply_delete_account
+      writes the single AuditLog row capturing the reassignment target + count);
+      the reassignment is NOT an inline bulk update here (WARNING 1 fix).
+
+    The reassignment DECISION lives here; the reassignment WRITE lives in the
+    audited helper (Open Question 2 — propose_delete_account stays block-only).
+    """
+    acc = db.get(Account, account_id)
+    if acc is None:
+        raise HTTPException(status_code=404, detail=f"Account {account_id} not found")
+    before = {"id": acc.id, "name": acc.name, "type": acc.type, "currency": acc.currency}
+
+    tx_count = int(
+        db.execute(
+            text("SELECT COUNT(*) FROM transactions WHERE account_id = :aid"),
+            {"aid": account_id},
+        ).scalar()
+        or 0
+    )
+
+    if tx_count > 0:
+        if reassign_to is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": f"{tx_count} transactions use this account — reassign or delete them first",
+                    "affected_count": tx_count,
+                },
+            )
+        target = db.get(Account, reassign_to)
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"Reassign target account {reassign_to} not found")
+        reassigned = apply_delete_account(db, account_id, before, reassign_to=reassign_to)
+    else:
+        reassigned = apply_delete_account(db, account_id, before)
+
+    db.commit()
+    from backend.query import reset_engine
+    reset_engine()
+    return {"status": "deleted", "reassigned": reassigned}
+
+
 @app.get("/transactions", response_model=list[TransactionOut])
 def list_transactions(limit: int = 50, db: Session = Depends(get_session)):
     return (
@@ -100,6 +209,32 @@ def list_transactions(limit: int = 50, db: Session = Depends(get_session)):
         .limit(min(limit, 500))
         .all()
     )
+
+
+@app.get("/cashflow/summary", response_model=CashflowSummary)
+def cashflow_summary(
+    period: str = "this_month",
+    start_date: str | None = None,
+    end_date: str | None = None,
+    db: Session = Depends(get_session),
+):
+    """Single aggregate dashboard payload (D-08, CASH-01/02/03).
+
+    Resolves the period exactly once and composes existing tools.py
+    aggregations + account_balances/monthly_trend (Plan 02). trend always
+    covers >=6 months regardless of the selected period (Pitfall 4). This is
+    an open read (no require_api_key), matching existing GET reads.
+    """
+    s, e = resolve_period(period, start_date, end_date)
+    totals = {
+        "income": income_total(period, start_date, end_date)["total"],
+        "expense": spending_total(period, start_date, end_date)["total"],
+        "net": net_total(period, start_date, end_date)["net"],
+    }
+    by_category = spending_by_category(period, start_date, end_date, limit=10)["rows"]
+    accounts = account_balances(s, e)["rows"]
+    trend = monthly_trend(6)["rows"]
+    return CashflowSummary(totals=totals, by_category=by_category, accounts=accounts, trend=trend)
 
 
 @app.post("/transactions", response_model=TransactionOut, status_code=201, dependencies=[Depends(require_api_key)])
@@ -123,6 +258,104 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_ses
     from backend.query import reset_engine
     reset_engine()
     return tx
+
+
+@app.put("/transactions/{tx_id}", response_model=TransactionOut, dependencies=[Depends(require_api_key)])
+def update_transaction(tx_id: int, payload: TransactionUpdate, db: Session = Depends(get_session)):
+    """Partial-update a transaction (CASH-04). Only supplied fields change."""
+    tx = db.get(Transaction, tx_id)
+    if tx is None:
+        raise HTTPException(status_code=404, detail=f"Transaction {tx_id} not found")
+    before = {
+        "id": tx.id,
+        "date": tx.date.isoformat() if tx.date else None,
+        "amount": str(tx.amount),
+        "currency": tx.currency,
+        "category": tx.category,
+        "merchant": tx.merchant,
+        "notes": tx.notes,
+        "account_id": tx.account_id,
+        "is_transfer": tx.is_transfer,
+    }
+    after = payload.model_dump(mode="json", exclude_none=True)
+    try:
+        apply_edit_transaction(db, tx_id, after, before)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(tx)
+    from backend.query import reset_engine
+    reset_engine()
+    return tx
+
+
+@app.delete("/transactions/{tx_id}", dependencies=[Depends(require_api_key)])
+def delete_transaction(tx_id: int, db: Session = Depends(get_session)):
+    """Delete a transaction (CASH-04)."""
+    tx = db.get(Transaction, tx_id)
+    if tx is None:
+        raise HTTPException(status_code=404, detail=f"Transaction {tx_id} not found")
+    before = {
+        "id": tx.id,
+        "date": tx.date.isoformat() if tx.date else None,
+        "amount": str(tx.amount),
+        "currency": tx.currency,
+        "category": tx.category,
+        "merchant": tx.merchant,
+        "notes": tx.notes,
+        "account_id": tx.account_id,
+        "is_transfer": tx.is_transfer,
+    }
+    apply_delete_transaction(db, tx_id, before)
+    db.commit()
+    from backend.query import reset_engine
+    reset_engine()
+    return {"status": "deleted"}
+
+
+@app.get("/categories")
+def list_category_names(db: Session = Depends(get_session)):
+    """Distinct category names across all transactions (open read).
+
+    The deterministic enumeration source Plan 05's CategoryManager consumes
+    (WARNING 2 fix) — reuses the same parameterized-SQL approach as
+    list_categories() in tools.py rather than hand-building SQL here.
+    """
+    sql = "SELECT DISTINCT category FROM transactions WHERE category IS NOT NULL ORDER BY category"
+    rows = db.execute(text(sql)).fetchall()
+    return {"categories": [r[0] for r in rows]}
+
+
+@app.get("/categories/{name}/affected-count", response_model=AffectedCountResponse)
+def category_affected_count(name: str, db: Session = Depends(get_session)):
+    """Count of transactions currently in the given category (open read, D-09)."""
+    count = int(
+        db.execute(
+            text("SELECT COUNT(*) FROM transactions WHERE category = :cat"), {"cat": name}
+        ).scalar()
+        or 0
+    )
+    return AffectedCountResponse(category=name, affected_count=count)
+
+
+@app.post("/categories/rename", dependencies=[Depends(require_api_key)])
+def rename_category(req: CategoryRenameRequest, db: Session = Depends(get_session)):
+    """Rename a category across all matching transactions (CASH-06)."""
+    count = apply_rename_category(db, req.old_name, req.new_name)
+    db.commit()
+    from backend.query import reset_engine
+    reset_engine()
+    return {"old_name": req.old_name, "new_name": req.new_name, "affected_count": count}
+
+
+@app.post("/categories/merge", dependencies=[Depends(require_api_key)])
+def merge_category(req: CategoryMergeRequest, db: Session = Depends(get_session)):
+    """Merge one category into another across all matching transactions (CASH-07)."""
+    count = apply_merge_category(db, req.from_name, req.into_name)
+    db.commit()
+    from backend.query import reset_engine
+    reset_engine()
+    return {"from_name": req.from_name, "into_name": req.into_name, "affected_count": count}
 
 
 @app.get("/settings", response_model=SettingsOut)
