@@ -1,5 +1,5 @@
 ---
-status: complete
+status: diagnosed
 phase: 04-cashflow-dashboard-crud
 source: [04-01-SUMMARY.md, 04-02-SUMMARY.md, 04-03-SUMMARY.md, 04-04-SUMMARY.md, 04-05-SUMMARY.md]
 started: 2026-07-05T06:26:47Z
@@ -80,17 +80,31 @@ blocked: 0
   reason: "User reported: i got this when clicking this week, other card work — Couldn't load the dashboard — check the backend is running and reload the page."
   severity: major
   test: 3
-  root_cause: ""     # Filled by diagnosis
-  artifacts: []      # Filled by diagnosis
-  missing: []        # Filled by diagnosis
-  debug_session: ""  # Filled by diagnosis
+  root_cause: "Frontend/backend period-key contract mismatch: the 'This week' pill sends period=this_week, but PERIODS in backend/tools.py has no week entry, so resolve_period() raises ValueError. /cashflow/summary is the only endpoint calling resolve_period without the standard ValueError→HTTPException(422) mapping, so it surfaces as HTTP 500 and the frontend renders its generic error state."
+  artifacts:
+    - path: "ui/app/cashflow/page.tsx"
+      issue: "Lines 50-57: Period type + PERIOD_OPTIONS include this_week, a key the backend doesn't recognize; lines 83-97: loadSummary collapses any non-ok into the generic error copy"
+    - path: "backend/tools.py"
+      issue: "Lines 30-33: PERIODS tuple lacks any week entry; lines 40-75: resolve_period() has no week branch, raises ValueError at line 75"
+    - path: "backend/main.py"
+      issue: "Lines 214-237: /cashflow/summary calls resolve_period (line 228) without ValueError→422 mapping, so invalid period becomes a raw 500"
+  missing:
+    - "Add 'this_week' to PERIODS and a this_week branch in resolve_period (ISO-Monday week start, half-open [monday, next_monday) bounds, consistent with existing conventions)"
+    - "Wrap /cashflow/summary handler with the standard try/except ValueError → HTTPException(422)"
+    - "(Optional) frontend distinguishes 4xx from connectivity failure in error copy; consider last_week sibling"
+  debug_session: ".planning/debug/this-week-period-fails.md"
 
-- truth: "Category names are treated case-insensitively (or normalized) so the same category is not duplicated as 'jajan' vs 'Jajan'"
+- truth: "The same category is not duplicated by a typo or case difference ('jajan' vs 'Jajan')"
   status: failed
-  reason: "User observed during rename test: 'why jajan and Jajan created 2 different categories?' — categories are case-sensitive, fragmenting spending across duplicate names."
+  reason: "User observed during rename test: 'why jajan and Jajan created 2 different categories?' — categories are free-text and case-sensitive, so typing the name by hand creates duplicate categories that fragment spending."
   severity: minor
   test: 10
-  root_cause: ""     # Filled by diagnosis
-  artifacts: []      # Filled by diagnosis
-  missing: []        # Filled by diagnosis
-  debug_session: ""  # Filled by diagnosis
+  root_cause: "Category is entered as a free-text field on the transaction form; there is no constraint on category names and no normalization, so any spelling/case variant ('jajan' vs 'Jajan') becomes a distinct category value stored on the transaction row."
+  user_fix_direction: "Replace the free-text category input in the Add/Edit Transaction modal with a dropdown/select populated from the existing categories (GET /categories), so the user chooses an existing category instead of retyping it. (Optional: still allow creating a new category deliberately, but default to selection to prevent accidental typos/case duplicates.)"
+  artifacts:
+    - path: "ui/app/cashflow/TransactionModal.tsx"
+      issue: "Category entered via free-text input, allowing typo/case-variant duplicates"
+  missing:
+    - "Change TransactionModal category field from free-text input to a select sourced from GET /categories"
+    - "(Optional) allow an explicit 'add new category' affordance rather than free typing by default"
+  debug_session: "(inline — cause understood from UAT; no debug agent needed)"
