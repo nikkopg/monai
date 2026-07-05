@@ -112,3 +112,46 @@ def test_custom_month_scopes_a_second_category_independently(seeded_scoping_data
     assert june == pytest.approx(12000.0)  # 5k + 7k (June 30 included)
     assert all_time == pytest.approx(912000.0)  # + the 900k July row
     assert june < all_time
+
+
+# ---------------------------------------------------------------------------
+# Gap closure 04-06: this_week / last_week named periods (UAT gap 1)
+#
+# The frontend's "This week" pill sends period=this_week, but PERIODS had no
+# week entry, so resolve_period raised ValueError and the dashboard broke.
+# These tests pin the ISO-Monday, half-open [monday, next_monday) contract
+# without freezing the clock — they assert weekday/duration/containment
+# invariants that hold on any calendar day.
+# ---------------------------------------------------------------------------
+
+def test_this_week_is_iso_monday_half_open_and_contains_today():
+    """resolve_period('this_week') → [ISO Monday, next Monday), 7-day span,
+    containing today. Deterministic on any day (no time freezing)."""
+    s, e = resolve_period("this_week")
+    assert s.weekday() == 0  # ISO Monday start
+    assert (e - s).days == 7  # exactly one week, half-open
+    assert s <= datetime.date.today() < e  # today falls inside the window
+
+
+def test_last_week_ends_where_this_week_starts():
+    """resolve_period('last_week') → the week immediately before this_week:
+    its end equals this_week's start (adjacency), also ISO-Monday, 7-day."""
+    tw_start, _ = resolve_period("this_week")
+    s, e = resolve_period("last_week")
+    assert s.weekday() == 0
+    assert (e - s).days == 7
+    assert e == tw_start  # last_week's end == this_week's start (no gap/overlap)
+
+
+def test_this_week_is_case_insensitive():
+    """resolve_period normalizes via .lower(), so THIS_WEEK == this_week —
+    lock the contract the router relies on."""
+    assert resolve_period("THIS_WEEK") == resolve_period("this_week")
+
+
+def test_unknown_period_still_raises_valueerror_naming_the_value():
+    """The ValueError fallthrough is preserved and its message names the
+    offending value (the fallthrough interpolates PERIODS + the input)."""
+    with pytest.raises(ValueError) as exc:
+        resolve_period("fortnight")
+    assert "fortnight" in str(exc.value)

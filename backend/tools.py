@@ -28,6 +28,7 @@ from backend.db import engine, get_session_sync
 
 # Named periods the router can choose from. Resolved to [start, end) date bounds.
 PERIODS = (
+    "this_week", "last_week",
     "this_month", "last_month", "this_year", "last_year",
     "last_30_days", "last_90_days", "all_time", "custom",
 )
@@ -55,6 +56,15 @@ def resolve_period(
         if e is not None:
             e = e + datetime.timedelta(days=1)
         return s, e
+    if period == "this_week":
+        # ISO week: Monday (weekday()==0) start, half-open through next Monday.
+        monday = today - datetime.timedelta(days=today.weekday())
+        return monday, monday + datetime.timedelta(days=7)
+    if period == "last_week":
+        # The full week before this_week: its end is exactly this_week's start,
+        # mirroring how last_month's end is this_month's start.
+        monday = today - datetime.timedelta(days=today.weekday())
+        return monday - datetime.timedelta(days=7), monday
     if period == "this_month":
         s = today.replace(day=1)
         return s, _first_of_next_month(s)
