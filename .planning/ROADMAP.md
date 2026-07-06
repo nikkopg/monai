@@ -122,8 +122,8 @@
 
 **Wave 5** *(gap closure from 04-UAT.md — parallel, no file overlap)*
 
-- [ ] 04-06-PLAN.md — Gap 1 (major): add this_week/last_week to PERIODS + resolve_period, ValueError→422 on /cashflow/summary, backend tests (CASH-01/02/03) [wave 5]
-- [ ] 04-07-PLAN.md — Gap 2 (minor): TransactionModal category becomes a select from GET /categories with deliberate "+ New category…" affordance, e2e updates (CASH-04/06) [wave 5]
+- [x] 04-06-PLAN.md — Gap 1 (major): add this_week/last_week to PERIODS + resolve_period, ValueError→422 on /cashflow/summary, backend tests (CASH-01/02/03) [wave 5]
+- [x] 04-07-PLAN.md — Gap 2 (minor): TransactionModal category becomes a select from GET /categories with deliberate "+ New category…" affordance, e2e updates (CASH-04/06) [wave 5]
 
 **UI hint**: yes
 
@@ -169,7 +169,7 @@
 | 1. Schema Foundation + Auth | 3/3 | Complete   | 2026-06-21 |
 | 2. Agentic Loop + Confirm-Before-Write | 2/3 | In Progress|  |
 | 3. Multi-Page UI Shell + Settings | 3/3 | Complete   | 2026-07-04 |
-| 4. Cashflow Dashboard + CRUD | 5/5 | Complete   | 2026-07-05 |
+| 4. Cashflow Dashboard + CRUD | 7/7 | Complete   | 2026-07-06 |
 | 5. Investment Subsystem | 0/? | Not started | - |
 | 6. MCP Server | 0/? | Not started | - |
 
