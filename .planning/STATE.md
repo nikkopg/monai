@@ -108,7 +108,7 @@ Recent decisions affecting current work:
 ## Session Continuity
 
 Last session: 2026-07-06T12:25:00.000Z
-Stopped at: Phase 4 complete + gap closures 04-06/04-07 verified against live stack
+Stopped at: Phase 4 fully verified (code + live + human browser-verify) — ready for Phase 5
 Resume file: .planning/phases/04-cashflow-dashboard-crud/04-UAT.md
 
 Phase 4 gap verification (2026-07-06):
@@ -118,7 +118,8 @@ Phase 4 gap verification (2026-07-06):
   payload; bogus period -> 422 with valid-period list (no more 500).
 - 04-07 verified: deployed /cashflow bundle contains the category <select> markers
   ((no category), + New category…, __new_category__); /categories returns 73 names.
-- Remaining: optional visual browser click-through of the Add/Edit modal + week pill.
+- Human browser-verify PASSED (2026-07-06, user-confirmed): category dropdown and
+  weekly pill work as expected. Phase 4 fully verified — no open UAT items.
 
 Notes for next session:
 
