@@ -2,9 +2,9 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: executing
-stopped_at: Phase 4 complete (gap closures 04-06/04-07 landed) — human browser-verify pending
-last_updated: "2026-07-06T12:21:00.000Z"
+status: completed
+stopped_at: Phase 5 context gathered
+last_updated: "2026-07-06T13:31:01.615Z"
 last_activity: 2026-07-06 -- Phase 04 gap-closure plans 04-06 + 04-07 executed and merged
 progress:
   total_phases: 6
@@ -107,17 +107,21 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-07-06T12:25:00.000Z
-Stopped at: Phase 4 fully verified (code + live + human browser-verify) — ready for Phase 5
-Resume file: .planning/phases/04-cashflow-dashboard-crud/04-UAT.md
+Last session: 2026-07-06T13:31:01.586Z
+Stopped at: Phase 5 context gathered
+Resume file: .planning/phases/05-investment-subsystem/05-CONTEXT.md
 
 Phase 4 gap verification (2026-07-06):
+
 - Rebuilt monai-backend + monai-frontend — running containers were a ~30h-old image
   predating ALL Phase 4 fixes (see memory: deploy-requires-rebuild).
+
 - 04-06 verified live: GET /cashflow/summary?period=this_week|last_week -> 200 full
   payload; bogus period -> 422 with valid-period list (no more 500).
+
 - 04-07 verified: deployed /cashflow bundle contains the category <select> markers
   ((no category), + New category…, __new_category__); /categories returns 73 names.
+
 - Human browser-verify PASSED (2026-07-06, user-confirmed): category dropdown and
   weekly pill work as expected. Phase 4 fully verified — no open UAT items.
 
