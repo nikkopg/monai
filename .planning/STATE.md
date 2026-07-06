@@ -107,9 +107,18 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-07-04T08:59:36.927Z
-Stopped at: Phase 4 context gathered
-Resume file: .planning/phases/04-cashflow-dashboard-crud/04-CONTEXT.md
+Last session: 2026-07-06T12:25:00.000Z
+Stopped at: Phase 4 complete + gap closures 04-06/04-07 verified against live stack
+Resume file: .planning/phases/04-cashflow-dashboard-crud/04-UAT.md
+
+Phase 4 gap verification (2026-07-06):
+- Rebuilt monai-backend + monai-frontend — running containers were a ~30h-old image
+  predating ALL Phase 4 fixes (see memory: deploy-requires-rebuild).
+- 04-06 verified live: GET /cashflow/summary?period=this_week|last_week -> 200 full
+  payload; bogus period -> 422 with valid-period list (no more 500).
+- 04-07 verified: deployed /cashflow bundle contains the category <select> markers
+  ((no category), + New category…, __new_category__); /categories returns 73 names.
+- Remaining: optional visual browser click-through of the Add/Edit modal + week pill.
 
 Notes for next session:
 
