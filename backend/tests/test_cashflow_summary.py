@@ -310,3 +310,36 @@ def test_cashflow_summary_resolve_period_called_once():
         f"Expected exactly one resolve_period( call in cashflow_summary body, "
         f"found {src.count('resolve_period(')}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Gap closure 04-06: week periods resolve end-to-end + invalid periods → 422
+#
+# UAT gap 1: the "This week" pill sent period=this_week, which raised ValueError
+# in resolve_period; because cashflow_summary was the only resolve_period caller
+# without the project-standard ValueError→422 mapping, the user got a raw 500 and
+# the dashboard error state. These tests pin both halves of the fix.
+# ---------------------------------------------------------------------------
+
+def test_cashflow_summary_this_week_returns_200(client):
+    """period=this_week now resolves end-to-end through the endpoint (200)."""
+    resp = client.get("/cashflow/summary?period=this_week")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert set(("totals", "by_category", "accounts", "trend")) <= set(body.keys())
+
+
+def test_cashflow_summary_last_week_returns_200(client):
+    """period=last_week also resolves end-to-end (200)."""
+    resp = client.get("/cashflow/summary?period=last_week")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert set(("totals", "by_category", "accounts", "trend")) <= set(body.keys())
+
+
+def test_cashflow_summary_unknown_period_returns_422_not_500(client):
+    """An unrecognized period is a client error (422), never a raw 500, and the
+    detail names the offending value."""
+    resp = client.get("/cashflow/summary?period=fortnight")
+    assert resp.status_code == 422, resp.text
+    assert "fortnight" in str(resp.json().get("detail", ""))
