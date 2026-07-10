@@ -1,23 +1,60 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+
 import { card } from "../styles";
+import PlatformManager, { type Platform } from "./PlatformManager";
 
 // ---------------------------------------------------------------------------
-// Investments page — Phase 3 skeleton. Server component (no client state, no
-// "use client" — RESEARCH.md Pitfall 5). Full holdings/live-price/P&L UI
-// ships in Phase 5.
+// Investments page — grown from the Phase 3 skeleton into a "use client"
+// tracker (RESEARCH Pitfall 5). This slice (Plan 05-02) renders only the
+// Platforms card hosting <PlatformManager>; the portfolio-total banner and
+// per-platform holding cards arrive in Plans 03/04.
 // ---------------------------------------------------------------------------
 
 export default function InvestmentsPage() {
+  const [platforms, setPlatforms] = useState<Platform[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const r = await fetch("/api/platforms");
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setPlatforms(await r.json());
+    } catch {
+      setError(
+        "Couldn't load your portfolio — check the backend is running and reload the page."
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "48px 24px" }}>
-      <section style={card}>
-        <h1 style={{ fontSize: 28, fontWeight: 600, marginTop: 0, marginBottom: 16 }}>
-          Investments are coming in Phase 5
-        </h1>
-        <p style={{ color: "#e6e8eb", fontSize: 14, margin: 0 }}>
-          Holdings, live prices, and profit/loss tracking will appear here
-          once the investment subsystem ships. Check back after Phase 5.
-        </p>
-      </section>
+      <h1 style={{ fontSize: 28, fontWeight: 600, marginTop: 0, marginBottom: 32 }}>
+        Investments
+      </h1>
+
+      {loading ? (
+        <section style={card}>
+          <p style={{ color: "#9aa0a6", fontSize: 14, margin: 0 }}>
+            Loading your portfolio…
+          </p>
+        </section>
+      ) : error ? (
+        <section style={card}>
+          <p style={{ color: "#f87171", fontSize: 14, margin: 0 }}>{error}</p>
+        </section>
+      ) : (
+        <PlatformManager platforms={platforms} onChanged={load} />
+      )}
     </main>
   );
 }
