@@ -44,7 +44,7 @@ Requirements for this cycle. Each maps to a roadmap phase.
 
 ### Investments
 
-- [ ] **INV-01**: User can add, edit, and remove holdings (ticker, quantity, avg cost, purchase date, currency)
+- [x] **INV-01**: User can add, edit, and remove holdings (ticker, quantity, avg cost, purchase date, currency)
 - [ ] **INV-02**: System fetches current market prices for crypto holdings
 - [ ] **INV-03**: System fetches current market prices for IDX stock holdings (best-effort, with fallback)
 - [ ] **INV-04**: User can manually set/override a holding's price (required fallback for mutual funds and no-API instruments)

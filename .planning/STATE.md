@@ -4,17 +4,17 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 05
 current_phase_name: investment-subsystem
-status: completed
-stopped_at: Phase 5 planned + plan-check PASS
-last_updated: "2026-07-10T11:35:47.928Z"
+status: in_progress
+stopped_at: Completed 05-02-PLAN.md (platform CRUD vertical slice)
+last_updated: "2026-07-10T11:48:05.837Z"
 last_activity: 2026-07-10
-last_activity_desc: Phase 05 planning pipeline complete (research→validation→ui→patterns→plan→plan-check)
+last_activity_desc: Executed Plan 05-02 — platform CRUD (backend helpers/DTOs/routes + PlatformManager UI)
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 23
-  completed_plans: 17
-  percent: 67
+  completed_plans: 20
+  percent: 78
 ---
 
 # Project State
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-06-21)
 
 ## Current Position
 
-Phase: 05 (investment-subsystem) — PLANNED (6 MVP vertical-slice plans, plan-check PASS); execution not yet started
-Plan: 1 of 6 executed
-Status: Phase 05 plans verified (05-PLAN-CHECK.md = PASS, 3 non-blocking warnings); ready for /gsd-execute-phase 5
-Last activity: 2026-07-10 -- Phase 05 planning pipeline complete (research→validation→ui→patterns→plan→plan-check)
+Phase: 05 (investment-subsystem) — IN PROGRESS (6 MVP vertical-slice plans)
+Plan: 2 of 6 executed (05-01 schema foundation, 05-02 platform CRUD)
+Status: Plan 05-02 complete — platform CRUD live end-to-end (audited writes, reassign-then-delete, PlatformManager UI); INV-01 done. Task 3 browser human-check deferred to UAT. Next: 05-03 (holdings ledger).
+Last activity: 2026-07-10 -- Executed Plan 05-02 (platform CRUD vertical slice)
 
 Progress: [███████░░░] 67% — milestone 4/6 phases
 
@@ -61,6 +61,7 @@ Progress: [███████░░░] 67% — milestone 4/6 phases
 | Phase 02-agentic-loop-confirm-before-write P03 | 8 | 2 tasks (Task 3 pending human) | 2 files |
 | Phase 05 P01 | 7m | 4 tasks | 6 files |
 | Phase 05 P01 | 7m | - tasks | - files |
+| Phase 05 P02 | ~40m | 3 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -79,6 +80,8 @@ Recent decisions affecting current work:
 - [Phase ?]: ask() thin shim preserves POST /query handler contract — no main.py changes required in plan 02-01
 - [02-03]: expires_at for ProposalCard computed client-side as Date.now()+15min — cosmetic only, server enforces on confirm (410)
 - [02-03]: SSE proxy passthrough: isStream gate before upstream.arrayBuffer(); export const dynamic = "force-dynamic"
+- [05-02]: Platform CRUD mirrors the Phase-4 account manager; reassign-then-delete moves holdings.platform_id in one audited helper (D-12/D-16)
+- [05-02]: DELETE /platforms 422 detail.affected_count consumed verbatim by PlatformManager; writes API-key guarded (T-05-02-AC), GET open
 
 ### Pending Todos
 
@@ -112,10 +115,14 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-07-10T11:35:36.066Z
-Stopped at: Phase 5 planned + plan-check PASS (ready to execute)
-Resume file: .planning/phases/05-investment-subsystem/05-PLAN-CHECK.md
-Resume command: /gsd-execute-phase 5 (Wave 1 = 05-01 alone; package-legitimacy human checkpoint pauses before pip install of yfinance/apscheduler)
+Last session: 2026-07-10 — Executed Plan 05-02 (platform CRUD vertical slice)
+Stopped at: Completed 05-02-PLAN.md; INV-01 done. One deferred item: Task 3 browser human-check on /investments (platform CRUD + reassign flow) — needs frontend+backend running.
+Resume file: .planning/phases/05-investment-subsystem/05-02-SUMMARY.md
+Resume command: /gsd-execute-phase 5 (next: Wave 3 = 05-03 holdings ledger)
+
+Plan 05-02 execution note (2026-07-10):
+- Applied pending Alembic migration 004 (b2e6d4a19f73) to live DB on localhost:5434 — Plan 01's migration was committed but never run against the dev DB (holdings.platform_id / platforms table were absent). Rule-3 schema-sync, no source change. Docker deploy path (entrypoint runs `alembic upgrade head`) still applies the same migration on rebuild.
+- 14/14 backend write-tool tests green; tsc clean; live 422/reassign integration path verified.
 
 Phase 4 gap verification (2026-07-06):
 

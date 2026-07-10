@@ -142,7 +142,7 @@
   5. The Investments page shows a total portfolio value figure with a corresponding "as of" timestamp
   6. Portfolio buy/sell events are recorded when holdings change, enabling the agent to answer: "since I bought BBCA, how has my eating-out spending changed?" with a number
 
-**Plans**: 1/6 plans executed
+**Plans**: 2/6 plans executed
 
 **Wave 1** *(foundation — runs alone)*
 
@@ -150,7 +150,7 @@
 
 **Wave 2** *(depends 05-01)*
 
-- [ ] 05-02-PLAN.md — Platform slice: apply_*_platform writes + CRUD routes + PlatformManager.tsx + /investments becomes "use client" (D-12, INV-01) [wave 2]
+- [x] 05-02-PLAN.md — Platform slice: apply_*_platform writes + CRUD routes + PlatformManager.tsx + /investments becomes "use client" (D-12, INV-01) [wave 2]
 
 **Wave 3** *(depends 05-01 + 05-02)*
 
@@ -192,7 +192,7 @@
 | 2. Agentic Loop + Confirm-Before-Write | 2/3 | In Progress|  |
 | 3. Multi-Page UI Shell + Settings | 3/3 | Complete   | 2026-07-04 |
 | 4. Cashflow Dashboard + CRUD | 7/7 | Complete   | 2026-07-06 |
-| 5. Investment Subsystem | 1/6 | In Progress|  |
+| 5. Investment Subsystem | 2/6 | In Progress|  |
 | 6. MCP Server | 0/? | Not started | - |
 
 ---
