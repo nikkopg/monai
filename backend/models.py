@@ -53,6 +53,23 @@ class Account(Base):
     )
 
 
+class Platform(Base):
+    """Investment platform / broker / exchange an instrument is held on (D-17).
+
+    Mirrors Account's shape; `holdings.platform_id` FK is nullable so existing
+    (unassigned) positions remain valid. `kind` is a free-form label
+    ('broker' | 'exchange' | 'wallet' | ...) — optional.
+    """
+
+    __tablename__ = "platforms"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(
+        String(128), unique=True, index=True, nullable=False
+    )
+    kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+
 class Transaction(Base):
     __tablename__ = "transactions"
 
@@ -142,6 +159,10 @@ class Holding(Base):
         String(8), server_default="IDR", nullable=False
     )
     asset_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Nullable FK to platforms (D-17): existing/unassigned holdings stay valid.
+    platform_id: Mapped[int | None] = mapped_column(
+        ForeignKey("platforms.id"), nullable=True, index=True
+    )
 
 
 class PortfolioEvent(Base):
@@ -192,4 +213,26 @@ class PriceCache(Base):
     source: Mapped[str] = mapped_column(String(32), nullable=False)
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default="now()", nullable=False
+    )
+
+
+class PortfolioValueHistory(Base):
+    """Daily per-holding portfolio value snapshot (D-13).
+
+    One row per holding per day (unique on (snapshot_date, ticker), enforced by
+    the migration's unique index). Powers the portfolio value time-series;
+    quantity/market_value/cost_basis reuse the Numeric precision conventions of
+    Holding (28,8) and money columns (18,2).
+    """
+
+    __tablename__ = "portfolio_value_history"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    snapshot_date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
+    ticker: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(28, 8), nullable=False)
+    market_value: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    cost_basis: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(
+        String(8), server_default="IDR", nullable=False
     )
