@@ -117,13 +117,13 @@ Which phases cover which requirements. Populated during roadmap creation.
 | CASH-06 | Phase 4: Cashflow Dashboard + CRUD | Complete |
 | CASH-07 | Phase 4: Cashflow Dashboard + CRUD | Complete |
 | CASH-08 | Phase 4: Cashflow Dashboard + CRUD | Complete |
-| INV-01 | Phase 5: Investment Subsystem | Pending |
-| INV-02 | Phase 5: Investment Subsystem | Pending |
-| INV-03 | Phase 5: Investment Subsystem | Pending |
-| INV-04 | Phase 5: Investment Subsystem | Pending |
-| INV-05 | Phase 5: Investment Subsystem | Pending |
-| INV-06 | Phase 5: Investment Subsystem | Pending |
-| INV-07 | Phase 5: Investment Subsystem | Pending |
+| INV-01 | Phase 5: Investment Subsystem | In Progress |
+| INV-02 | Phase 5: Investment Subsystem | In Progress |
+| INV-03 | Phase 5: Investment Subsystem | In Progress |
+| INV-04 | Phase 5: Investment Subsystem | In Progress |
+| INV-05 | Phase 5: Investment Subsystem | In Progress |
+| INV-06 | Phase 5: Investment Subsystem | In Progress |
+| INV-07 | Phase 5: Investment Subsystem | In Progress |
 | CHAT-03 | Phase 5: Investment Subsystem | Pending |
 | MCP-01 | Phase 6: MCP Server | Pending |
 | MCP-02 | Phase 6: MCP Server | Pending |
@@ -131,6 +131,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | MCP-04 | Phase 6: MCP Server | Pending |
 
 **Coverage:**
+
 - v1 requirements: 30 total
 - Mapped to phases: 30
 - Unmapped: 0
