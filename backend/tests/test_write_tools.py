@@ -346,6 +346,205 @@ def test_propose_merge_category_creates_proposal(db_session):
 
 
 # ---------------------------------------------------------------------------
+# D-12: Platform write helpers (apply_add_platform / apply_delete_platform)
+# ---------------------------------------------------------------------------
+
+
+def _make_platform(db, name: str = "Test Platform WTT", kind: str | None = "brokerage") -> int:
+    from backend.models import Platform
+    existing = db.query(Platform).filter(Platform.name == name).first()
+    if existing:
+        db.delete(existing)
+        db.commit()
+    plat = Platform(name=name, kind=kind)
+    db.add(plat)
+    db.commit()
+    db.refresh(plat)
+    return plat.id
+
+
+def test_apply_add_platform_creates_row_and_audit(db_session):
+    """apply_add_platform inserts a platforms row and writes exactly one
+    AuditLog(entity="platform", operation="add", before=None).
+    """
+    from backend.writes import apply_add_platform
+    from backend.models import Platform, AuditLog
+
+    name = "BCA Sekuritas WTT"
+    # Clean up leftover from a prior run
+    existing = db_session.query(Platform).filter(Platform.name == name).first()
+    if existing:
+        db_session.delete(existing)
+        db_session.commit()
+
+    before_audit = int(
+        db_session.execute(
+            text("SELECT COUNT(*) FROM audit_log WHERE entity = 'platform'")
+        ).scalar()
+        or 0
+    )
+
+    plat = apply_add_platform(db_session, {"name": name, "kind": "brokerage"})
+    db_session.commit()
+    db_session.refresh(plat)
+
+    # Row exists with the supplied values
+    row = db_session.query(Platform).filter(Platform.name == name).first()
+    assert row is not None
+    assert row.kind == "brokerage"
+
+    # Exactly one new platform AuditLog row, operation="add", before=None
+    after_audit = int(
+        db_session.execute(
+            text("SELECT COUNT(*) FROM audit_log WHERE entity = 'platform'")
+        ).scalar()
+        or 0
+    )
+    assert after_audit == before_audit + 1
+
+    log = (
+        db_session.query(AuditLog)
+        .filter(AuditLog.entity == "platform", AuditLog.entity_id == plat.id)
+        .order_by(AuditLog.id.desc())
+        .first()
+    )
+    assert log is not None
+    assert log.operation == "add"
+    assert log.before is None
+
+    # Cleanup
+    db_session.query(AuditLog).filter(
+        AuditLog.entity == "platform", AuditLog.entity_id == plat.id
+    ).delete()
+    db_session.delete(row)
+    db_session.commit()
+
+
+def test_apply_delete_platform_reassigns_holdings(db_session):
+    """apply_delete_platform with reassign_to moves dependent holdings to the
+    target platform, records reassigned_count in the AuditLog after-dict, then
+    deletes the source platform.
+    """
+    from backend.writes import apply_delete_platform
+    from backend.models import Platform, Holding, AuditLog
+    import random
+
+    source_id = _make_platform(db_session, "SrcPlatformWTT", "brokerage")
+    target_id = _make_platform(db_session, "DstPlatformWTT", "exchange")
+
+    ticker = f"REASSIGN{random.randint(1000, 9999)}"
+    h = Holding(
+        ticker=ticker,
+        quantity=3,
+        avg_cost=100000,
+        currency="IDR",
+        platform_id=source_id,
+    )
+    db_session.add(h)
+    db_session.commit()
+    db_session.refresh(h)
+    h_id = h.id
+
+    before = {"id": source_id, "name": "SrcPlatformWTT", "kind": "brokerage"}
+    reassigned = apply_delete_platform(db_session, source_id, before, reassign_to=target_id)
+    db_session.commit()
+
+    assert reassigned == 1
+
+    # Holding now points at the target platform
+    db_session.expire_all()
+    moved = db_session.get(Holding, h_id)
+    assert moved is not None
+    assert moved.platform_id == target_id
+
+    # Source platform is gone
+    assert db_session.get(Platform, source_id) is None
+
+    # The delete AuditLog after-dict carries reassigned_count
+    log = (
+        db_session.query(AuditLog)
+        .filter(
+            AuditLog.entity == "platform",
+            AuditLog.entity_id == source_id,
+            AuditLog.operation == "delete",
+        )
+        .order_by(AuditLog.id.desc())
+        .first()
+    )
+    assert log is not None
+    assert log.after is not None
+    assert log.after.get("reassigned_count") == 1
+    assert log.after.get("reassign_to") == target_id
+
+    # Cleanup
+    db_session.query(AuditLog).filter(
+        AuditLog.entity == "platform", AuditLog.entity_id.in_([source_id, target_id])
+    ).delete(synchronize_session=False)
+    db_session.delete(moved)
+    tgt = db_session.get(Platform, target_id)
+    if tgt:
+        db_session.delete(tgt)
+    db_session.commit()
+
+
+def test_post_platforms_requires_api_key(client, api_key):
+    """POST /platforms without the key → 401; with the key → 201 and the row."""
+    from backend.db import engine
+
+    # Skip cleanly when Postgres is down (mirrors db_available)
+    try:
+        with engine.connect() as c:
+            c.execute(text("SELECT 1"))
+    except Exception as e:
+        pytest.skip(f"Postgres not available: {e}")
+
+    name = "AuthCheckPlatformWTT"
+    from backend.db import SessionLocal
+    from backend.models import Platform, AuditLog
+
+    _db = SessionLocal()
+    try:
+        existing = _db.query(Platform).filter(Platform.name == name).first()
+        if existing:
+            _db.query(AuditLog).filter(
+                AuditLog.entity == "platform", AuditLog.entity_id == existing.id
+            ).delete()
+            _db.delete(existing)
+            _db.commit()
+    finally:
+        _db.close()
+
+    # No key header → 401
+    r_no_key = client.post("/platforms", json={"name": name, "kind": "brokerage"})
+    assert r_no_key.status_code == 401
+
+    # With key → 201 and the created row
+    r_ok = client.post(
+        "/platforms",
+        json={"name": name, "kind": "brokerage"},
+        headers={"MONAI_API_KEY": api_key},
+    )
+    assert r_ok.status_code == 201, r_ok.text
+    body = r_ok.json()
+    assert body["name"] == name
+    assert body["kind"] == "brokerage"
+    assert "id" in body
+
+    # Cleanup
+    _db = SessionLocal()
+    try:
+        row = _db.query(Platform).filter(Platform.name == name).first()
+        if row:
+            _db.query(AuditLog).filter(
+                AuditLog.entity == "platform", AuditLog.entity_id == row.id
+            ).delete()
+            _db.delete(row)
+            _db.commit()
+    finally:
+        _db.close()
+
+
+# ---------------------------------------------------------------------------
 # D-06: Orphan-delete blocked
 # ---------------------------------------------------------------------------
 

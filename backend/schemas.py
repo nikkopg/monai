@@ -95,6 +95,26 @@ class AccountUpdate(BaseModel):
     currency: str | None = None
 
 
+class PlatformCreate(BaseModel):
+    name: str
+    kind: str | None = None
+
+
+class PlatformUpdate(BaseModel):
+    """Partial-update body for editing a platform — all fields Optional."""
+
+    name: str | None = None
+    kind: str | None = None
+
+
+class PlatformOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    kind: str | None
+
+
 class CategoryRenameRequest(BaseModel):
     old_name: str
     new_name: str

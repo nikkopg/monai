@@ -20,7 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.importer import _get_or_create_account
-from backend.models import Account, AuditLog, Transaction
+from backend.models import Account, AuditLog, Platform, Transaction
 
 
 def apply_add_transaction(db: Session, after: dict) -> Transaction:
@@ -129,6 +129,62 @@ def apply_delete_account(db: Session, acc_id: int, before: dict | None, reassign
     if acc is not None:
         db.delete(acc)
     db.add(AuditLog(entity="account", entity_id=acc_id, operation="delete",
+                    before=before, after=audit_after))
+    return reassigned_count
+
+
+def apply_add_platform(db: Session, after: dict) -> Platform:
+    """Insert a new investment platform (D-12)."""
+    plat = Platform(
+        name=after["name"],
+        kind=after.get("kind"),
+    )
+    db.add(plat)
+    db.flush()  # LOAD-BEARING: populates plat.id before the AuditLog row below
+    db.add(AuditLog(entity="platform", entity_id=plat.id, operation="add",
+                    before=None, after=after))
+    return plat
+
+
+def apply_edit_platform(db: Session, platform_id: int, after: dict, before: dict | None) -> Platform:
+    """Partial-update an existing platform. None fields in `after` are left unchanged."""
+    plat = db.get(Platform, platform_id)
+    if plat is None:
+        raise ValueError(f"Platform {platform_id} not found during confirm")
+    if after.get("name") is not None:
+        plat.name = after["name"]
+    if after.get("kind") is not None:
+        plat.kind = after["kind"]
+    db.add(AuditLog(entity="platform", entity_id=platform_id, operation="edit",
+                    before=before, after=after))
+    return plat
+
+
+def apply_delete_platform(db: Session, platform_id: int, before: dict | None, reassign_to: int | None = None) -> int:
+    """Delete a platform, optionally reassigning its holdings first (D-12).
+
+    When `reassign_to` is provided, dependent holdings are moved to that
+    platform (via a single parameterized UPDATE) BEFORE the platform is
+    deleted, and the reassignment target + row count are recorded in the
+    single AuditLog row this function writes — mirroring apply_delete_account
+    exactly (WARNING 1 fix), only the reassigned column is holdings.platform_id.
+    Returns the reassignment count (0 when reassign_to is None).
+    """
+    reassigned_count = 0
+    audit_after: dict | None = None
+
+    if reassign_to is not None:
+        result = db.execute(
+            text("UPDATE holdings SET platform_id = :reassign_to WHERE platform_id = :pid"),
+            {"reassign_to": reassign_to, "pid": platform_id},
+        )
+        reassigned_count = result.rowcount
+        audit_after = {"reassign_to": reassign_to, "reassigned_count": reassigned_count}
+
+    plat = db.get(Platform, platform_id)
+    if plat is not None:
+        db.delete(plat)
+    db.add(AuditLog(entity="platform", entity_id=platform_id, operation="delete",
                     before=before, after=audit_after))
     return reassigned_count
 

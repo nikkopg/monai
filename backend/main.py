@@ -44,13 +44,16 @@ from sqlalchemy.orm import Session
 from backend.auth import require_api_key
 from backend.db import get_session
 from backend.importer import _get_or_create_account, import_csv_text
-from backend.models import Account, AuditLog, Holding, Proposal, Transaction
+from backend.models import Account, AuditLog, Holding, Platform, Proposal, Transaction
 from backend.writes import (
     apply_add_account,
+    apply_add_platform,
     apply_add_transaction,
     apply_delete_account,
+    apply_delete_platform,
     apply_delete_transaction,
     apply_edit_account,
+    apply_edit_platform,
     apply_edit_transaction,
     apply_merge_category,
     apply_rename_category,
@@ -65,6 +68,9 @@ from backend.schemas import (
     CategoryRenameRequest,
     ConfirmRequest,
     ImportResponse,
+    PlatformCreate,
+    PlatformOut,
+    PlatformUpdate,
     ProposalOut,
     QueryRequest,
     QueryResponse,
@@ -194,6 +200,96 @@ def delete_account(
         reassigned = apply_delete_account(db, account_id, before, reassign_to=reassign_to)
     else:
         reassigned = apply_delete_account(db, account_id, before)
+
+    db.commit()
+    from backend.query import reset_engine
+    reset_engine()
+    return {"status": "deleted", "reassigned": reassigned}
+
+
+# ---------------------------------------------------------------------------
+# Platforms (D-12) — managed investment-platform entity, mirrors /accounts.
+# GET is an open read; every write route requires the API key (T-05-02-AC).
+# ---------------------------------------------------------------------------
+
+
+@app.get("/platforms", response_model=list[PlatformOut])
+def list_platforms(db: Session = Depends(get_session)):
+    return db.query(Platform).order_by(Platform.name).all()
+
+
+@app.post("/platforms", response_model=PlatformOut, status_code=201, dependencies=[Depends(require_api_key)])
+def create_platform(payload: PlatformCreate, db: Session = Depends(get_session)):
+    """Create an investment platform (INV-01). Routed through apply_add_platform (audited)."""
+    plat = apply_add_platform(db, payload.model_dump(mode="json"))
+    db.commit()
+    db.refresh(plat)
+    from backend.query import reset_engine
+    reset_engine()
+    return plat
+
+
+@app.put("/platforms/{platform_id}", response_model=PlatformOut, dependencies=[Depends(require_api_key)])
+def update_platform(platform_id: int, payload: PlatformUpdate, db: Session = Depends(get_session)):
+    """Partial-update a platform (INV-01). Only supplied fields change."""
+    plat = db.get(Platform, platform_id)
+    if plat is None:
+        raise HTTPException(status_code=404, detail=f"Platform {platform_id} not found")
+    before = {"id": plat.id, "name": plat.name, "kind": plat.kind}
+    try:
+        apply_edit_platform(db, platform_id, payload.model_dump(mode="json", exclude_none=True), before)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(plat)
+    from backend.query import reset_engine
+    reset_engine()
+    return plat
+
+
+@app.delete("/platforms/{platform_id}", dependencies=[Depends(require_api_key)])
+def delete_platform(
+    platform_id: int,
+    reassign_to: int | None = None,
+    db: Session = Depends(get_session),
+):
+    """Delete a platform with reassign-then-delete (INV-01, D-12).
+
+    - No holdings → plain audited delete.
+    - Has holdings and no reassign_to → 422 with affected_count; the exact
+      detail shape the PlatformManager copy consumes (`detail.affected_count`).
+    - reassign_to set → holdings are reassigned to the target platform and the
+      source is deleted in ONE audited helper call (apply_delete_platform writes
+      the single AuditLog row capturing the reassignment target + count).
+    """
+    plat = db.get(Platform, platform_id)
+    if plat is None:
+        raise HTTPException(status_code=404, detail=f"Platform {platform_id} not found")
+    before = {"id": plat.id, "name": plat.name, "kind": plat.kind}
+
+    holdings_count = int(
+        db.execute(
+            text("SELECT COUNT(*) FROM holdings WHERE platform_id = :pid"),
+            {"pid": platform_id},
+        ).scalar()
+        or 0
+    )
+
+    if holdings_count > 0:
+        if reassign_to is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": f"{holdings_count} holdings use this platform — reassign or delete them first",
+                    "affected_count": holdings_count,
+                },
+            )
+        target = db.get(Platform, reassign_to)
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"Reassign target platform {reassign_to} not found")
+        reassigned = apply_delete_platform(db, platform_id, before, reassign_to=reassign_to)
+    else:
+        reassigned = apply_delete_platform(db, platform_id, before)
 
     db.commit()
     from backend.query import reset_engine
