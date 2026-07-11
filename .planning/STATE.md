@@ -10,7 +10,7 @@ last_updated: "2026-07-11T09:35:00.000Z"
 last_activity: 2026-07-11
 last_activity_desc: Rebuilt stale backend image (migration 004 predated it), confirmed 136/136 backend tests green with MONAI_API_KEY set, live-verified 05-06 scheduler boot/shutdown + manual snapshot job run in container
 progress:
-  total_phases: 6
+  total_phases: 7
   completed_phases: 4
   total_plans: 23
   completed_plans: 23
@@ -66,6 +66,10 @@ Progress: [███████░░░] 67% — milestone 4/6 phases
 | Phase 05 P04 | 40 | 4 tasks | 10 files |
 
 ## Accumulated Context
+
+### Roadmap Evolution
+
+- Phase 7 added (2026-07-11): Investment Subsystem v2 (multi-platform holdings, multi-currency USD→IDR, cash, physical gold, pie-chart viz). Origin: real dogfooding of Phase 5. Depends on Phase 5. Needs spec + discuss before planning (currency model). Placed after Phase 6 (MCP Server).
 
 ### Decisions
 

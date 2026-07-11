@@ -248,6 +248,25 @@ All 30 v1 requirements mapped. No orphans.
 | Phase 5 | Yes | Sectors.app free tier coverage for IDX tickers requires direct verification; Ollama function-calling support determines `FunctionAgent` vs `ReActAgent` |
 | All others | No | Standard patterns with well-documented APIs |
 
+### Phase 7: Investment Subsystem v2 (multi-platform, multi-currency, cash, gold, pie chart)
+
+**Goal**: The portfolio reflects how the user actually holds assets — the same asset across multiple platforms, cost basis in the currency it was bought in, cash and physical gold as first-class positions — and surfaces allocation at a glance.
+**Depends on**: Phase 5 (investment subsystem)
+**Requirements**: TBD (derive during spec/discuss)
+**Origin**: Real dogfooding of Phase 5 (2026-07-11) surfaced these gaps.
+
+**Scope** (items 1–4 share the holdings data model — design together to avoid conflicting migrations):
+
+1. **Multi-platform holdings** — allow the same asset on multiple platforms as distinct positions. Change holdings uniqueness from global `ticker` to `(ticker, platform_id)`. Ripples through `recompute_holding_from_events`, `portfolio_events`, `price_cache` keying, and summary grouping. Revisits the current `POST /holdings` 422-on-duplicate stopgap (quick task, 2026-07-11).
+2. **Multi-currency + USD→IDR conversion** — crypto avg costs are entered in USD; store cost in native currency and convert at display. **Open design decisions:** FX rate source (hardcoded / API / manual), and current-rate vs historical-at-purchase.
+3. **Cash asset type** — track idle IDR / USDT balances as portfolio positions.
+4. **Physical gold asset type** — grams × gold price (manual price, or a spot adapter).
+5. **Portfolio pie-chart-by-category viz** — allocation by asset type/category (Recharts already in the stack). Independent of 1–4.
+
+**Design note:** This phase needs a real **spec + discuss** pass before planning — the currency model especially (items 1–4 all touch holding identity, currency, and valuation). Run `/gsd-spec-phase 7` first, then `/gsd-discuss-phase 7`.
+
+**Plans**: TBD (run `/gsd-plan-phase 7` after spec/discuss)
+
 ---
 *Roadmap created: 2026-06-21*
 *Last updated: 2026-06-21 after Phase 2 planning*
