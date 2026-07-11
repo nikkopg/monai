@@ -18,14 +18,23 @@ router: it reads holdings + the latest price_cache row per ticker and hands
 them to these pure calculators.
 """
 
-from datetime import datetime, timezone
+import logging
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.models import Holding, Platform, PortfolioEvent, PriceCache
+from backend.models import (
+    Holding,
+    Platform,
+    PortfolioEvent,
+    PortfolioValueHistory,
+    PriceCache,
+)
 from backend.prices import is_stale as _price_is_stale
+
+logger = logging.getLogger(__name__)
 
 
 def recompute_holding_from_events(db: Session, ticker: str) -> dict:
@@ -209,6 +218,59 @@ def portfolio_summary(db: Session) -> dict:
         "total_realized_pnl": total_realized,
         "as_of": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def snapshot_all_holdings(db: Session) -> dict:
+    """D-13: write one portfolio_value_history row per holding for today.
+
+    For each holding, read its current price from price_cache, then record
+    market_value = price × quantity and cost_basis = avg_cost × quantity (all
+    Decimal). Rows are keyed on the unique (snapshot_date, ticker) index (Plan
+    01): a same-day row that already exists is skipped, so re-running the job is
+    idempotent (upsert-or-skip). Holdings without a current price are skipped
+    (market_value is unknown until a price row exists — D-13 tolerates gaps).
+
+    Per-holding work is wrapped in try/except so one ticker's failure never
+    aborts the whole snapshot or the scheduler thread (T-05-06-DEG). Does NOT
+    commit — the caller (the daily job) owns the transaction boundary.
+
+    Returns {written, skipped, failed} counts.
+    """
+    today = date.today()
+    written = skipped = failed = 0
+    for h in db.query(Holding).all():
+        try:
+            exists = db.scalars(
+                select(PortfolioValueHistory).where(
+                    PortfolioValueHistory.snapshot_date == today,
+                    PortfolioValueHistory.ticker == h.ticker,
+                )
+            ).first()
+            if exists is not None:
+                skipped += 1
+                continue
+
+            price_row = _latest_price(db, h.ticker)
+            if price_row is None:
+                skipped += 1
+                continue
+
+            db.add(
+                PortfolioValueHistory(
+                    snapshot_date=today,
+                    ticker=h.ticker,
+                    quantity=h.quantity,
+                    market_value=price_row.price * h.quantity,
+                    cost_basis=h.avg_cost * h.quantity,
+                    currency="IDR",
+                )
+            )
+            written += 1
+        except Exception:
+            # One ticker's failure must not abort the snapshot (T-05-06-DEG).
+            logger.warning("snapshot failed for ticker %s", h.ticker, exc_info=True)
+            failed += 1
+    return {"written": written, "skipped": skipped, "failed": failed}
 
 
 def _realized_for_ticker(db: Session, ticker: str) -> dict:
