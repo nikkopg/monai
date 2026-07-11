@@ -896,3 +896,37 @@ def test_orphan_delete_blocked(db_session):
     if acc:
         db_session.delete(acc)
         db_session.commit()
+
+
+def test_create_holding_duplicate_ticker_returns_422(client, api_key):
+    """POST /holdings twice with the same ticker → the second returns a clean
+    422 (holdings.ticker is globally UNIQUE today), not a raw 500 from an
+    uncaught IntegrityError. ponytail: a later phase makes (ticker, platform_id)
+    the uniqueness key so the same asset can live on multiple platforms."""
+    from backend.db import engine
+    try:
+        with engine.connect() as c:
+            c.execute(text("SELECT 1"))
+    except Exception as e:
+        pytest.skip(f"Postgres not available: {e}")
+
+    ticker = "DUPTEST01"
+    body = {"ticker": ticker, "quantity": "1", "avg_cost": "100", "asset_type": "crypto"}
+    hdr = {"MONAI_API_KEY": api_key}
+    try:
+        r1 = client.post("/holdings", json=body, headers=hdr)
+        assert r1.status_code == 201, r1.text
+        r2 = client.post("/holdings", json=body, headers=hdr)
+        assert r2.status_code == 422, r2.text
+        assert ticker in r2.json()["detail"]
+    finally:
+        # Clean up the created holding via its id.
+        from backend.db import SessionLocal
+        from backend.models import Holding
+        s = SessionLocal()
+        try:
+            for h in s.query(Holding).filter(Holding.ticker == ticker).all():
+                s.delete(h)
+            s.commit()
+        finally:
+            s.close()

@@ -40,6 +40,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from sqlalchemy import desc, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.auth import require_api_key
@@ -363,9 +364,18 @@ def create_holding(payload: HoldingCreate, db: Session = Depends(get_session)):
     """Direct holding override — seed a position without an event history (D-03)."""
     try:
         holding = apply_add_holding(db, payload.model_dump(mode="json"))
+        db.commit()
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    db.commit()
+    except IntegrityError:
+        # holdings.ticker is globally UNIQUE today (one position per ticker).
+        # ponytail: stopgap 422 — a later phase makes (ticker, platform_id) the
+        # uniqueness key so the same asset can live on multiple platforms.
+        db.rollback()
+        raise HTTPException(
+            status_code=422,
+            detail=f"A holding for '{payload.ticker}' already exists.",
+        )
     db.refresh(holding)
     from backend.query import reset_engine
     reset_engine()
