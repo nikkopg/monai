@@ -38,7 +38,6 @@ export default function HoldingModal({ platforms, onClose, onSaved }: Props) {
   const [quantity, setQuantity] = useState("");
   const [price, setPrice] = useState("");
   const [date, setDate] = useState(toLocalDatetimeInputValue(new Date()));
-  const [notes, setNotes] = useState("");
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -64,6 +63,8 @@ export default function HoldingModal({ platforms, onClose, onSaved }: Props) {
         quantity: parseFloat(quantity),
         price: parseFloat(price),
         date: new Date(date).toISOString().slice(0, 10),
+        asset_type: assetType,
+        platform_id: platformId ? parseInt(platformId, 10) : null,
       };
       const r = await fetch("/api/portfolio-events", {
         method: "POST",
@@ -207,14 +208,6 @@ export default function HoldingModal({ platforms, onClose, onSaved }: Props) {
                 type="datetime-local"
                 value={date}
                 onChange={(e) => setDate(e.target.value)}
-              />
-            </div>
-            <div>
-              <label style={label}>Notes</label>
-              <input
-                style={input}
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
               />
             </div>
           </div>
