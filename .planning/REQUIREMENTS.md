@@ -45,10 +45,10 @@ Requirements for this cycle. Each maps to a roadmap phase.
 ### Investments
 
 - [x] **INV-01**: User can add, edit, and remove holdings (ticker, quantity, avg cost, purchase date, currency)
-- [ ] **INV-02**: System fetches current market prices for crypto holdings
-- [ ] **INV-03**: System fetches current market prices for IDX stock holdings (best-effort, with fallback)
-- [ ] **INV-04**: User can manually set/override a holding's price (required fallback for mutual funds and no-API instruments)
-- [ ] **INV-05**: Each displayed price shows its as-of time and a staleness indicator
+- [x] **INV-02**: System fetches current market prices for crypto holdings
+- [x] **INV-03**: System fetches current market prices for IDX stock holdings (best-effort, with fallback)
+- [x] **INV-04**: User can manually set/override a holding's price (required fallback for mutual funds and no-API instruments)
+- [x] **INV-05**: Each displayed price shows its as-of time and a staleness indicator
 - [ ] **INV-06**: Investment page shows current portfolio value and per-holding profit/loss
 - [x] **INV-07**: Portfolio events (buys/sells) are recorded, enabling correlation queries
 

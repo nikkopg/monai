@@ -6,14 +6,14 @@ current_phase: 05
 current_phase_name: investment-subsystem
 status: in_progress
 stopped_at: Completed 05-02-PLAN.md (platform CRUD vertical slice)
-last_updated: "2026-07-11T02:17:16.897Z"
+last_updated: "2026-07-11T02:25:21.736Z"
 last_activity: 2026-07-10
 last_activity_desc: Executed Plan 05-02 (platform CRUD vertical slice)
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 23
-  completed_plans: 20
+  completed_plans: 21
   percent: 67
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-06-21)
 ## Current Position
 
 Phase: 05 (investment-subsystem) — IN PROGRESS (6 MVP vertical-slice plans)
-Plan: 2 of 6 executed (05-01 schema foundation, 05-02 platform CRUD)
+Plan: 3 of 6 executed (05-01 schema foundation, 05-02 platform CRUD)
 Status: Plan 05-02 complete — platform CRUD live end-to-end (audited writes, reassign-then-delete, PlatformManager UI); INV-01 done. Task 3 browser human-check deferred to UAT. Next: 05-03 (holdings ledger).
 Last activity: 2026-07-10 -- Executed Plan 05-02 (platform CRUD vertical slice)
 
@@ -63,6 +63,7 @@ Progress: [███████░░░] 67% — milestone 4/6 phases
 | Phase 05 P01 | 7m | - tasks | - files |
 | Phase 05 P02 | ~40m | 3 tasks | 6 files |
 | Phase 05 P05 | 5 min | 1 tasks | 2 files |
+| Phase 05 P04 | 40 | 4 tasks | 10 files |
 
 ## Accumulated Context
 
@@ -117,7 +118,7 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-07-11T02:16:46.469Z
+Last session: 2026-07-11T02:25:10.975Z
 Stopped at: Completed 05-02-PLAN.md; INV-01 done. One deferred item: Task 3 browser human-check on /investments (platform CRUD + reassign flow) — needs frontend+backend running.
 Resume file: .planning/phases/05-investment-subsystem/05-02-SUMMARY.md
 Resume command: /gsd-execute-phase 5 (next: Wave 3 = 05-03 holdings ledger)
