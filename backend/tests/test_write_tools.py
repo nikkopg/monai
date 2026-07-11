@@ -745,6 +745,57 @@ def test_apply_edit_and_delete_holding_audit(db_session):
     _cleanup_ticker(db_session, ticker)
 
 
+def test_apply_add_holding_persists_coingecko_id(db_session):
+    """apply_add_holding sets coingecko_id from `after` (Tier 1 override)."""
+    from backend.writes import apply_add_holding
+
+    ticker = "COINGECKO01"
+    _cleanup_ticker(db_session, ticker)
+
+    h = apply_add_holding(db_session, {
+        "ticker": ticker, "quantity": 5, "avg_cost": 200, "currency": "IDR",
+        "asset_type": "crypto", "coingecko_id": "bittensor",
+    })
+    db_session.commit()
+    db_session.refresh(h)
+    assert h.coingecko_id == "bittensor"
+
+    _cleanup_ticker(db_session, ticker)
+
+
+def test_apply_edit_holding_sets_coingecko_id_when_provided_no_clobber(db_session):
+    """apply_edit_holding sets coingecko_id when provided (set-when-provided);
+    omitting it on a later edit does NOT clobber the existing value."""
+    from decimal import Decimal
+    from backend.writes import apply_add_holding, apply_edit_holding
+
+    ticker = "COINGECKO02"
+    _cleanup_ticker(db_session, ticker)
+
+    h = apply_add_holding(db_session, {
+        "ticker": ticker, "quantity": 5, "avg_cost": 200, "currency": "IDR",
+        "asset_type": "crypto",
+    })
+    db_session.commit()
+    db_session.refresh(h)
+    h_id = h.id
+    assert h.coingecko_id is None
+
+    apply_edit_holding(db_session, h_id, {"coingecko_id": "bittensor"}, {"id": h_id})
+    db_session.commit()
+    db_session.refresh(h)
+    assert h.coingecko_id == "bittensor"
+
+    # Omitting coingecko_id on a subsequent edit must not clobber it.
+    apply_edit_holding(db_session, h_id, {"quantity": 9}, {"id": h_id})
+    db_session.commit()
+    db_session.refresh(h)
+    assert h.coingecko_id == "bittensor"
+    assert h.quantity == Decimal("9")
+
+    _cleanup_ticker(db_session, ticker)
+
+
 def test_investments_summary_grouped_payload(db_session):
     """GET /investments/summary composes holdings grouped by platform (with an
     'unassigned' group for null platform_id), each with unrealized/realized P&L,
