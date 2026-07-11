@@ -410,6 +410,36 @@ export default function InvestmentsPage() {
                                   >
                                     Edit
                                   </button>
+                                  <button
+                                    type="button"
+                                    onClick={async () => {
+                                      if (
+                                        !confirm(
+                                          `Delete holding ${h.ticker}? This removes the position (its event history is kept).`
+                                        )
+                                      )
+                                        return;
+                                      const r = await fetch(
+                                        `/api/holdings/${h.id}`,
+                                        { method: "DELETE" }
+                                      );
+                                      if (r.ok) load();
+                                      else
+                                        setError(
+                                          `Couldn't delete ${h.ticker} — please try again.`
+                                        );
+                                    }}
+                                    style={{
+                                      background: "transparent",
+                                      color: "#f87171",
+                                      border: "none",
+                                      cursor: "pointer",
+                                      fontSize: 12,
+                                      padding: 0,
+                                    }}
+                                  >
+                                    Delete
+                                  </button>
                                 </div>
                               </td>
                             </tr>
