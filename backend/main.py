@@ -62,6 +62,7 @@ from backend.writes import (
     apply_edit_transaction,
     apply_merge_category,
     apply_rename_category,
+    apply_set_price,
 )
 from backend.schemas import (
     AccountCreate,
@@ -82,6 +83,7 @@ from backend.schemas import (
     PortfolioEventCreate,
     PortfolioEventOut,
     PortfolioSummary,
+    PriceOverrideRequest,
     ProposalOut,
     QueryRequest,
     QueryResponse,
@@ -396,9 +398,46 @@ def investments_summary(db: Session = Depends(get_session)):
     hands them to portfolio.py's pure calculators: platform-grouped holdings
     with per-holding unrealized/realized P&L, totals, and an 'as of' timestamp.
     A ticker with no price_cache row → null current price + null unrealized for
-    that holding (Plan 04 backfills live prices).
+    that holding. Lazy refresh (D-09): stale tickers are refreshed server-side on
+    load (force=False), so the summary reflects reasonably fresh prices without a
+    manual button click. Per-ticker failures are swallowed inside refresh_all_prices.
     """
+    from backend.prices import refresh_all_prices
+
+    refresh_all_prices(db, force=False)  # only stale tickers (D-09)
+    db.commit()
     return compose_portfolio_summary(db)
+
+
+@app.post("/prices/refresh", dependencies=[Depends(require_api_key)])
+def refresh_prices(db: Session = Depends(get_session)):
+    """Force-fetch every ticker's live price (INV-02/03, D-09).
+
+    Calls refresh_all_prices(force=True); per-ticker failures are swallowed
+    inside (adapters return None, never raise — Pitfall 2) so one failing/slow
+    source never 500s the endpoint. Returns {refreshed, skipped, failed} counts.
+    """
+    from backend.prices import refresh_all_prices
+    from backend.query import reset_engine
+
+    counts = refresh_all_prices(db, force=True)
+    db.commit()
+    reset_engine()
+    return counts
+
+
+@app.post("/prices/override", dependencies=[Depends(require_api_key)])
+def override_price(payload: PriceOverrideRequest, db: Session = Depends(get_session)):
+    """Manually set a ticker's price (INV-04, D-11). Positive-price validated at
+    the schema boundary (422); writes price_cache source='manual', audited."""
+    try:
+        apply_set_price(db, payload.ticker, payload.price)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    from backend.query import reset_engine
+    reset_engine()
+    return {"status": "ok", "ticker": payload.ticker}
 
 
 @app.get("/transactions", response_model=list[TransactionOut])

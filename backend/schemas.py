@@ -198,6 +198,17 @@ class PortfolioSummary(BaseModel):
     as_of: str
 
 
+class PriceOverrideRequest(BaseModel):
+    """Manual price override body (INV-04, D-11, T-05-04-INP).
+
+    price must be a positive Decimal — a negative/zero price is rejected with a
+    422 at the schema boundary (V5) BEFORE apply_set_price runs.
+    """
+
+    ticker: str
+    price: MoneyDecimal = Field(..., gt=0, description="New price per unit in IDR; positive")
+
+
 class CategoryRenameRequest(BaseModel):
     old_name: str
     new_name: str

@@ -20,7 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.importer import _get_or_create_account
-from backend.models import Account, AuditLog, Holding, Platform, PortfolioEvent, Transaction
+from backend.models import Account, AuditLog, Holding, Platform, PortfolioEvent, PriceCache, Transaction
 from backend.portfolio import recompute_holding_from_events
 
 
@@ -271,6 +271,27 @@ def apply_delete_holding(db: Session, holding_id: int, before: dict | None) -> N
         db.delete(holding)
     db.add(AuditLog(entity="holding", entity_id=holding_id, operation="delete",
                     before=before, after=None))
+
+
+def apply_set_price(db: Session, ticker: str, price, source: str = "manual") -> PriceCache:
+    """Manual price override (INV-04, D-11): insert a fresh price_cache row.
+
+    Writes a new row rather than mutating — the newest row (by fetched_at) is
+    "current price", so a manual override immediately wins and is later replaced
+    by the next successful live fetch (D-11). Money via Decimal(str(...)).
+    Audited (entity="price_cache", D-16). Does NOT commit — caller owns the txn.
+    """
+    row = PriceCache(
+        ticker=ticker,
+        price=Decimal(str(price)),  # LOAD-BEARING: str() before Decimal() avoids float artifacts
+        currency="IDR",
+        source=source,
+    )
+    db.add(row)
+    db.flush()  # LOAD-BEARING: populates row.id before the AuditLog row below
+    db.add(AuditLog(entity="price_cache", entity_id=row.id, operation="add",
+                    before=None, after={"ticker": ticker, "price": str(price), "source": source}))
+    return row
 
 
 def apply_rename_category(db: Session, old_name: str, new_name: str) -> int:

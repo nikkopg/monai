@@ -77,6 +77,49 @@ def test_fetch_manual_price_is_none():
     assert prices.fetch_manual_price("ANYTHING") is None
 
 
+def test_override_requires_api_key(client, api_key):
+    """POST /prices/override without the header → 401 (T-05-04-AC).
+
+    The api_key fixture configures a non-empty server key (so auth is enforced);
+    the request deliberately omits the MONAI_API_KEY header.
+    """
+    resp = client.post("/prices/override", json={"ticker": "BTC", "price": 100})
+    assert resp.status_code == 401
+
+
+def test_override_rejects_nonpositive_price(client, api_key):
+    """Negative/zero price → 422 at the schema boundary (V5, T-05-04-INP)."""
+    headers = {"MONAI_API_KEY": api_key}
+    assert client.post("/prices/override", json={"ticker": "BTC", "price": -5}, headers=headers).status_code == 422
+    assert client.post("/prices/override", json={"ticker": "BTC", "price": 0}, headers=headers).status_code == 422
+
+
+def test_refresh_tolerates_failing_ticker(client, api_key, monkeypatch):
+    """POST /prices/refresh does not 500 when a ticker fetch fails (Pitfall 2).
+
+    refresh_all_prices already swallows per-ticker failures (adapters return
+    None); here we assert the endpoint returns 200 with count fields even when
+    every fetch 'fails'.
+    """
+    import backend.main as main_mod
+
+    def _all_fail(db, *, force=False):
+        return {"refreshed": 0, "skipped": 0, "failed": 3}
+
+    # Patch the name the route imports lazily from backend.prices.
+    import backend.prices as prices_mod
+    monkeypatch.setattr(prices_mod, "refresh_all_prices", _all_fail)
+
+    resp = client.post("/prices/refresh", headers={"MONAI_API_KEY": api_key})
+    assert resp.status_code == 200
+    assert resp.json()["failed"] == 3
+
+
+def test_refresh_requires_api_key(client, api_key):
+    """POST /prices/refresh without the header → 401 (T-05-04-AC)."""
+    assert client.post("/prices/refresh").status_code == 401
+
+
 def test_is_stale_respects_ttl():
     """Fresh within TTL → False; past TTL → True; missing → True (INV-05)."""
     from backend import prices

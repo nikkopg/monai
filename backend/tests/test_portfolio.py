@@ -143,12 +143,81 @@ def test_recompute_holding_from_events(db_session):
         _cleanup_ticker(db_session, t4)
 
 
-def test_manual_price_override():
-    pytest.fail("not yet implemented — Plan 03/04 fills this")
+def _cleanup_prices(db, ticker):
+    from backend.models import PriceCache
+    db.query(PriceCache).filter(PriceCache.ticker == ticker).delete()
+    db.commit()
 
 
-def test_staleness_ttl():
-    pytest.fail("not yet implemented — Plan 03/04 fills this")
+def test_manual_price_override(db_session):
+    """INV-04/D-11: apply_set_price writes source='manual' and the summary's P&L
+    for that holding immediately uses it (newest price_cache row wins)."""
+    from decimal import Decimal
+    from backend.writes import apply_set_price
+    from backend.portfolio import portfolio_summary, recompute_holding_from_events
+
+    t = _random_ticker()
+    try:
+        _add_event(db_session, t, "buy", 10, 100, 1)  # avg_cost 100, qty 10
+        recompute_holding_from_events(db_session, t)
+        db_session.commit()
+
+        row = apply_set_price(db_session, t, 150)
+        db_session.commit()
+        assert row.source == "manual"
+        assert row.price == Decimal("150")
+
+        summary = portfolio_summary(db_session)
+        hrow = next(
+            h for g in summary["groups"] for h in g["holdings"] if h["ticker"] == t
+        )
+        assert hrow["current_price"] == Decimal("150")
+        assert hrow["price_source"] == "manual"
+        # unrealized = (150 − 100) × 10 = 500
+        assert hrow["unrealized_pnl"] == Decimal("500")
+        assert hrow["is_stale"] is False  # just written → fresh
+    finally:
+        _cleanup_prices(db_session, t)
+        _cleanup_ticker(db_session, t)
+
+
+def test_staleness_ttl(db_session):
+    """INV-05: a price_cache row older than its asset-type TTL surfaces
+    is_stale=True in the summary; a fresh one is is_stale=False."""
+    import datetime as _dt
+    from decimal import Decimal
+    from backend.models import Holding, PriceCache
+    from backend.portfolio import portfolio_summary
+
+    t = _random_ticker()
+    try:
+        # crypto holding; crypto TTL is 5 min
+        db_session.add(Holding(ticker=t, quantity=Decimal("1"), avg_cost=Decimal("100"),
+                               currency="IDR", asset_type="crypto"))
+        stale_at = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=1)
+        db_session.add(PriceCache(ticker=t, price=Decimal("200"), currency="IDR",
+                                  source="coingecko", fetched_at=stale_at))
+        db_session.commit()
+
+        hrow = next(
+            h for g in portfolio_summary(db_session)["groups"]
+            for h in g["holdings"] if h["ticker"] == t
+        )
+        assert hrow["is_stale"] is True
+
+        # A fresh row flips it back to False.
+        db_session.add(PriceCache(ticker=t, price=Decimal("210"), currency="IDR",
+                                  source="manual",
+                                  fetched_at=_dt.datetime.now(_dt.timezone.utc)))
+        db_session.commit()
+        hrow = next(
+            h for g in portfolio_summary(db_session)["groups"]
+            for h in g["holdings"] if h["ticker"] == t
+        )
+        assert hrow["is_stale"] is False
+    finally:
+        _cleanup_prices(db_session, t)
+        _cleanup_ticker(db_session, t)
 
 
 def test_avg_cost_realized_pnl(db_session):

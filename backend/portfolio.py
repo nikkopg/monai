@@ -25,6 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.models import Holding, Platform, PortfolioEvent, PriceCache
+from backend.prices import is_stale as _price_is_stale
 
 
 def recompute_holding_from_events(db: Session, ticker: str) -> dict:
@@ -183,6 +184,12 @@ def portfolio_summary(db: Session) -> dict:
                 "price_source": price_row.source if price_row is not None else None,
                 "price_fetched_at": (
                     price_row.fetched_at.isoformat() if price_row is not None else None
+                ),
+                # Server-computed freshness (INV-05): the frontend renders this
+                # flag, never the TTL. A ticker with no price row is stale.
+                "is_stale": _price_is_stale(
+                    price_row.fetched_at if price_row is not None else None,
+                    h.asset_type,
                 ),
             }
         )
