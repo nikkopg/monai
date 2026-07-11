@@ -749,6 +749,18 @@ def test_portfolio_event_requires_api_key(client, api_key):
     assert r.status_code == 401
 
 
+def test_portfolio_event_missing_platform_id_returns_422(client, api_key):
+    """POST /portfolio-events without platform_id → 422 at the schema boundary
+    (Quick 260711-rb2: platform is required, no more '(unassigned)')."""
+    r = client.post(
+        "/portfolio-events",
+        json={"ticker": "NOPLATFORMEVT", "event_type": "buy",
+              "quantity": 1, "price": 100, "date": "2024-01-10"},
+        headers={"MONAI_API_KEY": api_key},
+    )
+    assert r.status_code == 422, r.text
+
+
 def test_apply_edit_and_delete_holding_audit(db_session):
     """apply_edit_holding and apply_delete_holding (D-03 direct override) each
     write one AuditLog(entity="holding") row."""
@@ -958,11 +970,11 @@ def test_orphan_delete_blocked(db_session):
         db_session.commit()
 
 
-def test_create_holding_duplicate_ticker_returns_422(client, api_key):
-    """POST /holdings twice with the same ticker → the second returns a clean
-    422 (holdings.ticker is globally UNIQUE today), not a raw 500 from an
-    uncaught IntegrityError. ponytail: a later phase makes (ticker, platform_id)
-    the uniqueness key so the same asset can live on multiple platforms."""
+def test_create_holding_duplicate_ticker_platform_returns_422(client, api_key):
+    """POST /holdings twice with the SAME (ticker, platform_id) → the second
+    returns a clean 422 (composite unique constraint), not a raw 500 from an
+    uncaught IntegrityError. Quick 260711-rb2: uniqueness key is now
+    (ticker, platform_id), not ticker alone."""
     from backend.db import engine
     try:
         with engine.connect() as c:
@@ -970,9 +982,21 @@ def test_create_holding_duplicate_ticker_returns_422(client, api_key):
     except Exception as e:
         pytest.skip(f"Postgres not available: {e}")
 
+    from backend.db import SessionLocal
+    from backend.models import Holding, Platform
+
     ticker = "DUPTEST01"
-    body = {"ticker": ticker, "quantity": "1", "avg_cost": "100", "asset_type": "crypto"}
     hdr = {"MONAI_API_KEY": api_key}
+    s = SessionLocal()
+    try:
+        plat_id = _make_platform(s, "TestDuplicatePlatform")
+    finally:
+        s.close()
+
+    body = {
+        "ticker": ticker, "quantity": "1", "avg_cost": "100",
+        "asset_type": "crypto", "platform_id": plat_id,
+    }
     try:
         r1 = client.post("/holdings", json=body, headers=hdr)
         assert r1.status_code == 201, r1.text
@@ -980,13 +1004,73 @@ def test_create_holding_duplicate_ticker_returns_422(client, api_key):
         assert r2.status_code == 422, r2.text
         assert ticker in r2.json()["detail"]
     finally:
-        # Clean up the created holding via its id.
-        from backend.db import SessionLocal
-        from backend.models import Holding
         s = SessionLocal()
         try:
             for h in s.query(Holding).filter(Holding.ticker == ticker).all():
                 s.delete(h)
+            plat = s.get(Platform, plat_id)
+            if plat is not None:
+                s.delete(plat)
+            s.commit()
+        finally:
+            s.close()
+
+
+def test_create_holding_missing_platform_id_returns_422(client, api_key):
+    """POST /holdings without platform_id → 422 at the schema boundary
+    (Quick 260711-rb2: platform is required, no more '(unassigned)')."""
+    hdr = {"MONAI_API_KEY": api_key}
+    body = {"ticker": "NOPLATFORM01", "quantity": "1", "avg_cost": "100", "asset_type": "crypto"}
+    r = client.post("/holdings", json=body, headers=hdr)
+    assert r.status_code == 422, r.text
+
+
+def test_create_holding_same_ticker_two_platforms_both_created(client, api_key):
+    """POST /holdings with the SAME ticker on two DIFFERENT platforms → both
+    return 201, not a 422 (position identity is (ticker, platform_id))."""
+    from backend.db import engine
+    try:
+        with engine.connect() as c:
+            c.execute(text("SELECT 1"))
+    except Exception as e:
+        pytest.skip(f"Postgres not available: {e}")
+
+    from backend.db import SessionLocal
+    from backend.models import Holding, Platform
+
+    ticker = "MULTIPLAT01"
+    hdr = {"MONAI_API_KEY": api_key}
+    s = SessionLocal()
+    try:
+        plat_a = _make_platform(s, "TestMultiPlatformA")
+        plat_b = _make_platform(s, "TestMultiPlatformB")
+    finally:
+        s.close()
+
+    try:
+        r1 = client.post(
+            "/holdings",
+            json={"ticker": ticker, "quantity": "1", "avg_cost": "100",
+                  "asset_type": "crypto", "platform_id": plat_a},
+            headers=hdr,
+        )
+        assert r1.status_code == 201, r1.text
+        r2 = client.post(
+            "/holdings",
+            json={"ticker": ticker, "quantity": "2", "avg_cost": "200",
+                  "asset_type": "crypto", "platform_id": plat_b},
+            headers=hdr,
+        )
+        assert r2.status_code == 201, r2.text
+    finally:
+        s = SessionLocal()
+        try:
+            for h in s.query(Holding).filter(Holding.ticker == ticker).all():
+                s.delete(h)
+            for pid in (plat_a, plat_b):
+                plat = s.get(Platform, pid)
+                if plat is not None:
+                    s.delete(plat)
             s.commit()
         finally:
             s.close()

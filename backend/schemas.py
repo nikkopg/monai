@@ -134,7 +134,7 @@ class PortfolioEventCreate(BaseModel):
     quantity: MoneyDecimal = Field(..., gt=0, description="Units; must be positive")
     price: MoneyDecimal = Field(..., gt=0, description="Price per unit (or dividend amount) in IDR; positive")
     date: date
-    platform_id: int | None = None
+    platform_id: int = Field(..., description="Required — position identity is (ticker, platform_id)")
     asset_type: str | None = None
 
 
@@ -158,7 +158,7 @@ class HoldingCreate(BaseModel):
     purchase_date: date | None = None
     currency: str = "IDR"
     asset_type: str | None = None
-    platform_id: int | None = None
+    platform_id: int = Field(..., description="Required — position identity is (ticker, platform_id)")
     coingecko_id: str | None = None
 
 
