@@ -45,14 +45,19 @@ from backend.auth import require_api_key
 from backend.db import get_session
 from backend.importer import _get_or_create_account, import_csv_text
 from backend.models import Account, AuditLog, Holding, Platform, Proposal, Transaction
+from backend.portfolio import portfolio_summary as compose_portfolio_summary
 from backend.writes import (
     apply_add_account,
+    apply_add_holding,
     apply_add_platform,
+    apply_add_portfolio_event,
     apply_add_transaction,
     apply_delete_account,
+    apply_delete_holding,
     apply_delete_platform,
     apply_delete_transaction,
     apply_edit_account,
+    apply_edit_holding,
     apply_edit_platform,
     apply_edit_transaction,
     apply_merge_category,
@@ -68,9 +73,15 @@ from backend.schemas import (
     CategoryRenameRequest,
     ConfirmRequest,
     ImportResponse,
+    HoldingCreate,
+    HoldingOut,
+    HoldingUpdate,
     PlatformCreate,
     PlatformOut,
     PlatformUpdate,
+    PortfolioEventCreate,
+    PortfolioEventOut,
+    PortfolioSummary,
     ProposalOut,
     QueryRequest,
     QueryResponse,
@@ -295,6 +306,99 @@ def delete_platform(
     from backend.query import reset_engine
     reset_engine()
     return {"status": "deleted", "reassigned": reassigned}
+
+
+# ---------------------------------------------------------------------------
+# Investments (INV-01/06/07) — event ledger + direct holding override + summary.
+# Every write route requires the API key (T-05-03-AC); GET /investments/summary
+# is an open read composing holdings + price_cache + portfolio.py calculators.
+# ---------------------------------------------------------------------------
+
+
+@app.post("/portfolio-events", response_model=PortfolioEventOut, status_code=201, dependencies=[Depends(require_api_key)])
+def create_portfolio_event(payload: PortfolioEventCreate, db: Session = Depends(get_session)):
+    """Log a buy/sell/dividend event (INV-07, D-01).
+
+    event_type is validated to the {buy,sell,dividend} literal set at the schema
+    boundary (422 on anything else) BEFORE apply_add_portfolio_event runs the
+    recompute. The helper inserts the event, audits it, then recomputes the
+    holding's qty/avg_cost from the full ledger.
+    """
+    try:
+        ev = apply_add_portfolio_event(db, payload.model_dump(mode="json"))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(ev)
+    from backend.query import reset_engine
+    reset_engine()
+    return ev
+
+
+@app.post("/holdings", response_model=HoldingOut, status_code=201, dependencies=[Depends(require_api_key)])
+def create_holding(payload: HoldingCreate, db: Session = Depends(get_session)):
+    """Direct holding override — seed a position without an event history (D-03)."""
+    try:
+        holding = apply_add_holding(db, payload.model_dump(mode="json"))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(holding)
+    from backend.query import reset_engine
+    reset_engine()
+    return holding
+
+
+@app.put("/holdings/{holding_id}", response_model=HoldingOut, dependencies=[Depends(require_api_key)])
+def update_holding(holding_id: int, payload: HoldingUpdate, db: Session = Depends(get_session)):
+    """Direct holding override — partial-update a holding (D-03). Audited."""
+    holding = db.get(Holding, holding_id)
+    if holding is None:
+        raise HTTPException(status_code=404, detail=f"Holding {holding_id} not found")
+    before = {
+        "id": holding.id, "ticker": holding.ticker,
+        "quantity": str(holding.quantity), "avg_cost": str(holding.avg_cost),
+        "asset_type": holding.asset_type, "platform_id": holding.platform_id,
+    }
+    try:
+        apply_edit_holding(db, holding_id, payload.model_dump(mode="json", exclude_none=True), before)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(holding)
+    from backend.query import reset_engine
+    reset_engine()
+    return holding
+
+
+@app.delete("/holdings/{holding_id}", dependencies=[Depends(require_api_key)])
+def delete_holding(holding_id: int, db: Session = Depends(get_session)):
+    """Direct holding override — delete a holding (D-03). Audited."""
+    holding = db.get(Holding, holding_id)
+    if holding is None:
+        raise HTTPException(status_code=404, detail=f"Holding {holding_id} not found")
+    before = {
+        "id": holding.id, "ticker": holding.ticker,
+        "quantity": str(holding.quantity), "avg_cost": str(holding.avg_cost),
+    }
+    apply_delete_holding(db, holding_id, before)
+    db.commit()
+    from backend.query import reset_engine
+    reset_engine()
+    return {"status": "deleted"}
+
+
+@app.get("/investments/summary", response_model=PortfolioSummary)
+def investments_summary(db: Session = Depends(get_session)):
+    """Composed portfolio payload (D-05, INV-06) — open read.
+
+    Reads every holding, joins the latest price_cache price per ticker, and
+    hands them to portfolio.py's pure calculators: platform-grouped holdings
+    with per-holding unrealized/realized P&L, totals, and an 'as of' timestamp.
+    A ticker with no price_cache row → null current price + null unrealized for
+    that holding (Plan 04 backfills live prices).
+    """
+    return compose_portfolio_summary(db)
 
 
 @app.get("/transactions", response_model=list[TransactionOut])

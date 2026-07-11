@@ -13,14 +13,15 @@ Every apply_* function:
   - never commits the session itself — the caller owns the transaction boundary
 """
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.importer import _get_or_create_account
-from backend.models import Account, AuditLog, Platform, Transaction
+from backend.models import Account, AuditLog, Holding, Platform, PortfolioEvent, Transaction
+from backend.portfolio import recompute_holding_from_events
 
 
 def apply_add_transaction(db: Session, after: dict) -> Transaction:
@@ -187,6 +188,89 @@ def apply_delete_platform(db: Session, platform_id: int, before: dict | None, re
     db.add(AuditLog(entity="platform", entity_id=platform_id, operation="delete",
                     before=before, after=audit_after))
     return reassigned_count
+
+
+def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
+    """Insert a buy/sell/dividend event, then recompute the holding (D-01/INV-07).
+
+    `portfolio_events` is the source of truth for a position (D-01). After the
+    row is inserted + audited, `recompute_holding_from_events` re-derives the
+    holding's quantity/avg_cost from the full ledger so the position always
+    falls out of the events, never a mutable running total. Money goes through
+    `Decimal(str(...))` (FND-03). Does NOT commit — caller owns the transaction.
+
+    NOTE: input validation (event_type ∈ {buy,sell,dividend}, positive
+    quantity/price) happens at the schema boundary (PortfolioEventCreate) BEFORE
+    this runs — the recompute never sanitizes its own inputs (T-05-03-EVT).
+    """
+    ev = PortfolioEvent(
+        date=date.fromisoformat(after["date"]) if after.get("date") else datetime.now(timezone.utc).date(),
+        ticker=after["ticker"],
+        event_type=after["event_type"],
+        quantity=Decimal(str(after["quantity"])),  # LOAD-BEARING: str() before Decimal() avoids float artifacts
+        price=Decimal(str(after["price"])),
+    )
+    db.add(ev)
+    db.flush()  # LOAD-BEARING: populates ev.id before the AuditLog row below
+    db.add(AuditLog(entity="portfolio_event", entity_id=ev.id, operation="add",
+                    before=None, after=after))
+    # D-01: position derives from the ledger — recompute after every event.
+    recompute_holding_from_events(db, after["ticker"])
+    return ev
+
+
+def apply_add_holding(db: Session, after: dict) -> Holding:
+    """D-03 direct override: insert a holding row directly (bypasses the ledger).
+
+    The escape hatch for seeding a position without an event history. Still
+    audited (entity="holding") — no write path bypasses the audit helper (D-16).
+    Money via Decimal(str(...)). Does NOT commit.
+    """
+    holding = Holding(
+        ticker=after["ticker"],
+        quantity=Decimal(str(after["quantity"])),
+        avg_cost=Decimal(str(after["avg_cost"])),
+        purchase_date=date.fromisoformat(after["purchase_date"]) if after.get("purchase_date") else None,
+        currency=after.get("currency", "IDR"),
+        asset_type=after.get("asset_type"),
+        platform_id=after.get("platform_id"),
+    )
+    db.add(holding)
+    db.flush()  # LOAD-BEARING: populates holding.id before the AuditLog row below
+    db.add(AuditLog(entity="holding", entity_id=holding.id, operation="add",
+                    before=None, after=after))
+    return holding
+
+
+def apply_edit_holding(db: Session, holding_id: int, after: dict, before: dict | None) -> Holding:
+    """D-03 direct override: partial-update a holding. None fields left unchanged."""
+    holding = db.get(Holding, holding_id)
+    if holding is None:
+        raise ValueError(f"Holding {holding_id} not found")
+    if after.get("ticker") is not None:
+        holding.ticker = after["ticker"]
+    if after.get("quantity") is not None:
+        holding.quantity = Decimal(str(after["quantity"]))
+    if after.get("avg_cost") is not None:
+        holding.avg_cost = Decimal(str(after["avg_cost"]))
+    if after.get("purchase_date") is not None:
+        holding.purchase_date = date.fromisoformat(after["purchase_date"])
+    if after.get("asset_type") is not None:
+        holding.asset_type = after["asset_type"]
+    if after.get("platform_id") is not None:
+        holding.platform_id = after["platform_id"]
+    db.add(AuditLog(entity="holding", entity_id=holding_id, operation="edit",
+                    before=before, after=after))
+    return holding
+
+
+def apply_delete_holding(db: Session, holding_id: int, before: dict | None) -> None:
+    """D-03 direct override: delete a holding by id (no-op if gone) and audit it."""
+    holding = db.get(Holding, holding_id)
+    if holding is not None:
+        db.delete(holding)
+    db.add(AuditLog(entity="holding", entity_id=holding_id, operation="delete",
+                    before=before, after=None))
 
 
 def apply_rename_category(db: Session, old_name: str, new_name: str) -> int:

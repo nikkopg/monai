@@ -1,9 +1,9 @@
 """Pydantic request/response models for the API."""
 
 import uuid as _uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
 
@@ -113,6 +113,89 @@ class PlatformOut(BaseModel):
     id: int
     name: str
     kind: str | None
+
+
+# ---------------------------------------------------------------------------
+# Investments (INV-01/06/07) — event ledger, holdings, composed summary
+# ---------------------------------------------------------------------------
+
+
+class PortfolioEventCreate(BaseModel):
+    """Buy/sell/dividend event body (INV-07, D-01).
+
+    event_type is a locked literal set — a value outside {buy,sell,dividend}
+    (e.g. "gift") is rejected with a 422 at the schema boundary BEFORE the
+    recompute runs (T-05-03-EVT). quantity/price must be positive (V5).
+    Convention for a lump-sum dividend: quantity=1, price=amount.
+    """
+
+    ticker: str
+    event_type: Literal["buy", "sell", "dividend"]
+    quantity: MoneyDecimal = Field(..., gt=0, description="Units; must be positive")
+    price: MoneyDecimal = Field(..., gt=0, description="Price per unit (or dividend amount) in IDR; positive")
+    date: date
+
+
+class PortfolioEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    date: date
+    ticker: str
+    event_type: str
+    quantity: MoneyDecimal
+    price: MoneyDecimal
+
+
+class HoldingCreate(BaseModel):
+    """Direct holding override body (D-03 escape hatch)."""
+
+    ticker: str
+    quantity: MoneyDecimal
+    avg_cost: MoneyDecimal
+    purchase_date: date | None = None
+    currency: str = "IDR"
+    asset_type: str | None = None
+    platform_id: int | None = None
+
+
+class HoldingUpdate(BaseModel):
+    """Partial-update body for a direct holding override — all fields Optional."""
+
+    ticker: str | None = None
+    quantity: MoneyDecimal | None = None
+    avg_cost: MoneyDecimal | None = None
+    purchase_date: date | None = None
+    asset_type: str | None = None
+    platform_id: int | None = None
+
+
+class HoldingOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    ticker: str
+    quantity: MoneyDecimal
+    avg_cost: MoneyDecimal
+    purchase_date: date | None
+    currency: str
+    asset_type: str | None
+    platform_id: int | None
+
+
+class PortfolioSummary(BaseModel):
+    """Composed GET /investments/summary payload (D-05, INV-06).
+
+    Built from a plain dict (portfolio.portfolio_summary), not an ORM row.
+    Money fields inside `groups` are already Decimal; the dict passthrough keeps
+    them serialized as JSON numbers via portfolio.py's own shaping.
+    """
+
+    groups: list  # [{platform_id, platform_name, kind, subtotal, holdings:[...]}]
+    total_value: MoneyDecimal
+    total_unrealized_pnl: MoneyDecimal
+    total_realized_pnl: MoneyDecimal
+    as_of: str
 
 
 class CategoryRenameRequest(BaseModel):

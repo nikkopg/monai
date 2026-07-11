@@ -545,6 +545,216 @@ def test_post_platforms_requires_api_key(client, api_key):
 
 
 # ---------------------------------------------------------------------------
+# INV-01/06/07: portfolio events, holding override, composed summary (Plan 05-03)
+# ---------------------------------------------------------------------------
+
+
+def _cleanup_ticker(db, ticker: str) -> None:
+    """Remove any holding/events/price_cache/audit rows for a ticker."""
+    from backend.models import Holding, PortfolioEvent, PriceCache, AuditLog
+
+    hids = [h.id for h in db.query(Holding).filter(Holding.ticker == ticker).all()]
+    if hids:
+        db.query(AuditLog).filter(
+            AuditLog.entity == "holding", AuditLog.entity_id.in_(hids)
+        ).delete(synchronize_session=False)
+    eids = [e.id for e in db.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).all()]
+    if eids:
+        db.query(AuditLog).filter(
+            AuditLog.entity == "portfolio_event", AuditLog.entity_id.in_(eids)
+        ).delete(synchronize_session=False)
+    db.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).delete(synchronize_session=False)
+    db.query(Holding).filter(Holding.ticker == ticker).delete(synchronize_session=False)
+    db.query(PriceCache).filter(PriceCache.ticker == ticker).delete(synchronize_session=False)
+    db.commit()
+
+
+def test_apply_add_portfolio_event_audits_and_recomputes(db_session):
+    """apply_add_portfolio_event inserts a portfolio_events row (INV-07), writes
+    one AuditLog(entity="portfolio_event"), and recomputes the holding's
+    qty/avg_cost from the ledger (D-01)."""
+    from decimal import Decimal
+    from backend.writes import apply_add_portfolio_event
+    from backend.models import PortfolioEvent, Holding, AuditLog
+
+    ticker = "EVTTEST01"
+    _cleanup_ticker(db_session, ticker)
+
+    before_audit = int(
+        db_session.execute(
+            text("SELECT COUNT(*) FROM audit_log WHERE entity = 'portfolio_event'")
+        ).scalar() or 0
+    )
+
+    apply_add_portfolio_event(db_session, {
+        "ticker": ticker, "event_type": "buy",
+        "quantity": 10, "price": 100, "date": "2024-01-10",
+    })
+    db_session.commit()
+
+    # Event row exists
+    ev = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
+    assert ev.event_type == "buy"
+
+    # Holding recomputed from the ledger (D-01)
+    h = db_session.query(Holding).filter(Holding.ticker == ticker).one()
+    assert h.quantity == Decimal("10")
+    assert h.avg_cost == Decimal("100")
+
+    # Exactly one new portfolio_event AuditLog row
+    after_audit = int(
+        db_session.execute(
+            text("SELECT COUNT(*) FROM audit_log WHERE entity = 'portfolio_event'")
+        ).scalar() or 0
+    )
+    assert after_audit == before_audit + 1
+
+    _cleanup_ticker(db_session, ticker)
+
+
+def test_portfolio_event_rejects_unknown_type(client, api_key):
+    """POST /portfolio-events with event_type 'gift' → 422 at the schema
+    boundary, BEFORE any recompute runs (T-05-03-EVT)."""
+    from backend.db import engine
+    try:
+        with engine.connect() as c:
+            c.execute(text("SELECT 1"))
+    except Exception as e:
+        pytest.skip(f"Postgres not available: {e}")
+
+    r = client.post(
+        "/portfolio-events",
+        json={"ticker": "GIFTTEST", "event_type": "gift",
+              "quantity": 1, "price": 100, "date": "2024-01-10"},
+        headers={"MONAI_API_KEY": api_key},
+    )
+    assert r.status_code == 422, r.text
+
+    # No holding was created as a side effect of the rejected request.
+    from backend.db import SessionLocal
+    from backend.models import Holding
+    _db = SessionLocal()
+    try:
+        assert _db.query(Holding).filter(Holding.ticker == "GIFTTEST").first() is None
+    finally:
+        _db.close()
+
+
+def test_portfolio_event_requires_api_key(client, api_key):
+    """POST /portfolio-events without the key header → 401 (T-05-03-AC).
+
+    The api_key fixture configures a server key so the fail-closed 503 guard is
+    satisfied; omitting the request header then exercises the 401 path.
+    """
+    r = client.post(
+        "/portfolio-events",
+        json={"ticker": "NOAUTHEVT", "event_type": "buy",
+              "quantity": 1, "price": 100, "date": "2024-01-10"},
+    )
+    assert r.status_code == 401
+
+
+def test_apply_edit_and_delete_holding_audit(db_session):
+    """apply_edit_holding and apply_delete_holding (D-03 direct override) each
+    write one AuditLog(entity="holding") row."""
+    from backend.writes import apply_add_holding, apply_edit_holding, apply_delete_holding
+    from backend.models import Holding, AuditLog
+
+    ticker = "OVERRIDE01"
+    _cleanup_ticker(db_session, ticker)
+
+    h = apply_add_holding(db_session, {
+        "ticker": ticker, "quantity": 5, "avg_cost": 200, "currency": "IDR",
+        "asset_type": "crypto",
+    })
+    db_session.commit()
+    db_session.refresh(h)
+    h_id = h.id
+
+    edit_before = int(
+        db_session.execute(
+            text("SELECT COUNT(*) FROM audit_log WHERE entity='holding' AND operation='edit'")
+        ).scalar() or 0
+    )
+    apply_edit_holding(db_session, h_id, {"quantity": 7}, {"id": h_id, "quantity": "5"})
+    db_session.commit()
+    edit_after = int(
+        db_session.execute(
+            text("SELECT COUNT(*) FROM audit_log WHERE entity='holding' AND operation='edit'")
+        ).scalar() or 0
+    )
+    assert edit_after == edit_before + 1
+
+    del_before = int(
+        db_session.execute(
+            text("SELECT COUNT(*) FROM audit_log WHERE entity='holding' AND operation='delete'")
+        ).scalar() or 0
+    )
+    apply_delete_holding(db_session, h_id, {"id": h_id, "ticker": ticker})
+    db_session.commit()
+    del_after = int(
+        db_session.execute(
+            text("SELECT COUNT(*) FROM audit_log WHERE entity='holding' AND operation='delete'")
+        ).scalar() or 0
+    )
+    assert del_after == del_before + 1
+    assert db_session.get(Holding, h_id) is None
+
+    _cleanup_ticker(db_session, ticker)
+
+
+def test_investments_summary_grouped_payload(db_session):
+    """GET /investments/summary composes holdings grouped by platform (with an
+    'unassigned' group for null platform_id), each with unrealized/realized P&L,
+    plus total_value and an as_of timestamp (D-05, INV-06)."""
+    from decimal import Decimal
+    from backend.portfolio import portfolio_summary
+    from backend.models import PriceCache
+
+    ticker = "SUMMARY01"
+    _cleanup_ticker(db_session, ticker)
+
+    # Seed a position from the ledger: buy 10 @ 100 then sell 4 @ 250.
+    from backend.writes import apply_add_portfolio_event
+    apply_add_portfolio_event(db_session, {
+        "ticker": ticker, "event_type": "buy", "quantity": 10, "price": 100, "date": "2024-01-01"})
+    apply_add_portfolio_event(db_session, {
+        "ticker": ticker, "event_type": "sell", "quantity": 4, "price": 250, "date": "2024-01-02"})
+    # A current price so unrealized is non-null.
+    db_session.add(PriceCache(ticker=ticker, price=Decimal("300"), currency="IDR", source="manual"))
+    db_session.commit()
+
+    summary = portfolio_summary(db_session)
+
+    assert "as_of" in summary and summary["as_of"]
+    assert "total_value" in summary
+    assert "total_unrealized_pnl" in summary
+    assert "total_realized_pnl" in summary
+
+    # Our ticker lands in the unassigned group (null platform_id).
+    rows = [
+        row for g in summary["groups"] for row in g["holdings"]
+        if row["ticker"] == ticker
+    ]
+    assert len(rows) == 1, f"expected one summary row for {ticker}, got {rows}"
+    row = rows[0]
+    # qty 6 @ avg_cost 100; current 300 → unrealized (300-100)*6 = 1200
+    assert row["quantity"] == Decimal("6")
+    assert row["avg_cost"] == Decimal("100")
+    assert row["current_price"] == Decimal("300")
+    assert row["unrealized_pnl"] == Decimal("1200")
+    # realized (250-100)*4 = 600
+    assert row["realized_pnl"] == Decimal("600")
+    # This holding has null platform_id → it must sit in the unassigned group.
+    unassigned = [g for g in summary["groups"] if g["platform_id"] is None]
+    assert unassigned and any(
+        r["ticker"] == ticker for r in unassigned[0]["holdings"]
+    )
+
+    _cleanup_ticker(db_session, ticker)
+
+
+# ---------------------------------------------------------------------------
 # D-06: Orphan-delete blocked
 # ---------------------------------------------------------------------------
 
