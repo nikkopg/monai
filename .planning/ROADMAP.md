@@ -14,7 +14,7 @@
 - [x] **Phase 2: Agentic Loop + Confirm-Before-Write** - Multi-step agent replaces single-shot router; write proposals with human approval gate (completed 2026-07-03)
 - [x] **Phase 3: Multi-Page UI Shell + Settings** - Four-page navigation, Settings page; users can navigate and configure the app (completed 2026-07-04)
 - [x] **Phase 4: Cashflow Dashboard + CRUD** - Spending/income dashboard with charts; full transaction/account/category management in UI (completed 2026-07-05)
-- [ ] **Phase 5: Investment Subsystem** - Holdings CRUD, live prices, P&L display, portfolio events, and spending-correlation queries
+- [x] **Phase 5: Investment Subsystem** - Holdings CRUD, live prices, P&L display, portfolio events, and spending-correlation queries (completed 2026-07-11)
 - [ ] **Phase 6: MCP Server** - FastMCP server co-mounted in FastAPI; read-only tools exposed to external clients
 
 ---
@@ -142,7 +142,7 @@
   5. The Investments page shows a total portfolio value figure with a corresponding "as of" timestamp
   6. Portfolio buy/sell events are recorded when holdings change, enabling the agent to answer: "since I bought BBCA, how has my eating-out spending changed?" with a number
 
-**Plans**: 5/6 plans executed
+**Plans**: 6/6 plans complete
 
 **Wave 1** *(foundation — runs alone)*
 
@@ -163,7 +163,7 @@
 
 **Wave 5** *(depends 05-03 + 05-04)*
 
-- [ ] 05-06-PLAN.md — Scheduler slice: APScheduler daily snapshot in FastAPI lifespan → portfolio_value_history (D-13/14) [wave 5]
+- [x] 05-06-PLAN.md — Scheduler slice: APScheduler daily snapshot in FastAPI lifespan → portfolio_value_history (D-13/14) [wave 5]
 
 **UI hint**: yes
 
@@ -192,7 +192,7 @@
 | 2. Agentic Loop + Confirm-Before-Write | 2/3 | In Progress|  |
 | 3. Multi-Page UI Shell + Settings | 3/3 | Complete   | 2026-07-04 |
 | 4. Cashflow Dashboard + CRUD | 7/7 | Complete   | 2026-07-06 |
-| 5. Investment Subsystem | 5/6 | In Progress|  |
+| 5. Investment Subsystem | 6/6 | Complete   | 2026-07-11 |
 | 6. MCP Server | 0/? | Not started | - |
 
 ---

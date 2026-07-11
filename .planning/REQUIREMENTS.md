@@ -49,7 +49,7 @@ Requirements for this cycle. Each maps to a roadmap phase.
 - [x] **INV-03**: System fetches current market prices for IDX stock holdings (best-effort, with fallback)
 - [x] **INV-04**: User can manually set/override a holding's price (required fallback for mutual funds and no-API instruments)
 - [x] **INV-05**: Each displayed price shows its as-of time and a staleness indicator
-- [ ] **INV-06**: Investment page shows current portfolio value and per-holding profit/loss
+- [x] **INV-06**: Investment page shows current portfolio value and per-holding profit/loss
 - [x] **INV-07**: Portfolio events (buys/sells) are recorded, enabling correlation queries
 
 ### Pages & Settings
