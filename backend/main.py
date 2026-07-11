@@ -33,6 +33,7 @@ Endpoints:
 import hmac
 import logging
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
@@ -112,7 +113,27 @@ from backend.settings import (
 
 logging.basicConfig(level=logging.INFO)
 
-app = FastAPI(title="monai", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Start the in-process daily portfolio-value snapshot scheduler (D-13/D-14).
+
+    entrypoint.sh runs a single uvicorn process (no --workers), so exactly one
+    scheduler owns the daily job — no leader election needed.
+    NOTE: a future multi-worker deploy would run N schedulers; that would need
+    leader election (or an external scheduler) to avoid N duplicate snapshots.
+    """
+    from backend.scheduler import build_scheduler
+
+    scheduler = build_scheduler()
+    scheduler.start()
+    try:
+        yield
+    finally:
+        scheduler.shutdown(wait=False)
+
+
+app = FastAPI(title="monai", version="0.1.0", lifespan=lifespan)
 
 # Local-only dev frontend
 app.add_middleware(
