@@ -247,6 +247,7 @@ def apply_add_holding(db: Session, after: dict) -> Holding:
         currency=after.get("currency", "IDR"),
         asset_type=after.get("asset_type"),
         platform_id=after.get("platform_id"),
+        coingecko_id=after.get("coingecko_id"),
     )
     db.add(holding)
     db.flush()  # LOAD-BEARING: populates holding.id before the AuditLog row below
@@ -272,6 +273,8 @@ def apply_edit_holding(db: Session, holding_id: int, after: dict, before: dict |
         holding.asset_type = after["asset_type"]
     if after.get("platform_id") is not None:
         holding.platform_id = after["platform_id"]
+    if after.get("coingecko_id") is not None:
+        holding.coingecko_id = after["coingecko_id"]
     db.add(AuditLog(entity="holding", entity_id=holding_id, operation="edit",
                     before=before, after=after))
     return holding

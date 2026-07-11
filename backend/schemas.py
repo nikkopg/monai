@@ -159,6 +159,7 @@ class HoldingCreate(BaseModel):
     currency: str = "IDR"
     asset_type: str | None = None
     platform_id: int | None = None
+    coingecko_id: str | None = None
 
 
 class HoldingUpdate(BaseModel):
@@ -170,6 +171,7 @@ class HoldingUpdate(BaseModel):
     purchase_date: date | None = None
     asset_type: str | None = None
     platform_id: int | None = None
+    coingecko_id: str | None = None
 
 
 class HoldingOut(BaseModel):
@@ -183,6 +185,7 @@ class HoldingOut(BaseModel):
     currency: str
     asset_type: str | None
     platform_id: int | None
+    coingecko_id: str | None
 
 
 class PortfolioSummary(BaseModel):

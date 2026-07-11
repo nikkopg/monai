@@ -40,6 +40,64 @@ def test_fetch_crypto_price(monkeypatch):
     assert prices.fetch_crypto_price("BTC") is None
 
 
+def test_fetch_crypto_price_explicit_coin_id(monkeypatch):
+    """Explicit coin_id overrides the symbol map — works for unknown tickers too."""
+    from backend import prices
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"bittensor": {"idr": 4_200_000_000}}
+
+    captured = {}
+
+    def _get(url, params, timeout):
+        captured.update(params)
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "get", _get)
+    result = prices.fetch_crypto_price("TAO", coin_id="bittensor")
+    assert result == (Decimal("4200000000"), "coingecko")
+    assert captured["ids"] == "bittensor"
+
+
+def test_fetch_crypto_price_no_coin_id_falls_back_to_map(monkeypatch):
+    """coin_id=None, known ticker -> falls back to TICKER_TO_COINGECKO_ID (regression guard)."""
+    from backend import prices
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"bitcoin": {"idr": 1_500_000_000}}
+
+    captured = {}
+
+    def _get(url, params, timeout):
+        captured.update(params)
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "get", _get)
+    result = prices.fetch_crypto_price("BTC", coin_id=None)
+    assert result == (Decimal("1500000000"), "coingecko")
+    assert captured["ids"] == "bitcoin"
+
+
+def test_fetch_crypto_price_unknown_ticker_no_coin_id_is_none(monkeypatch):
+    """No coin_id + unknown ticker -> None, no outbound call (no fabrication)."""
+    from backend import prices
+
+    def _boom(*a, **k):
+        raise AssertionError("must not call the network with no resolved coin id")
+
+    monkeypatch.setattr(httpx, "get", _boom)
+    assert prices.fetch_crypto_price("NOTACOIN", coin_id=None) is None
+    assert prices.fetch_crypto_price("NOTACOIN", coin_id="") is None
+
+
 def test_fetch_idx_price_fallback(monkeypatch):
     """yfinance raising → None (fallback contract, INV-03) — never raises."""
     import yfinance as yf
