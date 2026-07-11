@@ -84,7 +84,8 @@ def _make_holding(db) -> int:
     from backend.models import Holding
     import random
     ticker = f"TSTTICKER{random.randint(1000,9999)}"
-    h = Holding(ticker=ticker, quantity=10, avg_cost=100000, currency="IDR")
+    plat_id = _make_platform(db, "TestWriteToolsPlatform")
+    h = Holding(ticker=ticker, quantity=10, avg_cost=100000, currency="IDR", platform_id=plat_id)
     db.add(h)
     db.commit()
     db.refresh(h)
@@ -579,6 +580,7 @@ def test_apply_add_portfolio_event_audits_and_recomputes(db_session):
 
     ticker = "EVTTEST01"
     _cleanup_ticker(db_session, ticker)
+    plat_id = _make_platform(db_session, "TestAuditRecomputePlatform")
 
     before_audit = int(
         db_session.execute(
@@ -589,12 +591,14 @@ def test_apply_add_portfolio_event_audits_and_recomputes(db_session):
     apply_add_portfolio_event(db_session, {
         "ticker": ticker, "event_type": "buy",
         "quantity": 10, "price": 100, "date": "2024-01-10",
+        "platform_id": plat_id,
     })
     db_session.commit()
 
     # Event row exists
     ev = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
     assert ev.event_type == "buy"
+    assert ev.platform_id == plat_id
 
     # Holding recomputed from the ledger (D-01)
     h = db_session.query(Holding).filter(Holding.ticker == ticker).one()
@@ -612,10 +616,11 @@ def test_apply_add_portfolio_event_audits_and_recomputes(db_session):
     _cleanup_ticker(db_session, ticker)
 
 
-def test_apply_add_portfolio_event_sets_platform_and_asset_type_without_clobber(db_session):
-    """A buy event carrying platform_id/asset_type sets them on the recomputed
-    holding; a later event on the same ticker with those fields omitted must
-    NOT null out the existing assignment (set-when-provided semantics)."""
+def test_apply_add_portfolio_event_sets_asset_type_without_clobber(db_session):
+    """platform_id is now identity (required on every event, set at creation via
+    the recompute upsert — Quick 260711-rb2). asset_type remains a plain
+    set-when-provided attribute: a later event on the same (ticker, platform_id)
+    with asset_type omitted must NOT null out the existing assignment."""
     from backend.writes import apply_add_portfolio_event
     from backend.models import Holding, Platform
 
@@ -624,7 +629,7 @@ def test_apply_add_portfolio_event_sets_platform_and_asset_type_without_clobber(
     plat_id = _make_platform(db_session, name="Test Platform EVT")
 
     try:
-        # First buy: platform_id + asset_type provided -> land on the holding.
+        # First buy: platform_id (identity) + asset_type provided.
         apply_add_portfolio_event(db_session, {
             "ticker": ticker, "event_type": "buy",
             "quantity": 10, "price": 100, "date": "2024-01-10",
@@ -632,18 +637,24 @@ def test_apply_add_portfolio_event_sets_platform_and_asset_type_without_clobber(
         })
         db_session.commit()
 
-        h = db_session.query(Holding).filter(Holding.ticker == ticker).one()
+        h = db_session.query(Holding).filter(
+            Holding.ticker == ticker, Holding.platform_id == plat_id
+        ).one()
         assert h.platform_id == plat_id
         assert h.asset_type == "crypto"
 
-        # Second buy: platform_id/asset_type omitted -> must NOT clobber existing.
+        # Second buy on the SAME (ticker, platform_id): asset_type omitted ->
+        # must NOT clobber existing.
         apply_add_portfolio_event(db_session, {
             "ticker": ticker, "event_type": "buy",
             "quantity": 5, "price": 110, "date": "2024-01-11",
+            "platform_id": plat_id,
         })
         db_session.commit()
 
-        h = db_session.query(Holding).filter(Holding.ticker == ticker).one()
+        h = db_session.query(Holding).filter(
+            Holding.ticker == ticker, Holding.platform_id == plat_id
+        ).one()
         assert h.platform_id == plat_id
         assert h.asset_type == "crypto"
     finally:
@@ -652,6 +663,48 @@ def test_apply_add_portfolio_event_sets_platform_and_asset_type_without_clobber(
         if plat is not None:
             db_session.delete(plat)
             db_session.commit()
+
+
+def test_apply_add_portfolio_event_same_ticker_two_platforms_independent(db_session):
+    """Quick 260711-rb2: the same ticker on two different platforms creates
+    TWO independent positions, not a collision — position identity is
+    (ticker, platform_id)."""
+    from decimal import Decimal
+    from backend.writes import apply_add_portfolio_event
+    from backend.models import Holding, Platform
+
+    ticker = "EVTTEST03"
+    _cleanup_ticker(db_session, ticker)
+    plat_a = _make_platform(db_session, name="Test Platform EVT A")
+    plat_b = _make_platform(db_session, name="Test Platform EVT B")
+
+    try:
+        apply_add_portfolio_event(db_session, {
+            "ticker": ticker, "event_type": "buy",
+            "quantity": 10, "price": 100, "date": "2024-01-10",
+            "platform_id": plat_a,
+        })
+        apply_add_portfolio_event(db_session, {
+            "ticker": ticker, "event_type": "buy",
+            "quantity": 3, "price": 500, "date": "2024-01-10",
+            "platform_id": plat_b,
+        })
+        db_session.commit()
+
+        holdings = db_session.query(Holding).filter(Holding.ticker == ticker).all()
+        assert len(holdings) == 2
+
+        ha = next(h for h in holdings if h.platform_id == plat_a)
+        hb = next(h for h in holdings if h.platform_id == plat_b)
+        assert ha.quantity == Decimal("10") and ha.avg_cost == Decimal("100")
+        assert hb.quantity == Decimal("3") and hb.avg_cost == Decimal("500")
+    finally:
+        _cleanup_ticker(db_session, ticker)
+        for pid in (plat_a, plat_b):
+            plat = db_session.get(Platform, pid)
+            if plat is not None:
+                db_session.delete(plat)
+                db_session.commit()
 
 
 def test_portfolio_event_rejects_unknown_type(client, api_key):
@@ -704,10 +757,11 @@ def test_apply_edit_and_delete_holding_audit(db_session):
 
     ticker = "OVERRIDE01"
     _cleanup_ticker(db_session, ticker)
+    plat_id = _make_platform(db_session, "TestOverrideAuditPlatform")
 
     h = apply_add_holding(db_session, {
         "ticker": ticker, "quantity": 5, "avg_cost": 200, "currency": "IDR",
-        "asset_type": "crypto",
+        "asset_type": "crypto", "platform_id": plat_id,
     })
     db_session.commit()
     db_session.refresh(h)
@@ -751,10 +805,11 @@ def test_apply_add_holding_persists_coingecko_id(db_session):
 
     ticker = "COINGECKO01"
     _cleanup_ticker(db_session, ticker)
+    plat_id = _make_platform(db_session, "TestCoingeckoPlatform01")
 
     h = apply_add_holding(db_session, {
         "ticker": ticker, "quantity": 5, "avg_cost": 200, "currency": "IDR",
-        "asset_type": "crypto", "coingecko_id": "bittensor",
+        "asset_type": "crypto", "coingecko_id": "bittensor", "platform_id": plat_id,
     })
     db_session.commit()
     db_session.refresh(h)
@@ -771,10 +826,11 @@ def test_apply_edit_holding_sets_coingecko_id_when_provided_no_clobber(db_sessio
 
     ticker = "COINGECKO02"
     _cleanup_ticker(db_session, ticker)
+    plat_id = _make_platform(db_session, "TestCoingeckoPlatform02")
 
     h = apply_add_holding(db_session, {
         "ticker": ticker, "quantity": 5, "avg_cost": 200, "currency": "IDR",
-        "asset_type": "crypto",
+        "asset_type": "crypto", "platform_id": plat_id,
     })
     db_session.commit()
     db_session.refresh(h)
@@ -797,22 +853,26 @@ def test_apply_edit_holding_sets_coingecko_id_when_provided_no_clobber(db_sessio
 
 
 def test_investments_summary_grouped_payload(db_session):
-    """GET /investments/summary composes holdings grouped by platform (with an
-    'unassigned' group for null platform_id), each with unrealized/realized P&L,
-    plus total_value and an as_of timestamp (D-05, INV-06)."""
+    """GET /investments/summary composes holdings grouped by platform, each
+    with unrealized/realized P&L, plus total_value and an as_of timestamp
+    (D-05, INV-06). platform_id is now required (Quick 260711-rb2) — no more
+    'unassigned' group."""
     from decimal import Decimal
     from backend.portfolio import portfolio_summary
-    from backend.models import PriceCache
+    from backend.models import Platform, PriceCache
 
     ticker = "SUMMARY01"
     _cleanup_ticker(db_session, ticker)
+    plat_id = _make_platform(db_session, "TestSummaryPlatform")
 
     # Seed a position from the ledger: buy 10 @ 100 then sell 4 @ 250.
     from backend.writes import apply_add_portfolio_event
     apply_add_portfolio_event(db_session, {
-        "ticker": ticker, "event_type": "buy", "quantity": 10, "price": 100, "date": "2024-01-01"})
+        "ticker": ticker, "event_type": "buy", "quantity": 10, "price": 100,
+        "date": "2024-01-01", "platform_id": plat_id})
     apply_add_portfolio_event(db_session, {
-        "ticker": ticker, "event_type": "sell", "quantity": 4, "price": 250, "date": "2024-01-02"})
+        "ticker": ticker, "event_type": "sell", "quantity": 4, "price": 250,
+        "date": "2024-01-02", "platform_id": plat_id})
     # A current price so unrealized is non-null.
     db_session.add(PriceCache(ticker=ticker, price=Decimal("300"), currency="IDR", source="manual"))
     db_session.commit()
@@ -824,7 +884,7 @@ def test_investments_summary_grouped_payload(db_session):
     assert "total_unrealized_pnl" in summary
     assert "total_realized_pnl" in summary
 
-    # Our ticker lands in the unassigned group (null platform_id).
+    # Our ticker lands under its platform's group.
     rows = [
         row for g in summary["groups"] for row in g["holdings"]
         if row["ticker"] == ticker
@@ -838,10 +898,10 @@ def test_investments_summary_grouped_payload(db_session):
     assert row["unrealized_pnl"] == Decimal("1200")
     # realized (250-100)*4 = 600
     assert row["realized_pnl"] == Decimal("600")
-    # This holding has null platform_id → it must sit in the unassigned group.
-    unassigned = [g for g in summary["groups"] if g["platform_id"] is None]
-    assert unassigned and any(
-        r["ticker"] == ticker for r in unassigned[0]["holdings"]
+    # This holding sits under its platform's group (identity, no more nulls).
+    plat_group = [g for g in summary["groups"] if g["platform_id"] == plat_id]
+    assert plat_group and any(
+        r["ticker"] == ticker for r in plat_group[0]["holdings"]
     )
 
     _cleanup_ticker(db_session, ticker)

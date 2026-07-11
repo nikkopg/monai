@@ -162,24 +162,48 @@ def apply_edit_platform(db: Session, platform_id: int, after: dict, before: dict
 
 
 def apply_delete_platform(db: Session, platform_id: int, before: dict | None, reassign_to: int | None = None) -> int:
-    """Delete a platform, optionally reassigning its holdings first (D-12).
+    """Delete a platform, optionally reassigning its holdings + events first (D-12).
 
-    When `reassign_to` is provided, dependent holdings are moved to that
-    platform (via a single parameterized UPDATE) BEFORE the platform is
-    deleted, and the reassignment target + row count are recorded in the
-    single AuditLog row this function writes — mirroring apply_delete_account
-    exactly (WARNING 1 fix), only the reassigned column is holdings.platform_id.
-    Returns the reassignment count (0 when reassign_to is None).
+    When `reassign_to` is provided, dependent holdings AND their portfolio_events
+    are moved to that platform (via parameterized UPDATEs) BEFORE the platform is
+    deleted, and the reassignment target + row count are recorded in the single
+    AuditLog row this function writes — mirroring apply_delete_account exactly
+    (WARNING 1 fix). Returns the holdings reassignment count (0 when reassign_to
+    is None).
+
+    Position identity is now (ticker, platform_id) (Quick 260711-rb2), so a
+    reassignment that would collide with an existing (ticker, platform_id) on
+    the target platform is rejected up front — merging positions is a later
+    feature, not an implicit side effect of a platform delete.
+    ponytail: reject colliding reassignment; position-merge is a later feature.
     """
     reassigned_count = 0
     audit_after: dict | None = None
 
     if reassign_to is not None:
+        collision = db.execute(
+            text(
+                "SELECT h1.ticker FROM holdings h1 "
+                "JOIN holdings h2 ON h1.ticker = h2.ticker "
+                "WHERE h1.platform_id = :pid AND h2.platform_id = :reassign_to"
+            ),
+            {"pid": platform_id, "reassign_to": reassign_to},
+        ).first()
+        if collision is not None:
+            raise ValueError(
+                f"Cannot reassign: {collision[0]} already exists on the target "
+                "platform — merge positions manually first."
+            )
+
         result = db.execute(
             text("UPDATE holdings SET platform_id = :reassign_to WHERE platform_id = :pid"),
             {"reassign_to": reassign_to, "pid": platform_id},
         )
         reassigned_count = result.rowcount
+        db.execute(
+            text("UPDATE portfolio_events SET platform_id = :reassign_to WHERE platform_id = :pid"),
+            {"reassign_to": reassign_to, "pid": platform_id},
+        )
         audit_after = {"reassign_to": reassign_to, "reassigned_count": reassigned_count}
 
     plat = db.get(Platform, platform_id)
@@ -191,13 +215,17 @@ def apply_delete_platform(db: Session, platform_id: int, before: dict | None, re
 
 
 def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
-    """Insert a buy/sell/dividend event, then recompute the holding (D-01/INV-07).
+    """Insert a buy/sell/dividend event, then recompute the position (D-01/INV-07).
 
-    `portfolio_events` is the source of truth for a position (D-01). After the
-    row is inserted + audited, `recompute_holding_from_events` re-derives the
-    holding's quantity/avg_cost from the full ledger so the position always
-    falls out of the events, never a mutable running total. Money goes through
-    `Decimal(str(...))` (FND-03). Does NOT commit — caller owns the transaction.
+    `portfolio_events` is the source of truth for a position (D-01). Position
+    identity is (ticker, platform_id) (Quick 260711-rb2) — platform_id is
+    required (the schema guarantees it; PortfolioEventCreate.platform_id is a
+    non-optional int). After the row is inserted + audited,
+    `recompute_holding_from_events` re-derives that position's quantity/avg_cost
+    from its own (ticker, platform_id) slice of the ledger so the position
+    always falls out of the events, never a mutable running total. Money goes
+    through `Decimal(str(...))` (FND-03). Does NOT commit — caller owns the
+    transaction.
 
     NOTE: input validation (event_type ∈ {buy,sell,dividend}, positive
     quantity/price) happens at the schema boundary (PortfolioEventCreate) BEFORE
@@ -209,26 +237,27 @@ def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
         event_type=after["event_type"],
         quantity=Decimal(str(after["quantity"])),  # LOAD-BEARING: str() before Decimal() avoids float artifacts
         price=Decimal(str(after["price"])),
+        platform_id=after["platform_id"],
     )
     db.add(ev)
     db.flush()  # LOAD-BEARING: populates ev.id before the AuditLog row below
     db.add(AuditLog(entity="portfolio_event", entity_id=ev.id, operation="add",
                     before=None, after=after))
     # D-01: position derives from the ledger — recompute after every event.
-    recompute_holding_from_events(db, after["ticker"])
-    # Set-when-provided: a later event with these fields omitted must NOT clobber
-    # an existing platform/asset_type assignment back to null (matches the
-    # None-means-keep convention in apply_edit_holding above).
-    if after.get("platform_id") is not None or after.get("asset_type") is not None:
+    recompute_holding_from_events(db, after["ticker"], after["platform_id"])
+    # Set-when-provided: a later event with asset_type omitted must NOT clobber
+    # an existing asset_type assignment back to null (matches the None-means-keep
+    # convention in apply_edit_holding above). platform_id is now identity — it's
+    # set by the recompute upsert above, not here.
+    if after.get("asset_type") is not None:
         # Session is autoflush=False (db.py) — recompute's newly-added Holding is
         # still pending, so flush before the lookup or the query misses it.
         db.flush()
-        holding = db.query(Holding).filter(Holding.ticker == after["ticker"]).one_or_none()
+        holding = db.query(Holding).filter(
+            Holding.ticker == after["ticker"], Holding.platform_id == after["platform_id"]
+        ).one_or_none()
         if holding is not None:
-            if after.get("platform_id") is not None:
-                holding.platform_id = after["platform_id"]
-            if after.get("asset_type") is not None:
-                holding.asset_type = after["asset_type"]
+            holding.asset_type = after["asset_type"]
     return ev
 
 

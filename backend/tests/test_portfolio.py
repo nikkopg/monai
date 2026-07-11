@@ -53,7 +53,21 @@ def _random_ticker() -> str:
     return f"TSTPF{random.randint(100000, 999999)}"
 
 
-def _add_event(db, ticker, event_type, quantity, price, day):
+def _make_platform(db, name: str) -> int:
+    """Insert (or reuse) a platforms row; return its id. Position identity now
+    requires a platform_id on every holding/event (Quick 260711-rb2)."""
+    from backend.models import Platform
+    existing = db.query(Platform).filter(Platform.name == name).first()
+    if existing:
+        return existing.id
+    plat = Platform(name=name, kind="brokerage")
+    db.add(plat)
+    db.commit()
+    db.refresh(plat)
+    return plat.id
+
+
+def _add_event(db, ticker, event_type, quantity, price, day, platform_id):
     """Insert a portfolio_events row directly (bypasses writes.py so the
     recompute algorithm is tested in isolation from the audit/apply path)."""
     import datetime as _dt
@@ -65,6 +79,7 @@ def _add_event(db, ticker, event_type, quantity, price, day):
         event_type=event_type,
         quantity=Decimal(str(quantity)),
         price=Decimal(str(price)),
+        platform_id=platform_id,
     )
     db.add(ev)
     db.commit()
@@ -86,11 +101,13 @@ def test_recompute_holding_from_events(db_session):
     from backend.portfolio import recompute_holding_from_events
     from backend.models import Holding
 
+    plat = _make_platform(db_session, "TestPortfolioPlatform")
+
     # --- Case 1: single buy ------------------------------------------------
     t1 = _random_ticker()
     try:
-        _add_event(db_session, t1, "buy", 10, 100, 1)
-        r = recompute_holding_from_events(db_session, t1)
+        _add_event(db_session, t1, "buy", 10, 100, 1, plat)
+        r = recompute_holding_from_events(db_session, t1, plat)
         db_session.commit()
         assert r["quantity"] == Decimal("10")
         assert r["avg_cost"] == Decimal("100")
@@ -98,15 +115,16 @@ def test_recompute_holding_from_events(db_session):
         h = db_session.query(Holding).filter(Holding.ticker == t1).one()
         assert h.quantity == Decimal("10")
         assert h.avg_cost == Decimal("100")
+        assert h.platform_id == plat
     finally:
         _cleanup_ticker(db_session, t1)
 
     # --- Case 2: two buys at different prices -> weighted avg -------------
     t2 = _random_ticker()
     try:
-        _add_event(db_session, t2, "buy", 10, 100, 1)
-        _add_event(db_session, t2, "buy", 10, 200, 2)
-        r = recompute_holding_from_events(db_session, t2)
+        _add_event(db_session, t2, "buy", 10, 100, 1, plat)
+        _add_event(db_session, t2, "buy", 10, 200, 2, plat)
+        r = recompute_holding_from_events(db_session, t2, plat)
         db_session.commit()
         assert r["quantity"] == Decimal("20")
         assert r["avg_cost"] == Decimal("150")
@@ -117,9 +135,9 @@ def test_recompute_holding_from_events(db_session):
     # --- Case 3: dividend folds into realized only -----------------------
     t3 = _random_ticker()
     try:
-        _add_event(db_session, t3, "buy", 10, 100, 1)
-        _add_event(db_session, t3, "dividend", 1, 500, 2)  # quantity=1, price=amount
-        r = recompute_holding_from_events(db_session, t3)
+        _add_event(db_session, t3, "buy", 10, 100, 1, plat)
+        _add_event(db_session, t3, "dividend", 1, 500, 2, plat)  # quantity=1, price=amount
+        r = recompute_holding_from_events(db_session, t3, plat)
         db_session.commit()
         assert r["quantity"] == Decimal("10")       # qty unchanged by dividend
         assert r["avg_cost"] == Decimal("100")      # avg_cost unchanged by dividend
@@ -131,9 +149,9 @@ def test_recompute_holding_from_events(db_session):
     # --- Case 4: sell the full position -> qty 0, row retained (D-04) -----
     t4 = _random_ticker()
     try:
-        _add_event(db_session, t4, "buy", 10, 100, 1)
-        _add_event(db_session, t4, "sell", 10, 250, 2)
-        r = recompute_holding_from_events(db_session, t4)
+        _add_event(db_session, t4, "buy", 10, 100, 1, plat)
+        _add_event(db_session, t4, "sell", 10, 250, 2, plat)
+        r = recompute_holding_from_events(db_session, t4, plat)
         db_session.commit()
         assert r["quantity"] == Decimal("0")
         h = db_session.query(Holding).filter(Holding.ticker == t4).one_or_none()
@@ -141,6 +159,59 @@ def test_recompute_holding_from_events(db_session):
         assert h.quantity == Decimal("0")
     finally:
         _cleanup_ticker(db_session, t4)
+
+
+def test_recompute_holding_per_position_independent(db_session):
+    """Quick 260711-rb2: same ticker on two platforms are independent
+    positions — recomputing one does NOT touch the other's qty/avg_cost."""
+    from decimal import Decimal
+    from backend.portfolio import recompute_holding_from_events
+    from backend.models import Holding
+
+    plat_a = _make_platform(db_session, "MultiPlatformA")
+    plat_b = _make_platform(db_session, "MultiPlatformB")
+    ticker = _random_ticker()
+    try:
+        _add_event(db_session, ticker, "buy", 10, 100, 1, plat_a)
+        _add_event(db_session, ticker, "buy", 5, 300, 1, plat_b)
+
+        ra = recompute_holding_from_events(db_session, ticker, plat_a)
+        rb = recompute_holding_from_events(db_session, ticker, plat_b)
+        db_session.commit()
+
+        assert ra["quantity"] == Decimal("10")
+        assert ra["avg_cost"] == Decimal("100")
+        assert rb["quantity"] == Decimal("5")
+        assert rb["avg_cost"] == Decimal("300")
+
+        ha = (
+            db_session.query(Holding)
+            .filter(Holding.ticker == ticker, Holding.platform_id == plat_a)
+            .one()
+        )
+        hb = (
+            db_session.query(Holding)
+            .filter(Holding.ticker == ticker, Holding.platform_id == plat_b)
+            .one()
+        )
+        assert ha.quantity == Decimal("10") and ha.avg_cost == Decimal("100")
+        assert hb.quantity == Decimal("5") and hb.avg_cost == Decimal("300")
+
+        # Recomputing plat_a again must not disturb plat_b's position.
+        _add_event(db_session, ticker, "buy", 10, 200, 2, plat_a)
+        recompute_holding_from_events(db_session, ticker, plat_a)
+        db_session.commit()
+
+        db_session.expire_all()
+        hb_after = (
+            db_session.query(Holding)
+            .filter(Holding.ticker == ticker, Holding.platform_id == plat_b)
+            .one()
+        )
+        assert hb_after.quantity == Decimal("5")
+        assert hb_after.avg_cost == Decimal("300")
+    finally:
+        _cleanup_ticker(db_session, ticker)
 
 
 def _cleanup_prices(db, ticker):
@@ -156,10 +227,11 @@ def test_manual_price_override(db_session):
     from backend.writes import apply_set_price
     from backend.portfolio import portfolio_summary, recompute_holding_from_events
 
+    plat = _make_platform(db_session, "TestManualPricePlatform")
     t = _random_ticker()
     try:
-        _add_event(db_session, t, "buy", 10, 100, 1)  # avg_cost 100, qty 10
-        recompute_holding_from_events(db_session, t)
+        _add_event(db_session, t, "buy", 10, 100, 1, plat)  # avg_cost 100, qty 10
+        recompute_holding_from_events(db_session, t, plat)
         db_session.commit()
 
         row = apply_set_price(db_session, t, 150)
@@ -189,11 +261,12 @@ def test_staleness_ttl(db_session):
     from backend.models import Holding, PriceCache
     from backend.portfolio import portfolio_summary
 
+    plat = _make_platform(db_session, "TestStalenessPlatform")
     t = _random_ticker()
     try:
         # crypto holding; crypto TTL is 5 min
         db_session.add(Holding(ticker=t, quantity=Decimal("1"), avg_cost=Decimal("100"),
-                               currency="IDR", asset_type="crypto"))
+                               currency="IDR", asset_type="crypto", platform_id=plat))
         stale_at = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(hours=1)
         db_session.add(PriceCache(ticker=t, price=Decimal("200"), currency="IDR",
                                   source="coingecko", fetched_at=stale_at))
@@ -228,12 +301,14 @@ def test_avg_cost_realized_pnl(db_session):
     from decimal import Decimal
     from backend.portfolio import recompute_holding_from_events, unrealized_pnl
 
+    plat = _make_platform(db_session, "TestAvgCostPlatform")
+
     # --- Profitable partial sell: buy 10 @ 100, sell 4 @ 250 -------------
     t1 = _random_ticker()
     try:
-        _add_event(db_session, t1, "buy", 10, 100, 1)
-        _add_event(db_session, t1, "sell", 4, 250, 2)
-        r = recompute_holding_from_events(db_session, t1)
+        _add_event(db_session, t1, "buy", 10, 100, 1, plat)
+        _add_event(db_session, t1, "sell", 4, 250, 2, plat)
+        r = recompute_holding_from_events(db_session, t1, plat)
         db_session.commit()
         assert r["quantity"] == Decimal("6")
         assert r["avg_cost"] == Decimal("100")          # UNCHANGED by the sell (D-02)
@@ -244,9 +319,9 @@ def test_avg_cost_realized_pnl(db_session):
     # --- Losing partial sell: buy 10 @ 100, sell 4 @ 60 -----------------
     t2 = _random_ticker()
     try:
-        _add_event(db_session, t2, "buy", 10, 100, 1)
-        _add_event(db_session, t2, "sell", 4, 60, 2)
-        r = recompute_holding_from_events(db_session, t2)
+        _add_event(db_session, t2, "buy", 10, 100, 1, plat)
+        _add_event(db_session, t2, "sell", 4, 60, 2, plat)
+        r = recompute_holding_from_events(db_session, t2, plat)
         db_session.commit()
         assert r["quantity"] == Decimal("6")
         assert r["avg_cost"] == Decimal("100")          # STILL unchanged on a loss

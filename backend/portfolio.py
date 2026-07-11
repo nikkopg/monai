@@ -37,24 +37,26 @@ from backend.prices import is_stale as _price_is_stale
 logger = logging.getLogger(__name__)
 
 
-def recompute_holding_from_events(db: Session, ticker: str) -> dict:
-    """D-01/D-02: rebuild a holding's position from its event ledger.
+def recompute_holding_from_events(db: Session, ticker: str, platform_id: int) -> dict:
+    """D-01/D-02: rebuild a position's state from its event ledger.
 
-    Scans `portfolio_events` for `ticker` in (date, id) order, deriving running
-    quantity + average cost. Buys add cost+qty; sells realize
+    Position identity is (ticker, platform_id) (Quick 260711-rb2) — the same
+    asset can exist on multiple platforms as independent positions. Scans
+    `portfolio_events` for (ticker, platform_id) in (date, id) order, deriving
+    running quantity + average cost. Buys add cost+qty; sells realize
     `(price − avg_cost) × qty` and reduce total_cost by `avg_cost × qty`
     (leaving avg_cost unchanged, D-02); dividends fold into realized only.
 
-    Upserts the `holdings` row (keyed on the unique `ticker`). If the resulting
-    quantity is 0 the row is retained as a zero-qty row (D-04: "drops off the
-    active list" is a query-time filter, not a delete). Does NOT commit — the
-    caller owns the transaction boundary (mirrors writes.py).
+    Upserts the `holdings` row keyed on (ticker, platform_id). If the
+    resulting quantity is 0 the row is retained as a zero-qty row (D-04:
+    "drops off the active list" is a query-time filter, not a delete). Does
+    NOT commit — the caller owns the transaction boundary (mirrors writes.py).
 
     Returns: {ticker, quantity, avg_cost, realized_pnl, dividend_total}.
     """
     events = db.scalars(
         select(PortfolioEvent)
-        .where(PortfolioEvent.ticker == ticker)
+        .where(PortfolioEvent.ticker == ticker, PortfolioEvent.platform_id == platform_id)
         .order_by(PortfolioEvent.date, PortfolioEvent.id)
     ).all()
 
@@ -82,9 +84,14 @@ def recompute_holding_from_events(db: Session, ticker: str) -> dict:
 
     avg_cost = (total_cost / qty) if qty > 0 else Decimal("0")
 
-    holding = db.query(Holding).filter(Holding.ticker == ticker).one_or_none()
+    holding = db.query(Holding).filter(
+        Holding.ticker == ticker, Holding.platform_id == platform_id
+    ).one_or_none()
     if holding is None:
-        holding = Holding(ticker=ticker, quantity=qty, avg_cost=avg_cost, currency="IDR")
+        holding = Holding(
+            ticker=ticker, quantity=qty, avg_cost=avg_cost, currency="IDR",
+            platform_id=platform_id,
+        )
         db.add(holding)
     else:
         holding.quantity = qty
@@ -131,12 +138,16 @@ def _latest_price(db: Session, ticker: str) -> PriceCache | None:
 def portfolio_summary(db: Session) -> dict:
     """Compose the GET /investments/summary payload (D-05, INV-06).
 
-    Reads every holding, joins the latest price_cache price per ticker, and
-    groups holdings by platform (null platform_id -> the "unassigned" group).
-    Per-holding fields: current_price (nullable), current_value (nullable),
-    unrealized_pnl (nullable), realized_pnl (from the event ledger). Totals sum
-    the non-null contributions; total_value / total_unrealized are null-safe.
-    Zero-qty holdings are still returned (D-04 filtering is a UI concern).
+    Reads every holding, joins the latest price_cache price per ticker (price
+    is platform-independent), and groups holdings by platform (Quick
+    260711-rb2: platform_id is required — one group per real platform, no
+    more "unassigned" bucket). Per-holding fields: current_price (nullable),
+    current_value (nullable), unrealized_pnl (nullable), realized_pnl (from
+    the event ledger, scoped to THIS holding's (ticker, platform_id) position
+    — the same ticker on two platforms must not double-count each other's
+    realized P&L). Totals sum the non-null contributions; total_value /
+    total_unrealized are null-safe. Zero-qty holdings are still returned
+    (D-04 filtering is a UI concern).
 
     Returns a dict shaped for PortfolioSummary:
       {groups: [{platform_id, platform_name, kind, subtotal, holdings: [...]}],
@@ -160,8 +171,10 @@ def portfolio_summary(db: Session) -> dict:
         )
         u_pnl = unrealized_pnl(current_price, h.avg_cost, h.quantity)
 
-        # Realized P&L + dividend total from the event ledger (source of truth).
-        realized = _realized_for_ticker(db, h.ticker)
+        # Realized P&L + dividend total from THIS position's event ledger
+        # (source of truth) — scoped to (ticker, platform_id), never the bare
+        # ticker, or two platforms' realized P&L would double-count.
+        realized = _realized_for_position(db, h.ticker, h.platform_id)
 
         if current_value is not None:
             total_value += current_value
@@ -169,7 +182,7 @@ def portfolio_summary(db: Session) -> dict:
             total_unrealized += u_pnl
         total_realized += realized["realized_pnl"]
 
-        gkey = h.platform_id  # None -> unassigned bucket
+        gkey = h.platform_id
         if gkey not in groups:
             plat = platforms.get(h.platform_id)
             groups[gkey] = {
@@ -274,15 +287,18 @@ def snapshot_all_holdings(db: Session) -> dict:
     return {"written": written, "skipped": skipped, "failed": failed}
 
 
-def _realized_for_ticker(db: Session, ticker: str) -> dict:
-    """Realized P&L + dividend total for a ticker WITHOUT mutating the holding.
+def _realized_for_position(db: Session, ticker: str, platform_id: int) -> dict:
+    """Realized P&L + dividend total for a (ticker, platform_id) position
+    WITHOUT mutating the holding.
 
     Mirrors recompute's ledger scan but is read-only (the summary must not
-    write). Kept private — the public recompute is the write path.
+    write). Kept private — the public recompute is the write path. Scoped to
+    the position's platform_id (Quick 260711-rb2) so the same ticker on two
+    platforms never double-counts each other's realized P&L.
     """
     events = db.scalars(
         select(PortfolioEvent)
-        .where(PortfolioEvent.ticker == ticker)
+        .where(PortfolioEvent.ticker == ticker, PortfolioEvent.platform_id == platform_id)
         .order_by(PortfolioEvent.date, PortfolioEvent.id)
     ).all()
 
