@@ -105,6 +105,7 @@ Recent decisions affecting current work:
 | 260703-gco | Add find_transactions read tool so the agent can resolve merchant names to transaction ids before propose_edit_transaction/propose_delete_transaction | 2026-07-03 | 076aae8 | [260703-gco-add-find-transactions-read-tool-so-the-a](./quick/260703-gco-add-find-transactions-read-tool-so-the-a/) |
 | 260703-grn | Fix agent_stream() to use ToolOutput.raw_output instead of re-parsing content as JSON, so proposal_id/proposal_token actually reach the frontend and ProposalCard renders | 2026-07-03 | df2903b | [260703-grn-fix-agent-stream-to-use-tooloutput-raw-o](./quick/260703-grn-fix-agent-stream-to-use-tooloutput-raw-o/) |
 | 260703-ja8 | Harden MONAI_API_KEY misconfiguration: compose fails fast on unset var; empty-key auth guard returns 503 JSON instead of unhandled 500 | 2026-07-03 | cb80d8c | [260703-ja8-harden-monai-api-key-misconfiguration-co](./quick/260703-ja8-harden-monai-api-key-misconfiguration-co/) |
+| 260711-k35 | Fix Log-event modal dropping platform/asset_type: wire both through PortfolioEventCreate + apply_add_portfolio_event (set-when-provided, no clobber), send from handleSubmit, drop dead Notes input. Post-merge flush fix caught via image rebuild. Live UAT: buy now lands assigned. 137/137 tests | 2026-07-11 | 0c6c3b2 | [260711-k35-fix-log-event-modal-dropping-platform-as](./quick/260711-k35-fix-log-event-modal-dropping-platform-as/) |
 
 ## Deferred Items
 
