@@ -172,3 +172,63 @@ class TestToolSQL:
         substring = merchant.lower()[: max(1, len(merchant) // 2)]
         rows = find_transactions(merchant=substring, limit=20)["rows"]
         assert any(substring in (r["merchant"] or "").lower() for r in rows)
+
+
+def test_spending_before_after_purchase(db_available):
+    """CHAT-03 / D-15: before/after correlation around the earliest buy event.
+
+    Seeds a portfolio_events buy row (pivot) plus one expense in the before
+    window and two in the after window for a unique category, then asserts the
+    equal-length windows, totals, delta, and the no-buy-event error path.
+    """
+    from sqlalchemy import text
+    from backend.db import engine
+    from backend.tools import spending_before_after_purchase
+
+    TICKER = "ZZTEST"
+    CATEGORY = "zz-correlation-test"
+    pivot = datetime.date.today() - datetime.timedelta(days=10)  # n_days = 10
+    before_day = pivot - datetime.timedelta(days=5)   # inside [pivot-10, pivot-1]
+    after_day = pivot + datetime.timedelta(days=3)    # inside [pivot, today]
+
+    with engine.begin() as c:
+        c.execute(
+            text("INSERT INTO portfolio_events (date, ticker, event_type, quantity, price) "
+                 "VALUES (:d, :t, 'buy', 1, 100)"),
+            {"d": pivot, "t": TICKER},
+        )
+        c.execute(
+            text("INSERT INTO transactions (date, amount, currency, category, is_transfer) "
+                 "VALUES (:d, -100, 'IDR', :cat, false)"),
+            {"d": before_day, "cat": CATEGORY},
+        )
+        c.execute(
+            text("INSERT INTO transactions (date, amount, currency, category, is_transfer) "
+                 "VALUES (:d, -300, 'IDR', :cat, false)"),
+            {"d": after_day, "cat": CATEGORY},
+        )
+        c.execute(
+            text("INSERT INTO transactions (date, amount, currency, category, is_transfer) "
+                 "VALUES (:d, -50, 'IDR', :cat, false)"),
+            {"d": pivot, "cat": CATEGORY},  # boundary: pivot day counts as "after"
+        )
+
+    try:
+        res = spending_before_after_purchase(TICKER, CATEGORY)
+        assert res["tool"] == "spending_before_after_purchase"
+        assert res["pivot_date"] == pivot.isoformat()
+        assert res["window_days"] == 10
+        assert res["before_total"] == 100.0
+        assert res["after_total"] == 350.0  # 300 + 50 (pivot day is "after")
+        assert res["delta"] == 250.0
+        assert abs(res["delta_pct"] - 250.0) < 1e-6
+
+        # Honesty: unknown ticker → structured error, never a fabricated number.
+        err = spending_before_after_purchase("NOSUCHTICKER", CATEGORY)
+        assert err["tool"] == "spending_before_after_purchase"
+        assert "error" in err
+        assert "before_total" not in err
+    finally:
+        with engine.begin() as c:
+            c.execute(text("DELETE FROM portfolio_events WHERE ticker = :t"), {"t": TICKER})
+            c.execute(text("DELETE FROM transactions WHERE category = :cat"), {"cat": CATEGORY})
