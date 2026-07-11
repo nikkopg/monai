@@ -6,15 +6,15 @@ current_phase: 05
 current_phase_name: investment-subsystem
 status: in_progress
 stopped_at: Completed 05-02-PLAN.md (platform CRUD vertical slice)
-last_updated: "2026-07-10T11:48:05.837Z"
+last_updated: "2026-07-11T02:17:16.897Z"
 last_activity: 2026-07-10
-last_activity_desc: Executed Plan 05-02 — platform CRUD (backend helpers/DTOs/routes + PlatformManager UI)
+last_activity_desc: Executed Plan 05-02 (platform CRUD vertical slice)
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 23
   completed_plans: 20
-  percent: 78
+  percent: 67
 ---
 
 # Project State
@@ -62,6 +62,7 @@ Progress: [███████░░░] 67% — milestone 4/6 phases
 | Phase 05 P01 | 7m | 4 tasks | 6 files |
 | Phase 05 P01 | 7m | - tasks | - files |
 | Phase 05 P02 | ~40m | 3 tasks | 6 files |
+| Phase 05 P05 | 5 min | 1 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -82,6 +83,7 @@ Recent decisions affecting current work:
 - [02-03]: SSE proxy passthrough: isStream gate before upstream.arrayBuffer(); export const dynamic = "force-dynamic"
 - [05-02]: Platform CRUD mirrors the Phase-4 account manager; reassign-then-delete moves holdings.platform_id in one audited helper (D-12/D-16)
 - [05-02]: DELETE /platforms 422 detail.affected_count consumed verbatim by PlatformManager; writes API-key guarded (T-05-02-AC), GET open
+- [Phase ?]: spending_before_after_purchase: pivot=earliest buy event; equal-length before/after windows; honest error on missing/future buy (CHAT-03/D-15)
 
 ### Pending Todos
 
@@ -115,12 +117,13 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-07-10 — Executed Plan 05-02 (platform CRUD vertical slice)
+Last session: 2026-07-11T02:16:46.469Z
 Stopped at: Completed 05-02-PLAN.md; INV-01 done. One deferred item: Task 3 browser human-check on /investments (platform CRUD + reassign flow) — needs frontend+backend running.
 Resume file: .planning/phases/05-investment-subsystem/05-02-SUMMARY.md
 Resume command: /gsd-execute-phase 5 (next: Wave 3 = 05-03 holdings ledger)
 
 Plan 05-02 execution note (2026-07-10):
+
 - Applied pending Alembic migration 004 (b2e6d4a19f73) to live DB on localhost:5434 — Plan 01's migration was committed but never run against the dev DB (holdings.platform_id / platforms table were absent). Rule-3 schema-sync, no source change. Docker deploy path (entrypoint runs `alembic upgrade head`) still applies the same migration on rebuild.
 - 14/14 backend write-tool tests green; tsc clean; live 422/reassign integration path verified.
 

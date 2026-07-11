@@ -17,7 +17,7 @@ Requirements for this cycle. Each maps to a roadmap phase.
 
 - [x] **CHAT-01**: User's question is answered by a multi-step reasoning agent that can plan and chain multiple tools within a single turn
 - [x] **CHAT-02**: The agent only invokes the fixed parameterized tools — it never emits raw SQL (correctness-by-construction preserved)
-- [ ] **CHAT-03**: User can ask spending↔portfolio correlation questions (e.g. "since I bought NVDA, how has my eating-out spending changed?")
+- [x] **CHAT-03**: User can ask spending↔portfolio correlation questions (e.g. "since I bought NVDA, how has my eating-out spending changed?")
 - [x] **CHAT-04**: When the agent intends to change data, it shows the exact proposed change and writes nothing until the user approves it in the UI
 - [x] **CHAT-05**: An approval is bound to that exact proposed operation — single-use and operation-scoped (not a reusable session-level "yes")
 - [x] **CHAT-06**: Every applied write is recorded in an audit log (what changed, old→new, when)
@@ -50,7 +50,7 @@ Requirements for this cycle. Each maps to a roadmap phase.
 - [ ] **INV-04**: User can manually set/override a holding's price (required fallback for mutual funds and no-API instruments)
 - [ ] **INV-05**: Each displayed price shows its as-of time and a staleness indicator
 - [ ] **INV-06**: Investment page shows current portfolio value and per-holding profit/loss
-- [ ] **INV-07**: Portfolio events (buys/sells) are recorded, enabling correlation queries
+- [x] **INV-07**: Portfolio events (buys/sells) are recorded, enabling correlation queries
 
 ### Pages & Settings
 
@@ -124,7 +124,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | INV-05 | Phase 5: Investment Subsystem | In Progress |
 | INV-06 | Phase 5: Investment Subsystem | In Progress |
 | INV-07 | Phase 5: Investment Subsystem | In Progress |
-| CHAT-03 | Phase 5: Investment Subsystem | Pending |
+| CHAT-03 | Phase 5: Investment Subsystem | Complete |
 | MCP-01 | Phase 6: MCP Server | Pending |
 | MCP-02 | Phase 6: MCP Server | Pending |
 | MCP-03 | Phase 6: MCP Server | Pending |

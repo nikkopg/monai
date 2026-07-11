@@ -142,7 +142,7 @@
   5. The Investments page shows a total portfolio value figure with a corresponding "as of" timestamp
   6. Portfolio buy/sell events are recorded when holdings change, enabling the agent to answer: "since I bought BBCA, how has my eating-out spending changed?" with a number
 
-**Plans**: 2/6 plans executed
+**Plans**: 4/6 plans executed
 
 **Wave 1** *(foundation — runs alone)*
 
@@ -154,12 +154,12 @@
 
 **Wave 3** *(depends 05-01 + 05-02)*
 
-- [ ] 05-03-PLAN.md — Ledger + P&L keystone: avg-cost recompute, holding/event writes, GET /investments/summary, HoldingModal/HoldingOverrideModal, grouped holding cards (D-01/02/03/05/16, INV-01/06/07) [wave 3]
+- [x] 05-03-PLAN.md — Ledger + P&L keystone: avg-cost recompute, holding/event writes, GET /investments/summary, HoldingModal/HoldingOverrideModal, grouped holding cards (D-01/02/03/05/16, INV-01/06/07) [wave 3]
 
 **Wave 4** *(parallel — disjoint files)*
 
 - [ ] 05-04-PLAN.md — Prices slice: adapter registry (CoinGecko/yfinance/manual), refresh + manual override + staleness, PriceOverrideDialog/StalenessBadge (D-08/09/10/11, INV-02/03/04/05) [wave 4, depends 05-03]
-- [ ] 05-05-PLAN.md — Correlation slice: spending_before_after_purchase tool in TOOLS registry (D-15, CHAT-03) [wave 4, depends 05-03]
+- [x] 05-05-PLAN.md — Correlation slice: spending_before_after_purchase tool in TOOLS registry (D-15, CHAT-03) [wave 4, depends 05-03]
 
 **Wave 5** *(depends 05-03 + 05-04)*
 
@@ -192,7 +192,7 @@
 | 2. Agentic Loop + Confirm-Before-Write | 2/3 | In Progress|  |
 | 3. Multi-Page UI Shell + Settings | 3/3 | Complete   | 2026-07-04 |
 | 4. Cashflow Dashboard + CRUD | 7/7 | Complete   | 2026-07-06 |
-| 5. Investment Subsystem | 2/6 | In Progress|  |
+| 5. Investment Subsystem | 4/6 | In Progress|  |
 | 6. MCP Server | 0/? | Not started | - |
 
 ---
