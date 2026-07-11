@@ -208,6 +208,61 @@ def spending_in_category(category: str, period="all_time", start_date=None, end_
             "period": _period_label(period, s, e)}
 
 
+def spending_before_after_purchase(ticker: str, category: str) -> dict:
+    """CHAT-03: 'since I bought BBCA, how has my eating-out spending changed?'
+
+    Pivot date = earliest 'buy' event for this ticker in portfolio_events
+    (D-15). Compares category spending in the N days before vs N days after
+    that date, where N = days elapsed since the purchase (equal-length
+    windows, so the comparison isn't skewed by an arbitrarily longer "after"
+    window as time passes).
+
+    Reuses spending_in_category()'s period="custom" contract (end_date
+    inclusive) — no new date-range SQL. When there is no buy event, or the
+    purchase is dated today/future (no "after" window yet), returns a
+    structured error dict instead of a fabricated number.
+    """
+    with engine.connect() as c:
+        pivot = c.execute(
+            text("SELECT MIN(date) FROM portfolio_events "
+                 "WHERE ticker = :ticker AND event_type = 'buy'"),
+            {"ticker": ticker},
+        ).scalar()
+
+    if pivot is None:
+        return {"tool": "spending_before_after_purchase",
+                "error": f"No buy event found for ticker '{ticker}' — nothing to compare against."}
+
+    today = datetime.date.today()
+    n_days = (today - pivot).days
+    if n_days < 1:
+        return {"tool": "spending_before_after_purchase",
+                "error": f"Purchase of {ticker} was today or in the future — no 'after' window yet."}
+
+    # Equal-length windows. end_date is inclusive per spending_in_category's
+    # custom-period contract: before = [pivot-n_days, pivot-1], after = [pivot, today].
+    before_start = pivot - datetime.timedelta(days=n_days)
+    before = spending_in_category(category, period="custom",
+                                  start_date=before_start.isoformat(),
+                                  end_date=(pivot - datetime.timedelta(days=1)).isoformat())
+    after = spending_in_category(category, period="custom",
+                                 start_date=pivot.isoformat(),
+                                 end_date=today.isoformat())
+
+    delta = after["total"] - before["total"]
+    return {
+        "tool": "spending_before_after_purchase",
+        "ticker": ticker,
+        "category": category,
+        "pivot_date": pivot.isoformat(),
+        "window_days": n_days,
+        "before_total": before["total"],
+        "after_total": after["total"],
+        "delta": delta,
+        "delta_pct": (delta / before["total"] * 100) if before["total"] else None,
+    }
+
+
 def transaction_count(period="all_time", start_date=None, end_date=None, kind="all") -> dict:
     """Count transactions in a period. kind: all | expense | income.
 
@@ -405,6 +460,7 @@ TOOLS = {
     "net_total": net_total,
     "spending_by_category": spending_by_category,
     "spending_in_category": spending_in_category,
+    "spending_before_after_purchase": spending_before_after_purchase,
     "transaction_count": transaction_count,
     "largest_transactions": largest_transactions,
     "average_daily_spending": average_daily_spending,
