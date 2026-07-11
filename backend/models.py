@@ -31,6 +31,7 @@ from sqlalchemy import (
     Numeric,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -146,12 +147,19 @@ class Holding(Base):
     quantity uses Numeric(28,8) for crypto-standard precision (D-09).
     avg_cost uses Numeric(18,2) consistent with transactions.amount (D-09).
     source of truth for current positions; portfolio_events records the history.
+
+    Position identity is (ticker, platform_id) — Quick 260711-rb2: the same
+    asset can live on multiple platforms as distinct positions. platform_id
+    is REQUIRED (no more "unassigned"); ticker alone is no longer unique.
     """
 
     __tablename__ = "holdings"
+    __table_args__ = (
+        UniqueConstraint("ticker", "platform_id", name="uq_holdings_ticker_platform"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    ticker: Mapped[str] = mapped_column(String(32), unique=True, index=True, nullable=False)
+    ticker: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(28, 8), nullable=False)
     avg_cost: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     purchase_date: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -159,9 +167,10 @@ class Holding(Base):
         String(8), server_default="IDR", nullable=False
     )
     asset_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    # Nullable FK to platforms (D-17): existing/unassigned holdings stay valid.
-    platform_id: Mapped[int | None] = mapped_column(
-        ForeignKey("platforms.id"), nullable=True, index=True
+    # Required FK to platforms (Quick 260711-rb2, Option 1): platform is part
+    # of position identity — "unassigned" is retired.
+    platform_id: Mapped[int] = mapped_column(
+        ForeignKey("platforms.id"), nullable=False, index=True
     )
     # Explicit CoinGecko coin-id override (Tier 1): disambiguates tickers that
     # map to multiple CoinGecko coins. None falls back to the fixed symbol map.
@@ -169,7 +178,11 @@ class Holding(Base):
 
 
 class PortfolioEvent(Base):
-    """Buy/sell/dividend history for an investment instrument."""
+    """Buy/sell/dividend history for an investment instrument.
+
+    Carries platform_id (Quick 260711-rb2) so recompute derives a position
+    per (ticker, platform_id) — matches Holding's identity.
+    """
 
     __tablename__ = "portfolio_events"
 
@@ -179,6 +192,9 @@ class PortfolioEvent(Base):
     event_type: Mapped[str] = mapped_column(String(16), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(28, 8), nullable=False)
     price: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    platform_id: Mapped[int] = mapped_column(
+        ForeignKey("platforms.id"), nullable=False, index=True
+    )
 
 
 class AppSetting(Base):
