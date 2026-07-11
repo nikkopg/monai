@@ -6,6 +6,8 @@ import { card, btn } from "../styles";
 import PlatformManager, { type Platform } from "./PlatformManager";
 import HoldingModal from "./HoldingModal";
 import HoldingOverrideModal from "./HoldingOverrideModal";
+import PriceOverrideDialog from "./PriceOverrideDialog";
+import StalenessBadge from "./StalenessBadge";
 
 // ---------------------------------------------------------------------------
 // Investments page — grown into the keystone portfolio view (Plan 05-03).
@@ -28,6 +30,9 @@ export type HoldingRow = {
   unrealized_pnl: number | null;
   realized_pnl: number;
   platform_id: number | null;
+  price_source: string | null;
+  price_fetched_at: string | null;
+  is_stale: boolean;
 };
 
 type Group = {
@@ -75,6 +80,8 @@ export default function InvestmentsPage() {
   const [showEvent, setShowEvent] = useState(false);
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [editingHolding, setEditingHolding] = useState<HoldingRow | null>(null);
+  const [priceHolding, setPriceHolding] = useState<HoldingRow | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -97,6 +104,21 @@ export default function InvestmentsPage() {
 
   useEffect(() => {
     load();
+  }, [load]);
+
+  // Refresh prices (INV-02/03): force-fetch every ticker server-side, then
+  // refetch the summary. Per-ticker failures are swallowed backend-side; a stale
+  // row after refresh surfaces the per-row "couldn't refresh" note below.
+  const refreshPrices = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await fetch("/api/prices/refresh", { method: "POST" });
+    } catch {
+      // network error surfaces as unchanged/stale prices below
+    } finally {
+      await load();
+      setRefreshing(false);
+    }
   }, [load]);
 
   const platformOptions: PlatformOption[] = platforms.map((p) => ({
@@ -154,9 +176,13 @@ export default function InvestmentsPage() {
                   as of {new Date(summary.as_of).toLocaleString()}
                 </p>
               </div>
-              {/* Handler wired in Plan 04 (live price fetch). */}
-              <button style={btn} type="button" disabled title="Live price fetch — Plan 04">
-                Refresh prices
+              <button
+                style={btn}
+                type="button"
+                onClick={refreshPrices}
+                disabled={refreshing}
+              >
+                {refreshing ? "Refreshing…" : "Refresh prices"}
               </button>
             </section>
 
@@ -289,6 +315,24 @@ export default function InvestmentsPage() {
                                 <div style={{ fontSize: 12, color: muted }}>
                                   {h.asset_type ?? "—"}
                                 </div>
+                                <div style={{ marginTop: 4 }}>
+                                  <StalenessBadge
+                                    fetchedAt={h.price_fetched_at}
+                                    source={h.price_source}
+                                    isStale={h.is_stale}
+                                  />
+                                </div>
+                                {h.is_stale && (
+                                  <div
+                                    style={{
+                                      fontSize: 11,
+                                      color: muted,
+                                      marginTop: 2,
+                                    }}
+                                  >
+                                    Couldn&apos;t refresh — showing last known price.
+                                  </div>
+                                )}
                               </td>
                               <td style={{ padding: 8, fontSize: 14, textAlign: "right" }}>
                                 {fmtQty(h.quantity, h.asset_type)}
@@ -327,23 +371,45 @@ export default function InvestmentsPage() {
                                   textAlign: "right",
                                 }}
                               >
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setEditingHolding(h);
-                                    setOverrideOpen(true);
-                                  }}
+                                <div
                                   style={{
-                                    background: "transparent",
-                                    color: muted,
-                                    border: "none",
-                                    cursor: "pointer",
-                                    fontSize: 12,
-                                    padding: 0,
+                                    display: "flex",
+                                    gap: 10,
+                                    justifyContent: "flex-end",
                                   }}
                                 >
-                                  Edit
-                                </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setPriceHolding(h)}
+                                    style={{
+                                      background: "transparent",
+                                      color: muted,
+                                      border: "none",
+                                      cursor: "pointer",
+                                      fontSize: 12,
+                                      padding: 0,
+                                    }}
+                                  >
+                                    Set price
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setEditingHolding(h);
+                                      setOverrideOpen(true);
+                                    }}
+                                    style={{
+                                      background: "transparent",
+                                      color: muted,
+                                      border: "none",
+                                      cursor: "pointer",
+                                      fontSize: 12,
+                                      padding: 0,
+                                    }}
+                                  >
+                                    Edit
+                                  </button>
+                                </div>
                               </td>
                             </tr>
                           );
@@ -372,6 +438,13 @@ export default function InvestmentsPage() {
           editingHolding={editingHolding}
           platforms={platformOptions}
           onClose={() => setOverrideOpen(false)}
+          onSaved={load}
+        />
+      )}
+      {priceHolding && (
+        <PriceOverrideDialog
+          holding={priceHolding}
+          onClose={() => setPriceHolding(null)}
           onSaved={load}
         />
       )}
