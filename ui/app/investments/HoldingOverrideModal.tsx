@@ -45,6 +45,9 @@ export default function HoldingOverrideModal({
     editingHolding ? String(editingHolding.avg_cost) : ""
   );
   const [purchaseDate, setPurchaseDate] = useState("");
+  const [coingeckoId, setCoingeckoId] = useState(
+    editingHolding?.coingecko_id ?? ""
+  );
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +64,7 @@ export default function HoldingOverrideModal({
         asset_type: assetType,
         platform_id: platformId ? parseInt(platformId, 10) : null,
         currency: "IDR",
+        coingecko_id: coingeckoId.trim() || null,
       };
       if (purchaseDate) body.purchase_date = purchaseDate;
 
@@ -211,6 +215,30 @@ export default function HoldingOverrideModal({
               <label style={label}>Currency</label>
               <input style={input} value="IDR" readOnly disabled />
             </div>
+            {assetType === "crypto" && (
+              <div style={{ gridColumn: "1 / -1" }}>
+                <label style={label}>CoinGecko id (optional)</label>
+                <input
+                  style={input}
+                  value={coingeckoId}
+                  placeholder="bittensor"
+                  onChange={(e) => setCoingeckoId(e.target.value)}
+                />
+                <p style={{ ...label, fontSize: 11, marginTop: 4 }}>
+                  Disambiguates tickers that map to multiple coins (e.g. TAO). Find
+                  the coin&apos;s API id on{" "}
+                  <a
+                    href="https://www.coingecko.com"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    coingecko.com
+                  </a>{" "}
+                  — the URL slug, e.g. <code>bittensor</code>. Leave blank to use
+                  the default ticker mapping.
+                </p>
+              </div>
+            )}
           </div>
 
           <div

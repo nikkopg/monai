@@ -30,6 +30,7 @@ export type HoldingRow = {
   unrealized_pnl: number | null;
   realized_pnl: number;
   platform_id: number | null;
+  coingecko_id?: string | null;
   price_source: string | null;
   price_fetched_at: string | null;
   is_stale: boolean;
