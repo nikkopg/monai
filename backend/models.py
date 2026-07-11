@@ -163,6 +163,9 @@ class Holding(Base):
     platform_id: Mapped[int | None] = mapped_column(
         ForeignKey("platforms.id"), nullable=True, index=True
     )
+    # Explicit CoinGecko coin-id override (Tier 1): disambiguates tickers that
+    # map to multiple CoinGecko coins. None falls back to the fixed symbol map.
+    coingecko_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class PortfolioEvent(Base):
