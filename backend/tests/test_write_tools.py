@@ -612,6 +612,48 @@ def test_apply_add_portfolio_event_audits_and_recomputes(db_session):
     _cleanup_ticker(db_session, ticker)
 
 
+def test_apply_add_portfolio_event_sets_platform_and_asset_type_without_clobber(db_session):
+    """A buy event carrying platform_id/asset_type sets them on the recomputed
+    holding; a later event on the same ticker with those fields omitted must
+    NOT null out the existing assignment (set-when-provided semantics)."""
+    from backend.writes import apply_add_portfolio_event
+    from backend.models import Holding, Platform
+
+    ticker = "EVTTEST02"
+    _cleanup_ticker(db_session, ticker)
+    plat_id = _make_platform(db_session, name="Test Platform EVT")
+
+    try:
+        # First buy: platform_id + asset_type provided -> land on the holding.
+        apply_add_portfolio_event(db_session, {
+            "ticker": ticker, "event_type": "buy",
+            "quantity": 10, "price": 100, "date": "2024-01-10",
+            "platform_id": plat_id, "asset_type": "crypto",
+        })
+        db_session.commit()
+
+        h = db_session.query(Holding).filter(Holding.ticker == ticker).one()
+        assert h.platform_id == plat_id
+        assert h.asset_type == "crypto"
+
+        # Second buy: platform_id/asset_type omitted -> must NOT clobber existing.
+        apply_add_portfolio_event(db_session, {
+            "ticker": ticker, "event_type": "buy",
+            "quantity": 5, "price": 110, "date": "2024-01-11",
+        })
+        db_session.commit()
+
+        h = db_session.query(Holding).filter(Holding.ticker == ticker).one()
+        assert h.platform_id == plat_id
+        assert h.asset_type == "crypto"
+    finally:
+        _cleanup_ticker(db_session, ticker)
+        plat = db_session.get(Platform, plat_id)
+        if plat is not None:
+            db_session.delete(plat)
+            db_session.commit()
+
+
 def test_portfolio_event_rejects_unknown_type(client, api_key):
     """POST /portfolio-events with event_type 'gift' → 422 at the schema
     boundary, BEFORE any recompute runs (T-05-03-EVT)."""
