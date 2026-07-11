@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 05
 current_phase_name: investment-subsystem
 status: in_progress
-stopped_at: Completed 05-02-PLAN.md (platform CRUD vertical slice)
-last_updated: "2026-07-11T02:33:28.987Z"
-last_activity: 2026-07-10
-last_activity_desc: Executed Plan 05-02 (platform CRUD vertical slice)
+stopped_at: Phase 5 all 6 plans executed — pending verification + human UAT
+last_updated: "2026-07-11T03:00:00.000Z"
+last_activity: 2026-07-11
+last_activity_desc: Executed Phase 5 Waves 1-5 (all 6 plans) — 135/136 backend tests green (1 known pre-existing settings-auth env failure)
 progress:
   total_phases: 6
   completed_phases: 4
   total_plans: 23
-  completed_plans: 22
+  completed_plans: 23
   percent: 67
 ---
 
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-06-21)
 
 ## Current Position
 
-Phase: 05 (investment-subsystem) — IN PROGRESS (6 MVP vertical-slice plans)
-Plan: 4 of 6 executed (05-01 schema foundation, 05-02 platform CRUD)
-Status: Plan 05-02 complete — platform CRUD live end-to-end (audited writes, reassign-then-delete, PlatformManager UI); INV-01 done. Task 3 browser human-check deferred to UAT. Next: 05-03 (holdings ledger).
-Last activity: 2026-07-10 -- Executed Plan 05-02 (platform CRUD vertical slice)
+Phase: 05 (investment-subsystem) — ALL 6 PLANS EXECUTED (pending verification + human UAT)
+Plan: 6 of 6 executed (05-01 schema foundation, 05-02 platform CRUD, 05-03 keystone ledger/P&L, 05-04 live prices/staleness/override, 05-05 correlation tool, 05-06 daily snapshot scheduler)
+Status: Code complete across all 8 requirements (INV-01..07, CHAT-03). 135/136 backend tests green — the 1 failure is pre-existing (test_settings.py::test_put_settings_requires_key, 503 vs 401 because MONAI_API_KEY unset in the test shell; also fails on the pre-phase baseline b22793b). Deferred to human UAT: all browser walkthroughs + scheduler-in-container check, which need `docker compose up -d --build`. Next: /gsd-verify-phase 5 then human UAT.
+Last activity: 2026-07-11 -- Executed Phase 5 Waves 1-5 (all 6 plans)
 
 Progress: [███████░░░] 67% — milestone 4/6 phases
 
