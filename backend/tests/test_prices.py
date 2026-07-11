@@ -11,6 +11,7 @@ from decimal import Decimal
 
 import httpx
 import pytest
+from sqlalchemy import text
 
 
 def test_fetch_crypto_price(monkeypatch):
@@ -176,6 +177,97 @@ def test_refresh_tolerates_failing_ticker(client, api_key, monkeypatch):
 def test_refresh_requires_api_key(client, api_key):
     """POST /prices/refresh without the header → 401 (T-05-04-AC)."""
     assert client.post("/prices/refresh").status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Quick 260711-rb2: multi-platform dedup — same ticker, two platforms, one fetch
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def db_available():
+    from backend.db import engine
+    try:
+        with engine.connect() as c:
+            c.execute(text("SELECT 1"))
+    except Exception as e:
+        pytest.skip(f"Postgres not available: {e}")
+    return True
+
+
+@pytest.fixture()
+def db_session(db_available):
+    from backend.db import SessionLocal
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def test_refresh_dedups_same_ticker_across_platforms(db_session, monkeypatch):
+    """Two holdings, same ticker, on different platforms -> the crypto adapter
+    is called ONCE for that ticker; both positions read the same cached price
+    via the shared price_cache (price is platform-independent, D-07)."""
+    from decimal import Decimal
+
+    from backend.models import Holding, Platform, PriceCache
+    from backend import prices as prices_mod
+
+    ticker = "DEDUPBTC01"
+    db_session.query(PriceCache).filter(PriceCache.ticker == ticker).delete()
+    db_session.query(Holding).filter(Holding.ticker == ticker).delete()
+    db_session.commit()
+
+    def _make_plat(name):
+        existing = db_session.query(Platform).filter(Platform.name == name).first()
+        if existing:
+            return existing.id
+        p = Platform(name=name, kind="exchange")
+        db_session.add(p)
+        db_session.commit()
+        db_session.refresh(p)
+        return p.id
+
+    plat_a = _make_plat("TestDedupPlatformA")
+    plat_b = _make_plat("TestDedupPlatformB")
+
+    db_session.add(Holding(ticker=ticker, quantity=Decimal("1"), avg_cost=Decimal("100"),
+                           currency="IDR", asset_type="crypto", platform_id=plat_a))
+    db_session.add(Holding(ticker=ticker, quantity=Decimal("2"), avg_cost=Decimal("200"),
+                           currency="IDR", asset_type="crypto", platform_id=plat_b))
+    db_session.commit()
+
+    call_count = {"n": 0}
+
+    def _fake_fetch(t, coin_id=None):
+        call_count["n"] += 1
+        return (Decimal("999"), "coingecko")
+
+    # refresh_all_prices does `adapter is fetch_crypto_price` (an identity check
+    # against the module GLOBAL, resolved at call time) before calling
+    # fetch_crypto_price(ticker, coin_id) with the coin_id kwarg — but
+    # PRICE_ADAPTERS["crypto"] was bound to the ORIGINAL function object at
+    # import time, so patching prices_mod.fetch_crypto_price alone does not
+    # change what PRICE_ADAPTERS.get("crypto") returns. Patch BOTH the module
+    # global (so the identity check still matches the object actually called)
+    # and the dict entry (so that object routes to our fake).
+    monkeypatch.setattr(prices_mod, "fetch_crypto_price", _fake_fetch)
+    monkeypatch.setitem(prices_mod.PRICE_ADAPTERS, "crypto", _fake_fetch)
+
+    try:
+        result = prices_mod.refresh_all_prices(db_session, force=True)
+        db_session.commit()
+
+        assert call_count["n"] == 1, "adapter must be called once per distinct ticker, not per holding"
+        assert result["refreshed"] == 1
+
+        rows = db_session.query(PriceCache).filter(PriceCache.ticker == ticker).all()
+        assert len(rows) == 1
+        assert rows[0].price == Decimal("999")
+    finally:
+        db_session.query(PriceCache).filter(PriceCache.ticker == ticker).delete()
+        db_session.query(Holding).filter(Holding.ticker == ticker).delete()
+        db_session.commit()
 
 
 def test_is_stale_respects_ttl():
