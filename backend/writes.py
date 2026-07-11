@@ -220,6 +220,9 @@ def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
     # an existing platform/asset_type assignment back to null (matches the
     # None-means-keep convention in apply_edit_holding above).
     if after.get("platform_id") is not None or after.get("asset_type") is not None:
+        # Session is autoflush=False (db.py) — recompute's newly-added Holding is
+        # still pending, so flush before the lookup or the query misses it.
+        db.flush()
         holding = db.query(Holding).filter(Holding.ticker == after["ticker"]).one_or_none()
         if holding is not None:
             if after.get("platform_id") is not None:
