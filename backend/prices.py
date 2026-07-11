@@ -53,27 +53,30 @@ TTL_BY_ASSET_TYPE: dict[str, timedelta] = {
 _DEFAULT_TTL = timedelta(days=7)
 
 
-def fetch_crypto_price(ticker: str) -> tuple[Decimal, str] | None:
+def fetch_crypto_price(ticker: str, coin_id: str | None = None) -> tuple[Decimal, str] | None:
     """CoinGecko /simple/price in native IDR (D-07 — no FX conversion).
 
-    `ticker` is resolved to a CoinGecko coin-id via the fixed
-    TICKER_TO_COINGECKO_ID map; an unknown ticker returns None (never an
-    outbound request with a user-controlled id — SSRF, Pitfall 1). Returns
-    (Decimal, "coingecko") or None on any HTTP/parse error — never raises.
+    `coin_id`, when provided (Tier 1 per-holding override), is used verbatim
+    as the CoinGecko coin-id — disambiguates tickers that map to multiple
+    CoinGecko coins (e.g. TAO). Otherwise `ticker` is resolved via the fixed
+    TICKER_TO_COINGECKO_ID map; an unresolved ticker returns None (never an
+    outbound request with a user-controlled id — SSRF, Pitfall 1; no
+    fabrication). Returns (Decimal, "coingecko") or None on any HTTP/parse
+    error — never raises.
     """
     import httpx
 
-    coin_id = TICKER_TO_COINGECKO_ID.get(ticker.upper())
-    if coin_id is None:
+    resolved = coin_id if coin_id else TICKER_TO_COINGECKO_ID.get(ticker.upper())
+    if resolved is None:
         return None
     try:
         resp = httpx.get(
             "https://api.coingecko.com/api/v3/simple/price",
-            params={"ids": coin_id, "vs_currencies": "idr"},
+            params={"ids": resolved, "vs_currencies": "idr"},
             timeout=10.0,
         )
         resp.raise_for_status()
-        price = resp.json().get(coin_id, {}).get("idr")
+        price = resp.json().get(resolved, {}).get("idr")
         if price is None:
             return None
         return Decimal(str(price)), "coingecko"
@@ -162,7 +165,10 @@ def refresh_all_prices(db: Session, *, force: bool = False) -> dict:
                 skipped += 1
                 continue
         try:
-            result = adapter(h.ticker)
+            if adapter is fetch_crypto_price:
+                result = fetch_crypto_price(h.ticker, h.coingecko_id)
+            else:
+                result = adapter(h.ticker)
         except Exception:
             # Defensive: adapters are contracted never to raise, but a bad
             # adapter must still not abort the batch.
