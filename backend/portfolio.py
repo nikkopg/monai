@@ -184,6 +184,7 @@ def portfolio_summary(db: Session) -> dict:
                 "id": h.id,
                 "ticker": h.ticker,
                 "asset_type": h.asset_type,
+                "coingecko_id": h.coingecko_id,
                 "quantity": h.quantity,
                 "avg_cost": h.avg_cost,
                 "current_price": current_price,
