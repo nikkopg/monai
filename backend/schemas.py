@@ -134,6 +134,8 @@ class PortfolioEventCreate(BaseModel):
     quantity: MoneyDecimal = Field(..., gt=0, description="Units; must be positive")
     price: MoneyDecimal = Field(..., gt=0, description="Price per unit (or dividend amount) in IDR; positive")
     date: date
+    platform_id: int | None = None
+    asset_type: str | None = None
 
 
 class PortfolioEventOut(BaseModel):
