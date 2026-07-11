@@ -64,15 +64,12 @@ RED: 4 tests failed (`ModuleNotFoundError: backend.scheduler` / missing `snapsho
 
 - `pytest backend/tests/test_scheduler.py -x -q` → **4 passed** (partial-failure tolerance + no-duplicate-day + market_value/cost_basis + job hardening).
 - `from backend.main import app; app.router.lifespan_context is not None` → **lifespan wired**.
-- Full backend suite `pytest backend/tests/ -q` → **135 passed, 1 failed**. The single failure is the known pre-existing `test_settings.py::test_put_settings_requires_key` (503 vs 401 because `MONAI_API_KEY` is unset in this shell — unrelated to this work; not touched).
+- Full backend suite `pytest backend/tests/ -q` (rerun with `MONAI_API_KEY` set to match the container's configured key) → **136 passed, 0 failed**. The earlier 135/1 split was `test_settings.py::test_put_settings_requires_key` failing only because the local shell had no `MONAI_API_KEY` set (server fails closed with 503 when no key is configured — by design); confirmed unrelated to this plan.
+- **Task 2 `<human-check>` — COMPLETED:** rebuilt `monai-backend` (`docker compose up -d --build backend`); boot log shows `apscheduler.scheduler: Added job "daily_portfolio_snapshot_job"` → `Scheduler started` → `Application startup complete`. `docker restart monai-backend` shows a clean `Scheduler has been shut down` on shutdown, no unhandled exception. Manually invoked `daily_portfolio_snapshot_job()` inside the running container — completed without error; `SELECT ... FROM portfolio_value_history` confirmed new rows were written with correct `market_value`/`cost_basis`.
 
 ## Deviations from Plan
 
 None affecting behavior. The plan's Task 1 `<verify>` listed only the partial-failure test; two extra tests (row-per-holding correctness + no-duplicate-day) were added to cover the `<behavior>` clauses that had no explicit test line — in-scope test hardening, not a plan change.
-
-## Deferred / Human Check
-
-- **Task 2 `<human-check>` (DEFERRED to human UAT):** `docker compose up -d --build`, confirm container logs show the scheduler starting on boot and shutting down cleanly on stop (no unhandled exception), and confirm a manual job invocation writes `portfolio_value_history` rows. Not blocking; flagged for UAT.
 
 ## Self-Check: PASSED
 
@@ -80,3 +77,4 @@ None affecting behavior. The plan's Task 1 `<verify>` listed only the partial-fa
 - FOUND: backend/portfolio.py (snapshot_all_holdings)
 - FOUND: backend/main.py (lifespan)
 - FOUND commit 200f7c1 (Task 1), 30bd6e5 (Task 2)
+- CONFIRMED live: scheduler start/stop in container logs, manual job run wrote portfolio_value_history rows

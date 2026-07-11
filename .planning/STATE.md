@@ -5,10 +5,10 @@ milestone_name: milestone
 current_phase: 05
 current_phase_name: investment-subsystem
 status: in_progress
-stopped_at: Phase 5 all 6 plans executed — pending verification + human UAT
-last_updated: "2026-07-11T03:00:00.000Z"
+stopped_at: Phase 5 all 6 plans executed, 136/136 tests green, scheduler live-verified — pending browser UAT walkthroughs
+last_updated: "2026-07-11T09:35:00.000Z"
 last_activity: 2026-07-11
-last_activity_desc: Executed Phase 5 Waves 1-5 (all 6 plans) — 135/136 backend tests green (1 known pre-existing settings-auth env failure)
+last_activity_desc: Rebuilt stale backend image (migration 004 predated it), confirmed 136/136 backend tests green with MONAI_API_KEY set, live-verified 05-06 scheduler boot/shutdown + manual snapshot job run in container
 progress:
   total_phases: 6
   completed_phases: 4
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-06-21)
 
 ## Current Position
 
-Phase: 05 (investment-subsystem) — ALL 6 PLANS EXECUTED (pending verification + human UAT)
+Phase: 05 (investment-subsystem) — ALL 6 PLANS EXECUTED, backend live-verified (pending browser UAT)
 Plan: 6 of 6 executed (05-01 schema foundation, 05-02 platform CRUD, 05-03 keystone ledger/P&L, 05-04 live prices/staleness/override, 05-05 correlation tool, 05-06 daily snapshot scheduler)
-Status: Code complete across all 8 requirements (INV-01..07, CHAT-03). 135/136 backend tests green — the 1 failure is pre-existing (test_settings.py::test_put_settings_requires_key, 503 vs 401 because MONAI_API_KEY unset in the test shell; also fails on the pre-phase baseline b22793b). Deferred to human UAT: all browser walkthroughs + scheduler-in-container check, which need `docker compose up -d --build`. Next: /gsd-verify-phase 5 then human UAT.
-Last activity: 2026-07-11 -- Executed Phase 5 Waves 1-5 (all 6 plans)
+Status: Code complete across all 8 requirements (INV-01..07, CHAT-03). 136/136 backend tests green (the earlier 135/1 split was a local-shell MONAI_API_KEY gap, not a code bug — confirmed by rerunning with the key set). Backend container was found crash-looping on a stale pre-migration-004 image; rebuilt and confirmed clean boot + migrations. 05-06's human-check (scheduler start/shutdown in container logs + manual daily_portfolio_snapshot_job() run writing portfolio_value_history rows) is now DONE, not deferred. Still pending: browser UAT walkthroughs for the Platform/Holdings/Price-override UI (PlatformManager, HoldingModal, StalenessBadge, PriceOverrideDialog) on the /investments page. Next: /gsd-verify-phase 5, then browser UAT.
+Last activity: 2026-07-11 -- Rebuilt stale backend image; confirmed 136/136 tests + live scheduler behavior
 
 Progress: [███████░░░] 67% — milestone 4/6 phases
 
