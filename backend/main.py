@@ -399,9 +399,17 @@ def update_holding(holding_id: int, payload: HoldingUpdate, db: Session = Depend
     }
     try:
         apply_edit_holding(db, holding_id, payload.model_dump(mode="json", exclude_none=True), before)
+        db.commit()
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    db.commit()
+    except IntegrityError:
+        # IN-01: renaming ticker onto an existing (ticker, platform_id) violates
+        # the composite unique constraint — 422, not an unhandled 500.
+        db.rollback()
+        raise HTTPException(
+            status_code=422,
+            detail=f"'{payload.ticker or holding.ticker}' already exists on that platform.",
+        )
     db.refresh(holding)
     from backend.query import reset_engine
     reset_engine()
@@ -836,6 +844,15 @@ def confirm_proposal(
         proposal.status = "confirmed"
         proposal.confirmed_at = datetime.now(timezone.utc)
         db.commit()
+    except ValueError as e:
+        # IN-02: delegated apply_* helpers raise ValueError for domain errors
+        # (currency mismatch, "Holding not found", bad range) — map to 422 like
+        # every direct REST write endpoint, not a generic 500.
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
+    except IntegrityError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=f"Conflicts with an existing record: {e.orig}")
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Write failed: {e}")

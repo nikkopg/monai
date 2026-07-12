@@ -132,7 +132,12 @@ class PortfolioEventCreate(BaseModel):
     ticker: str
     event_type: Literal["buy", "sell", "dividend"]
     quantity: MoneyDecimal = Field(..., gt=0, description="Units; must be positive")
-    price: MoneyDecimal = Field(..., gt=0, description="Price per unit (or dividend amount) in IDR; positive")
+    price: MoneyDecimal = Field(
+        ..., gt=0,
+        description="Price per unit (or dividend amount) in the event's native "
+                    "currency (see `currency`), positive; converted to IDR "
+                    "internally at the trade-date FX rate — do NOT pre-convert.",
+    )
     date: date
     platform_id: int = Field(..., description="Required — position identity is (ticker, platform_id)")
     asset_type: str | None = None
