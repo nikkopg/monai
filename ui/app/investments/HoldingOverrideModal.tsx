@@ -35,8 +35,14 @@ export default function HoldingOverrideModal({
   const [assetType, setAssetType] = useState<string>(
     editingHolding?.asset_type ?? "crypto"
   );
+  // Platform is required (no more "(unassigned)"): editing keeps the
+  // holding's existing platform; creating defaults to the first platform.
   const [platformId, setPlatformId] = useState<string>(
-    editingHolding?.platform_id != null ? String(editingHolding.platform_id) : ""
+    editingHolding?.platform_id != null
+      ? String(editingHolding.platform_id)
+      : platforms.length > 0
+      ? String(platforms[0].id)
+      : ""
   );
   const [quantity, setQuantity] = useState(
     editingHolding ? String(editingHolding.quantity) : ""
@@ -62,7 +68,7 @@ export default function HoldingOverrideModal({
         quantity: parseFloat(quantity),
         avg_cost: parseFloat(avgCost),
         asset_type: assetType,
-        platform_id: platformId ? parseInt(platformId, 10) : null,
+        platform_id: parseInt(platformId, 10),
         currency: "IDR",
         coingecko_id: coingeckoId.trim() || null,
       };
@@ -169,16 +175,21 @@ export default function HoldingOverrideModal({
               <label style={label}>Platform</label>
               <select
                 style={input}
+                required
                 value={platformId}
                 onChange={(e) => setPlatformId(e.target.value)}
               >
-                <option value="">(unassigned)</option>
                 {platforms.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
                   </option>
                 ))}
               </select>
+              {platforms.length === 0 && (
+                <p style={{ ...label, fontSize: 11, marginTop: 4, color: "#f87171" }}>
+                  Add a platform first
+                </p>
+              )}
             </div>
             <div>
               <label style={label}>Quantity</label>
@@ -258,7 +269,7 @@ export default function HoldingOverrideModal({
             >
               Cancel
             </button>
-            <button style={btn} type="submit" disabled={saving}>
+            <button style={btn} type="submit" disabled={saving || platforms.length === 0}>
               {saving ? "Saving…" : isEdit ? "Save holding" : "Add holding directly"}
             </button>
             {error && (

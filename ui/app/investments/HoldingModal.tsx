@@ -33,7 +33,11 @@ function toLocalDatetimeInputValue(d: Date): string {
 export default function HoldingModal({ platforms, onClose, onSaved }: Props) {
   const [ticker, setTicker] = useState("");
   const [assetType, setAssetType] = useState<string>("crypto");
-  const [platformId, setPlatformId] = useState<string>("");
+  // Platform is required (no more "(unassigned)") — default to the first
+  // platform when any exist.
+  const [platformId, setPlatformId] = useState<string>(
+    platforms.length > 0 ? String(platforms[0].id) : ""
+  );
   const [eventType, setEventType] = useState<"buy" | "sell" | "dividend">("buy");
   const [quantity, setQuantity] = useState("");
   const [price, setPrice] = useState("");
@@ -64,7 +68,7 @@ export default function HoldingModal({ platforms, onClose, onSaved }: Props) {
         price: parseFloat(price),
         date: new Date(date).toISOString().slice(0, 10),
         asset_type: assetType,
-        platform_id: platformId ? parseInt(platformId, 10) : null,
+        platform_id: parseInt(platformId, 10),
       };
       const r = await fetch("/api/portfolio-events", {
         method: "POST",
@@ -152,16 +156,21 @@ export default function HoldingModal({ platforms, onClose, onSaved }: Props) {
               <label style={label}>Platform</label>
               <select
                 style={input}
+                required
                 value={platformId}
                 onChange={(e) => setPlatformId(e.target.value)}
               >
-                <option value="">(unassigned)</option>
                 {platforms.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
                   </option>
                 ))}
               </select>
+              {platforms.length === 0 && (
+                <p style={{ ...label, fontSize: 11, marginTop: 4, color: "#f87171" }}>
+                  Add a platform first
+                </p>
+              )}
             </div>
             <div>
               <label style={label}>Event type</label>
@@ -229,7 +238,7 @@ export default function HoldingModal({ platforms, onClose, onSaved }: Props) {
             >
               Cancel
             </button>
-            <button style={btn} type="submit" disabled={saving}>
+            <button style={btn} type="submit" disabled={saving || platforms.length === 0}>
               {saving ? "Saving…" : "Log event"}
             </button>
             {error && (

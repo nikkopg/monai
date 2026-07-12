@@ -146,29 +146,44 @@ def _latest_price_row(db: Session, ticker: str) -> PriceCache | None:
 
 
 def refresh_all_prices(db: Session, *, force: bool = False) -> dict:
-    """Route each holding to its adapter and cache fresh prices (D-08/D-09).
+    """Route each DISTINCT ticker to its adapter and cache one fresh price (D-08/D-09).
 
-    For every holding: if `force` or its cached price is missing/stale, call the
-    asset_type-routed adapter. On a non-None result, insert a new price_cache row
+    Price is platform-independent (Quick 260711-rb2: multiple holdings can now
+    share a ticker across platforms) — this fetches each ticker AT MOST ONCE
+    and writes a single price_cache row for it, regardless of how many holdings
+    reference it. If `force` or the cached price is missing/stale, call the
+    asset_type-routed adapter (using the first holding for that ticker to pick
+    asset_type/coingecko_id — prefers a non-null coingecko_id when more than one
+    holding disagrees). On a non-None result, insert a new price_cache row
     (source from the adapter). On None, leave the last row (marked stale
     downstream). Per-ticker try/except means one failing/slow source never aborts
     the batch (T-05-04-DEG). Does NOT commit — caller owns the transaction.
 
-    Returns {refreshed, skipped, failed} counts.
+    Returns {refreshed, skipped, failed} counts (per DISTINCT ticker, not per
+    holding row).
     """
     refreshed = skipped = failed = 0
+
+    # Group holdings by ticker so each ticker is fetched once. Prefer a
+    # non-null coingecko_id when platforms disagree (Tier 1 override, D-12).
+    by_ticker: dict[str, Holding] = {}
     for h in db.query(Holding).all():
+        existing = by_ticker.get(h.ticker)
+        if existing is None or (existing.coingecko_id is None and h.coingecko_id is not None):
+            by_ticker[h.ticker] = h
+
+    for ticker, h in by_ticker.items():
         adapter = PRICE_ADAPTERS.get(h.asset_type or "other", fetch_manual_price)
         if not force:
-            row = _latest_price_row(db, h.ticker)
+            row = _latest_price_row(db, ticker)
             if row is not None and not is_stale(row.fetched_at, h.asset_type):
                 skipped += 1
                 continue
         try:
             if adapter is fetch_crypto_price:
-                result = fetch_crypto_price(h.ticker, h.coingecko_id)
+                result = fetch_crypto_price(ticker, h.coingecko_id)
             else:
-                result = adapter(h.ticker)
+                result = adapter(ticker)
         except Exception:
             # Defensive: adapters are contracted never to raise, but a bad
             # adapter must still not abort the batch.
@@ -179,7 +194,7 @@ def refresh_all_prices(db: Session, *, force: bool = False) -> dict:
         price, source = result
         db.add(
             PriceCache(
-                ticker=h.ticker,
+                ticker=ticker,
                 price=Decimal(str(price)),
                 currency="IDR",
                 source=source,

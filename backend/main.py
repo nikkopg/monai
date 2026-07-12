@@ -361,20 +361,22 @@ def create_portfolio_event(payload: PortfolioEventCreate, db: Session = Depends(
 
 @app.post("/holdings", response_model=HoldingOut, status_code=201, dependencies=[Depends(require_api_key)])
 def create_holding(payload: HoldingCreate, db: Session = Depends(get_session)):
-    """Direct holding override — seed a position without an event history (D-03)."""
+    """Direct holding override — seed a position without an event history (D-03).
+
+    Position identity is (ticker, platform_id) (Quick 260711-rb2): the same
+    ticker on two different platforms is two valid rows; a duplicate
+    (ticker, platform_id) violates the composite unique constraint.
+    """
     try:
         holding = apply_add_holding(db, payload.model_dump(mode="json"))
         db.commit()
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     except IntegrityError:
-        # holdings.ticker is globally UNIQUE today (one position per ticker).
-        # ponytail: stopgap 422 — a later phase makes (ticker, platform_id) the
-        # uniqueness key so the same asset can live on multiple platforms.
         db.rollback()
         raise HTTPException(
             status_code=422,
-            detail=f"A holding for '{payload.ticker}' already exists.",
+            detail=f"'{payload.ticker}' already exists on that platform.",
         )
     db.refresh(holding)
     from backend.query import reset_engine
