@@ -558,6 +558,49 @@ def test_recompute_fx_none_propagates_never_fabricates_rate(db_session, monkeypa
         _cleanup_ticker(db_session, t)
 
 
+def test_summary_realized_pnl_fx_converted_for_non_idr_position(db_session, monkeypatch):
+    """CR-01 regression: portfolio_summary's realized_pnl for a USD position must
+    be FX-converted to IDR, not the raw native magnitude.
+
+    Buy 10 @ 100 USD then sell 4 @ 200 USD, both at rate 15000:
+      avg_cost = 100 * 15000 = 1_500_000 IDR/unit
+      realized = (200*15000 - 1_500_000) * 4 = 1_500_000 * 4 = 6_000_000 IDR
+    The pre-fix bug (native sum) would report (200-100)*4 = 400 — the assertion
+    below fails loudly on that regression.
+    """
+    from decimal import Decimal
+    from backend import portfolio as portfolio_mod
+
+    plat = _make_platform(db_session, "TestRealizedFxPlatform")
+    t = _random_ticker()
+
+    def fake_get_rate(base, quote, as_of, db):
+        # portfolio_summary converts realized P&L for EVERY holding now, so
+        # unrelated IDR holdings in the shared DB call get_rate("IDR","IDR") —
+        # model real get_rate's base==quote identity short-circuit.
+        if base == quote:
+            return Decimal("1")
+        assert base == "USD" and quote == "IDR"
+        return Decimal("15000")
+
+    monkeypatch.setattr(portfolio_mod.fx, "get_rate", fake_get_rate)
+    try:
+        _add_event_ccy(db_session, t, "buy", 10, 100, 1, plat, "USD")
+        _add_event_ccy(db_session, t, "sell", 4, 200, 2, plat, "USD")
+        # recompute creates the Holding row so portfolio_summary iterates it.
+        portfolio_mod.recompute_holding_from_events(db_session, t, plat)
+        db_session.commit()
+
+        summary = portfolio_mod.portfolio_summary(db_session)
+        hrow = next(
+            h for g in summary["groups"] for h in g["holdings"] if h["ticker"] == t
+        )
+        assert hrow["realized_pnl"] == Decimal("6000000")  # IDR, FX-converted
+        assert hrow["realized_pnl"] != Decimal("400")       # NOT the raw-USD bug
+    finally:
+        _cleanup_ticker(db_session, t)
+
+
 def test_cash_holding_values_via_fx_with_no_price_cache_row(db_session, monkeypatch):
     """CG-01: a cash holding (asset_type='cash') values as quantity ×
     fx_rate(currency, 'IDR', today) with NO price_cache row present at all —
@@ -570,6 +613,11 @@ def test_cash_holding_values_via_fx_with_no_price_cache_row(db_session, monkeypa
     t = _random_ticker()
 
     def fake_get_rate(base, quote, as_of, db):
+        # _realized_for_position now converts every holding's ledger, so
+        # unrelated IDR holdings in the shared DB hit get_rate("IDR","IDR") —
+        # model real get_rate's base==quote identity short-circuit.
+        if base == quote:
+            return Decimal("1")
         assert base == "USD" and quote == "IDR"
         return Decimal("15500")
 

@@ -142,6 +142,11 @@ class _FakeDb:
     def add(self, obj):
         self.added.append(obj)
 
+    def flush(self):
+        # get_rate flushes after the cache insert (CR-02); no-op here — this
+        # fake's scalars() returns a fixed existing_row regardless.
+        pass
+
 
 def test_get_rate_cache_hit_does_not_call_adapter(monkeypatch):
     """Cache HIT returns stored Decimal without calling the adapter (FX-05)."""
@@ -213,18 +218,27 @@ def test_get_rate_second_call_same_pair_does_not_refetch(monkeypatch):
 
     monkeypatch.setattr(httpx, "get", _get)
 
-    # Simulates the real DB round-trip: after the first miss+insert, a second
-    # get_rate call would find the row via a fresh query. We model this by
-    # constructing a DB whose scalars() reflects whatever has been added so far.
+    # Models the REAL SessionLocal (autoflush=False, backend/db.py): a plain
+    # SELECT sees only rows that have been *flushed*, not merely add()ed. So
+    # scalars() reads `flushed`, add() stages into `pending`, and flush() moves
+    # pending -> flushed. This is a genuine regression test for CR-02: if
+    # get_rate forgets to db.flush() after the cache insert, the second call's
+    # _latest_cache_row SELECT misses the pending row, re-fetches, and re-adds —
+    # tripping call_count == 2 / two rows below.
     class _StatefulDb:
         def __init__(self):
-            self.added = []
+            self.pending = []
+            self.flushed = []
 
         def scalars(self, _stmt):
-            return _FakeQuery(self.added[0] if self.added else None)
+            return _FakeQuery(self.flushed[0] if self.flushed else None)
 
         def add(self, obj):
-            self.added.append(obj)
+            self.pending.append(obj)
+
+        def flush(self):
+            self.flushed.extend(self.pending)
+            self.pending = []
 
     db = _StatefulDb()
     first = fx.get_rate("USD", "IDR", date(2024, 1, 15), db=db)
@@ -232,7 +246,7 @@ def test_get_rate_second_call_same_pair_does_not_refetch(monkeypatch):
     assert first == Decimal("15561")
     assert second == Decimal("15561")
     assert call_count["n"] == 1, "adapter must be called exactly once across both get_rate calls"
-    assert len(db.added) == 1, "exactly one fx_rate_cache row must be written"
+    assert len(db.flushed) + len(db.pending) == 1, "exactly one fx_rate_cache row must be written"
 
 
 def test_cash_and_gold_have_explicit_ttl_entries():

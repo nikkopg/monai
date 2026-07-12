@@ -124,4 +124,8 @@ def get_rate(base: str, quote: str, as_of: date, db: Session) -> Decimal | None:
             fetched_at=datetime.now(timezone.utc),
         )
     )
+    db.flush()  # LOAD-BEARING (CR-02): SessionLocal is autoflush=False, so a
+    # same-request repeat lookup for this (rate_date, base, quote) must see this
+    # pending row via _latest_cache_row — otherwise it re-inserts the same unique
+    # key and the next commit raises IntegrityError (500). Same idiom as writes.py.
     return rate

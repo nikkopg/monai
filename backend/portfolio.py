@@ -249,7 +249,10 @@ def portfolio_summary(db: Session) -> dict:
             total_value += current_value
         if u_pnl is not None:
             total_unrealized += u_pnl
-        total_realized += realized["realized_pnl"]
+        # CR-01: realized_pnl is None on an FX rate gap — null-guard the total
+        # exactly like total_unrealized above, never coerce None to zero.
+        if realized["realized_pnl"] is not None:
+            total_realized += realized["realized_pnl"]
 
         gkey = h.platform_id
         if gkey not in groups:
@@ -437,13 +440,19 @@ def value_history_series(db: Session, range_param: str = "All") -> list[dict]:
 
 
 def _realized_for_position(db: Session, ticker: str, platform_id: int) -> dict:
-    """Realized P&L + dividend total for a (ticker, platform_id) position
+    """Realized P&L + dividend total (IDR) for a (ticker, platform_id) position
     WITHOUT mutating the holding.
 
     Mirrors recompute's ledger scan but is read-only (the summary must not
     write). Kept private — the public recompute is the write path. Scoped to
     the position's platform_id (Quick 260711-rb2) so the same ticker on two
     platforms never double-counts each other's realized P&L.
+
+    CR-01: each event's native price is FX-converted to IDR at the trade-date
+    rate, identically to recompute_holding_from_events — otherwise a non-IDR
+    position's realized P&L would sum raw foreign magnitudes into an IDR total.
+    On a rate gap the whole position returns None (never fabricate a number),
+    matching recompute's None-propagation.
     """
     events = db.scalars(
         select(PortfolioEvent)
@@ -451,22 +460,37 @@ def _realized_for_position(db: Session, ticker: str, platform_id: int) -> dict:
         .order_by(PortfolioEvent.date, PortfolioEvent.id)
     ).all()
 
+    holding = db.query(Holding).filter(
+        Holding.ticker == ticker, Holding.platform_id == platform_id
+    ).one_or_none()
+    default_currency = (
+        holding.currency if holding is not None
+        else (events[0].currency if events and events[0].currency else "IDR")
+    )
+
     qty = Decimal("0")
-    total_cost = Decimal("0")
+    total_cost = Decimal("0")  # cost basis of the currently-open quantity, IDR
     realized_pnl = Decimal("0")
     dividend_total = Decimal("0")
 
     for ev in events:
+        ev_currency = ev.currency or default_currency
+        rate = fx.get_rate(ev_currency, "IDR", ev.date, db)
+        if rate is None:
+            # Vendor outage/gap — propagate None, never fabricate rate=1.0.
+            return {"realized_pnl": None, "dividend_total": None}
+        idr_amount = ev.price * ev.quantity * rate
+
         if ev.event_type == "buy":
-            total_cost += ev.price * ev.quantity
+            total_cost += idr_amount
             qty += ev.quantity
         elif ev.event_type == "sell":
             avg_cost = (total_cost / qty) if qty > 0 else Decimal("0")
-            realized_pnl += (ev.price - avg_cost) * ev.quantity
+            realized_pnl += (ev.price * rate - avg_cost) * ev.quantity
             total_cost -= avg_cost * ev.quantity
             qty -= ev.quantity
         elif ev.event_type == "dividend":
-            realized_pnl += ev.price * ev.quantity
-            dividend_total += ev.price * ev.quantity
+            realized_pnl += idr_amount
+            dividend_total += idr_amount
 
     return {"realized_pnl": realized_pnl, "dividend_total": dividend_total}
