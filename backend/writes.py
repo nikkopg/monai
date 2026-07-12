@@ -230,7 +230,26 @@ def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
     NOTE: input validation (event_type ∈ {buy,sell,dividend}, positive
     quantity/price) happens at the schema boundary (PortfolioEventCreate) BEFORE
     this runs — the recompute never sanitizes its own inputs (T-05-03-EVT).
+
+    T-07-02-CUR: one currency per position. If a parent holding already
+    exists for (ticker, platform_id), the event's currency is validated
+    against it — a mismatch raises ValueError (mapped to 422 at the API
+    boundary) rather than silently blending two currencies into one
+    average-cost pool. An event that omits its own currency defaults to the
+    holding's currency (or "IDR" if this is the position's first event).
     """
+    existing_holding = db.query(Holding).filter(
+        Holding.ticker == after["ticker"], Holding.platform_id == after["platform_id"]
+    ).one_or_none()
+    event_currency = after.get("currency")
+    if event_currency is None:
+        event_currency = existing_holding.currency if existing_holding is not None else "IDR"
+    elif existing_holding is not None and event_currency != existing_holding.currency:
+        raise ValueError(
+            f"event currency {event_currency} does not match holding currency "
+            f"{existing_holding.currency} (one currency per position)"
+        )
+
     ev = PortfolioEvent(
         date=date.fromisoformat(after["date"]) if after.get("date") else datetime.now(timezone.utc).date(),
         ticker=after["ticker"],
@@ -238,6 +257,7 @@ def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
         quantity=Decimal(str(after["quantity"])),  # LOAD-BEARING: str() before Decimal() avoids float artifacts
         price=Decimal(str(after["price"])),
         platform_id=after["platform_id"],
+        currency=event_currency,
     )
     db.add(ev)
     db.flush()  # LOAD-BEARING: populates ev.id before the AuditLog row below

@@ -76,8 +76,14 @@ def recompute_holding_from_events(db: Session, ticker: str, platform_id: int) ->
         Holding.ticker == ticker, Holding.platform_id == platform_id
     ).one_or_none()
     # Fallback currency for events that omit one (schema default is IDR, but
-    # an existing holding's currency is the authoritative fallback).
-    default_currency = holding.currency if holding is not None else "IDR"
+    # an existing holding's currency is the authoritative fallback). For a
+    # brand-new position, the FIRST event's own currency (if stamped) becomes
+    # the position's currency — not a hardcoded IDR default, or a USD-only
+    # position's opening buy would silently mis-resolve to IDR (T-07-02-CUR).
+    default_currency = (
+        holding.currency if holding is not None
+        else (events[0].currency if events and events[0].currency else "IDR")
+    )
 
     qty = Decimal("0")
     total_cost = Decimal("0")  # cost basis of the currently-open quantity, IDR

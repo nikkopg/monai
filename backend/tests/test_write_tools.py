@@ -1074,3 +1074,159 @@ def test_create_holding_same_ticker_two_platforms_both_created(client, api_key):
             s.commit()
         finally:
             s.close()
+
+
+# ---------------------------------------------------------------------------
+# Event-currency validation + cash/gold pass-through (Plan 07-02, T-07-02-CUR)
+# ---------------------------------------------------------------------------
+
+def test_apply_add_portfolio_event_matching_currency_succeeds(db_session):
+    """A buy whose currency matches the (new) parent holding's currency
+    succeeds and stamps event.currency."""
+    from backend.writes import apply_add_portfolio_event
+    from backend.models import PortfolioEvent
+
+    ticker = "EVTCCY01"
+    _cleanup_ticker(db_session, ticker)
+    plat_id = _make_platform(db_session, "TestCcyMatchPlatform")
+    try:
+        apply_add_portfolio_event(db_session, {
+            "ticker": ticker, "event_type": "buy",
+            "quantity": 10, "price": 100, "date": "2024-01-10",
+            "platform_id": plat_id, "currency": "USD",
+        })
+        db_session.commit()
+
+        ev = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
+        assert ev.currency == "USD"
+
+        # Second buy on the same position, same currency -> still succeeds.
+        apply_add_portfolio_event(db_session, {
+            "ticker": ticker, "event_type": "buy",
+            "quantity": 5, "price": 110, "date": "2024-01-11",
+            "platform_id": plat_id, "currency": "USD",
+        })
+        db_session.commit()
+    finally:
+        _cleanup_ticker(db_session, ticker)
+
+
+def test_apply_add_portfolio_event_currency_mismatch_raises(db_session):
+    """A buy whose currency differs from the parent holding's currency raises
+    ValueError (-> 422 at the API boundary) — one currency per position, no
+    cross-currency averaging (T-07-02-CUR)."""
+    from backend.writes import apply_add_portfolio_event
+
+    ticker = "EVTCCY02"
+    _cleanup_ticker(db_session, ticker)
+    plat_id = _make_platform(db_session, "TestCcyMismatchPlatform")
+    try:
+        apply_add_portfolio_event(db_session, {
+            "ticker": ticker, "event_type": "buy",
+            "quantity": 10, "price": 100, "date": "2024-01-10",
+            "platform_id": plat_id, "currency": "USD",
+        })
+        db_session.commit()
+
+        with pytest.raises(ValueError, match="currency"):
+            apply_add_portfolio_event(db_session, {
+                "ticker": ticker, "event_type": "buy",
+                "quantity": 5, "price": 110, "date": "2024-01-11",
+                "platform_id": plat_id, "currency": "IDR",
+            })
+        db_session.rollback()
+    finally:
+        _cleanup_ticker(db_session, ticker)
+
+
+def test_apply_add_portfolio_event_currency_mismatch_422_at_api(client, api_key):
+    """API boundary: a currency-mismatched event returns 422, not a 500."""
+    from backend.db import SessionLocal
+
+    ticker = "EVTCCY03"
+    hdr = {"MONAI_API_KEY": api_key}
+    s = SessionLocal()
+    try:
+        plat_id = _make_platform(s, "TestCcyMismatch422Platform")
+    finally:
+        s.close()
+    try:
+        r1 = client.post(
+            "/portfolio-events",
+            json={"ticker": ticker, "event_type": "buy", "quantity": "10",
+                  "price": "100", "date": "2024-01-10", "platform_id": plat_id,
+                  "currency": "USD"},
+            headers=hdr,
+        )
+        assert r1.status_code == 201, r1.text
+
+        r2 = client.post(
+            "/portfolio-events",
+            json={"ticker": ticker, "event_type": "buy", "quantity": "5",
+                  "price": "110", "date": "2024-01-11", "platform_id": plat_id,
+                  "currency": "IDR"},
+            headers=hdr,
+        )
+        assert r2.status_code == 422, r2.text
+    finally:
+        s = SessionLocal()
+        try:
+            _cleanup_ticker(s, ticker)
+        finally:
+            s.close()
+
+
+def test_apply_add_holding_cash_and_gold_pass_through(db_session):
+    """apply_add_holding persists cash/gold holdings unchanged — currency +
+    asset_type thread through the existing D-03 override helper (CG-01/CG-02
+    pass-through, no code change expected, proven here)."""
+    from decimal import Decimal
+    from backend.writes import apply_add_holding
+    from backend.models import Holding, AuditLog
+
+    t_cash = "HLDCASH01"
+    t_gold = "HLDGOLD01"
+    _cleanup_ticker(db_session, t_cash)
+    _cleanup_ticker(db_session, t_gold)
+    plat_id = _make_platform(db_session, "TestCashGoldPlatform")
+    try:
+        before_audit = int(
+            db_session.execute(
+                text("SELECT COUNT(*) FROM audit_log WHERE entity = 'holding'")
+            ).scalar() or 0
+        )
+
+        h_cash = apply_add_holding(db_session, {
+            "ticker": t_cash, "quantity": "1000", "avg_cost": "0",
+            "currency": "USD", "asset_type": "cash", "platform_id": plat_id,
+        })
+        db_session.commit()
+        assert h_cash.currency == "USD"
+        assert h_cash.asset_type == "cash"
+        assert h_cash.quantity == Decimal("1000")
+
+        h_gold = apply_add_holding(db_session, {
+            "ticker": t_gold, "quantity": "25", "avg_cost": "1000000",
+            "currency": "IDR", "asset_type": "gold", "platform_id": plat_id,
+        })
+        db_session.commit()
+        assert h_gold.currency == "IDR"
+        assert h_gold.asset_type == "gold"
+        assert h_gold.quantity == Decimal("25")
+
+        # Audit trail preserved for both writes.
+        after_audit = int(
+            db_session.execute(
+                text("SELECT COUNT(*) FROM audit_log WHERE entity = 'holding'")
+            ).scalar() or 0
+        )
+        assert after_audit == before_audit + 2
+        assert db_session.query(AuditLog).filter(
+            AuditLog.entity == "holding", AuditLog.entity_id == h_cash.id
+        ).count() == 1
+        assert db_session.query(AuditLog).filter(
+            AuditLog.entity == "holding", AuditLog.entity_id == h_gold.id
+        ).count() == 1
+    finally:
+        _cleanup_ticker(db_session, t_cash)
+        _cleanup_ticker(db_session, t_gold)

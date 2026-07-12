@@ -136,6 +136,9 @@ class PortfolioEventCreate(BaseModel):
     date: date
     platform_id: int = Field(..., description="Required — position identity is (ticker, platform_id)")
     asset_type: str | None = None
+    currency: str | None = Field(
+        None, description="Native currency of price; must match the parent holding's currency if one exists"
+    )
 
 
 class PortfolioEventOut(BaseModel):
