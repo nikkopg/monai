@@ -235,6 +235,36 @@ class PriceCache(Base):
     )
 
 
+class FxRateCache(Base):
+    """Immutable historical FX rate cache, keyed by (rate_date, base, quote) (FX-05).
+
+    Structural clone of PriceCache (same column-naming conventions) with the
+    natural key swapped from `ticker` to a currency-pair-by-date tuple.
+    `get_rate()` (backend/fx.py) only ever INSERTs a new row on a genuine
+    cache miss — an existing (rate_date, base_currency, quote_currency) row
+    is never UPDATEd, so historical-at-purchase P&L (FX-03) stays
+    reproducible even as the vendor's "latest" rate moves.
+    """
+
+    __tablename__ = "fx_rate_cache"
+    __table_args__ = (
+        UniqueConstraint(
+            "rate_date", "base_currency", "quote_currency",
+            name="uq_fx_rate_cache_date_pair",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rate_date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
+    base_currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    quote_currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    rate: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    fetched_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
+    )
+
+
 class PortfolioValueHistory(Base):
     """Daily per-position portfolio value snapshot (D-13).
 

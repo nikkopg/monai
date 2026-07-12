@@ -49,6 +49,13 @@ TTL_BY_ASSET_TYPE: dict[str, timedelta] = {
     "idx_stock": timedelta(days=1),
     "mutual_fund": timedelta(days=7),
     "other": timedelta(days=7),
+    # Gold spot moves slowly — same cadence as mutual_fund (CG-03, Pitfall 1).
+    "gold": timedelta(days=7),
+    # Cash has no "price" — its IDR value is FX-rate-driven, not
+    # price_cache-driven (CG-01). This entry exists only so `cash` never
+    # silently falls through to `_DEFAULT_TTL`; portfolio_summary special-cases
+    # asset_type == "cash" and skips the price_cache/is_stale path entirely.
+    "cash": timedelta(days=7),
 }
 _DEFAULT_TTL = timedelta(days=7)
 
