@@ -773,39 +773,10 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
             apply_merge_category(db, row.get("from_name"), row.get("into_name"))
 
         elif operation == "add_holding":
-            from decimal import Decimal as _D
-            h = Holding(
-                ticker=after["ticker"],
-                quantity=_D(str(after["quantity"])),
-                avg_cost=_D(str(after["avg_cost"])),
-                purchase_date=datetime.fromisoformat(after["purchase_date"]).date()
-                    if after.get("purchase_date") else None,
-                currency=after.get("currency", "IDR"),
-                asset_type=after.get("asset_type"),
-            )
-            db.add(h)
-            db.flush()
-            db.add(AuditLog(entity="holding", entity_id=h.id, operation="add",
-                            before=None, after=after))
+            apply_add_holding(db, after)
 
         elif operation == "edit_holding":
-            from decimal import Decimal as _D
-            h_id = row.get("id")
-            h = db.get(Holding, h_id)
-            if h is None:
-                raise ValueError(f"Holding {h_id} not found during confirm")
-            if after.get("quantity") is not None:
-                h.quantity = _D(str(after["quantity"]))
-            if after.get("avg_cost") is not None:
-                h.avg_cost = _D(str(after["avg_cost"]))
-            if after.get("purchase_date") is not None:
-                h.purchase_date = datetime.fromisoformat(after["purchase_date"]).date()
-            if after.get("currency") is not None:
-                h.currency = after["currency"]
-            if after.get("asset_type") is not None:
-                h.asset_type = after["asset_type"]
-            db.add(AuditLog(entity="holding", entity_id=h_id, operation="edit",
-                            before=before, after=after))
+            apply_edit_holding(db, row.get("id"), after, before)
 
         elif operation == "delete_holding":
             h_id = row.get("id")

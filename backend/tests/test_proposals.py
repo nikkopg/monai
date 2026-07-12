@@ -322,6 +322,143 @@ def test_confirm_requires_api_key(client, api_key, db_session):
     db_session.commit()
 
 
+def _make_platform(db, name: str = "ZZ Test Platform CH01") -> int:
+    from backend.models import Platform
+    import secrets
+    platform = Platform(name=f"{name} {secrets.token_hex(4)}", kind="exchange")
+    db.add(platform)
+    db.commit()
+    db.refresh(platform)
+    return platform.id
+
+
+def test_confirm_add_holding_persists_platform_id(client, api_key, db_session):
+    """CH-01 regression closure: a chat-initiated add_holding proposal carrying
+    platform_id, when confirmed via _execute_proposal_payload, must write a
+    Holding WITH platform_id set — no NOT NULL IntegrityError (Pitfall 2, the
+    confirm-time write is the actual bug; delegating to apply_add_holding fixes it).
+    """
+    from backend.models import Holding, Proposal
+    import secrets
+
+    platform_id = _make_platform(db_session)
+
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=15)
+    after = {
+        "ticker": "ZZCH01",
+        "quantity": "1",
+        "avg_cost": "100",
+        "platform_id": platform_id,
+        "purchase_date": None,
+        "currency": "IDR",
+        "asset_type": "crypto",
+    }
+    payload = {"operation": "add_holding", "rows": [{"before": None, "after": after}]}
+    p = Proposal(
+        token=token, operation="add_holding", payload=payload,
+        status="pending", expires_at=expires_at,
+    )
+    db_session.add(p)
+    db_session.commit()
+    db_session.refresh(p)
+
+    audit_before = int(
+        db_session.execute(
+            text("SELECT COUNT(*) FROM audit_log WHERE entity='holding'")
+        ).scalar() or 0
+    )
+
+    resp = client.post(
+        f"/proposals/{p.id}/confirm",
+        json={"token": token},
+        headers={"MONAI_API_KEY": api_key},
+    )
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+    assert resp.json()["status"] == "confirmed"
+
+    db_session.expire_all()
+    holding = db_session.query(Holding).filter(Holding.ticker == "ZZCH01").one()
+    assert holding.platform_id == platform_id, (
+        "CH-01 regression: platform_id not persisted on chat-confirmed add_holding"
+    )
+
+    # Audit trail preserved through delegation (T-07-05-AUD)
+    audit_after = int(
+        db_session.execute(
+            text("SELECT COUNT(*) FROM audit_log WHERE entity='holding' AND entity_id=:id"),
+            {"id": holding.id},
+        ).scalar() or 0
+    )
+    assert audit_after >= 1, "Audit-log row missing after delegated add_holding confirm"
+
+    # Cleanup
+    from backend.models import Platform
+    db_session.delete(holding)
+    platform = db_session.get(Platform, platform_id)
+    if platform:
+        db_session.delete(platform)
+    db_session.commit()
+
+
+def test_confirm_edit_holding_via_delegation(client, api_key, db_session):
+    """edit_holding confirm delegates to apply_edit_holding — quantity updates, audit row written."""
+    from backend.models import Holding, Platform, Proposal
+    import secrets
+
+    platform_id = _make_platform(db_session)
+    holding = Holding(
+        ticker="ZZCH01EDIT", quantity=1, avg_cost=100, currency="IDR",
+        asset_type="crypto", platform_id=platform_id,
+    )
+    db_session.add(holding)
+    db_session.commit()
+    db_session.refresh(holding)
+
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=15)
+    before = {"quantity": "1"}
+    after = {"quantity": "5"}
+    payload = {
+        "operation": "edit_holding",
+        "rows": [{"id": holding.id, "before": before, "after": after}],
+    }
+    p = Proposal(
+        token=token, operation="edit_holding", payload=payload,
+        status="pending", expires_at=expires_at,
+    )
+    db_session.add(p)
+    db_session.commit()
+    db_session.refresh(p)
+
+    resp = client.post(
+        f"/proposals/{p.id}/confirm",
+        json={"token": token},
+        headers={"MONAI_API_KEY": api_key},
+    )
+    assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+
+    db_session.expire_all()
+    updated = db_session.get(Holding, holding.id)
+    from decimal import Decimal
+    assert updated.quantity == Decimal("5")
+
+    audit_count = int(
+        db_session.execute(
+            text("SELECT COUNT(*) FROM audit_log WHERE entity='holding' AND entity_id=:id AND operation='edit'"),
+            {"id": holding.id},
+        ).scalar() or 0
+    )
+    assert audit_count >= 1, "Audit-log row missing after delegated edit_holding confirm"
+
+    # Cleanup
+    db_session.delete(updated)
+    platform = db_session.get(Platform, platform_id)
+    if platform:
+        db_session.delete(platform)
+    db_session.commit()
+
+
 def test_get_proposals_excludes_token(client, api_key, db_session):
     """GET /proposals response JSON has NO 'token' field anywhere (T-02-07)."""
     tx_id = _make_transaction(db_session)
