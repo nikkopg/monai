@@ -25,6 +25,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from backend import fx
 from backend.models import (
     Holding,
     Platform,
@@ -47,12 +48,23 @@ def recompute_holding_from_events(db: Session, ticker: str, platform_id: int) ->
     `(price − avg_cost) × qty` and reduce total_cost by `avg_cost × qty`
     (leaving avg_cost unchanged, D-02); dividends fold into realized only.
 
+    FX-03/FX-04: each event's native price×quantity is converted to IDR via
+    `fx.get_rate(ev.currency or holding.currency, "IDR", ev.date, db)` at the
+    event's OWN trade date BEFORE accumulating into total_cost — cost basis is
+    historical-at-purchase, current value (portfolio_summary) uses today's
+    rate, so unrealized P&L includes FX drift. If a rate is unavailable
+    (vendor outage/gap), this function returns quantity=None/avg_cost=None
+    (propagated, never a fabricated rate=1.0) and does NOT upsert the holding
+    row for that broken state — caller (apply_add_portfolio_event) still owns
+    the transaction boundary.
+
     Upserts the `holdings` row keyed on (ticker, platform_id). If the
     resulting quantity is 0 the row is retained as a zero-qty row (D-04:
     "drops off the active list" is a query-time filter, not a delete). Does
     NOT commit — the caller owns the transaction boundary (mirrors writes.py).
 
-    Returns: {ticker, quantity, avg_cost, realized_pnl, dividend_total}.
+    Returns: {ticker, quantity, avg_cost, realized_pnl, dividend_total}, all
+    None if an FX rate could not be resolved for one of the ledger's events.
     """
     events = db.scalars(
         select(PortfolioEvent)
@@ -60,18 +72,39 @@ def recompute_holding_from_events(db: Session, ticker: str, platform_id: int) ->
         .order_by(PortfolioEvent.date, PortfolioEvent.id)
     ).all()
 
+    holding = db.query(Holding).filter(
+        Holding.ticker == ticker, Holding.platform_id == platform_id
+    ).one_or_none()
+    # Fallback currency for events that omit one (schema default is IDR, but
+    # an existing holding's currency is the authoritative fallback).
+    default_currency = holding.currency if holding is not None else "IDR"
+
     qty = Decimal("0")
-    total_cost = Decimal("0")  # cost basis of the currently-open quantity
+    total_cost = Decimal("0")  # cost basis of the currently-open quantity, IDR
     realized_pnl = Decimal("0")
     dividend_total = Decimal("0")
 
     for ev in events:
+        ev_currency = ev.currency or default_currency
+        rate = fx.get_rate(ev_currency, "IDR", ev.date, db)
+        if rate is None:
+            # Vendor outage/gap — propagate None, never fabricate rate=1.0.
+            return {
+                "ticker": ticker,
+                "quantity": None,
+                "avg_cost": None,
+                "realized_pnl": None,
+                "dividend_total": None,
+            }
+        native_amount = ev.price * ev.quantity
+        idr_amount = native_amount * rate
+
         if ev.event_type == "buy":
-            total_cost += ev.price * ev.quantity
+            total_cost += idr_amount
             qty += ev.quantity
         elif ev.event_type == "sell":
             avg_cost = (total_cost / qty) if qty > 0 else Decimal("0")
-            realized_pnl += (ev.price - avg_cost) * ev.quantity
+            realized_pnl += (ev.price * rate - avg_cost) * ev.quantity
             # avg_cost UNCHANGED by a sell (D-02): reduce the pool proportionally
             # rather than re-deriving avg_cost from a smaller basis.
             total_cost -= avg_cost * ev.quantity
@@ -79,17 +112,14 @@ def recompute_holding_from_events(db: Session, ticker: str, platform_id: int) ->
         elif ev.event_type == "dividend":
             # Dividends fold into realized return (D-02); qty/cost untouched.
             # Convention: quantity=1, price=amount for a lump-sum dividend.
-            realized_pnl += ev.price * ev.quantity
-            dividend_total += ev.price * ev.quantity
+            realized_pnl += idr_amount
+            dividend_total += idr_amount
 
     avg_cost = (total_cost / qty) if qty > 0 else Decimal("0")
 
-    holding = db.query(Holding).filter(
-        Holding.ticker == ticker, Holding.platform_id == platform_id
-    ).one_or_none()
     if holding is None:
         holding = Holding(
-            ticker=ticker, quantity=qty, avg_cost=avg_cost, currency="IDR",
+            ticker=ticker, quantity=qty, avg_cost=avg_cost, currency=default_currency,
             platform_id=platform_id,
         )
         db.add(holding)
@@ -149,27 +179,60 @@ def portfolio_summary(db: Session) -> dict:
     total_unrealized are null-safe. Zero-qty holdings are still returned
     (D-04 filtering is a UI concern).
 
+    CG-01: asset_type=='cash' is special-cased BEFORE the price_cache read —
+    value = quantity × fx.get_rate(currency, "IDR", today, db), no
+    price_cache row involved at all. Its per-row current_price/current_value
+    come from that FX amount (never None while a rate resolves), is_stale is
+    hardcoded False, price_source is "fx" — NOT the generic
+    _price_is_stale(None, 'cash')=True path, which would show a permanent
+    false "stale" badge (INV-05). Gold (CG-02) takes no branch — it flows
+    through the normal price_cache path exactly like crypto/stocks.
+
     Returns a dict shaped for PortfolioSummary:
       {groups: [{platform_id, platform_name, kind, subtotal, holdings: [...]}],
+       asset_type_groups: [{asset_type, total_value}],
        total_value, total_unrealized_pnl, total_realized_pnl, as_of}
     """
     holdings = db.query(Holding).order_by(Holding.ticker).all()
     platforms = {p.id: p for p in db.query(Platform).all()}
+    today = date.today()
 
     # Realized P&L is a ledger byproduct — recompute is read-only here (we do
     # NOT persist; the summary is a pure read composing existing state).
     groups: dict[object, dict] = {}
+    asset_type_totals: dict[str | None, Decimal] = {}
     total_value = Decimal("0")
     total_unrealized = Decimal("0")
     total_realized = Decimal("0")
 
     for h in holdings:
-        price_row = _latest_price(db, h.ticker)
-        current_price = price_row.price if price_row is not None else None
-        current_value = (
-            current_price * h.quantity if current_price is not None else None
-        )
-        u_pnl = unrealized_pnl(current_price, h.avg_cost, h.quantity)
+        if h.asset_type == "cash":
+            # CG-01: cash values as amount × today's FX rate — no price_cache
+            # read at all (Open Question 2, LOCKED).
+            rate = fx.get_rate(h.currency, "IDR", today, db)
+            current_price = rate  # "price" of 1 unit of cash in IDR
+            current_value = h.quantity * rate if rate is not None else None
+            u_pnl = unrealized_pnl(current_price, h.avg_cost, h.quantity)
+            price_source = "fx"
+            price_fetched_at = datetime.now(timezone.utc).isoformat()
+            # INV-05: cash is fresh whenever a rate resolved — never the
+            # false "stale" badge from _price_is_stale(None, 'cash').
+            is_stale = rate is None
+        else:
+            price_row = _latest_price(db, h.ticker)
+            current_price = price_row.price if price_row is not None else None
+            current_value = (
+                current_price * h.quantity if current_price is not None else None
+            )
+            u_pnl = unrealized_pnl(current_price, h.avg_cost, h.quantity)
+            price_source = price_row.source if price_row is not None else None
+            price_fetched_at = (
+                price_row.fetched_at.isoformat() if price_row is not None else None
+            )
+            is_stale = _price_is_stale(
+                price_row.fetched_at if price_row is not None else None,
+                h.asset_type,
+            )
 
         # Realized P&L + dividend total from THIS position's event ledger
         # (source of truth) — scoped to (ticker, platform_id), never the bare
@@ -204,29 +267,32 @@ def portfolio_summary(db: Session) -> dict:
                 "current_value": current_value,
                 "unrealized_pnl": u_pnl,
                 "realized_pnl": realized["realized_pnl"],
-                "price_source": price_row.source if price_row is not None else None,
-                "price_fetched_at": (
-                    price_row.fetched_at.isoformat() if price_row is not None else None
-                ),
+                "price_source": price_source,
+                "price_fetched_at": price_fetched_at,
                 # Server-computed freshness (INV-05): the frontend renders this
                 # flag, never the TTL. A ticker with no price row is stale.
-                "is_stale": _price_is_stale(
-                    price_row.fetched_at if price_row is not None else None,
-                    h.asset_type,
-                ),
+                "is_stale": is_stale,
             }
         )
         if current_value is not None:
             groups[gkey]["subtotal"] += current_value
+            # VZ-01 pie data contract: aggregate current IDR value by asset_type.
+            atkey = h.asset_type
+            asset_type_totals[atkey] = asset_type_totals.get(atkey, Decimal("0")) + current_value
 
     # Stable order: real platforms first (by name), unassigned last.
     ordered = sorted(
         groups.values(),
         key=lambda g: (g["platform_id"] is None, (g["platform_name"] or "").lower()),
     )
+    asset_type_groups = [
+        {"asset_type": atype, "total_value": val}
+        for atype, val in sorted(asset_type_totals.items(), key=lambda kv: (kv[0] is None, kv[0] or ""))
+    ]
 
     return {
         "groups": ordered,
+        "asset_type_groups": asset_type_groups,
         "total_value": total_value,
         "total_unrealized_pnl": total_unrealized,
         "total_realized_pnl": total_realized,
@@ -244,6 +310,16 @@ def snapshot_all_holdings(db: Session) -> dict:
     re-running the job is idempotent (upsert-or-skip) AND a ticker held on two
     platforms records BOTH. Holdings without a current price are skipped
     (market_value is unknown until a price row exists — D-13 tolerates gaps).
+
+    CG-01: asset_type=='cash' is special-cased BEFORE the "no price_cache row
+    -> skip" gate — cash never has a price_cache row, so without this branch
+    it would be skipped forever and never appear in Plan 04's VZ-02 history
+    series. market_value = quantity × fx.get_rate(currency, "IDR", today, db);
+    cost_basis mirrors the same CG-01 semantics (cash has no cost-basis P&L
+    except FX movement, so cost_basis uses the holding's own avg_cost × qty,
+    consistent with every other asset type's cost_basis formula here). If the
+    FX rate is unavailable, the row is skipped (not written with a fabricated
+    rate=1.0) — counted the same as any other skip.
 
     Per-holding work is wrapped in try/except so one ticker's failure never
     aborts the whole snapshot or the scheduler thread (T-05-06-DEG). Does NOT
@@ -264,6 +340,29 @@ def snapshot_all_holdings(db: Session) -> dict:
             ).first()
             if exists is not None:
                 skipped += 1
+                continue
+
+            if h.asset_type == "cash":
+                # CG-01: cash never has a price_cache row — special-case it
+                # BEFORE the price_row None-skip gate below, or it would be
+                # skipped forever (Plan 04's VZ-02 series would permanently
+                # omit cash, a first-class position).
+                rate = fx.get_rate(h.currency, "IDR", today, db)
+                if rate is None:
+                    skipped += 1
+                    continue
+                db.add(
+                    PortfolioValueHistory(
+                        snapshot_date=today,
+                        ticker=h.ticker,
+                        quantity=h.quantity,
+                        market_value=h.quantity * rate,
+                        cost_basis=h.avg_cost * h.quantity,
+                        currency="IDR",
+                        platform_id=h.platform_id,
+                    )
+                )
+                written += 1
                 continue
 
             price_row = _latest_price(db, h.ticker)

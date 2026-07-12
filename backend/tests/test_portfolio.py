@@ -457,3 +457,267 @@ def test_value_history_series_empty_is_graceful(db_session):
         PortfolioValueHistory.ticker == t
     ).all()
     assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# FX-aware valuation, cash, gold, currency-mismatch, None-propagation
+# (Plan 07-02: FX-03, CG-01, CG-02, CG-03)
+# ---------------------------------------------------------------------------
+
+def _add_event_ccy(db, ticker, event_type, quantity, price, day, platform_id, currency):
+    """Like _add_event but stamps a currency (FX-04)."""
+    import datetime as _dt
+    from decimal import Decimal
+    from backend.models import PortfolioEvent
+    ev = PortfolioEvent(
+        date=_dt.date(2024, 1, day),
+        ticker=ticker,
+        event_type=event_type,
+        quantity=Decimal(str(quantity)),
+        price=Decimal(str(price)),
+        platform_id=platform_id,
+        currency=currency,
+    )
+    db.add(ev)
+    db.commit()
+    return ev
+
+
+def test_recompute_fx_converts_native_cost_to_idr_at_trade_date_rate(db_session, monkeypatch):
+    """FX-03: a USD buy converts to IDR at the trade-date rate; total_cost/
+    avg_cost land in IDR, exact Decimal (no float drift): 200 USD-cost qty=1
+    at rate 15800 -> 3160000 IDR total_cost/avg_cost."""
+    from decimal import Decimal
+    from backend import portfolio as portfolio_mod
+
+    plat = _make_platform(db_session, "TestFxPlatform")
+    t = _random_ticker()
+
+    def fake_get_rate(base, quote, as_of, db):
+        assert base == "USD" and quote == "IDR"
+        return Decimal("15800")
+
+    monkeypatch.setattr(portfolio_mod.fx, "get_rate", fake_get_rate)
+    try:
+        _add_event_ccy(db_session, t, "buy", 1, 200, 1, plat, "USD")
+        r = portfolio_mod.recompute_holding_from_events(db_session, t, plat)
+        db_session.commit()
+        assert r["quantity"] == Decimal("1")
+        assert r["avg_cost"] == Decimal("3160000")  # 200 * 15800, exact
+    finally:
+        _cleanup_ticker(db_session, t)
+
+
+def test_recompute_fx_d02_invariant_preserved_across_partial_sell(db_session, monkeypatch):
+    """D-02 preserved under FX conversion: a partial sell leaves avg_cost
+    unchanged (only qty/total_cost drop by avg_cost×sold_qty)."""
+    from decimal import Decimal
+    from backend import portfolio as portfolio_mod
+
+    plat = _make_platform(db_session, "TestFxD02Platform")
+    t = _random_ticker()
+
+    def fake_get_rate(base, quote, as_of, db):
+        return Decimal("15000")
+
+    monkeypatch.setattr(portfolio_mod.fx, "get_rate", fake_get_rate)
+    try:
+        _add_event_ccy(db_session, t, "buy", 10, 100, 1, plat, "USD")  # avg_cost 100*15000=1500000
+        r_before = portfolio_mod.recompute_holding_from_events(db_session, t, plat)
+        db_session.commit()
+        assert r_before["avg_cost"] == Decimal("1500000")
+
+        _add_event_ccy(db_session, t, "sell", 4, 200, 2, plat, "USD")
+        r_after = portfolio_mod.recompute_holding_from_events(db_session, t, plat)
+        db_session.commit()
+        assert r_after["quantity"] == Decimal("6")
+        assert r_after["avg_cost"] == r_before["avg_cost"]  # UNCHANGED by the sell
+    finally:
+        _cleanup_ticker(db_session, t)
+
+
+def test_recompute_fx_none_propagates_never_fabricates_rate(db_session, monkeypatch):
+    """A failed FX lookup (vendor outage/gap) makes the recompute result None,
+    never a fabricated rate=1.0."""
+    from backend import portfolio as portfolio_mod
+
+    plat = _make_platform(db_session, "TestFxNonePlatform")
+    t = _random_ticker()
+
+    def fake_get_rate(base, quote, as_of, db):
+        return None
+
+    monkeypatch.setattr(portfolio_mod.fx, "get_rate", fake_get_rate)
+    try:
+        _add_event_ccy(db_session, t, "buy", 10, 100, 1, plat, "USD")
+        r = portfolio_mod.recompute_holding_from_events(db_session, t, plat)
+        db_session.commit()
+        assert r["quantity"] is None
+        assert r["avg_cost"] is None
+    finally:
+        _cleanup_ticker(db_session, t)
+
+
+def test_cash_holding_values_via_fx_with_no_price_cache_row(db_session, monkeypatch):
+    """CG-01: a cash holding (asset_type='cash') values as quantity ×
+    fx_rate(currency, 'IDR', today) with NO price_cache row present at all —
+    the special-case branch must fire, not the generic price_cache path."""
+    from decimal import Decimal
+    from backend.models import Holding
+    from backend import portfolio as portfolio_mod
+
+    plat = _make_platform(db_session, "TestCashPlatform")
+    t = _random_ticker()
+
+    def fake_get_rate(base, quote, as_of, db):
+        assert base == "USD" and quote == "IDR"
+        return Decimal("15500")
+
+    monkeypatch.setattr(portfolio_mod.fx, "get_rate", fake_get_rate)
+    db_session.add(Holding(
+        ticker=t, quantity=Decimal("100"), avg_cost=Decimal("0"),
+        currency="USD", asset_type="cash", platform_id=plat,
+    ))
+    db_session.commit()
+    try:
+        # Sanity: no price_cache row exists for this ticker (special-case proof).
+        from backend.models import PriceCache
+        assert db_session.query(PriceCache).filter(PriceCache.ticker == t).count() == 0
+
+        summary = portfolio_mod.portfolio_summary(db_session)
+        hrow = next(
+            h for g in summary["groups"] for h in g["holdings"] if h["ticker"] == t
+        )
+        # 100 USD * 15500 = 1550000 IDR
+        assert hrow["current_value"] == Decimal("1550000")
+        assert hrow["current_value"] is not None
+        assert hrow["is_stale"] is False  # no false "stale" badge (INV-05)
+        assert hrow["price_source"] == "fx"
+    finally:
+        _cleanup_ticker(db_session, t)
+
+
+def test_cash_snapshot_writes_history_row_not_skipped(db_session, monkeypatch):
+    """CG-01: snapshot_all_holdings writes a portfolio_value_history row for a
+    cash holding today (no price_cache row needed) and does NOT skip it —
+    otherwise cash never appears in Plan 04's VZ-02 line chart."""
+    from decimal import Decimal
+    import datetime as _dt
+    from backend.models import Holding, PortfolioValueHistory
+    from backend import portfolio as portfolio_mod
+
+    plat = _make_platform(db_session, "TestCashSnapshotPlatform")
+    t = _random_ticker()
+
+    def fake_get_rate(base, quote, as_of, db):
+        return Decimal("15600")
+
+    monkeypatch.setattr(portfolio_mod.fx, "get_rate", fake_get_rate)
+    db_session.add(Holding(
+        ticker=t, quantity=Decimal("50"), avg_cost=Decimal("0"),
+        currency="USD", asset_type="cash", platform_id=plat,
+    ))
+    db_session.commit()
+    try:
+        result = portfolio_mod.snapshot_all_holdings(db_session)
+        db_session.commit()
+        assert result["written"] >= 1
+
+        row = db_session.query(PortfolioValueHistory).filter(
+            PortfolioValueHistory.ticker == t,
+            PortfolioValueHistory.snapshot_date == _dt.date.today(),
+        ).one_or_none()
+        assert row is not None
+        assert row.market_value == Decimal("780000")  # 50 * 15600
+    finally:
+        db_session.query(PortfolioValueHistory).filter(
+            PortfolioValueHistory.ticker == t
+        ).delete()
+        db_session.commit()
+        _cleanup_ticker(db_session, t)
+
+
+def test_gold_holding_full_ledger_pnl_identical_to_crypto(db_session):
+    """CG-02: a gold holding gets full average-cost ledger P&L, grams ×
+    per-gram price, identical to any crypto/stock position — no branch."""
+    from decimal import Decimal
+    from backend.portfolio import recompute_holding_from_events, portfolio_summary
+    from backend.writes import apply_set_price
+
+    plat = _make_platform(db_session, "TestGoldPlatform")
+    t = _random_ticker()
+    try:
+        _add_event(db_session, t, "buy", 10, 1000000, 1, plat)  # 10 grams @ 1,000,000/g
+        recompute_holding_from_events(db_session, t, plat)
+        db_session.commit()
+
+        from backend.models import Holding
+        h = db_session.query(Holding).filter(
+            Holding.ticker == t, Holding.platform_id == plat
+        ).one()
+        h.asset_type = "gold"
+        db_session.commit()
+
+        apply_set_price(db_session, t, 1200000, source="manual")
+        db_session.commit()
+
+        summary = portfolio_summary(db_session)
+        hrow = next(
+            h for g in summary["groups"] for h in g["holdings"] if h["ticker"] == t
+        )
+        assert hrow["current_price"] == Decimal("1200000")
+        assert hrow["current_value"] == Decimal("12000000")  # 10 * 1,200,000
+        assert hrow["unrealized_pnl"] == Decimal("2000000")  # (1200000-1000000)*10
+        assert hrow["price_source"] == "manual"
+    finally:
+        _cleanup_prices(db_session, t)
+        _cleanup_ticker(db_session, t)
+
+
+def test_portfolio_summary_asset_type_grouping(db_session, monkeypatch):
+    """VZ-01 data contract: portfolio_summary groups holdings by asset_type
+    (current IDR market value per group), alongside the existing platform
+    grouping."""
+    from decimal import Decimal
+    from backend.models import Holding
+    from backend import portfolio as portfolio_mod
+    from backend.writes import apply_set_price
+
+    plat = _make_platform(db_session, "TestAssetTypeGroupPlatform")
+    t_crypto = _random_ticker()
+    t_cash = _random_ticker()
+
+    def fake_get_rate(base, quote, as_of, db):
+        return Decimal("15000")
+
+    monkeypatch.setattr(portfolio_mod.fx, "get_rate", fake_get_rate)
+    db_session.add(Holding(
+        ticker=t_crypto, quantity=Decimal("1"), avg_cost=Decimal("100"),
+        currency="IDR", asset_type="crypto", platform_id=plat,
+    ))
+    db_session.add(Holding(
+        ticker=t_cash, quantity=Decimal("10"), avg_cost=Decimal("0"),
+        currency="USD", asset_type="cash", platform_id=plat,
+    ))
+    db_session.commit()
+    apply_set_price(db_session, t_crypto, 500, source="manual")
+    db_session.commit()
+    try:
+        summary = portfolio_mod.portfolio_summary(db_session)
+        assert "asset_type_groups" in summary
+        by_type = {g["asset_type"] for g in summary["asset_type_groups"]}
+        assert {"crypto", "cash"} <= by_type
+        # DB is shared across tests (not isolated per-test), so assert our
+        # holdings' own contribution rather than an exact group aggregate.
+        crypto_row = next(
+            h for g in summary["groups"] for h in g["holdings"] if h["ticker"] == t_crypto
+        )
+        cash_row = next(
+            h for g in summary["groups"] for h in g["holdings"] if h["ticker"] == t_cash
+        )
+        assert crypto_row["current_value"] == Decimal("500")     # 1 * 500
+        assert cash_row["current_value"] == Decimal("150000")    # 10 * 15000
+    finally:
+        _cleanup_prices(db_session, t_crypto)
+        _cleanup_ticker(db_session, t_crypto)
+        _cleanup_ticker(db_session, t_cash)

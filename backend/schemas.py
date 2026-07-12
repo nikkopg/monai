@@ -197,6 +197,7 @@ class PortfolioSummary(BaseModel):
     """
 
     groups: list  # [{platform_id, platform_name, kind, subtotal, holdings:[...]}]
+    asset_type_groups: list = []  # [{asset_type, total_value}] — VZ-01 pie data contract
     total_value: MoneyDecimal
     total_unrealized_pnl: MoneyDecimal
     total_realized_pnl: MoneyDecimal
