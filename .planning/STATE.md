@@ -4,16 +4,16 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 07
 current_phase_name: investment-subsystem-v2-multi-platform-multi-currency-cash-g
-status: executing
-stopped_at: Completed 07-05-PLAN.md
-last_updated: "2026-07-12T11:30:48.710Z"
+status: verifying
+stopped_at: Completed 07-02-PLAN.md
+last_updated: "2026-07-12T11:44:33.562Z"
 last_activity: 2026-07-12
 last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 7
   completed_phases: 4
   total_plans: 28
-  completed_plans: 25
+  completed_plans: 26
   percent: 57
 ---
 
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-06-21)
 
 Phase: 07 (investment-subsystem-v2-multi-platform-multi-currency-cash-g) — EXECUTING
 Plan: 5 of 5 (07-05 complete; 07-02, 07-03 still incomplete)
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-12 -- Phase 07 execution started
 
 Progress: [███████░░░] 67% — milestone 4/6 phases
@@ -67,6 +67,7 @@ Progress: [███████░░░] 67% — milestone 4/6 phases
 | Phase 07 P01 | 25min | 2 tasks | 5 files |
 | Phase 07 P04 | 35m | 2 tasks | 5 files |
 | Phase 07 P05 | 25min | 2 tasks | 4 files |
+| Phase 07 P02 | ~35min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -99,6 +100,9 @@ Recent decisions affecting current work:
 - [Phase ?]: Range tokens 1M/3M/6M/All implemented as a fixed day-count dict; unrecognized token raises ValueError, mapped to 422
 - [Phase 07]: CH-01 two-site fix: propose_add_holding forwards platform_id (site 1) + _execute_proposal_payload delegates to apply_add_holding/apply_edit_holding (site 2, the actual root cause) — deleted ~35 lines of duplicated inline Holding construction
 - [Phase 07]: find_platforms/find_accounts read tools mirror find_transactions shape; find_accounts closes the STATE.md account-id gap blocking chat account-delete
+- [Phase ?]: [07-02]: FX conversion in recompute_holding_from_events at the two total_cost mutation sites only — preserves D-02 avg_cost invariant, no accumulator restructure
+- [Phase ?]: [07-02]: Cash special-cased before price_cache read in both portfolio_summary and snapshot_all_holdings (CG-01) — value = quantity x today's FX rate, is_stale=False, price_source='fx'
+- [Phase ?]: [07-02]: One currency per position enforced at apply_add_portfolio_event write time; new position's currency seeded from its first event's own currency (not hardcoded IDR)
 
 ### Pending Todos
 
@@ -139,8 +143,8 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-07-12T11:29:23.905Z
-Stopped at: Completed 07-05-PLAN.md
+Last session: 2026-07-12T11:44:33.545Z
+Stopped at: Completed 07-02-PLAN.md
 Resume file: None
 Resume command: /gsd-execute-phase 07 (next: 07-02 and 07-03, the FX/cash model — independent of 07-05)
 
