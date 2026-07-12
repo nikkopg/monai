@@ -2,19 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 05
-current_phase_name: investment-subsystem
-status: in_progress
-stopped_at: Phase 5 all 6 plans executed, 136/136 tests green, scheduler live-verified — pending browser UAT walkthroughs
-last_updated: "2026-07-11T09:35:00.000Z"
-last_activity: 2026-07-11
-last_activity_desc: Rebuilt stale backend image (migration 004 predated it), confirmed 136/136 backend tests green with MONAI_API_KEY set, live-verified 05-06 scheduler boot/shutdown + manual snapshot job run in container
+status: verifying
+stopped_at: Phase 7 context gathered (6 scope items; line chart INVX-01 pulled in)
+last_updated: "2026-07-12T05:58:42.739Z"
+last_activity: 2026-07-11 -- Rebuilt stale backend image; confirmed 136/136 tests + live scheduler behavior
 progress:
   total_phases: 7
-  completed_phases: 4
-  total_plans: 23
-  completed_plans: 23
-  percent: 67
+  completed_phases: 5
+  total_plans: 22
+  completed_plans: 22
+  percent: 71
 ---
 
 # Project State
@@ -129,9 +126,9 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-07-11T02:33:28.971Z
-Stopped at: Completed 05-02-PLAN.md; INV-01 done. One deferred item: Task 3 browser human-check on /investments (platform CRUD + reassign flow) — needs frontend+backend running.
-Resume file: .planning/phases/05-investment-subsystem/05-02-SUMMARY.md
+Last session: 2026-07-12T05:58:42.701Z
+Stopped at: Phase 7 context gathered (6 scope items; line chart INVX-01 pulled in)
+Resume file: .planning/phases/07-investment-subsystem-v2-multi-platform-multi-currency-cash-g/07-CONTEXT.md
 Resume command: /gsd-execute-phase 5 (next: Wave 3 = 05-03 holdings ledger)
 
 Plan 05-02 execution note (2026-07-10):
