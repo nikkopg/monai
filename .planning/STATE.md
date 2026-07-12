@@ -2,16 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
+current_phase: 07
+current_phase_name: investment-subsystem-v2-multi-platform-multi-currency-cash-g
 status: executing
-stopped_at: Phase 7 context gathered (6 scope items; line chart INVX-01 pulled in)
-last_updated: "2026-07-12T06:48:46.209Z"
-last_activity: 2026-07-12 -- Phase 07 planning complete
+stopped_at: Completed 07-01-PLAN.md
+last_updated: "2026-07-12T11:06:40.422Z"
+last_activity: 2026-07-12
+last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 7
-  completed_phases: 5
-  total_plans: 27
-  completed_plans: 22
-  percent: 71
+  completed_phases: 4
+  total_plans: 28
+  completed_plans: 23
+  percent: 57
 ---
 
 # Project State
@@ -21,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-21)
 
 **Core value:** You can understand and manage your entire financial life — spending and investments — by talking to a trustworthy AI that never fabricates a number and never changes your data without your say-so.
-**Current focus:** Phase 04 complete — next: Phase 05 (investment-subsystem)
+**Current focus:** Phase 07 — investment-subsystem-v2-multi-platform-multi-currency-cash-g
 
 ## Current Position
 
-Phase: 05 (investment-subsystem) — ALL 6 PLANS EXECUTED, backend live-verified (pending browser UAT)
-Plan: 6 of 6 executed (05-01 schema foundation, 05-02 platform CRUD, 05-03 keystone ledger/P&L, 05-04 live prices/staleness/override, 05-05 correlation tool, 05-06 daily snapshot scheduler)
+Phase: 07 (investment-subsystem-v2-multi-platform-multi-currency-cash-g) — EXECUTING
+Plan: 2 of 5
 Status: Ready to execute
-Last activity: 2026-07-12 -- Phase 07 planning complete
+Last activity: 2026-07-12 -- Phase 07 execution started
 
 Progress: [███████░░░] 67% — milestone 4/6 phases
 
@@ -61,6 +64,7 @@ Progress: [███████░░░] 67% — milestone 4/6 phases
 | Phase 05 P02 | ~40m | 3 tasks | 6 files |
 | Phase 05 P05 | 5 min | 1 tasks | 2 files |
 | Phase 05 P04 | 40 | 4 tasks | 10 files |
+| Phase 07 P01 | 25min | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -86,6 +90,9 @@ Recent decisions affecting current work:
 - [05-02]: Platform CRUD mirrors the Phase-4 account manager; reassign-then-delete moves holdings.platform_id in one audited helper (D-12/D-16)
 - [05-02]: DELETE /platforms 422 detail.affected_count consumed verbatim by PlatformManager; writes API-key guarded (T-05-02-AC), GET open
 - [Phase ?]: spending_before_after_purchase: pivot=earliest buy event; equal-length before/after windows; honest error on missing/future buy (CHAT-03/D-15)
+- [Phase 07]: USDT normalized to USD via _FX_ALIASES before FX lookup, not a frankfurter call
+- [Phase 07]: No walk-backward logic for weekend/holiday FX dates — frankfurter returns nearest prior business-day rate
+- [Phase 07]: Migration 008 revision d3e4f5a6b7c8, down_revision c1d2e3f4a5b6 (007 head)
 
 ### Pending Todos
 
@@ -126,9 +133,9 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-07-12T05:58:42.701Z
-Stopped at: Phase 7 context gathered (6 scope items; line chart INVX-01 pulled in)
-Resume file: .planning/phases/07-investment-subsystem-v2-multi-platform-multi-currency-cash-g/07-CONTEXT.md
+Last session: 2026-07-12T11:06:40.405Z
+Stopped at: Completed 07-01-PLAN.md
+Resume file: .planning/phases/07-investment-subsystem-v2-multi-platform-multi-currency-cash-g/07-02-PLAN.md
 Resume command: /gsd-execute-phase 5 (next: Wave 3 = 05-03 holdings ledger)
 
 Plan 05-02 execution note (2026-07-10):
