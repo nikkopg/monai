@@ -5,16 +5,16 @@ milestone_name: milestone
 current_phase: 07
 current_phase_name: investment-subsystem-v2-multi-platform-multi-currency-cash-g
 status: verifying
-stopped_at: Completed 07-02-PLAN.md
-last_updated: "2026-07-12T11:44:33.562Z"
+stopped_at: Completed 07-03-PLAN.md
+last_updated: "2026-07-12T11:51:03.532Z"
 last_activity: 2026-07-12
 last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 7
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 28
-  completed_plans: 26
-  percent: 57
+  completed_plans: 27
+  percent: 71
 ---
 
 # Project State
@@ -68,6 +68,7 @@ Progress: [███████░░░] 67% — milestone 4/6 phases
 | Phase 07 P04 | 35m | 2 tasks | 5 files |
 | Phase 07 P05 | 25min | 2 tasks | 4 files |
 | Phase 07 P02 | ~35min | 2 tasks | 5 files |
+| Phase 07 P03 | 5min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -103,6 +104,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [07-02]: FX conversion in recompute_holding_from_events at the two total_cost mutation sites only — preserves D-02 avg_cost invariant, no accumulator restructure
 - [Phase ?]: [07-02]: Cash special-cased before price_cache read in both portfolio_summary and snapshot_all_holdings (CG-01) — value = quantity x today's FX rate, is_stale=False, price_source='fx'
 - [Phase ?]: [07-02]: One currency per position enforced at apply_add_portfolio_event write time; new position's currency seeded from its first event's own currency (not hardcoded IDR)
+- [Phase ?]: [07-03]: Platform grouping for allocation pie derived client-side from existing activeGroups (no new backend array) — satisfies no-new-endpoint constraint
+- [Phase ?]: [07-03]: Toggle pill styling/placement implemented directly per already-approved 07-UI-SPEC.md rather than deferred to a later UI pass
 
 ### Pending Todos
 
@@ -143,8 +146,8 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-07-12T11:44:33.545Z
-Stopped at: Completed 07-02-PLAN.md
+Last session: 2026-07-12T11:51:03.515Z
+Stopped at: Completed 07-03-PLAN.md
 Resume file: None
 Resume command: /gsd-execute-phase 07 (next: 07-02 and 07-03, the FX/cash model — independent of 07-05)
 
