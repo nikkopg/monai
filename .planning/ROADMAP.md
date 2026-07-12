@@ -266,13 +266,13 @@ All 30 v1 requirements mapped. No orphans.
 
 **Design note:** This phase needs a real **spec + discuss** pass before planning — the currency model especially (items 1–4 all touch holding identity, currency, and valuation). Run `/gsd-spec-phase 7` first, then `/gsd-discuss-phase 7`.
 
-**Plans**: 2/5 plans executed
+**Plans**: 3/5 plans executed
 
 - [x] 07-01-PLAN.md — FX adapter registry + immutable fx_rate_cache + portfolio_events.currency migration (Wave 1) [FX-01/02/04/05]
 - [ ] 07-02-PLAN.md — Currency-aware valuation + cash special-case + gold ledger + asset-type grouping (Wave 2, depends 01) [FX-03, CG-01/02/03]
 - [ ] 07-03-PLAN.md — Allocation pie chart (asset-type↔platform toggle, current IDR value) (Wave 3, depends 02) [VZ-01]
 - [x] 07-04-PLAN.md — Historical value/P&L line chart + GET /investments/history (Wave 1, independent) [VZ-02, INVX-01]
-- [ ] 07-05-PLAN.md — CH-01 chat two-site fix + find_platforms/find_accounts read tools (Wave 2) [CH-01]
+- [x] 07-05-PLAN.md — CH-01 chat two-site fix + find_platforms/find_accounts read tools (Wave 2) [CH-01]
 
 ---
 *Roadmap created: 2026-06-21*

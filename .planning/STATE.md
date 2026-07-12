@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 07
 current_phase_name: investment-subsystem-v2-multi-platform-multi-currency-cash-g
 status: executing
-stopped_at: Completed 07-04-PLAN.md
-last_updated: "2026-07-12T11:19:01.750Z"
+stopped_at: Completed 07-05-PLAN.md
+last_updated: "2026-07-12T11:30:48.710Z"
 last_activity: 2026-07-12
 last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 7
   completed_phases: 4
   total_plans: 28
-  completed_plans: 24
+  completed_plans: 25
   percent: 57
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-06-21)
 ## Current Position
 
 Phase: 07 (investment-subsystem-v2-multi-platform-multi-currency-cash-g) — EXECUTING
-Plan: 3 of 5
+Plan: 5 of 5 (07-05 complete; 07-02, 07-03 still incomplete)
 Status: Ready to execute
 Last activity: 2026-07-12 -- Phase 07 execution started
 
@@ -66,6 +66,7 @@ Progress: [███████░░░] 67% — milestone 4/6 phases
 | Phase 05 P04 | 40 | 4 tasks | 10 files |
 | Phase 07 P01 | 25min | 2 tasks | 5 files |
 | Phase 07 P04 | 35m | 2 tasks | 5 files |
+| Phase 07 P05 | 25min | 2 tasks | 4 files |
 
 ## Accumulated Context
 
@@ -96,10 +97,12 @@ Recent decisions affecting current work:
 - [Phase 07]: Migration 008 revision d3e4f5a6b7c8, down_revision c1d2e3f4a5b6 (007 head)
 - [Phase ?]: value_history_series aggregates all rows per date (no ticker/asset_type filter) so cash rows appear automatically once Plan 02 writes them
 - [Phase ?]: Range tokens 1M/3M/6M/All implemented as a fixed day-count dict; unrecognized token raises ValueError, mapped to 422
+- [Phase 07]: CH-01 two-site fix: propose_add_holding forwards platform_id (site 1) + _execute_proposal_payload delegates to apply_add_holding/apply_edit_holding (site 2, the actual root cause) — deleted ~35 lines of duplicated inline Holding construction
+- [Phase 07]: find_platforms/find_accounts read tools mirror find_transactions shape; find_accounts closes the STATE.md account-id gap blocking chat account-delete
 
 ### Pending Todos
 
-- Analogous gap for accounts: no read tool exposes account `id` (`propose_edit_account`/`propose_delete_account` both require `account_id: int`, but there's no `find_accounts`/list-with-id tool). Likely to block Phase 2 verification step 6 ("delete my BCA account") the same way `find_transactions` was needed for step 4. Deferred — surfaced during live verification 2026-07-03, not yet actioned.
+- ~~Analogous gap for accounts: no read tool exposes account `id`~~ **RESOLVED 2026-07-12** (07-05): `find_accounts` added, mirrors `find_transactions` shape; unblocks chat "delete my BCA account".
 
 ### Blockers/Concerns
 
@@ -126,7 +129,7 @@ Recent decisions affecting current work:
 
 | Category | Item | Status | Deferred At |
 |----------|------|--------|-------------|
-| Phase 7 | Multi-platform ripple: agentic-chat `propose_add_holding`/`_execute_proposal_payload` add_holding branch (backend/tools.py) doesn't pass `platform_id` → hits the new NOT NULL constraint if invoked via chat. REGRESSION to the chat write path. Needs a product decision (does the agent ask which platform?). | Open | rb2 (2026-07-11) |
+| Phase 7 | ~~Multi-platform ripple: agentic-chat `propose_add_holding`/`_execute_proposal_payload` add_holding branch (backend/tools.py) doesn't pass `platform_id` → hits the new NOT NULL constraint if invoked via chat.~~ **RESOLVED 2026-07-12** (07-05, CH-01): two-site fix — `propose_add_holding` forwards `platform_id`; `_execute_proposal_payload` delegates to `apply_add_holding`/`apply_edit_holding`. | Resolved | rb2 (2026-07-11) |
 | Phase 7 | ~~Multi-platform ripple: snapshot value-history keyed only on (snapshot_date, ticker)~~ **RESOLVED 2026-07-12** (migration 007, commit below): widened to (snapshot_date, ticker, platform_id); a ticker on 2 platforms now snapshots both. | Resolved | rb2 (2026-07-11) |
 | v2 | QRY-01: recurring-charge detection | Acknowledged | Init |
 | v2 | QRY-02: period comparison | Acknowledged | Init |
@@ -136,10 +139,10 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-07-12T11:19:01.733Z
-Stopped at: Completed 07-04-PLAN.md
+Last session: 2026-07-12T11:29:23.905Z
+Stopped at: Completed 07-05-PLAN.md
 Resume file: None
-Resume command: /gsd-execute-phase 5 (next: Wave 3 = 05-03 holdings ledger)
+Resume command: /gsd-execute-phase 07 (next: 07-02 and 07-03, the FX/cash model — independent of 07-05)
 
 Plan 05-02 execution note (2026-07-10):
 
