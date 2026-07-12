@@ -8,6 +8,7 @@ import HoldingModal from "./HoldingModal";
 import HoldingOverrideModal from "./HoldingOverrideModal";
 import PriceOverrideDialog from "./PriceOverrideDialog";
 import StalenessBadge from "./StalenessBadge";
+import ValueHistoryChart, { type HistoryPoint } from "./ValueHistoryChart";
 
 // ---------------------------------------------------------------------------
 // Investments page — grown into the keystone portfolio view (Plan 05-03).
@@ -76,6 +77,10 @@ export default function InvestmentsPage() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [history, setHistory] = useState<HistoryPoint[]>([]);
+  const [historyRange, setHistoryRange] = useState<
+    "1M" | "3M" | "6M" | "All"
+  >("3M");
 
   // Modal state.
   const [showEvent, setShowEvent] = useState(false);
@@ -106,6 +111,24 @@ export default function InvestmentsPage() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // History is fetched separately from the summary — re-fetch only when the
+  // range selector changes, not on every summary/price refresh (07-UI-SPEC.md
+  // page.tsx wiring note).
+  const loadHistory = useCallback(async (range: "1M" | "3M" | "6M" | "All") => {
+    try {
+      const res = await fetch(`/api/investments/history?range=${range}`);
+      if (!res.ok) throw new Error("fetch failed");
+      const body = await res.json();
+      setHistory(body.points ?? []);
+    } catch {
+      setHistory([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadHistory(historyRange);
+  }, [loadHistory, historyRange]);
 
   // Refresh prices (INV-02/03): force-fetch every ticker server-side, then
   // refetch the summary. Per-ticker failures are swallowed backend-side; a stale
@@ -225,6 +248,12 @@ export default function InvestmentsPage() {
                 </div>
               </div>
             </section>
+
+            <ValueHistoryChart
+              data={history}
+              range={historyRange}
+              onRangeChange={setHistoryRange}
+            />
 
             {/* Log-event primary CTA + de-emphasized direct-override link */}
             <div
