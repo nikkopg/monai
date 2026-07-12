@@ -173,6 +173,77 @@ class TestToolSQL:
         rows = find_transactions(merchant=substring, limit=20)["rows"]
         assert any(substring in (r["merchant"] or "").lower() for r in rows)
 
+    def test_find_platforms_rows_include_id(self, db_available):
+        from backend.tools import find_platforms
+        rows = find_platforms(limit=5)["rows"]
+        for row in rows:
+            assert "id" in row and isinstance(row["id"], int)
+            assert "name" in row
+            assert "kind" in row
+
+    def test_find_platforms_name_filter_ilike(self, db_available):
+        from sqlalchemy import text
+        from backend.db import engine
+        from backend.tools import find_platforms
+
+        with engine.connect() as c:
+            c.execute(text(
+                "INSERT INTO platforms (name, kind) VALUES ('ZZ Test Bitplatform', 'exchange') "
+                "ON CONFLICT (name) DO NOTHING"
+            ))
+            c.commit()
+        rows = find_platforms(name="zz test bit", limit=10)["rows"]
+        assert any(r["name"] == "ZZ Test Bitplatform" for r in rows)
+
+    def test_find_platforms_limit_clamping(self, db_available):
+        from backend.tools import find_platforms
+        rows = find_platforms(limit=999)["rows"]
+        assert len(rows) <= 50
+        rows_zero = find_platforms(limit=0)["rows"]
+        assert len(rows_zero) >= 0  # clamp floor is 1, call must not raise
+
+    def test_find_accounts_rows_include_id(self, db_available):
+        from backend.tools import find_accounts
+        rows = find_accounts(limit=5)["rows"]
+        for row in rows:
+            assert "id" in row and isinstance(row["id"], int)
+            assert "name" in row
+            assert "type" in row
+            assert "currency" in row
+
+    def test_find_accounts_name_filter_ilike(self, db_available):
+        from sqlalchemy import text
+        from backend.db import engine
+        from backend.tools import find_accounts
+
+        with engine.connect() as c:
+            c.execute(text(
+                "INSERT INTO accounts (name, type, currency) VALUES ('ZZ Test BCA', 'bank', 'IDR') "
+                "ON CONFLICT (name) DO NOTHING"
+            ))
+            c.commit()
+        rows = find_accounts(name="zz test bca", limit=10)["rows"]
+        assert any(r["name"] == "ZZ Test BCA" for r in rows)
+
+    def test_find_accounts_limit_clamping(self, db_available):
+        from backend.tools import find_accounts
+        rows = find_accounts(limit=999)["rows"]
+        assert len(rows) <= 50
+        rows_zero = find_accounts(limit=0)["rows"]
+        assert len(rows_zero) >= 0  # clamp floor is 1, call must not raise
+
+    def test_tools_registry_includes_find_platforms_and_find_accounts(self):
+        from backend.tools import TOOLS
+        assert "find_platforms" in TOOLS
+        assert "find_accounts" in TOOLS
+
+    def test_propose_add_holding_includes_platform_id(self, db_available):
+        from backend.tools import propose_add_holding
+        proposal = propose_add_holding(
+            ticker="ZZTEST", quantity=1, avg_cost=100, platform_id=42
+        )
+        assert proposal["after"]["platform_id"] == 42
+
 
 def test_spending_before_after_purchase(db_available):
     """CHAT-03 / D-15: before/after correlation around the earliest buy event.

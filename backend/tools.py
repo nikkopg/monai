@@ -453,6 +453,43 @@ def find_transactions(
             "period": _period_label(period, s, e)}
 
 
+def find_platforms(name: str | None = None, limit: int = 10) -> dict:
+    """Search/filter investment platforms and return their ids, names, and kinds,
+    so the agent can resolve a platform name (e.g. "bibit") to a concrete
+    platform_id before calling propose_add_holding. Rows are ordered by name.
+    """
+    p: dict = {"lim": max(1, min(int(limit), 50))}
+    clauses = []
+    if name is not None:
+        clauses.append("name ILIKE :name")
+        p["name"] = f"%{name}%"
+    sql = (
+        "SELECT id, name, kind FROM platforms" +
+        (" WHERE " + " AND ".join(clauses) if clauses else "") +
+        " ORDER BY name LIMIT :lim"
+    )
+    with engine.connect() as c:
+        rows = [_platform_to_dict(r) for r in c.execute(text(sql), p).fetchall()]
+    return {"tool": "find_platforms", "rows": rows}
+
+
+def find_accounts(name: str | None = None, limit: int = 10) -> dict:
+    """Search/filter accounts and return their ids, names, types, and
+    currencies, so the agent can resolve an account name (e.g. "BCA") to a
+    concrete account_id before calling propose_edit_account/propose_delete_account.
+    Rows are ordered by name.
+    """
+    from backend.models import Account
+
+    p: dict = {"lim": max(1, min(int(limit), 50))}
+    with get_session_sync() as db:
+        q = db.query(Account)
+        if name is not None:
+            q = q.filter(Account.name.ilike(f"%{name}%"))
+        rows = [_account_to_dict(a) for a in q.order_by(Account.name).limit(p["lim"]).all()]
+    return {"tool": "find_accounts", "rows": rows}
+
+
 # Registry: name -> callable (read tools)
 TOOLS = {
     "spending_total": spending_total,
@@ -466,6 +503,8 @@ TOOLS = {
     "average_daily_spending": average_daily_spending,
     "list_categories": list_categories,
     "find_transactions": find_transactions,
+    "find_platforms": find_platforms,
+    "find_accounts": find_accounts,
     "monthly_trend": monthly_trend,
     "account_balances": account_balances,
 }
@@ -518,6 +557,10 @@ def _tx_to_dict(tx) -> dict:
 
 def _account_to_dict(acc) -> dict:
     return {"id": acc.id, "name": acc.name, "type": acc.type, "currency": acc.currency}
+
+
+def _platform_to_dict(p) -> dict:
+    return {"id": p[0], "name": p[1], "kind": p[2]}
 
 
 def _holding_to_dict(h) -> dict:
@@ -803,17 +846,21 @@ def propose_add_holding(
     ticker: str,
     quantity: float,
     avg_cost: float,
+    platform_id: int | None = None,
     purchase_date: str | None = None,
     currency: str = "IDR",
     asset_type: str | None = None,
 ) -> dict:
     """Propose adding a new holding (investment position). Returns a proposal for user confirmation.
     Does NOT add any data — user must approve. D-05: holdings row CRUD only, no portfolio_events.
+    platform_id is required by the holdings schema (multi-platform, D-17) — use
+    find_platforms to resolve a platform name to its id before calling this.
     """
     after = {
         "ticker": ticker,
         "quantity": str(Decimal(str(quantity))),
         "avg_cost": str(Decimal(str(avg_cost))),
+        "platform_id": platform_id,
         "purchase_date": purchase_date,
         "currency": currency,
         "asset_type": asset_type,
