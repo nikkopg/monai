@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 07
 current_phase_name: investment-subsystem-v2-multi-platform-multi-currency-cash-g
 status: executing
-stopped_at: Completed 07-01-PLAN.md
-last_updated: "2026-07-12T11:06:40.422Z"
+stopped_at: Completed 07-04-PLAN.md
+last_updated: "2026-07-12T11:19:01.750Z"
 last_activity: 2026-07-12
 last_activity_desc: Phase 07 execution started
 progress:
   total_phases: 7
   completed_phases: 4
   total_plans: 28
-  completed_plans: 23
+  completed_plans: 24
   percent: 57
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-06-21)
 ## Current Position
 
 Phase: 07 (investment-subsystem-v2-multi-platform-multi-currency-cash-g) — EXECUTING
-Plan: 2 of 5
+Plan: 3 of 5
 Status: Ready to execute
 Last activity: 2026-07-12 -- Phase 07 execution started
 
@@ -65,6 +65,7 @@ Progress: [███████░░░] 67% — milestone 4/6 phases
 | Phase 05 P05 | 5 min | 1 tasks | 2 files |
 | Phase 05 P04 | 40 | 4 tasks | 10 files |
 | Phase 07 P01 | 25min | 2 tasks | 5 files |
+| Phase 07 P04 | 35m | 2 tasks | 5 files |
 
 ## Accumulated Context
 
@@ -93,6 +94,8 @@ Recent decisions affecting current work:
 - [Phase 07]: USDT normalized to USD via _FX_ALIASES before FX lookup, not a frankfurter call
 - [Phase 07]: No walk-backward logic for weekend/holiday FX dates — frankfurter returns nearest prior business-day rate
 - [Phase 07]: Migration 008 revision d3e4f5a6b7c8, down_revision c1d2e3f4a5b6 (007 head)
+- [Phase ?]: value_history_series aggregates all rows per date (no ticker/asset_type filter) so cash rows appear automatically once Plan 02 writes them
+- [Phase ?]: Range tokens 1M/3M/6M/All implemented as a fixed day-count dict; unrecognized token raises ValueError, mapped to 422
 
 ### Pending Todos
 
@@ -133,9 +136,9 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-07-12T11:06:40.405Z
-Stopped at: Completed 07-01-PLAN.md
-Resume file: .planning/phases/07-investment-subsystem-v2-multi-platform-multi-currency-cash-g/07-02-PLAN.md
+Last session: 2026-07-12T11:19:01.733Z
+Stopped at: Completed 07-04-PLAN.md
+Resume file: None
 Resume command: /gsd-execute-phase 5 (next: Wave 3 = 05-03 holdings ledger)
 
 Plan 05-02 execution note (2026-07-10):

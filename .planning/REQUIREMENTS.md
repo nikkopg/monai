@@ -51,6 +51,7 @@ Requirements for this cycle. Each maps to a roadmap phase.
 - [x] **INV-05**: Each displayed price shows its as-of time and a staleness indicator
 - [x] **INV-06**: Investment page shows current portfolio value and per-holding profit/loss
 - [x] **INV-07**: Portfolio events (buys/sells) are recorded, enabling correlation queries
+- [x] **INVX-01**: Historical portfolio value over time (not just current snapshot) — promoted from v2 backlog into Phase 7 (VZ-02)
 
 ### Pages & Settings
 
@@ -71,7 +72,7 @@ Acknowledged but deferred — not in this cycle's roadmap.
 
 ### Investments+
 
-- **INVX-01**: Historical portfolio value over time (not just current snapshot)
+- **INVX-01**: ~~Historical portfolio value over time~~ — promoted into Phase 7 (see v1 Investments section above), no longer deferred
 - **INVX-02**: Automated reksadana NAV feed (if a reliable source emerges)
 
 ## Out of Scope
@@ -125,6 +126,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | INV-06 | Phase 5: Investment Subsystem | In Progress |
 | INV-07 | Phase 5: Investment Subsystem | In Progress |
 | CHAT-03 | Phase 5: Investment Subsystem | Complete |
+| INVX-01 | Phase 7: Investment Subsystem v2 | Complete |
 | MCP-01 | Phase 6: MCP Server | Pending |
 | MCP-02 | Phase 6: MCP Server | Pending |
 | MCP-03 | Phase 6: MCP Server | Pending |
