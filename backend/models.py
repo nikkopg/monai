@@ -195,6 +195,13 @@ class PortfolioEvent(Base):
     platform_id: Mapped[int] = mapped_column(
         ForeignKey("platforms.id"), nullable=False, index=True
     )
+    # Native cost currency for this event (FX-04): the historical FX rate is
+    # re-fetched by date from fx_rate_cache at compute time, not stored here.
+    # Nullable + server_default 'IDR' mirrors Holding.currency's idiom;
+    # validated against the parent holding's currency at write time (Plan 02).
+    currency: Mapped[str | None] = mapped_column(
+        String(8), server_default="IDR", nullable=True
+    )
 
 
 class AppSetting(Base):
