@@ -48,6 +48,7 @@ from backend.db import get_session
 from backend.importer import _get_or_create_account, import_csv_text
 from backend.models import Account, AuditLog, Holding, Platform, Proposal, Transaction
 from backend.portfolio import portfolio_summary as compose_portfolio_summary
+from backend.portfolio import value_history_series
 from backend.writes import (
     apply_add_account,
     apply_add_holding,
@@ -94,6 +95,7 @@ from backend.schemas import (
     TransactionCreate,
     TransactionOut,
     TransactionUpdate,
+    ValueHistoryResponse,
 )
 from backend.tools import (
     account_balances,
@@ -440,6 +442,22 @@ def investments_summary(db: Session = Depends(get_session)):
     refresh_all_prices(db, force=False)  # only stale tickers (D-09)
     db.commit()
     return compose_portfolio_summary(db)
+
+
+@app.get("/investments/history", response_model=ValueHistoryResponse)
+def investments_history(range: str = "All", db: Session = Depends(get_session)):
+    """Daily portfolio value + P&L series (VZ-02, INVX-01) — open read.
+
+    Reads the already-populated portfolio_value_history (D-13/D-14); makes NO
+    fx.get_rate call. range accepts 1M/3M/6M/All; an unrecognized token maps
+    to 422 (V4/V5). No-backfill (D-13): a fresh collector returns an empty
+    series, not an error.
+    """
+    try:
+        points = value_history_series(db, range)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return {"points": points}
 
 
 @app.post("/prices/refresh", dependencies=[Depends(require_api_key)])

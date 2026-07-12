@@ -19,7 +19,7 @@ them to these pure calculators.
 """
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -288,6 +288,47 @@ def snapshot_all_holdings(db: Session) -> dict:
             logger.warning("snapshot failed for ticker %s", h.ticker, exc_info=True)
             failed += 1
     return {"written": written, "skipped": skipped, "failed": failed}
+
+
+_HISTORY_RANGES = {"1M": 30, "3M": 90, "6M": 180, "All": None}
+
+
+def value_history_series(db: Session, range_param: str = "All") -> list[dict]:
+    """Compose the GET /investments/history payload (VZ-02, INVX-01).
+
+    Pure read over the already-populated portfolio_value_history (D-13/D-14) —
+    makes NO fx.get_rate call, so this can run in Wave 1 independent of the FX
+    plans; series CONTENTS (whether cash appears) depend on Plan 02's
+    snapshot_all_holdings cash special-case having written cash rows, not on
+    anything at read time. Groups every row (including cash) by snapshot_date:
+    total_market_value = Σ market_value, total_pnl = Σ(market_value −
+    cost_basis), both Decimal. range_param trims by snapshot_date using
+    _HISTORY_RANGES; an unrecognized token raises ValueError (422 at the API
+    layer). No rows (collector just went live) returns an empty list — no
+    backfill (D-13), not an error.
+    """
+    if range_param not in _HISTORY_RANGES:
+        raise ValueError(f"unknown range: {range_param!r}")
+
+    rows = db.scalars(
+        select(PortfolioValueHistory).order_by(PortfolioValueHistory.snapshot_date)
+    ).all()
+
+    days = _HISTORY_RANGES[range_param]
+    if days is not None:
+        cutoff = date.today() - timedelta(days=days)
+        rows = [r for r in rows if r.snapshot_date >= cutoff]
+
+    by_date: dict[date, dict] = {}
+    for r in rows:
+        bucket = by_date.setdefault(
+            r.snapshot_date,
+            {"date": r.snapshot_date, "total_market_value": Decimal("0"), "total_pnl": Decimal("0")},
+        )
+        bucket["total_market_value"] += r.market_value
+        bucket["total_pnl"] += r.market_value - r.cost_basis
+
+    return [by_date[d] for d in sorted(by_date)]
 
 
 def _realized_for_position(db: Session, ticker: str, platform_id: int) -> dict:

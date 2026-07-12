@@ -203,6 +203,21 @@ class PortfolioSummary(BaseModel):
     as_of: str
 
 
+class ValueHistoryPointOut(BaseModel):
+    """One day's point in the GET /investments/history series (VZ-02, INVX-01)."""
+
+    date: date
+    total_market_value: MoneyDecimal
+    total_pnl: MoneyDecimal
+
+
+class ValueHistoryResponse(BaseModel):
+    """GET /investments/history payload — a list of daily points, already
+    range-filtered server-side (VZ-02)."""
+
+    points: list[ValueHistoryPointOut]
+
+
 class PriceOverrideRequest(BaseModel):
     """Manual price override body (INV-04, D-11, T-05-04-INP).
 

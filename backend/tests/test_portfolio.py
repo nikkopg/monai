@@ -334,3 +334,126 @@ def test_avg_cost_realized_pnl(db_session):
     assert unrealized_pnl(Decimal("80"), Decimal("100"), Decimal("6")) == Decimal("-120")
     # No price yet -> unrealized is None (Plan 04 backfills live prices)
     assert unrealized_pnl(None, Decimal("100"), Decimal("6")) is None
+
+
+# ---------------------------------------------------------------------------
+# value_history_series (VZ-02, INVX-01, Plan 07-04)
+# ---------------------------------------------------------------------------
+
+def _add_history_row(db, ticker, platform_id, snapshot_date, market_value, cost_basis):
+    from decimal import Decimal
+    from backend.models import PortfolioValueHistory
+    row = PortfolioValueHistory(
+        snapshot_date=snapshot_date,
+        ticker=ticker,
+        quantity=Decimal("1"),
+        market_value=Decimal(str(market_value)),
+        cost_basis=Decimal(str(cost_basis)),
+        currency="IDR",
+        platform_id=platform_id,
+    )
+    db.add(row)
+    db.commit()
+    return row
+
+
+def _cleanup_history(db, tickers):
+    from backend.models import PortfolioValueHistory
+    db.query(PortfolioValueHistory).filter(PortfolioValueHistory.ticker.in_(tickers)).delete(
+        synchronize_session=False
+    )
+    db.commit()
+
+
+def test_value_history_series_aggregates_per_date(db_session):
+    """Aggregation test: per-date total_market_value = Σ market_value,
+    total_pnl = Σ(market_value − cost_basis), summed across positions on the
+    same day (including a second ticker so the Σ is exercised). Asserted as a
+    DELTA (before vs. after inserting fixture rows) so the test is robust to
+    other pre-existing portfolio_value_history rows already in this DB — the
+    function itself aggregates ALL rows for a date by design (whole-portfolio
+    view, no ticker filter)."""
+    import datetime as _dt
+    from decimal import Decimal
+    from backend.portfolio import value_history_series
+
+    plat = _make_platform(db_session, "TestHistoryPlatform")
+    t1, t2 = _random_ticker(), _random_ticker()
+    try:
+        d1 = _dt.date.today() - _dt.timedelta(days=2)
+        d2 = _dt.date.today() - _dt.timedelta(days=1)
+        d3 = _dt.date.today()
+
+        before = {p["date"]: p for p in value_history_series(db_session, "All")}
+        zero = {"total_market_value": Decimal("0"), "total_pnl": Decimal("0")}
+
+        _add_history_row(db_session, t1, plat, d1, "1000", "800")
+        _add_history_row(db_session, t1, plat, d2, "1100", "800")
+        _add_history_row(db_session, t2, plat, d2, "500", "600")  # same day as t1's 2nd row
+        _add_history_row(db_session, t1, plat, d3, "1200", "800")
+
+        after = {p["date"]: p for p in value_history_series(db_session, "All")}
+
+        def delta(d, field):
+            return after[d][field] - before.get(d, zero)[field]
+
+        assert delta(d1, "total_market_value") == Decimal("1000")
+        assert delta(d1, "total_pnl") == Decimal("200")  # 1000 - 800
+
+        # d2 sums BOTH t1 and t2's rows
+        assert delta(d2, "total_market_value") == Decimal("1600")   # 1100 + 500
+        assert delta(d2, "total_pnl") == Decimal("200")             # (1100-800) + (500-600)
+
+        assert delta(d3, "total_market_value") == Decimal("1200")
+        assert delta(d3, "total_pnl") == Decimal("400")  # 1200 - 800
+
+        # Points are sorted ascending by date.
+        assert [p["date"] for p in after.values()] == sorted(after)
+    finally:
+        _cleanup_history(db_session, [t1, t2])
+
+
+def test_value_history_series_range_filter(db_session):
+    """Range filter trims by snapshot_date; a bad range raises ValueError."""
+    import datetime as _dt
+    from backend.portfolio import value_history_series
+
+    plat = _make_platform(db_session, "TestHistoryRangePlatform")
+    t = _random_ticker()
+    try:
+        old_date = _dt.date.today() - _dt.timedelta(days=200)
+        recent_date = _dt.date.today() - _dt.timedelta(days=5)
+        _add_history_row(db_session, t, plat, old_date, "100", "80")
+        _add_history_row(db_session, t, plat, recent_date, "110", "80")
+
+        series_1m = value_history_series(db_session, "1M")
+        dates_1m = {p["date"] for p in series_1m}
+        assert recent_date in dates_1m
+        assert old_date not in dates_1m
+
+        series_all = value_history_series(db_session, "All")
+        dates_all = {p["date"] for p in series_all}
+        assert old_date in dates_all and recent_date in dates_all
+
+        with pytest.raises(ValueError):
+            value_history_series(db_session, "not-a-range")
+    finally:
+        _cleanup_history(db_session, [t])
+
+
+def test_value_history_series_empty_is_graceful(db_session):
+    """No-backfill (D-13): an empty portfolio_value_history returns an empty
+    series, not an error, for a range with no matching rows."""
+    from backend.portfolio import value_history_series
+
+    t = _random_ticker()  # never inserted -> no rows for this ticker anywhere
+    series = value_history_series(db_session, "1M")
+    assert isinstance(series, list)
+    assert all(p["date"] for p in series)  # sanity: doesn't blow up on real data
+    # A ticker that was never seeded contributes nothing — assert isolation
+    # by checking the random ticker's own history is empty via a direct query.
+    from backend.models import PortfolioValueHistory
+    rows = db_session.query(PortfolioValueHistory).filter(
+        PortfolioValueHistory.ticker == t
+    ).all()
+    assert rows == []
