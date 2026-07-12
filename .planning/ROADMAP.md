@@ -262,6 +262,7 @@ All 30 v1 requirements mapped. No orphans.
 3. **Cash asset type** — track idle IDR / USDT balances as portfolio positions.
 4. **Physical gold asset type** — grams × gold price (manual price, or a spot adapter).
 5. **Portfolio pie-chart-by-category viz** — allocation by asset type/category (Recharts already in the stack). Independent of 1–4.
+6. **Historical value/P&L line chart (INVX-01)** — pulled in from deferred v2 during discuss (2026-07-12). Two views "like Bitget": total portfolio value over time + unrealized P&L over time, with a time-range selector. Data pipeline (`portfolio_value_history` + daily snapshot scheduler) already shipped in Phase 5 (D-13/D-14); only the chart UI ships here. History starts at collector go-live (no backfill). Independent of 1–4.
 
 **Design note:** This phase needs a real **spec + discuss** pass before planning — the currency model especially (items 1–4 all touch holding identity, currency, and valuation). Run `/gsd-spec-phase 7` first, then `/gsd-discuss-phase 7`.
 
