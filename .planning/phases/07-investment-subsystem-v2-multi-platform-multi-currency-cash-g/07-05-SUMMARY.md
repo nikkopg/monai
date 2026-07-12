@@ -113,3 +113,7 @@ None - no external service configuration required.
 ---
 *Phase: 07-investment-subsystem-v2-multi-platform-multi-currency-cash-g*
 *Completed: 2026-07-12*
+
+## Self-Check: PASSED
+
+All modified files confirmed present on disk; all task/doc commits (925f1b4, 21357e4) confirmed in git log.
