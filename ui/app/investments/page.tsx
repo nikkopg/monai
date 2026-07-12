@@ -9,6 +9,7 @@ import HoldingOverrideModal from "./HoldingOverrideModal";
 import PriceOverrideDialog from "./PriceOverrideDialog";
 import StalenessBadge from "./StalenessBadge";
 import ValueHistoryChart, { type HistoryPoint } from "./ValueHistoryChart";
+import AllocationPieChart, { type AllocationSlice } from "./AllocationPieChart";
 
 // ---------------------------------------------------------------------------
 // Investments page — grown into the keystone portfolio view (Plan 05-03).
@@ -45,8 +46,11 @@ type Group = {
   holdings: HoldingRow[];
 };
 
+type AssetTypeGroup = { asset_type: string | null; total_value: number };
+
 type Summary = {
   groups: Group[];
+  asset_type_groups: AssetTypeGroup[];
   total_value: number;
   total_unrealized_pnl: number;
   total_realized_pnl: number;
@@ -81,6 +85,9 @@ export default function InvestmentsPage() {
   const [historyRange, setHistoryRange] = useState<
     "1M" | "3M" | "6M" | "All"
   >("3M");
+  const [allocationGroupBy, setAllocationGroupBy] = useState<
+    "asset_type" | "platform"
+  >("asset_type");
 
   // Modal state.
   const [showEvent, setShowEvent] = useState(false);
@@ -160,6 +167,22 @@ export default function InvestmentsPage() {
       .filter((g) => g.holdings.length > 0 || g.platform_id !== null) ?? [];
 
   const hasAnyHolding = activeGroups.some((g) => g.holdings.length > 0);
+
+  // VZ-01: both groupings already live on the one summary payload — the
+  // toggle only switches which array is passed to AllocationPieChart, no
+  // new fetch (07-UI-SPEC.md page.tsx wiring note).
+  const allocationData: AllocationSlice[] =
+    allocationGroupBy === "asset_type"
+      ? (summary?.asset_type_groups ?? []).map((g) => ({
+          label: g.asset_type ?? "Other",
+          value: g.total_value,
+        }))
+      : activeGroups
+          .filter((g) => g.holdings.length > 0)
+          .map((g) => ({
+            label: g.platform_id === null ? "Unassigned" : g.platform_name,
+            value: g.subtotal,
+          }));
 
   return (
     <main style={{ maxWidth: 760, margin: "0 auto", padding: "48px 24px" }}>
@@ -247,6 +270,47 @@ export default function InvestmentsPage() {
                   {fmtSigned(summary.total_realized_pnl)}
                 </div>
               </div>
+            </section>
+
+            {/* Allocation pie (VZ-01) — asset-type/platform toggle, no new fetch */}
+            <section style={{ ...card, marginBottom: 24 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: 16,
+                }}
+              >
+                <span style={{ fontSize: 20, fontWeight: 600 }}>Allocation</span>
+                <div style={{ display: "flex", gap: 4 }}>
+                  {(
+                    [
+                      { key: "asset_type", label: "Asset type" },
+                      { key: "platform", label: "Platform" },
+                    ] as const
+                  ).map((opt) => (
+                    <button
+                      key={opt.key}
+                      type="button"
+                      onClick={() => setAllocationGroupBy(opt.key)}
+                      style={{
+                        padding: "4px 12px",
+                        borderRadius: 6,
+                        fontSize: 12,
+                        border: "1px solid #2a2e37",
+                        cursor: "pointer",
+                        background:
+                          allocationGroupBy === opt.key ? "#3b82f6" : "transparent",
+                        color: allocationGroupBy === opt.key ? "white" : muted,
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <AllocationPieChart data={allocationData} />
             </section>
 
             <ValueHistoryChart
