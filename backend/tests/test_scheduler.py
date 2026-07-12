@@ -175,3 +175,40 @@ def test_build_scheduler_registers_daily_job():
     assert job.misfire_grace_time == 3600
     assert job.coalesce is True
     assert job.max_instances == 1
+
+
+def test_snapshot_records_both_platforms_for_shared_ticker(db_session):
+    """Gap B: a ticker held on TWO platforms produces TWO snapshot rows in one
+    run — the value-history key is (snapshot_date, ticker, platform_id), so the
+    second platform is no longer silently skipped."""
+    from backend.portfolio import snapshot_all_holdings
+    from backend.models import Holding, Platform, PortfolioValueHistory
+
+    ticker = _random_ticker()
+    plats = []
+    for _ in range(2):
+        p = Platform(name=f"SnapPlat{random.randint(100000, 999999)}", kind="test")
+        db_session.add(p)
+        db_session.flush()
+        plats.append(p.id)
+    for pid in plats:
+        db_session.add(Holding(ticker=ticker, quantity=Decimal("2"), avg_cost=Decimal("100"),
+                               currency="IDR", asset_type="crypto", platform_id=pid))
+    db_session.commit()
+    _set_price(db_session, ticker, price=150)  # price is shared per ticker
+
+    try:
+        snapshot_all_holdings(db_session)
+        db_session.commit()
+        rows = _history_rows(db_session, ticker)
+        assert len(rows) == 2, "shared ticker on two platforms must snapshot both positions"
+        assert {r.platform_id for r in rows} == set(plats)
+    finally:
+        db_session.query(PortfolioValueHistory).filter(PortfolioValueHistory.ticker == ticker).delete()
+        db_session.query(Holding).filter(Holding.ticker == ticker).delete()
+        db_session.commit()
+        for pid in plats:
+            p = db_session.get(Platform, pid)
+            if p:
+                db_session.delete(p)
+        db_session.commit()

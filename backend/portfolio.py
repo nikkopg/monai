@@ -239,9 +239,10 @@ def snapshot_all_holdings(db: Session) -> dict:
 
     For each holding, read its current price from price_cache, then record
     market_value = price × quantity and cost_basis = avg_cost × quantity (all
-    Decimal). Rows are keyed on the unique (snapshot_date, ticker) index (Plan
-    01): a same-day row that already exists is skipped, so re-running the job is
-    idempotent (upsert-or-skip). Holdings without a current price are skipped
+    Decimal). Rows are keyed on the unique (snapshot_date, ticker, platform_id)
+    index: a same-day row for that position already existing is skipped, so
+    re-running the job is idempotent (upsert-or-skip) AND a ticker held on two
+    platforms records BOTH. Holdings without a current price are skipped
     (market_value is unknown until a price row exists — D-13 tolerates gaps).
 
     Per-holding work is wrapped in try/except so one ticker's failure never
@@ -258,6 +259,7 @@ def snapshot_all_holdings(db: Session) -> dict:
                 select(PortfolioValueHistory).where(
                     PortfolioValueHistory.snapshot_date == today,
                     PortfolioValueHistory.ticker == h.ticker,
+                    PortfolioValueHistory.platform_id == h.platform_id,
                 )
             ).first()
             if exists is not None:
@@ -277,6 +279,7 @@ def snapshot_all_holdings(db: Session) -> dict:
                     market_value=price_row.price * h.quantity,
                     cost_basis=h.avg_cost * h.quantity,
                     currency="IDR",
+                    platform_id=h.platform_id,
                 )
             )
             written += 1

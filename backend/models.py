@@ -236,12 +236,13 @@ class PriceCache(Base):
 
 
 class PortfolioValueHistory(Base):
-    """Daily per-holding portfolio value snapshot (D-13).
+    """Daily per-position portfolio value snapshot (D-13).
 
-    One row per holding per day (unique on (snapshot_date, ticker), enforced by
-    the migration's unique index). Powers the portfolio value time-series;
-    quantity/market_value/cost_basis reuse the Numeric precision conventions of
-    Holding (28,8) and money columns (18,2).
+    One row per holding per day (unique on (snapshot_date, ticker, platform_id),
+    enforced by the migration's unique index — widened from (snapshot_date,
+    ticker) in quick 260711 so a ticker held on two platforms records BOTH).
+    Powers the portfolio value time-series; quantity/market_value/cost_basis
+    reuse the Numeric precision conventions of Holding (28,8) and money (18,2).
     """
 
     __tablename__ = "portfolio_value_history"
@@ -254,4 +255,9 @@ class PortfolioValueHistory(Base):
     cost_basis: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
     currency: Mapped[str] = mapped_column(
         String(8), server_default="IDR", nullable=False
+    )
+    # Nullable: pre-existing (pre-multi-platform) rows keep NULL; new snapshots
+    # always carry the holding's platform_id (part of the widened unique key).
+    platform_id: Mapped[int | None] = mapped_column(
+        ForeignKey("platforms.id"), index=True, nullable=True
     )
