@@ -252,7 +252,7 @@ All 30 v1 requirements mapped. No orphans.
 
 **Goal**: The portfolio reflects how the user actually holds assets — the same asset across multiple platforms, cost basis in the currency it was bought in, cash and physical gold as first-class positions — and surfaces allocation at a glance.
 **Depends on**: Phase 5 (investment subsystem)
-**Requirements**: TBD (derive during spec/discuss)
+**Requirements**: INV-01, INV-02, INV-03, INV-04, INV-05, INV-06, INV-07, CHAT-03, INVX-01
 **Origin**: Real dogfooding of Phase 5 (2026-07-11) surfaced these gaps.
 
 **Scope** (items 1–4 share the holdings data model — design together to avoid conflicting migrations):
@@ -266,7 +266,12 @@ All 30 v1 requirements mapped. No orphans.
 
 **Design note:** This phase needs a real **spec + discuss** pass before planning — the currency model especially (items 1–4 all touch holding identity, currency, and valuation). Run `/gsd-spec-phase 7` first, then `/gsd-discuss-phase 7`.
 
-**Plans**: TBD (run `/gsd-plan-phase 7` after spec/discuss)
+**Plans**: 5 plans (waves: 1 → 2 → 3)
+- [ ] 07-01-PLAN.md — FX adapter registry + immutable fx_rate_cache + portfolio_events.currency migration (Wave 1) [FX-01/02/04/05]
+- [ ] 07-02-PLAN.md — Currency-aware valuation + cash special-case + gold ledger + asset-type grouping (Wave 2, depends 01) [FX-03, CG-01/02/03]
+- [ ] 07-03-PLAN.md — Allocation pie chart (asset-type↔platform toggle, current IDR value) (Wave 3, depends 02) [VZ-01]
+- [ ] 07-04-PLAN.md — Historical value/P&L line chart + GET /investments/history (Wave 1, independent) [VZ-02, INVX-01]
+- [ ] 07-05-PLAN.md — CH-01 chat two-site fix + find_platforms/find_accounts read tools (Wave 2) [CH-01]
 
 ---
 *Roadmap created: 2026-06-21*
