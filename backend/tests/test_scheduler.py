@@ -53,13 +53,20 @@ def _random_ticker() -> str:
 
 
 def _add_holding(db, ticker, quantity, avg_cost, asset_type="other"):
-    from backend.models import Holding
+    from backend.models import Holding, Platform
+    # platform_id is NOT NULL since quick 260711-rb2 — get-or-create one test platform.
+    plat = db.query(Platform).filter(Platform.name == "TestSchedulerPlatform").first()
+    if plat is None:
+        plat = Platform(name="TestSchedulerPlatform", kind="test")
+        db.add(plat)
+        db.flush()
     h = Holding(
         ticker=ticker,
         quantity=Decimal(str(quantity)),
         avg_cost=Decimal(str(avg_cost)),
         currency="IDR",
         asset_type=asset_type,
+        platform_id=plat.id,
     )
     db.add(h)
     db.commit()

@@ -44,8 +44,13 @@ def upgrade() -> None:
     #    fails this loudly rather than silently allowing "unassigned" back in).
     op.alter_column("holdings", "platform_id", nullable=False)
 
-    # 2-3. Replace the global-unique ticker index with a non-unique one.
+    # 2-3. Replace the global-unique ticker index with a non-unique one, AND
+    #      drop the separate column-level unique constraint. 002_new_tables.py
+    #      created the ticker column with `unique=True` (-> `holdings_ticker_key`
+    #      constraint) AND a `unique=True` index (`ix_holdings_ticker`). BOTH
+    #      enforce unique(ticker); both must go for a ticker to live on >1 platform.
     op.drop_index("ix_holdings_ticker", table_name="holdings")
+    op.drop_constraint("holdings_ticker_key", "holdings", type_="unique")
     op.create_index("ix_holdings_ticker", "holdings", ["ticker"])
 
     # 4. Composite uniqueness: position identity is (ticker, platform_id).
@@ -92,10 +97,12 @@ def downgrade() -> None:
     # Reverse step 4.
     op.drop_constraint("uq_holdings_ticker_platform", "holdings", type_="unique")
 
-    # Reverse steps 2-3: restore unique(ticker). Fails if a duplicate-ticker
-    # row already exists (inherent — see module docstring).
+    # Reverse steps 2-3: restore unique(ticker) — both the unique index and the
+    # column-level unique constraint. Fails if a duplicate-ticker row already
+    # exists (inherent — see module docstring).
     op.drop_index("ix_holdings_ticker", table_name="holdings")
     op.create_index("ix_holdings_ticker", "holdings", ["ticker"], unique=True)
+    op.create_unique_constraint("holdings_ticker_key", "holdings", ["ticker"])
 
     # Reverse step 1.
     op.alter_column("holdings", "platform_id", nullable=True)

@@ -237,10 +237,10 @@ def test_refresh_dedups_same_ticker_across_platforms(db_session, monkeypatch):
                            currency="IDR", asset_type="crypto", platform_id=plat_b))
     db_session.commit()
 
-    call_count = {"n": 0}
+    calls: dict[str, int] = {}
 
     def _fake_fetch(t, coin_id=None):
-        call_count["n"] += 1
+        calls[t] = calls.get(t, 0) + 1
         return (Decimal("999"), "coingecko")
 
     # refresh_all_prices does `adapter is fetch_crypto_price` (an identity check
@@ -255,16 +255,20 @@ def test_refresh_dedups_same_ticker_across_platforms(db_session, monkeypatch):
     monkeypatch.setitem(prices_mod.PRICE_ADAPTERS, "crypto", _fake_fetch)
 
     try:
-        result = prices_mod.refresh_all_prices(db_session, force=True)
-        db_session.commit()
-
-        assert call_count["n"] == 1, "adapter must be called once per distinct ticker, not per holding"
-        assert result["refreshed"] == 1
-
+        prices_mod.refresh_all_prices(db_session, force=True)
+        # force=True touches EVERY holding in the shared DB (real crypto tickers
+        # included), so assert per-ticker: our shared ticker is fetched exactly
+        # once despite its two holdings — that's the dedup. flush (not commit) so
+        # the pending price_cache row is queryable without persisting fakes.
+        db_session.flush()
+        assert calls.get(ticker) == 1, "adapter must be called once for the shared ticker, not per holding"
         rows = db_session.query(PriceCache).filter(PriceCache.ticker == ticker).all()
         assert len(rows) == 1
         assert rows[0].price == Decimal("999")
     finally:
+        # Discard ALL pending fake-price writes (force touched every ticker) so
+        # the user's real price_cache is never polluted with the 999 stub.
+        db_session.rollback()
         db_session.query(PriceCache).filter(PriceCache.ticker == ticker).delete()
         db_session.query(Holding).filter(Holding.ticker == ticker).delete()
         db_session.commit()

@@ -192,10 +192,16 @@ def test_spending_before_after_purchase(db_available):
     after_day = pivot + datetime.timedelta(days=3)    # inside [pivot, today]
 
     with engine.begin() as c:
+        # portfolio_events.platform_id is NOT NULL + FK since quick 260711-rb2 —
+        # get-or-create a throwaway platform for the pivot event.
+        plat_id = c.execute(
+            text("INSERT INTO platforms (name, kind) VALUES ('zz-corr-plat', 'test') "
+                 "ON CONFLICT (name) DO UPDATE SET kind = 'test' RETURNING id")
+        ).scalar()
         c.execute(
-            text("INSERT INTO portfolio_events (date, ticker, event_type, quantity, price) "
-                 "VALUES (:d, :t, 'buy', 1, 100)"),
-            {"d": pivot, "t": TICKER},
+            text("INSERT INTO portfolio_events (date, ticker, event_type, quantity, price, platform_id) "
+                 "VALUES (:d, :t, 'buy', 1, 100, :pid)"),
+            {"d": pivot, "t": TICKER, "pid": plat_id},
         )
         c.execute(
             text("INSERT INTO transactions (date, amount, currency, category, is_transfer) "
