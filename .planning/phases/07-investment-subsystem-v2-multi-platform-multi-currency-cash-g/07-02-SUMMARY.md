@@ -121,3 +121,15 @@ None — no external service configuration required (frankfurter.dev, already wi
 ---
 *Phase: 07-investment-subsystem-v2-multi-platform-multi-currency-cash-g*
 *Completed: 2026-07-12*
+
+## Self-Check: PASSED
+
+- FOUND: backend/portfolio.py
+- FOUND: backend/writes.py
+- FOUND: backend/schemas.py
+- FOUND: backend/tests/test_portfolio.py
+- FOUND: backend/tests/test_write_tools.py
+- FOUND: .planning/phases/07-investment-subsystem-v2-multi-platform-multi-currency-cash-g/07-02-SUMMARY.md
+- FOUND commit: 839c772 (Task 1)
+- FOUND commit: 93be103 (Task 2)
+- FOUND commit: e3b709e (docs: summary)
