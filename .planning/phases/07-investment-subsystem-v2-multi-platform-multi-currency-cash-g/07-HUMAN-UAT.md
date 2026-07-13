@@ -1,9 +1,9 @@
 ---
-status: partial
+status: resolved
 phase: 07-investment-subsystem-v2-multi-platform-multi-currency-cash-g
 source: [07-VERIFICATION.md]
 started: 2026-07-12T16:19:09Z
-updated: 2026-07-12T16:19:09Z
+updated: 2026-07-13T00:00:00Z
 ---
 
 ## Current Test
@@ -37,24 +37,22 @@ expected: In a live chat session, adding a holding on a specific platform
 ("add 5 BBCA on Stockbit") and deleting an account/holding ("delete my BCA account")
 both work end-to-end — the LLM selects `find_platforms` / `find_accounts`, proposes
 the correct write, and the confirmed write applies.
-result: FIX DEPLOYED, ready for live retest — root cause: query.py built the agent's
-FunctionTool list separately and never registered find_platforms/find_accounts, so
-the LLM got "Tool find_platforms not found" and fell back to list_categories. Fix:
-register both as agent read-tools (commit 5c04365). Backend container rebuilt by user;
-verified the running container has the registration and is healthy (200). Final step
-is the human live chat retest (LLM tool-selection can't be checked programmatically).
+result: PASSED — root cause: query.py built the agent's FunctionTool list separately
+and never registered find_platforms/find_accounts, so the LLM got "Tool find_platforms
+not found" and fell back to list_categories. Fix: register both as agent read-tools
+(commit 5c04365). Backend rebuilt by user; user confirmed live "add BBCA" chat command
+now works end-to-end.
 
 ## Summary
 
 total: 3
-passed: 2
+passed: 3
 issues: 0
-pending: 1
+pending: 0
 skipped: 0
 blocked: 0
 
 ## Gaps
 
-- Item 3 (CH-01): code fix deployed + verified in the running container; awaiting the
-  human live chat retest ("add 5 BBCA on Stockbit" / "delete my BCA account").
-- Deferred (not a gap): WR-03 Numeric(18,2) price precision migration.
+- None. All 3 human-verification items passed.
+- Deferred (not a gap, user opted to hold): WR-03 Numeric(18,2) price precision migration.

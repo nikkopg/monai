@@ -1,7 +1,9 @@
 ---
 phase: 07-investment-subsystem-v2-multi-platform-multi-currency-cash-g
 verified: 2026-07-12T16:17:02Z
-status: human_needed
+status: passed
+human_verified: 2026-07-13T00:00:00Z
+human_verified_note: "All 3 human-UAT items passed — VZ-01 pie fixed (Number-coercion), VZ-02 line chart (Jul-11 corrupt data corrected), CH-01 live chat add confirmed working by user. See 07-HUMAN-UAT.md."
 score: 22/22 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0

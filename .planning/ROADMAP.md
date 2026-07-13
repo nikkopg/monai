@@ -16,6 +16,7 @@
 - [x] **Phase 4: Cashflow Dashboard + CRUD** - Spending/income dashboard with charts; full transaction/account/category management in UI (completed 2026-07-05)
 - [x] **Phase 5: Investment Subsystem** - Holdings CRUD, live prices, P&L display, portfolio events, and spending-correlation queries (completed 2026-07-11)
 - [ ] **Phase 6: MCP Server** - FastMCP server co-mounted in FastAPI; read-only tools exposed to external clients
+- [x] **Phase 7: Investment Subsystem v2** - Multi-platform holdings, FX/multi-currency valuation, cash + gold positions, allocation pie + historical value chart, chat multi-platform writes (completed 2026-07-13; executed ahead of Phase 6)
 
 ---
 
