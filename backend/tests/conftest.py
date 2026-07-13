@@ -68,3 +68,52 @@ def api_key(monkeypatch: pytest.MonkeyPatch) -> str:
 
     monkeypatch.setattr(auth_mod, "_CONFIGURED_KEY", _TEST_API_KEY)
     return _TEST_API_KEY
+
+
+# ---------------------------------------------------------------------------
+# Session teardown: purge test-created platforms from the shared dev DB.
+#
+# The suite runs against the live dev DB and the various `_make_platform`
+# helpers create Platform rows (plus holdings / value-history) but only clean
+# up tickers — so every run used to leak Test*/*WTT/SnapPlat*/zz* platforms.
+# This one autouse fixture removes them all after the session, regardless of
+# which test file created them or how. Deletes run in FK order
+# (value_history -> events -> holdings -> platforms) and are fully guarded:
+# an unavailable DB never fails the suite.
+# ---------------------------------------------------------------------------
+
+# Name LIKE patterns + kind used exclusively by test-created platforms. Real
+# platforms (Bibit/Binance/Bitget/Pluang/Stockbit) match none of these.
+_TEST_PLATFORM_NAME_PATTERNS = ("Test%", "%WTT%", "MultiPlatform%", "SnapPlat%", "zz%", "ZZ%")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _purge_test_platforms():
+    """Delete every test-created platform (and its dependents) after the run."""
+    yield  # run all tests first
+    try:
+        from sqlalchemy import text
+        from backend.db import SessionLocal
+    except Exception:
+        return
+
+    try:
+        db = SessionLocal()
+    except Exception:
+        return
+    try:
+        name_clause = " OR ".join(f"name LIKE :p{i}" for i in range(len(_TEST_PLATFORM_NAME_PATTERNS)))
+        params = {f"p{i}": pat for i, pat in enumerate(_TEST_PLATFORM_NAME_PATTERNS)}
+        ids = db.execute(
+            text(f"SELECT id FROM platforms WHERE kind = 'test' OR {name_clause}"), params
+        ).scalars().all()
+        if not ids:
+            return
+        for tbl in ("portfolio_value_history", "portfolio_events", "holdings", "platforms"):
+            col = "id" if tbl == "platforms" else "platform_id"
+            db.execute(text(f"DELETE FROM {tbl} WHERE {col} = ANY(:ids)"), {"ids": ids})
+        db.commit()
+    except Exception:
+        db.rollback()  # test-DB hygiene must never fail the suite
+    finally:
+        db.close()
