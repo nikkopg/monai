@@ -175,13 +175,15 @@ export default function InvestmentsPage() {
     allocationGroupBy === "asset_type"
       ? (summary?.asset_type_groups ?? []).map((g) => ({
           label: g.asset_type ?? "Other",
-          value: g.total_value,
+          // total_value / subtotal are Decimal -> serialized as JSON strings by
+          // Pydantic; coerce to Number or recharts renders NaN slices (blank pie).
+          value: Number(g.total_value),
         }))
       : activeGroups
           .filter((g) => g.holdings.length > 0)
           .map((g) => ({
             label: g.platform_id === null ? "Unassigned" : g.platform_name,
-            value: g.subtotal,
+            value: Number(g.subtotal),
           }));
 
   return (
