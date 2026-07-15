@@ -36,14 +36,17 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
+from fastmcp.utilities.lifespan import combine_lifespans
 from sqlalchemy import desc, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backend import auth
 from backend.auth import require_api_key
+from backend.mcp_server import build_mcp
 from backend.db import get_session
 from backend.importer import _get_or_create_account, import_csv_text
 from backend.models import Account, AuditLog, Holding, Platform, Proposal, Transaction
@@ -136,7 +139,18 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown(wait=False)
 
 
-app = FastAPI(title="monai", version="0.1.0", lifespan=lifespan)
+# MCP server (Phase 6) — read-only, API-key-gated, co-mounted at /mcp on this
+# same FastAPI process/port (MCP-01). path="/" here + app.mount("/mcp", ...)
+# below == endpoint is exactly /mcp, never /mcp/mcp (RESEARCH Pitfall 3).
+mcp = build_mcp()
+mcp_app = mcp.http_app(path="/")
+
+# combine_lifespans, never mcp_app.lifespan alone — monai's existing
+# scheduler lifespan must keep running (RESEARCH Pitfall 1).
+app = FastAPI(
+    title="monai", version="0.1.0",
+    lifespan=combine_lifespans(lifespan, mcp_app.lifespan),
+)
 
 # Local-only dev frontend
 app.add_middleware(
@@ -149,6 +163,35 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def mcp_api_key_guard(request: Request, call_next):
+    """Outer-app auth guard for the whole /mcp subtree (MCP-04, D-04).
+
+    Registered on the outer FastAPI app (not inside the mounted mcp_app) so
+    it runs BEFORE the MCP session manager sees the request (RESEARCH
+    Pitfall 4). Reuses the single auth.key_ok() constant-time check — no
+    new secret, no hand-rolled comparison. Accepts either the existing
+    MONAI_API_KEY header or `Authorization: Bearer <key>` (same secret) for
+    client-agnostic MCP clients (RESEARCH A2). Never logs the header value.
+    """
+    if request.url.path.startswith("/mcp"):
+        if not auth._CONFIGURED_KEY:
+            return JSONResponse(
+                {"detail": "Server misconfigured: MONAI_API_KEY env var is not set"},
+                status_code=503,
+            )
+        key = request.headers.get("MONAI_API_KEY")
+        if key is None:
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.lower().startswith("bearer "):
+                key = auth_header[7:]
+        if not auth.key_ok(key):
+            return JSONResponse({"detail": "Invalid or missing API key"}, status_code=401)
+    return await call_next(request)
+
+
+app.mount("/mcp", mcp_app)
 
 
 @app.get("/health")
