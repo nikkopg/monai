@@ -181,7 +181,10 @@
   3. Attempting to call a write tool (add transaction, edit holding) from the external client fails — the tool does not exist in the MCP server's registry
   4. The external client must provide a valid API key to use the MCP server; unauthenticated connections are rejected
 
-**Plans**: TBD
+**Plans**: 2 plans
+
+- [ ] 06-01-PLAN.md — Wave 0: pin fastmcp (+ legitimacy checkpoint) & create test_mcp.py MCP-01..04 stubs
+- [ ] 06-02-PLAN.md — Wave 1: co-mount read-only auth-gated /mcp (15 tools, D-02 parity), tests green
 
 ---
 
