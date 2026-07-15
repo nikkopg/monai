@@ -4,9 +4,9 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 06
 current_phase_name: in progress
-status: in_progress
-stopped_at: Phase 06 Plan 01 complete
-last_updated: "2026-07-15T22:55:38.499Z"
+status: ready_to_plan
+stopped_at: Phase 06 complete (2/2) — ready to discuss Phase 07
+last_updated: 2026-07-15T23:01:35.443Z
 last_activity: 2026-07-16
 last_activity_desc: Phase 06 Plan 01 (fastmcp dependency + test scaffold) complete
 progress:
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-21)
 
 **Core value:** You can understand and manage your entire financial life — spending and investments — by talking to a trustworthy AI that never fabricates a number and never changes your data without your say-so.
-**Current focus:** Phase 06 — mcp-server
+**Current focus:** Phase 07 — investment subsystem v2 multi platform multi currency cash g
 
 ## Current Position
 
-Phase: 06 — mcp-server (in progress)
-Plan: 2 of 2 complete (06-01 done; 06-02 remains)
-Status: Plan 06-01 complete — fastmcp pinned, test_mcp.py scaffold in place
-Last activity: 2026-07-16 -- Phase 06 Plan 01 (fastmcp dependency + test scaffold) complete
+Phase: 07
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-07-15
 
 Progress: [███████░░░] 67% — milestone 4/6 phases
 
@@ -39,7 +39,7 @@ Progress: [███████░░░] 67% — milestone 4/6 phases
 
 **Velocity:**
 
-- Total plans completed: 3
+- Total plans completed: 5
 - Average duration: —
 - Total execution time: —
 
@@ -48,6 +48,7 @@ Progress: [███████░░░] 67% — milestone 4/6 phases
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
 | 01 | 3 | - | - |
+| 06 | 2 | - | - |
 
 **Recent Trend:**
 
