@@ -98,8 +98,10 @@ def _get_agent_workflow():
             # Read tools
             spending_total, income_total, net_total,
             spending_by_category, spending_in_category,
+            spending_before_after_purchase,
             transaction_count, largest_transactions,
             average_daily_spending, list_categories, find_transactions,
+            monthly_trend, account_balances,
             # Investment lookup tools (resolve platform/account names -> ids)
             find_platforms, find_accounts,
             # Write tools (proposal-producers — never mutate directly)
@@ -117,6 +119,7 @@ def _get_agent_workflow():
             FunctionTool.from_defaults(fn=net_total),
             FunctionTool.from_defaults(fn=spending_by_category),
             FunctionTool.from_defaults(fn=spending_in_category),
+            FunctionTool.from_defaults(fn=spending_before_after_purchase),
             FunctionTool.from_defaults(fn=transaction_count),
             FunctionTool.from_defaults(fn=largest_transactions),
             FunctionTool.from_defaults(fn=average_daily_spending),
@@ -124,6 +127,8 @@ def _get_agent_workflow():
             FunctionTool.from_defaults(fn=find_transactions),
             FunctionTool.from_defaults(fn=find_platforms),
             FunctionTool.from_defaults(fn=find_accounts),
+            FunctionTool.from_defaults(fn=monthly_trend),
+            FunctionTool.from_defaults(fn=account_balances),
         ]
 
         # Write tools — proposal-producers (CHAT-07, D-04 single source of truth)

@@ -27,6 +27,18 @@ _API_KEY_HEADER = APIKeyHeader(name="MONAI_API_KEY", auto_error=False)
 _CONFIGURED_KEY: str = os.environ.get("MONAI_API_KEY", "")
 
 
+def key_ok(key: str | None) -> bool:
+    """
+    Constant-time API-key check — the single comparison shared by
+    require_api_key (FastAPI dependency, write routes) and the /mcp auth
+    middleware (backend/main.py). One secret, one check (D-04).
+
+    Returns True only when _CONFIGURED_KEY is set AND key is not None AND
+    hmac.compare_digest(key, _CONFIGURED_KEY) is True. Never logs the key.
+    """
+    return bool(_CONFIGURED_KEY) and key is not None and hmac.compare_digest(key, _CONFIGURED_KEY)
+
+
 def require_api_key(api_key: str | None = Security(_API_KEY_HEADER)) -> None:
     """
     FastAPI dependency that enforces API-key authentication on write endpoints.
@@ -47,5 +59,5 @@ def require_api_key(api_key: str | None = Security(_API_KEY_HEADER)) -> None:
             ),
         )
 
-    if api_key is None or not hmac.compare_digest(api_key, _CONFIGURED_KEY):
+    if not key_ok(api_key):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")

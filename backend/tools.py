@@ -509,6 +509,13 @@ TOOLS = {
     "account_balances": account_balances,
 }
 
+# Snapshot of the read-only tool names, captured BEFORE the write tools are
+# merged into TOOLS below. TOOLS itself becomes 26 entries (15 read + 11
+# propose_* write) once this module finishes loading, so any read-only
+# surface (e.g. the MCP server, D-03/MCP-03) must key off this frozenset,
+# never off TOOLS directly.
+READ_TOOL_NAMES: frozenset[str] = frozenset(TOOLS)
+
 
 # ---------------------------------------------------------------------------
 # Helpers for write tools
