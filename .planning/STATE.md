@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 current_phase: 06
-current_phase_name: mcp-server
+current_phase_name: in progress
 status: in_progress
 stopped_at: Phase 06 Plan 01 complete
-last_updated: "2026-07-15T22:43:08.317Z"
+last_updated: "2026-07-15T22:55:38.499Z"
 last_activity: 2026-07-16
 last_activity_desc: Phase 06 Plan 01 (fastmcp dependency + test scaffold) complete
 progress:
   total_phases: 7
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 30
-  completed_plans: 28
-  percent: 71
+  completed_plans: 29
+  percent: 86
 ---
 
 # Project State
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-06-21)
 ## Current Position
 
 Phase: 06 — mcp-server (in progress)
-Plan: 1 of 2 complete (06-01 done; 06-02 remains)
+Plan: 2 of 2 complete (06-01 done; 06-02 remains)
 Status: Plan 06-01 complete — fastmcp pinned, test_mcp.py scaffold in place
 Last activity: 2026-07-16 -- Phase 06 Plan 01 (fastmcp dependency + test scaffold) complete
 
@@ -70,6 +70,7 @@ Progress: [███████░░░] 67% — milestone 4/6 phases
 | Phase 07 P02 | ~35min | 2 tasks | 5 files |
 | Phase 07 P03 | 5min | 2 tasks | 2 files |
 | Phase 06 P01 | 6min | 3 tasks | 3 files |
+| Phase 06 P02 | 55min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -108,6 +109,8 @@ Recent decisions affecting current work:
 - [Phase ?]: [07-03]: Platform grouping for allocation pie derived client-side from existing activeGroups (no new backend array) — satisfies no-new-endpoint constraint
 - [Phase ?]: [07-03]: Toggle pill styling/placement implemented directly per already-approved 07-UI-SPEC.md rather than deferred to a later UI pass
 - [Phase 06-01]: fastmcp legitimacy checkpoint approved by human operator: PrefectHQ/fastmcp, 106 PyPI releases, seam SUS flag was a documented false positive
+- [Phase ?]: [06-02]: backend.tools.TOOLS mutates to 26 entries (15 read + 11 write) at module load via TOOLS.update() — added READ_TOOL_NAMES frozenset snapshot captured before the mutation, the correct single source of truth for MCP's read-only registration
+- [Phase ?]: [06-02]: /mcp auth middleware accepts both MONAI_API_KEY header and Authorization: Bearer <key> (same secret) for client-agnostic external MCP clients
 
 ### Pending Todos
 
@@ -148,10 +151,10 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-07-15T22:43:08.308Z
+Last session: 2026-07-15T22:55:30.298Z
 Stopped at: Phase 6 context gathered
 Resume file: 
-Resume command: /gsd-execute-phase 07 (next: 07-02 and 07-03, the FX/cash model — independent of 07-05)
+None
 
 Plan 05-02 execution note (2026-07-10):
 

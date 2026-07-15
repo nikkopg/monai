@@ -15,7 +15,7 @@
 - [x] **Phase 3: Multi-Page UI Shell + Settings** - Four-page navigation, Settings page; users can navigate and configure the app (completed 2026-07-04)
 - [x] **Phase 4: Cashflow Dashboard + CRUD** - Spending/income dashboard with charts; full transaction/account/category management in UI (completed 2026-07-05)
 - [x] **Phase 5: Investment Subsystem** - Holdings CRUD, live prices, P&L display, portfolio events, and spending-correlation queries (completed 2026-07-11)
-- [ ] **Phase 6: MCP Server** - FastMCP server co-mounted in FastAPI; read-only tools exposed to external clients
+- [x] **Phase 6: MCP Server** - FastMCP server co-mounted in FastAPI; read-only tools exposed to external clients (completed 2026-07-15)
 - [x] **Phase 7: Investment Subsystem v2** - Multi-platform holdings, FX/multi-currency valuation, cash + gold positions, allocation pie + historical value chart, chat multi-platform writes (completed 2026-07-13; executed ahead of Phase 6)
 
 ---
@@ -181,10 +181,10 @@
   3. Attempting to call a write tool (add transaction, edit holding) from the external client fails — the tool does not exist in the MCP server's registry
   4. The external client must provide a valid API key to use the MCP server; unauthenticated connections are rejected
 
-**Plans**: 1/2 plans executed
+**Plans**: 2/2 plans complete
 
 - [x] 06-01-PLAN.md — Wave 0: pin fastmcp (+ legitimacy checkpoint) & create test_mcp.py MCP-01..04 stubs
-- [ ] 06-02-PLAN.md — Wave 1: co-mount read-only auth-gated /mcp (15 tools, D-02 parity), tests green
+- [x] 06-02-PLAN.md — Wave 1: co-mount read-only auth-gated /mcp (15 tools, D-02 parity), tests green
 
 ---
 
@@ -197,7 +197,7 @@
 | 3. Multi-Page UI Shell + Settings | 3/3 | Complete   | 2026-07-04 |
 | 4. Cashflow Dashboard + CRUD | 7/7 | Complete   | 2026-07-06 |
 | 5. Investment Subsystem | 6/6 | Complete   | 2026-07-11 |
-| 6. MCP Server | 1/2 | In Progress|  |
+| 6. MCP Server | 2/2 | Complete   | 2026-07-15 |
 
 ---
 
