@@ -2,16 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-status: completed
-stopped_at: Phase 6 context gathered
-last_updated: "2026-07-15T13:06:12.912Z"
-last_activity: 2026-07-13 -- Phase 07 marked complete
+current_phase: 06
+current_phase_name: mcp-server
+status: in_progress
+stopped_at: Phase 06 Plan 01 complete
+last_updated: "2026-07-15T22:43:08.317Z"
+last_activity: 2026-07-16
+last_activity_desc: Phase 06 Plan 01 (fastmcp dependency + test scaffold) complete
 progress:
   total_phases: 7
-  completed_phases: 6
-  total_plans: 27
-  completed_plans: 27
-  percent: 86
+  completed_phases: 5
+  total_plans: 30
+  completed_plans: 28
+  percent: 71
 ---
 
 # Project State
@@ -21,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-21)
 
 **Core value:** You can understand and manage your entire financial life — spending and investments — by talking to a trustworthy AI that never fabricates a number and never changes your data without your say-so.
-**Current focus:** Phase 07 — investment-subsystem-v2-multi-platform-multi-currency-cash-g
+**Current focus:** Phase 06 — mcp-server
 
 ## Current Position
 
-Phase: 07 — COMPLETE (verified passed; human-UAT 3/3 passed 2026-07-13)
-Plan: 5 of 5 complete
-Status: Phase 07 complete. Next: Phase 6 (MCP Server) remains. Deferred: WR-03 Numeric(18,6) price-precision migration (user opted to hold).
-Last activity: 2026-07-13 -- Phase 07 marked complete
+Phase: 06 — mcp-server (in progress)
+Plan: 1 of 2 complete (06-01 done; 06-02 remains)
+Status: Plan 06-01 complete — fastmcp pinned, test_mcp.py scaffold in place
+Last activity: 2026-07-16 -- Phase 06 Plan 01 (fastmcp dependency + test scaffold) complete
 
 Progress: [███████░░░] 67% — milestone 4/6 phases
 
@@ -66,6 +69,7 @@ Progress: [███████░░░] 67% — milestone 4/6 phases
 | Phase 07 P05 | 25min | 2 tasks | 4 files |
 | Phase 07 P02 | ~35min | 2 tasks | 5 files |
 | Phase 07 P03 | 5min | 2 tasks | 2 files |
+| Phase 06 P01 | 6min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -103,6 +107,7 @@ Recent decisions affecting current work:
 - [Phase ?]: [07-02]: One currency per position enforced at apply_add_portfolio_event write time; new position's currency seeded from its first event's own currency (not hardcoded IDR)
 - [Phase ?]: [07-03]: Platform grouping for allocation pie derived client-side from existing activeGroups (no new backend array) — satisfies no-new-endpoint constraint
 - [Phase ?]: [07-03]: Toggle pill styling/placement implemented directly per already-approved 07-UI-SPEC.md rather than deferred to a later UI pass
+- [Phase 06-01]: fastmcp legitimacy checkpoint approved by human operator: PrefectHQ/fastmcp, 106 PyPI releases, seam SUS flag was a documented false positive
 
 ### Pending Todos
 
@@ -143,9 +148,9 @@ Recent decisions affecting current work:
 
 ## Session Continuity
 
-Last session: 2026-07-15T13:06:12.856Z
+Last session: 2026-07-15T22:43:08.308Z
 Stopped at: Phase 6 context gathered
-Resume file: .planning/phases/06-mcp-server/06-CONTEXT.md
+Resume file: 
 Resume command: /gsd-execute-phase 07 (next: 07-02 and 07-03, the FX/cash model — independent of 07-05)
 
 Plan 05-02 execution note (2026-07-10):

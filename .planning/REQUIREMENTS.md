@@ -26,7 +26,7 @@ Requirements for this cycle. Each maps to a roadmap phase.
 
 ### MCP Server
 
-- [ ] **MCP-01**: monai exposes its finance tools via a single MCP server
+- [x] **MCP-01**: monai exposes its finance tools via a single MCP server
 - [ ] **MCP-02**: The web chat agent and external MCP clients share the same underlying tool implementations (one source of truth)
 - [ ] **MCP-03**: External MCP clients can use read/query tools only; write tools are not exposed to external clients
 - [ ] **MCP-04**: External MCP clients must authenticate before using the server
@@ -127,7 +127,7 @@ Which phases cover which requirements. Populated during roadmap creation.
 | INV-07 | Phase 5: Investment Subsystem | In Progress |
 | CHAT-03 | Phase 5: Investment Subsystem | Complete |
 | INVX-01 | Phase 7: Investment Subsystem v2 | Complete |
-| MCP-01 | Phase 6: MCP Server | Pending |
+| MCP-01 | Phase 6: MCP Server | Complete |
 | MCP-02 | Phase 6: MCP Server | Pending |
 | MCP-03 | Phase 6: MCP Server | Pending |
 | MCP-04 | Phase 6: MCP Server | Pending |
