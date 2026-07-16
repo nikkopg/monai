@@ -1,10 +1,12 @@
 ---
 phase: 6
 slug: mcp-server
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: validated
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-07-15
+audited_at: 2026-07-16
+audited_by: gsd-validate-phase
 ---
 
 # Phase 6 — Validation Strategy
@@ -19,16 +21,16 @@ created: 2026-07-15
 |----------|-------|
 | **Framework** | pytest 8.x |
 | **Config file** | backend/pytest config (existing) |
-| **Quick run command** | `pytest backend/test_mcp.py -q` |
-| **Full suite command** | `pytest backend -q` |
-| **Estimated runtime** | ~30 seconds |
+| **Quick run command** | `pytest backend/tests/test_mcp.py -q` |
+| **Full suite command** | `pytest backend/tests -q` |
+| **Estimated runtime** | ~3 seconds (MCP file) |
 
 ---
 
 ## Sampling Rate
 
-- **After every task commit:** Run `pytest backend/test_mcp.py -q`
-- **After every plan wave:** Run `pytest backend -q`
+- **After every task commit:** Run `pytest backend/tests/test_mcp.py -q`
+- **After every plan wave:** Run `pytest backend/tests -q`
 - **Before `/gsd:verify-work`:** Full suite must be green
 - **Max feedback latency:** 30 seconds
 
@@ -36,38 +38,49 @@ created: 2026-07-15
 
 ## Per-Task Verification Map
 
-| Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
-|---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 6-01-01 | 01 | 0 | MCP-01 | T-6-01 / — | fastmcp dependency installed; test_mcp.py stubs present | unit | `pytest backend/test_mcp.py -q` | ❌ W0 | ⬜ pending |
+| Requirement | Behavior | Test Type | Test | Automated Command | Status |
+|-------------|----------|-----------|------|-------------------|--------|
+| MCP-01 | Finance tools exposed via a single co-mounted MCP server; `/mcp` handshake is not 404 | integration | `test_mcp_endpoint_mounted` | `pytest backend/tests/test_mcp.py::test_mcp_endpoint_mounted -q` | ✅ green |
+| MCP-02 | Web chat agent and MCP clients share one tool source; `tools/list` == 15 `TOOLS`, `tools/call` result == direct `TOOLS[name](...)`; agent read-tool list length 15 | integration | `test_mcp_read_parity`, `test_agent_read_tools_count` | `pytest backend/tests/test_mcp.py::test_mcp_read_parity backend/tests/test_mcp.py::test_agent_read_tools_count -q` | ✅ green |
+| MCP-03 | Read-only surface only; no `propose_*` in `tools/list`; calling one is unknown-tool | integration | `test_mcp_no_write_tools` | `pytest backend/tests/test_mcp.py::test_mcp_no_write_tools -q` | ✅ green |
+| MCP-04 | Auth required; `/mcp` request without the key → 401 (503 if key unset) | integration | `test_mcp_requires_key` | `pytest backend/tests/test_mcp.py::test_mcp_requires_key -q` | ✅ green |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
-*Full per-task map populated by planner from PLAN.md tasks.*
 
----
-
-## Wave 0 Requirements
-
-- [ ] `backend/test_mcp.py` — stubs for MCP-01..MCP-04 (enumerate, call-parity, no-writes, auth)
-- [ ] `fastmcp>=3.4,<4` added to backend/requirements.txt + container rebuild
-- [ ] Existing fixtures (`client`, `api_key`, `async_client`) reused — no new conftest needed
+**Coverage:** 4/4 requirements COVERED by green automated tests (`5 passed in 3.05s`, run 2026-07-16). No MISSING or PARTIAL gaps.
 
 ---
 
 ## Manual-Only Verifications
 
-| Behavior | Requirement | Why Manual | Test Instructions |
-|----------|-------------|------------|-------------------|
-| External MCP client (Claude Desktop) connects to `http://host:8001/mcp`, enumerates read-only tools, calls a read tool | MCP-01, MCP-02, MCP-04 | Requires a real external MCP client + live container; header/Bearer auth mechanism confirmed against actual client (research open question A2) | 1) Rebuild container. 2) Add monai MCP server to Claude Desktop with MONAI_API_KEY. 3) Confirm 15 read tools enumerate, 0 write tools. 4) Ask "spending total last month" — result matches web chat. 5) Confirm unauthenticated connection rejected. |
+| Behavior | Requirement | Why Manual | Status |
+|----------|-------------|------------|--------|
+| External MCP client (Claude Desktop) connects to `http://host:8001/mcp`, enumerates 15 read-only tools / 0 write tools, calls a read tool matching web chat, unauthenticated rejected | MCP-01, MCP-02, MCP-04 | Requires a real external MCP client + live container; header/Bearer auth confirmed against actual client (research A2) | ✅ Verified live in UAT (commit `839d25a` — 5/5 passed, live external MCP clients) |
 
 ---
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 30s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references — none remain
+- [x] No watch-mode flags
+- [x] Feedback latency < 30s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** NYQUIST-COMPLIANT — 4/4 requirements automated & green; sole manual item verified live in UAT.
+
+---
+
+## Validation Audit 2026-07-16
+
+| Metric | Count |
+|--------|-------|
+| Requirements | 4 |
+| Covered (green automated) | 4 |
+| Partial | 0 |
+| Missing | 0 |
+| Gaps found | 0 |
+| Tests generated | 0 (all pre-existing) |
+
+Audited State A. Corrected the plan-time draft: test path `backend/test_mcp.py` → `backend/tests/test_mcp.py`; populated the per-task map from the executed `test_mcp.py` (5 tests, `5 passed in 3.05s`); flipped `nyquist_compliant`/`wave_0_complete` to true and status to `validated`. No test generation needed — every MCP-01..MCP-04 requirement already has a dedicated green test.
