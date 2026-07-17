@@ -1,10 +1,11 @@
 ---
 phase: 5
 slug: investment-subsystem
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: validated
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-07-06
+validated: 2026-07-17
 ---
 
 # Phase 5 — Validation Strategy
@@ -39,19 +40,19 @@ created: 2026-07-06
 
 | Requirement | Behavior | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |-------------|----------|------------|-----------------|-----------|-------------------|-------------|--------|
-| INV-01 | Add/edit/remove holding via events; holding recomputes correctly | — | N/A | unit | `pytest backend/tests/test_portfolio.py::test_recompute_holding_from_events -x` | ❌ W0 | ⬜ pending |
-| INV-01 | Direct holding override (D-03) writes audit_log | T-5 Repudiation | Every `apply_*` writes AuditLog before/after | unit | `pytest backend/tests/test_write_tools.py::test_propose_edit_holding_creates_proposal -x` | ✅ extend | ⬜ pending |
-| INV-02 | CoinGecko adapter returns Decimal price for a known coin id | T-5 SSRF | Ticker→coin-id via fixed server map | unit (mocked HTTP) | `pytest backend/tests/test_prices.py::test_fetch_crypto_price -x` | ❌ W0 | ⬜ pending |
-| INV-03 | yfinance adapter degrades to None on any exception (fallback contract) | — | Never propagate 500; fall back to cache | unit (mocked yfinance) | `pytest backend/tests/test_prices.py::test_fetch_idx_price_fallback -x` | ❌ W0 | ⬜ pending |
-| INV-04 | Manual price override writes `price_cache` `source='manual'`, reflected in P&L | V5 Input Validation | Positive Decimal at schema layer | integration | `pytest backend/tests/test_portfolio.py::test_manual_price_override -x` | ❌ W0 | ⬜ pending |
-| INV-05 | Staleness badge flips to "stale" once `fetched_at` exceeds asset-type TTL | — | N/A | unit | `pytest backend/tests/test_portfolio.py::test_staleness_ttl -x` | ❌ W0 | ⬜ pending |
-| INV-06 | Realized + unrealized P&L match hand-computed values for buy→sell→dividend | — | N/A | unit | `pytest backend/tests/test_portfolio.py::test_avg_cost_realized_pnl -x` | ❌ W0 | ⬜ pending |
-| INV-07 | `portfolio_events` row created on every buy/sell/dividend write | V5 Input Validation | `event_type` constrained to Literal set | integration | `pytest backend/tests/test_write_tools.py::test_propose_add_portfolio_event -x` | ✅ extend | ⬜ pending |
-| CHAT-03 | Correlation tool returns correct before/after totals for a known pivot date | — | N/A | unit | `pytest backend/tests/test_tools.py::test_spending_before_after_purchase -x` | ✅ extend | ⬜ pending |
-| D-14 | Daily job runs without raising even if one ticker's fetch fails | T-5 DoS | `max_instances=1` + misfire grace | integration | `pytest backend/tests/test_scheduler.py::test_snapshot_job_partial_failure_tolerant -x` | ❌ W0 | ⬜ pending |
-| D-17 | `alembic upgrade head` applies cleanly on `9c1a4f7d2b8e`, reversible | — | N/A | manual/smoke | `alembic upgrade head && alembic downgrade -1` on dev DB copy | manual-only | ⬜ pending |
+| INV-01 | Add/edit/remove holding via events; holding recomputes correctly | — | N/A | unit | `pytest backend/tests/test_portfolio.py::test_recompute_holding_from_events -x` | ✅ test_portfolio.py | ✅ green |
+| INV-01 | Direct holding override (D-03) writes audit_log | T-5 Repudiation | Every `apply_*` writes AuditLog before/after | unit | `pytest backend/tests/test_write_tools.py::test_propose_edit_holding_creates_proposal -x` | ✅ test_write_tools.py | ✅ green |
+| INV-02 | CoinGecko adapter returns Decimal price for a known coin id | T-5 SSRF | Ticker→coin-id via fixed server map | unit (mocked HTTP) | `pytest backend/tests/test_prices.py::test_fetch_crypto_price -x` | ✅ test_prices.py | ✅ green (+3 coin-id variants) |
+| INV-03 | yfinance adapter degrades to None on any exception (fallback contract) | — | Never propagate 500; fall back to cache | unit (mocked yfinance) | `pytest backend/tests/test_prices.py::test_fetch_idx_price_fallback -x` | ✅ test_prices.py | ✅ green |
+| INV-04 | Manual price override writes `price_cache` `source='manual'`, reflected in P&L | V5 Input Validation | Positive Decimal at schema layer | integration | `pytest backend/tests/test_portfolio.py::test_manual_price_override -x` | ✅ test_portfolio.py | ✅ green |
+| INV-05 | Staleness badge flips to "stale" once `fetched_at` exceeds asset-type TTL | — | N/A | unit | `pytest backend/tests/test_portfolio.py::test_staleness_ttl -x` | ✅ test_portfolio.py | ✅ green |
+| INV-06 | Realized + unrealized P&L match hand-computed values for buy→sell→dividend | — | N/A | unit | `pytest backend/tests/test_portfolio.py::test_avg_cost_realized_pnl -x` | ✅ test_portfolio.py | ✅ green |
+| INV-07 | `portfolio_events` row created on every buy/sell/dividend write | V5 Input Validation | `event_type` constrained to Literal set | integration | `pytest backend/tests/test_write_tools.py -k apply_add_portfolio_event -x` | ✅ test_write_tools.py | ✅ green (renamed `test_apply_add_portfolio_event_*`) |
+| CHAT-03 | Correlation tool returns correct before/after totals for a known pivot date | — | N/A | unit | `pytest backend/tests/test_tools.py -k spending_before_after_purchase -x` | ✅ test_tools.py | ✅ green |
+| D-14 | Daily job runs without raising even if one ticker's fetch fails | T-5 DoS | `max_instances=1` + misfire grace | integration | `pytest backend/tests/test_scheduler.py::test_snapshot_job_partial_failure_tolerant -x` | ✅ test_scheduler.py | ✅ green |
+| D-17 | `alembic upgrade head` applies cleanly on `9c1a4f7d2b8e`, reversible | — | N/A | manual/smoke | `alembic upgrade head && alembic downgrade -1` on dev DB copy | manual-only | 🔵 manual (see Manual-Only) |
 
-*Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
+*Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky · 🔵 manual*
 
 ---
 
@@ -79,11 +80,26 @@ created: 2026-07-06
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references (`test_portfolio.py`, `test_prices.py`, `test_scheduler.py`)
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 30s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references (`test_portfolio.py`, `test_prices.py`, `test_scheduler.py`)
+- [x] No watch-mode flags
+- [x] Feedback latency < 30s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** validated 2026-07-17
+
+---
+
+## Validation Audit 2026-07-17
+
+Retroactive audit (`/gsd-validate-phase 5`). State A. Full suite: **191 passed, 0 failed, 0 skipped** (DB up).
+
+| Metric | Count |
+|--------|-------|
+| Requirements audited | 9 automated (INV-01…07, CHAT-03, D-14) + 1 manual (D-17) |
+| Gaps found | 0 |
+| Resolved (test generated) | 0 |
+| Escalated to manual-only | 0 |
+
+All planned test files (`test_portfolio.py`, `test_prices.py`, `test_scheduler.py`) exist and run green. Two rows had their command corrected to match shipped names: INV-07 → `test_apply_add_portfolio_event_*`, CHAT-03 → `-k spending_before_after_purchase`. D-17 (migration up/down) stays manual-only by design; the three visual/live-API items in Manual-Only remain manual.

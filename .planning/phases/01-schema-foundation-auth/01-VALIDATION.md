@@ -1,10 +1,11 @@
 ---
 phase: 1
 slug: schema-foundation-auth
-status: draft
-nyquist_compliant: false
-wave_0_complete: false
+status: validated
+nyquist_compliant: true
+wave_0_complete: true
 created: 2026-06-21
+validated: 2026-07-17
 ---
 
 # Phase 1 — Validation Strategy
@@ -40,9 +41,12 @@ created: 2026-06-21
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| TBD | — | — | FND-01/02/03 | — | — | — | — | ❌ W0 | ⬜ pending |
+| — | 01-01 | — | FND-01 (schema presence) | — | New tables bootstrap on a fresh DB; whole suite depends on them | infra/smoke | `pytest backend/tests -q` (191 collected — none run without the schema) | ✅ conftest.py | ✅ green |
+| — | 01-03 | — | FND-02 | — | Missing/wrong key on write paths → 401; empty configured key → 503 | integration | `pytest backend/tests/test_auth.py -q` | ✅ test_auth.py | ✅ green (8) |
+| — | 01-02 | — | FND-03 | — | Decimal round-trips as JSON number; non-numeric rejected | unit | `pytest backend/tests/test_decimal.py -q` | ✅ test_decimal.py | ✅ green (5) |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
+*FND-01 data-preservation on a populated volume is verified manually (see Manual-Only) — the automatable half (schema presence on a fresh DB) is proven by the conftest bootstrap.*
 
 ---
 
@@ -68,11 +72,26 @@ created: 2026-06-21
 
 ## Validation Sign-Off
 
-- [ ] All tasks have `<automated>` verify or Wave 0 dependencies
-- [ ] Sampling continuity: no 3 consecutive tasks without automated verify
-- [ ] Wave 0 covers all MISSING references
-- [ ] No watch-mode flags
-- [ ] Feedback latency < 30s
-- [ ] `nyquist_compliant: true` set in frontmatter
+- [x] All tasks have `<automated>` verify or Wave 0 dependencies
+- [x] Sampling continuity: no 3 consecutive tasks without automated verify
+- [x] Wave 0 covers all MISSING references
+- [x] No watch-mode flags
+- [x] Feedback latency < 30s
+- [x] `nyquist_compliant: true` set in frontmatter
 
-**Approval:** pending
+**Approval:** validated 2026-07-17
+
+---
+
+## Validation Audit 2026-07-17
+
+Retroactive audit (`/gsd-validate-phase 1`). State A. Full suite: **191 passed, 0 failed, 0 skipped** (DB up).
+
+| Metric | Count |
+|--------|-------|
+| Requirements audited | 3 (FND-01/02/03) |
+| Gaps found | 0 |
+| Resolved (test generated) | 0 |
+| Escalated to manual-only | 0 |
+
+FND-02→`test_auth.py`, FND-03→`test_decimal.py` — both green. FND-01 schema presence proven implicitly by the conftest bootstrap; data-preservation on the live volume remains the one documented manual-only check.
