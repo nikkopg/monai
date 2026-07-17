@@ -15,6 +15,20 @@ You can understand and manage your entire financial life — spending and invest
 by talking to a trustworthy AI that never fabricates a number and never changes your
 data without your say-so.
 
+## Current Milestone: v1.1 UI Redesign — "Paper" Aesthetic
+
+**Goal:** Re-skin all four pages + the nav shell to the Claude Design "paper" mockup — a warm editorial look — without changing any behavior, data, or endpoints.
+
+**Target features (all visual; functionality preserved):**
+- Design-token foundation (colors, Instrument Serif + Hanken Grotesk type, radii, spacing) driving `ui/app/styles.ts` as the single source of truth
+- Nav shell restyle (left sidebar, serif wordmark, synced footer card)
+- Cashflow page — dark net-worth hero, 6-month trend, stat cards, category donut, accounts list, recent transactions
+- Chat page — user/assistant bubbles, collapsible tool-trace, proposal card, sticky composer
+- Investments page — total-value hero, allocation donut, holdings table
+- Settings page — provider segmented control, API-key + preferences cards, live-refresh toggle
+
+**Key context:** Pixel-faithful to `.planning/design/monai-redesign.dc.html` (recreate the look, not the prototype's internals). Data stays real and IDR — the mockup's USD/fake numbers are illustrative. No backend, schema, or API changes; zero regressions to v1.0 behavior. Rollout is foundation-first: tokens → Nav → pages.
+
 ## Requirements
 
 ### Validated
@@ -41,9 +55,11 @@ data without your say-so.
 
 ### Active
 
-<!-- Next cycle's scope. Empty until v1.1 requirements are defined. -->
+<!-- v1.1 scope: visual redesign only. See .planning/REQUIREMENTS.md for REQ-IDs. -->
 
-(None yet — define with `/gsd:new-milestone`. Deferred v2 candidates: QRY-01 recurring-charge detection, QRY-02 compare two arbitrary periods, QRY-03 token-by-token streaming, INVX-02 automated reksadana NAV feed.)
+- v1.1 UI Redesign ("paper" aesthetic) — design-token foundation + restyle of Nav and all four pages, pixel-faithful to the Claude Design mockup, functionality unchanged (UIR-* requirements).
+
+Deferred v2 candidates (still out of this cycle): QRY-01 recurring-charge detection, QRY-02 compare two arbitrary periods, QRY-03 token-by-token streaming, INVX-02 automated reksadana NAV feed.
 
 ### Out of Scope
 
@@ -116,4 +132,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-17 after v1.0 milestone*
+*Last updated: 2026-07-18 — started milestone v1.1 (UI Redesign — "Paper" Aesthetic)*

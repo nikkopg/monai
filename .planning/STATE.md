@@ -1,20 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: milestone
-current_phase: 07
-current_phase_name: v1.0 shipped
-status: milestone_shipped
-stopped_at: Milestone v1.0 SHIPPED 2026-07-17 — archived (milestones/v1.0-ROADMAP.md + v1.0-REQUIREMENTS.md), ROADMAP collapsed, PROJECT.md evolved, REQUIREMENTS.md removed, commit 9f15944, tag v1.0 pushed. Between milestones — next: /gsd:new-milestone
-last_updated: 2026-07-17T20:35:00+07:00
+milestone: v1.1
+milestone_name: UI Redesign — Paper Aesthetic
+status: planning
+last_updated: "2026-07-17T22:57:04.999Z"
 last_activity: 2026-07-17
-last_activity_desc: v1.0 milestone archived + tagged (audit passed 35/35, 7/7 phases)
 progress:
-  total_phases: 7
-  completed_phases: 7
-  total_plans: 30
-  completed_plans: 30
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -28,12 +24,10 @@ See: .planning/PROJECT.md (updated 2026-06-21)
 
 ## Current Position
 
-Phase: milestone-audit (all 7 phases code-complete)
+Phase: Not started (defining requirements)
 Plan: —
-Status: Audited — 7/7 phases verified (tech_debt, no blockers). Remaining: Nyquist PARTIAL on phases 1/2/5/7; visual human-verify (INVX-01 + P7 charts, P5 staleness badge, P2 streaming ProposalCard, live-agent tool-selection)
-Last activity: 2026-07-16
-
-Progress: [██████████] 100% — all 7 phases code-complete; 5/7 formally verified; cross-phase integration 8/8 connected
+Status: Defining requirements
+Last activity: 2026-07-17 — Milestone v1.1 started
 
 ## Performance Metrics
 
