@@ -28,7 +28,7 @@ Full phase detail: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 
 **Milestone Goal:** Re-skin all four pages + the nav shell to the Claude Design "paper" mockup (`.planning/design/monai-redesign.dc.html`) — a warm editorial look — without changing any behavior, data, or endpoints.
 
-- [ ] **Phase 8: Design Foundation + App Shell** - Token layer, fonts, and the restyled sidebar/nav shell that every page depends on
+- [x] **Phase 8: Design Foundation + App Shell** - Token layer, fonts, and the restyled sidebar/nav shell that every page depends on — completed 2026-07-18
 - [ ] **Phase 9: Cashflow + Chat Restyle** - The two primary-workflow pages restyled to the mockup, bound to real data
 - [ ] **Phase 10: Investments + Settings + Consistency Sweep** - Remaining pages, secondary surfaces (modals/managers/charts), responsive adaptation, and full regression pass
 

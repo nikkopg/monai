@@ -12,8 +12,8 @@ import { test, expect, type Page } from "@playwright/test";
 //   (c) clicking a nav link performs a client-side transition (no full
 //       document reload) — proven via a window sentinel that survives
 //       navigation
-//   (d) the active nav link is visually highlighted (accent color or a 2px
-//       bottom border) while the others are not
+//   (d) the active nav link is visually highlighted (v1.1 "paper" redesign:
+//       a dark ink pill background) while the others are not
 // ---------------------------------------------------------------------------
 
 const NAV_LABELS = ["Chat", "Cashflow", "Investments", "Settings"] as const;
@@ -35,11 +35,11 @@ test.describe("route rendering", () => {
     await expect(page.getByText("Recent transactions")).toBeVisible();
   });
 
-  test("/investments renders the Phase 5 skeleton heading", async ({ page }) => {
+  test("/investments renders the Investments heading", async ({ page }) => {
     const res = await page.goto("/investments");
     expect(res?.status()).toBeLessThan(400);
     await expect(
-      page.getByText("Investments are coming in Phase 5")
+      page.getByRole("heading", { name: "Investments" })
     ).toBeVisible();
   });
 
@@ -95,24 +95,17 @@ test.describe("client-side navigation", () => {
     await links.filter({ hasText: "Cashflow" }).click();
     await expect(page).toHaveURL(/\/cashflow$/);
 
+    // v1.1: active link carries the dark ink pill (#23201b == rgb(35, 32, 27)).
+    // toHaveCSS auto-retries so it settles past the .2s background transition.
     const cashflowLink = links.filter({ hasText: "Cashflow" });
-    const activeColor = await cashflowLink.evaluate(
-      (el) => getComputedStyle(el).color
-    );
-    const activeBorderWidth = await cashflowLink.evaluate(
-      (el) => getComputedStyle(el).borderBottomWidth
-    );
-    // Accent #3b82f6 == rgb(59, 130, 246), OR a 2px bottom border indicator.
-    const isAccentColor = activeColor === "rgb(59, 130, 246)";
-    const isTwoPxBorder = activeBorderWidth === "2px";
-    expect(isAccentColor || isTwoPxBorder).toBe(true);
+    await expect(cashflowLink).toHaveCSS("background-color", "rgb(35, 32, 27)");
 
     for (const label of ["Chat", "Investments", "Settings"]) {
-      const inactiveLink = links.filter({ hasText: label });
-      const inactiveColor = await inactiveLink.evaluate(
-        (el) => getComputedStyle(el).color
+      // Inactive links have no pill (transparent background).
+      await expect(links.filter({ hasText: label })).not.toHaveCSS(
+        "background-color",
+        "rgb(35, 32, 27)"
       );
-      expect(inactiveColor).not.toBe("rgb(59, 130, 246)");
     }
   });
 });

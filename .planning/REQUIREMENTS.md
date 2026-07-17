@@ -17,9 +17,9 @@ Design language (from the mockup, authoritative):
 
 ### Foundation
 
-- [ ] **UIR-01**: A shared design-token layer (palette, type families, radii, spacing) lives in `ui/app/styles.ts` as the single source of truth; page components reference tokens, not hard-coded hex.
-- [ ] **UIR-02**: Instrument Serif + Hanken Grotesk are loaded and applied app-wide — serif for headings/wordmark/hero figures, grotesk for body and controls.
-- [ ] **UIR-03**: The app shell matches the mockup — cream page background, centered rounded panel, and a left sidebar with the serif "monai" wordmark, uppercase "Menu" label, icon+label nav items with active (dark pill) / inactive states, and a "synced" status footer card.
+- [x] **UIR-01**: A shared design-token layer (palette, type families, radii, spacing) lives in `ui/app/styles.ts` as the single source of truth; page components reference tokens, not hard-coded hex.
+- [x] **UIR-02**: Instrument Serif + Hanken Grotesk are loaded and applied app-wide — serif for headings/wordmark/hero figures, grotesk for body and controls.
+- [x] **UIR-03**: The app shell matches the mockup — cream page background, centered rounded panel, and a left sidebar with the serif "monai" wordmark, uppercase "Menu" label, icon+label nav items with active (dark pill) / inactive states, and a "synced" status footer card.
 
 ### Pages
 
@@ -53,9 +53,9 @@ Design language (from the mockup, authoritative):
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| UIR-01 | Phase 8 | Pending |
-| UIR-02 | Phase 8 | Pending |
-| UIR-03 | Phase 8 | Pending |
+| UIR-01 | Phase 8 | Complete |
+| UIR-02 | Phase 8 | Complete |
+| UIR-03 | Phase 8 | Complete |
 | UIR-04 | Phase 9 | Pending |
 | UIR-05 | Phase 9 | Pending |
 | UIR-06 | Phase 10 | Pending |

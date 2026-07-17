@@ -1,0 +1,542 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: #ece8e1; font-family: 'Hanken Grotesk', system-ui, sans-serif; color: #23201b; }
+  a { color: #2f6f4f; text-decoration: none; }
+  a:hover { color: #23543c; }
+  ::selection { background: #cfe0d6; }
+  input, select, button, textarea { font-family: inherit; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: #2f6f4f !important; }
+  @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+  @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes railIn { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+  .tab-in { animation: fadeIn .35s ease both; }
+</style>
+</helmet>
+<div style="min-height: 100vh; display: flex; justify-content: center; align-items: flex-start; padding: 28px;">
+  <div style="width: 1240px; max-width: 100%; height: 820px; display: flex; background: #f7f5f1; border: 1px solid #ded8cd; border-radius: 22px; overflow: hidden; box-shadow: 0 1px 2px rgba(40,34,24,.05), 0 30px 60px -30px rgba(40,34,24,.28);">
+
+    <!-- Sidebar -->
+    <aside style="width: 236px; flex-shrink: 0; background: #f2efe8; border-right: 1px solid #e2dccf; padding: 26px 18px; display: flex; flex-direction: column;">
+      <div style="display: flex; align-items: baseline; gap: 8px; padding: 0 10px 26px;">
+        <span style="font-family: 'Instrument Serif', serif; font-size: 30px; letter-spacing: -.5px;">monai</span>
+        <span style="width: 6px; height: 6px; border-radius: 50%; background: #2f6f4f; margin-bottom: 4px;"></span>
+      </div>
+      <div style="font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: #a49c8c; padding: 0 10px 10px;">Menu</div>
+      <nav style="display: flex; flex-direction: column; gap: 4px;">
+        <sc-for list="{{ navItems }}" as="item" hint-placeholder-count="4">
+          <div onClick="{{ item.onClick }}" style="{{ item.style }}">
+            <span style="display: inline-flex; width: 20px; height: 20px;">{{ item.icon }}</span>
+            <span>{{ item.label }}</span>
+          </div>
+        </sc-for>
+      </nav>
+      <div style="margin-top: auto; padding: 14px; background: #eae5db; border: 1px solid #e2dccf; border-radius: 14px;">
+        <div style="font-size: 13px; font-weight: 600; margin-bottom: 3px;">Everything's synced</div>
+        <div style="font-size: 12px; color: #8b8474; line-height: 1.45;">Last import 2 hours ago · 4 accounts</div>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <main style="flex: 1; overflow-y: auto;">
+
+      <!-- ===================== CASHFLOW ===================== -->
+      <sc-if value="{{ isCashflow }}" hint-placeholder-val="{{ true }}">
+        <div class="tab-in" style="padding: 40px 44px 60px;">
+          <div style="display: flex; justify-content: space-between; align-items: flex-end; margin-bottom: 30px;">
+            <div>
+              <div style="font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: #a49c8c; margin-bottom: 6px;">Overview</div>
+              <h1 style="font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 40px; margin: 0; letter-spacing: -.5px;">Cashflow</h1>
+            </div>
+            <div style="display: flex; gap: 6px; background: #efece4; border: 1px solid #e2dccf; border-radius: 999px; padding: 4px;">
+              <sc-for list="{{ periods }}" as="p" hint-placeholder-count="4">
+                <button onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</button>
+              </sc-for>
+            </div>
+          </div>
+
+          <!-- Hero + trend -->
+          <div style="display: grid; grid-template-columns: 1.05fr 1.35fr; gap: 18px; margin-bottom: 18px;">
+            <div style="animation: fadeUp .5s cubic-bezier(.2,.7,.3,1) both; background: #23201b; color: #f2efe8; border-radius: 18px; padding: 26px 28px; display: flex; flex-direction: column; justify-content: space-between;">
+              <div>
+                <div style="font-size: 13px; color: #b6ae9d; margin-bottom: 10px;">Net worth</div>
+                <div style="font-family: 'Instrument Serif', serif; font-size: 52px; line-height: 1; letter-spacing: -1px; font-variant-numeric: tabular-nums;">{{ netWorth }}</div>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px; margin-top: 22px;">
+                <span style="display: inline-flex; align-items: center; gap: 5px; background: rgba(129,196,158,.16); color: #9fdcb6; font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 999px;">▲ {{ netDelta }}</span>
+                <span style="font-size: 13px; color: #b6ae9d;">this month</span>
+              </div>
+            </div>
+
+            <div style="animation: fadeUp .5s cubic-bezier(.2,.7,.3,1) both; animation-delay: 70ms; background: #fff; border: 1px solid #e7e1d5; border-radius: 18px; padding: 22px 24px;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                <div style="font-size: 14px; font-weight: 600;">6-month trend</div>
+                <div style="display: flex; gap: 16px; font-size: 12px; color: #8b8474;">
+                  <span style="display: inline-flex; align-items: center; gap: 6px;"><span style="width: 14px; height: 2px; background: #2f6f4f; display: inline-block;"></span>Income</span>
+                  <span style="display: inline-flex; align-items: center; gap: 6px;"><span style="width: 14px; height: 0; border-top: 2px dashed #b5503f; display: inline-block;"></span>Expenses</span>
+                </div>
+              </div>
+              {{ trend }}
+              <div style="display: flex; justify-content: space-between; font-size: 11px; color: #a49c8c; margin-top: 6px; padding: 0 2px;">
+                <span>Feb</span><span>Mar</span><span>Apr</span><span>May</span><span>Jun</span><span>Jul</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Stat cards -->
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; margin-bottom: 18px;">
+            <div style="animation: fadeUp .5s cubic-bezier(.2,.7,.3,1) both; animation-delay: 120ms; background: #fff; border: 1px solid #e7e1d5; border-radius: 16px; padding: 20px 22px;">
+              <div style="font-size: 13px; color: #8b8474; margin-bottom: 8px;">Income</div>
+              <div style="font-size: 28px; font-weight: 600; color: #2f6f4f; font-variant-numeric: tabular-nums;">{{ income }}</div>
+            </div>
+            <div style="animation: fadeUp .5s cubic-bezier(.2,.7,.3,1) both; animation-delay: 170ms; background: #fff; border: 1px solid #e7e1d5; border-radius: 16px; padding: 20px 22px;">
+              <div style="font-size: 13px; color: #8b8474; margin-bottom: 8px;">Expenses</div>
+              <div style="font-size: 28px; font-weight: 600; color: #b5503f; font-variant-numeric: tabular-nums;">{{ expense }}</div>
+            </div>
+            <div style="animation: fadeUp .5s cubic-bezier(.2,.7,.3,1) both; animation-delay: 220ms; background: #fff; border: 1px solid #e7e1d5; border-radius: 16px; padding: 20px 22px;">
+              <div style="font-size: 13px; color: #8b8474; margin-bottom: 8px;">Net saved</div>
+              <div style="font-size: 28px; font-weight: 600; color: #23201b; font-variant-numeric: tabular-nums;">{{ net }}</div>
+            </div>
+          </div>
+
+          <!-- Category + accounts -->
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-bottom: 18px;">
+            <div style="animation: fadeUp .5s cubic-bezier(.2,.7,.3,1) both; animation-delay: 260ms; background: #fff; border: 1px solid #e7e1d5; border-radius: 18px; padding: 22px 24px;">
+              <div style="font-size: 14px; font-weight: 600; margin-bottom: 14px;">Spending by category</div>
+              <div style="display: flex; align-items: center; gap: 22px;">
+                {{ donut }}
+                <div style="flex: 1; display: flex; flex-direction: column; gap: 9px;">
+                  <sc-for list="{{ legend }}" as="c" hint-placeholder-count="5">
+                    <div style="display: flex; align-items: center; gap: 10px; font-size: 13px;">
+                      <span style="width: 9px; height: 9px; border-radius: 3px; background: {{ c.color }}; flex-shrink: 0;"></span>
+                      <span style="flex: 1;">{{ c.name }}</span>
+                      <span style="color: #8b8474; font-variant-numeric: tabular-nums;">{{ c.amount }}</span>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </div>
+
+            <div style="animation: fadeUp .5s cubic-bezier(.2,.7,.3,1) both; animation-delay: 300ms; background: #fff; border: 1px solid #e7e1d5; border-radius: 18px; padding: 22px 24px;">
+              <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px;">Accounts</div>
+              <sc-for list="{{ accounts }}" as="a" hint-placeholder-count="4">
+                <div style="display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid #f0ece3;">
+                  <span style="width: 34px; height: 34px; border-radius: 10px; background: #f2efe8; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; color: #6f6857;">{{ a.badge }}</span>
+                  <div style="flex: 1;">
+                    <div style="font-size: 14px; font-weight: 500;">{{ a.name }}</div>
+                    <div style="font-size: 12px; color: #a49c8c;">{{ a.type }}</div>
+                  </div>
+                  <div style="text-align: right;">
+                    <div style="font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; color: {{ a.color }};">{{ a.balance }}</div>
+                    <div style="font-size: 12px; font-variant-numeric: tabular-nums; color: {{ a.deltaColor }};">{{ a.delta }}</div>
+                  </div>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <!-- Recent transactions -->
+          <div style="animation: fadeUp .5s cubic-bezier(.2,.7,.3,1) both; animation-delay: 340ms; background: #fff; border: 1px solid #e7e1d5; border-radius: 18px; padding: 22px 24px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+              <div style="font-size: 14px; font-weight: 600;">Recent transactions</div>
+              <button style="background: #23201b; color: #f2efe8; border: none; border-radius: 999px; padding: 8px 16px; font-size: 13px; font-weight: 600; cursor: pointer; transition: transform .15s ease;" style-hover="transform: translateY(-1px);">+ Add transaction</button>
+            </div>
+            <sc-for list="{{ txs }}" as="t" hint-placeholder-count="5">
+              <div style="display: flex; align-items: center; gap: 14px; padding: 12px 0; border-top: 1px solid #f0ece3;">
+                <span style="width: 38px; height: 38px; border-radius: 11px; background: {{ t.tint }}; display: inline-flex; align-items: center; justify-content: center;">{{ t.icon }}</span>
+                <div style="flex: 1;">
+                  <div style="font-size: 14px; font-weight: 500;">{{ t.merchant }}</div>
+                  <div style="font-size: 12px; color: #a49c8c;">{{ t.category }} · {{ t.date }}</div>
+                </div>
+                <div style="font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; color: {{ t.color }};">{{ t.amount }}</div>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ===================== CHAT ===================== -->
+      <sc-if value="{{ isChat }}" hint-placeholder-val="{{ true }}">
+        <div class="tab-in" style="max-width: 760px; margin: 0 auto; padding: 40px 44px 60px;">
+          <div style="margin-bottom: 26px;">
+            <div style="font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: #a49c8c; margin-bottom: 6px;">Assistant</div>
+            <h1 style="font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 40px; margin: 0; letter-spacing: -.5px;">Ask about your money</h1>
+          </div>
+
+          <!-- User bubble -->
+          <div style="display: flex; justify-content: flex-end; margin-bottom: 18px; animation: fadeUp .45s ease both;">
+            <div style="background: #23201b; color: #f2efe8; padding: 12px 18px; border-radius: 16px 16px 4px 16px; font-size: 15px; max-width: 80%;">How much did I spend on food this year?</div>
+          </div>
+
+          <!-- Assistant answer -->
+          <div style="animation: fadeUp .45s ease both; animation-delay: 120ms; margin-bottom: 16px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+              <span style="font-family: 'Instrument Serif', serif; font-size: 18px;">monai</span>
+              <span style="font-size: 12px; color: #a49c8c;">· answered just now</span>
+            </div>
+            <p style="font-size: 16px; line-height: 1.6; margin: 0 0 14px; color: #34302a;">You've spent <strong>$4,820</strong> on Food &amp; drink so far in 2026 — about <strong>14%</strong> of your total spending. That's down 8% from the same period last year, mostly from fewer restaurant visits.</p>
+            <button onClick="{{ toggleTrace }}" style="background: none; border: none; color: #8b8474; cursor: pointer; font-size: 13px; padding: 0; display: inline-flex; align-items: center; gap: 6px;">{{ traceCaret }} how I got this (2 steps)</button>
+            <sc-if value="{{ traceOpen }}" hint-placeholder-val="{{ false }}">
+              <div style="margin-top: 10px; border-left: 2px solid #e2dccf; padding-left: 14px; display: flex; flex-direction: column; gap: 8px;">
+                <div style="font-size: 12px; color: #8b8474; font-family: ui-monospace, monospace;"><span style="color: #2f6f4f; font-weight: 600;">spending_by_category</span>(category="Food &amp; drink", period="this_year") <span style="color: #b6ae9d;">→</span> {"{"}total: 4820, tx: 312{"}"}</div>
+                <div style="font-size: 12px; color: #8b8474; font-family: ui-monospace, monospace;"><span style="color: #2f6f4f; font-weight: 600;">compare_period</span>(prev="last_year") <span style="color: #b6ae9d;">→</span> {"{"}delta_pct: -8.0{"}"}</div>
+              </div>
+            </sc-if>
+          </div>
+
+          <!-- Proposal card -->
+          <div style="animation: fadeUp .45s ease both; animation-delay: 200ms; background: #fff; border: 1px solid #cfe0d6; border-left: 3px solid #2f6f4f; border-radius: 14px; padding: 18px 20px; margin-bottom: 26px;">
+            <div style="font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: #2f6f4f; font-weight: 700; margin-bottom: 10px;">Proposed rename category</div>
+            <div style="font-size: 14px; display: flex; align-items: center; gap: 10px;">
+              <span style="color: #b5503f; text-decoration: line-through;">Food</span>
+              <span style="color: #b6ae9d;">→</span>
+              <span style="color: #2f6f4f; font-weight: 600;">Food &amp; drink</span>
+              <span style="color: #a49c8c; font-size: 13px;">(312 transactions)</span>
+            </div>
+            <div style="display: flex; gap: 10px; margin-top: 16px;">
+              <button style="background: #2f6f4f; color: #fff; border: none; border-radius: 10px; padding: 9px 20px; font-size: 14px; font-weight: 600; cursor: pointer; transition: transform .15s ease;" style-hover="transform: translateY(-1px);">Approve</button>
+              <button style="background: #f2efe8; color: #6f6857; border: 1px solid #e2dccf; border-radius: 10px; padding: 9px 20px; font-size: 14px; font-weight: 600; cursor: pointer;">Reject</button>
+              <span style="margin-left: auto; align-self: center; font-size: 12px; color: #a49c8c;">expires in 15 min</span>
+            </div>
+          </div>
+
+          <!-- Composer -->
+          <div style="position: sticky; bottom: 0; display: flex; gap: 10px; background: #f7f5f1; padding-top: 8px;">
+            <input style="flex: 1; background: #fff; border: 1px solid #e2dccf; border-radius: 14px; padding: 14px 18px; font-size: 15px; color: #23201b; transition: border-color .15s ease;" placeholder="Ask anything about your finances…">
+            <button style="background: #23201b; color: #f2efe8; border: none; border-radius: 14px; padding: 0 24px; font-size: 15px; font-weight: 600; cursor: pointer; transition: transform .15s ease;" style-hover="transform: translateY(-1px);">Ask</button>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ===================== INVESTMENTS ===================== -->
+      <sc-if value="{{ isInvestments }}" hint-placeholder-val="{{ true }}">
+        <div class="tab-in" style="padding: 40px 44px 60px;">
+          <div style="margin-bottom: 28px;">
+            <div style="font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: #a49c8c; margin-bottom: 6px;">Portfolio</div>
+            <h1 style="font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 40px; margin: 0; letter-spacing: -.5px;">Investments</h1>
+          </div>
+
+          <div style="display: grid; grid-template-columns: 1.05fr 1.35fr; gap: 18px; margin-bottom: 18px;">
+            <div style="animation: fadeUp .5s cubic-bezier(.2,.7,.3,1) both; background: #23201b; color: #f2efe8; border-radius: 18px; padding: 26px 28px;">
+              <div style="font-size: 13px; color: #b6ae9d; margin-bottom: 10px;">Total value</div>
+              <div style="font-family: 'Instrument Serif', serif; font-size: 52px; line-height: 1; letter-spacing: -1px; font-variant-numeric: tabular-nums;">{{ investTotal }}</div>
+              <div style="display: flex; align-items: center; gap: 8px; margin-top: 22px;">
+                <span style="display: inline-flex; align-items: center; gap: 5px; background: rgba(129,196,158,.16); color: #9fdcb6; font-size: 13px; font-weight: 600; padding: 4px 10px; border-radius: 999px;">▲ {{ investDelta }}</span>
+                <span style="font-size: 13px; color: #b6ae9d;">all time (+18.0%)</span>
+              </div>
+            </div>
+
+            <div style="animation: fadeUp .5s cubic-bezier(.2,.7,.3,1) both; animation-delay: 70ms; background: #fff; border: 1px solid #e7e1d5; border-radius: 18px; padding: 22px 24px; display: flex; align-items: center; gap: 26px;">
+              <div style="display: flex; flex-direction: column;">
+                <div style="font-size: 14px; font-weight: 600; margin-bottom: 14px;">Allocation</div>
+                {{ allocDonut }}
+              </div>
+              <div style="flex: 1; display: flex; flex-direction: column; gap: 11px;">
+                <sc-for list="{{ allocLegend }}" as="c" hint-placeholder-count="4">
+                  <div style="display: flex; align-items: center; gap: 10px; font-size: 13px;">
+                    <span style="width: 9px; height: 9px; border-radius: 3px; background: {{ c.color }}; flex-shrink: 0;"></span>
+                    <span style="flex: 1; font-weight: 500;">{{ c.name }}</span>
+                    <span style="color: #8b8474;">{{ c.pct }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+
+          <div style="animation: fadeUp .5s cubic-bezier(.2,.7,.3,1) both; animation-delay: 130ms; background: #fff; border: 1px solid #e7e1d5; border-radius: 18px; padding: 22px 24px;">
+            <div style="font-size: 14px; font-weight: 600; margin-bottom: 8px;">Holdings</div>
+            <div style="display: flex; font-size: 12px; color: #a49c8c; padding: 8px 0; border-bottom: 1px solid #f0ece3;">
+              <span style="flex: 2;">Asset</span>
+              <span style="flex: 1; text-align: right;">Units</span>
+              <span style="flex: 1.2; text-align: right;">Price</span>
+              <span style="flex: 1.2; text-align: right;">Value</span>
+              <span style="flex: 1.2; text-align: right;">Return</span>
+            </div>
+            <sc-for list="{{ holdings }}" as="h" hint-placeholder-count="4">
+              <div style="display: flex; align-items: center; font-size: 14px; padding: 13px 0; border-top: 1px solid #f0ece3;">
+                <span style="flex: 2; display: flex; align-items: center; gap: 11px;">
+                  <span style="width: 32px; height: 32px; border-radius: 9px; background: {{ h.color }}; color: #fff; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700;">{{ h.ticker }}</span>
+                  <span style="font-weight: 500;">{{ h.name }}</span>
+                </span>
+                <span style="flex: 1; text-align: right; font-variant-numeric: tabular-nums; color: #6f6857;">{{ h.units }}</span>
+                <span style="flex: 1.2; text-align: right; font-variant-numeric: tabular-nums; color: #6f6857;">{{ h.price }}</span>
+                <span style="flex: 1.2; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600;">{{ h.value }}</span>
+                <span style="flex: 1.2; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; color: #2f6f4f;">{{ h.ret }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- ===================== SETTINGS ===================== -->
+      <sc-if value="{{ isSettings }}" hint-placeholder-val="{{ true }}">
+        <div class="tab-in" style="max-width: 720px; margin: 0 auto; padding: 40px 44px 60px;">
+          <div style="margin-bottom: 28px;">
+            <div style="font-size: 12px; letter-spacing: .12em; text-transform: uppercase; color: #a49c8c; margin-bottom: 6px;">Configuration</div>
+            <h1 style="font-family: 'Instrument Serif', serif; font-weight: 400; font-size: 40px; margin: 0; letter-spacing: -.5px;">Settings</h1>
+          </div>
+
+          <div style="animation: fadeUp .5s cubic-bezier(.2,.7,.3,1) both; background: #fff; border: 1px solid #e7e1d5; border-radius: 18px; padding: 24px; margin-bottom: 18px;">
+            <div style="font-size: 15px; font-weight: 600; margin-bottom: 4px;">LLM provider &amp; model</div>
+            <div style="font-size: 13px; color: #8b8474; margin-bottom: 16px;">Which engine answers your questions.</div>
+            <div style="font-size: 12px; color: #a49c8c; margin-bottom: 7px;">Provider</div>
+            <div style="display: inline-flex; background: #f2efe8; border: 1px solid #e2dccf; border-radius: 12px; padding: 4px; margin-bottom: 18px;">
+              <sc-for list="{{ providers }}" as="p" hint-placeholder-count="3">
+                <button onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.label }}</button>
+              </sc-for>
+            </div>
+            <div style="font-size: 12px; color: #a49c8c; margin-bottom: 7px;">Model</div>
+            <input style="width: 100%; background: #faf8f4; border: 1px solid #e2dccf; border-radius: 10px; padding: 11px 14px; font-size: 14px; color: #23201b; transition: border-color .15s ease;" value="{{ model }}">
+            <div style="margin-top: 18px;">
+              <button style="background: #2f6f4f; color: #fff; border: none; border-radius: 10px; padding: 10px 22px; font-size: 14px; font-weight: 600; cursor: pointer;">Save provider</button>
+            </div>
+          </div>
+
+          <div style="animation: fadeUp .5s cubic-bezier(.2,.7,.3,1) both; animation-delay: 70ms; background: #fff; border: 1px solid #e7e1d5; border-radius: 18px; padding: 24px; margin-bottom: 18px;">
+            <div style="font-size: 15px; font-weight: 600; margin-bottom: 4px;">API keys</div>
+            <div style="font-size: 13px; color: #8b8474; margin-bottom: 16px;">Stored encrypted. Leave blank to keep the current key.</div>
+            <div style="font-size: 12px; color: #a49c8c; margin-bottom: 7px;">Anthropic API key</div>
+            <input type="password" style="width: 100%; background: #faf8f4; border: 1px solid #e2dccf; border-radius: 10px; padding: 11px 14px; font-size: 14px; color: #23201b; margin-bottom: 14px; transition: border-color .15s ease;" placeholder="sk-ant-••••••••••••4f2a">
+            <div style="font-size: 12px; color: #a49c8c; margin-bottom: 7px;">OpenAI API key</div>
+            <input type="password" style="width: 100%; background: #faf8f4; border: 1px solid #e2dccf; border-radius: 10px; padding: 11px 14px; font-size: 14px; color: #23201b; transition: border-color .15s ease;" placeholder="sk-••••••••••••9c1b">
+            <div style="margin-top: 18px;">
+              <button style="background: #2f6f4f; color: #fff; border: none; border-radius: 10px; padding: 10px 22px; font-size: 14px; font-weight: 600; cursor: pointer;">Save keys</button>
+            </div>
+          </div>
+
+          <div style="animation: fadeUp .5s cubic-bezier(.2,.7,.3,1) both; animation-delay: 140ms; background: #fff; border: 1px solid #e7e1d5; border-radius: 18px; padding: 24px;">
+            <div style="font-size: 15px; font-weight: 600; margin-bottom: 16px;">Preferences</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 18px;">
+              <div>
+                <div style="font-size: 12px; color: #a49c8c; margin-bottom: 7px;">Base currency</div>
+                <input style="width: 100%; background: #faf8f4; border: 1px solid #e2dccf; border-radius: 10px; padding: 11px 14px; font-size: 14px; color: #23201b; transition: border-color .15s ease;" value="USD">
+              </div>
+              <div>
+                <div style="font-size: 12px; color: #a49c8c; margin-bottom: 7px;">Price data source</div>
+                <input style="width: 100%; background: #faf8f4; border: 1px solid #e2dccf; border-radius: 10px; padding: 11px 14px; font-size: 14px; color: #23201b; transition: border-color .15s ease;" value="coingecko">
+              </div>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; padding: 14px 0; border-top: 1px solid #f0ece3;">
+              <div>
+                <div style="font-size: 14px; font-weight: 500;">Live price refresh</div>
+                <div style="font-size: 12px; color: #8b8474;">Pull quotes every 15 minutes.</div>
+              </div>
+              <div onClick="{{ toggleLive }}" style="{{ toggleTrack }}">
+                <span style="{{ toggleKnob }}"></span>
+              </div>
+            </div>
+            <div style="margin-top: 12px;">
+              <button style="background: #2f6f4f; color: #fff; border: none; border-radius: 10px; padding: 10px 22px; font-size: 14px; font-weight: 600; cursor: pointer;">Save preferences</button>
+            </div>
+          </div>
+        </div>
+      </sc-if>
+
+    </main>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1240,&quot;height&quot;:820}}">
+class Component extends DCLogic {
+  state = { tab: 'cashflow', p: 0, period: 'this_month', traceOpen: false, provider: 'claude', live: true };
+
+  componentDidMount() { this.animate(); }
+
+  animate() {
+    const start = performance.now(), dur = 1100;
+    const ease = t => 1 - Math.pow(1 - t, 3);
+    const step = now => {
+      const t = Math.min(1, (now - start) / dur);
+      this.setState({ p: ease(t) });
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  setTab(tab) {
+    this.setState({ tab });
+    if (tab === 'cashflow' || tab === 'investments') this.setState({ p: 0 }, () => this.animate());
+  }
+
+  money(n) {
+    const v = Math.round(n);
+    return (v < 0 ? '-$' : '$') + Math.abs(v).toLocaleString('en-US');
+  }
+
+  // ---- icons -------------------------------------------------------------
+  icon(name) {
+    const h = React.createElement;
+    const p = { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round', strokeLinejoin: 'round' };
+    const paths = {
+      cashflow: [h('path', { key: 1, d: 'M3 3v18h18' }), h('path', { key: 2, d: 'M7 14l3-3 3 3 5-6' })],
+      chat: [h('path', { key: 1, d: 'M21 12a8 8 0 0 1-11.5 7.2L4 20l1-4.3A8 8 0 1 1 21 12z' })],
+      investments: [h('path', { key: 1, d: 'M3 17l5-5 3 3 8-8' }), h('path', { key: 2, d: 'M15 7h5v5' })],
+      settings: [h('circle', { key: 1, cx: 12, cy: 12, r: 3 }), h('path', { key: 2, d: 'M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 4.6 15H4.5a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 11 4.6V4.5a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0 1.1 2.7h.1a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.1.9z' })],
+    };
+    return h('svg', p, paths[name]);
+  }
+
+  // ---- charts ------------------------------------------------------------
+  donutEl(items, total, size) {
+    const h = React.createElement;
+    const r = size / 2 - 13, cx = size / 2, C = 2 * Math.PI * r, p = this.state.p;
+    let acc = 0;
+    const rings = items.map((it, i) => {
+      const frac = it.val / total;
+      const rot = acc * 360 - 90;
+      acc += frac;
+      return h('circle', {
+        key: i, cx, cy: cx, r, fill: 'none', stroke: it.color, strokeWidth: 15,
+        strokeDasharray: `${C * frac * p} ${C}`,
+        transform: `rotate(${rot} ${cx} ${cx})`,
+        style: { transition: 'stroke-dasharray .1s linear' },
+      });
+    });
+    return h('svg', { width: size, height: size, style: { flexShrink: 0 } }, rings);
+  }
+
+  trendEl() {
+    const h = React.createElement;
+    const w = 380, ht = 150, padX = 6, top = 12, bot = 118, max = 9200, p = this.state.p;
+    const inc = [7600, 7900, 8100, 7700, 8600, 8240];
+    const exp = [5400, 6100, 5000, 5800, 5300, 5180];
+    const x = i => padX + i * (w - 2 * padX) / 5;
+    const y = v => top + (1 - v / max) * (bot - top);
+    const line = arr => arr.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
+    const area = `${line(inc)} L${x(5)} ${bot} L${x(0)} ${bot} Z`;
+    return h('svg', { width: '100%', viewBox: `0 0 ${w} ${ht}`, style: { display: 'block' } }, [
+      h('path', { key: 'a', d: area, fill: '#2f6f4f', opacity: 0.06 * p }),
+      h('path', { key: 'i', d: line(inc), fill: 'none', stroke: '#2f6f4f', strokeWidth: 2.4, strokeLinecap: 'round', strokeLinejoin: 'round', pathLength: 1, strokeDasharray: 1, strokeDashoffset: 1 - p }),
+      h('path', { key: 'e', d: line(exp), fill: 'none', stroke: '#b5503f', strokeWidth: 2, strokeDasharray: '5 5', strokeLinecap: 'round', strokeLinejoin: 'round', opacity: p }),
+      h('circle', { key: 'di', cx: x(5), cy: y(inc[5]), r: 3.5, fill: '#2f6f4f', opacity: p }),
+      h('circle', { key: 'de', cx: x(5), cy: y(exp[5]), r: 3.5, fill: '#b5503f', opacity: p }),
+    ]);
+  }
+
+  navStyle(id) {
+    const active = this.state.tab === id;
+    return `display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:12px;font-size:14px;font-weight:${active ? 600 : 500};cursor:pointer;transition:background .2s ease,color .2s ease;color:${active ? '#f2efe8' : '#6f6857'};background:${active ? '#23201b' : 'transparent'};`;
+  }
+
+  pillStyle(v) {
+    const active = this.state.period === v;
+    return `border:none;border-radius:999px;padding:7px 15px;font-size:13px;font-weight:${active ? 600 : 500};cursor:pointer;transition:all .2s ease;color:${active ? '#f2efe8' : '#8b8474'};background:${active ? '#23201b' : 'transparent'};`;
+  }
+
+  segStyle(v) {
+    const active = this.state.provider === v;
+    return `border:none;border-radius:9px;padding:8px 18px;font-size:14px;font-weight:${active ? 600 : 500};cursor:pointer;transition:all .2s ease;color:${active ? '#23201b' : '#8b8474'};background:${active ? '#fff' : 'transparent'};box-shadow:${active ? '0 1px 2px rgba(40,34,24,.12)' : 'none'};`;
+  }
+
+  renderVals() {
+    const p = this.state.p;
+    const cats = [
+      { name: 'Housing', val: 2100, color: '#2f6f4f' },
+      { name: 'Food & drink', val: 980, color: '#5a8f73' },
+      { name: 'Shopping', val: 720, color: '#d8b26a' },
+      { name: 'Transport', val: 540, color: '#8fae9c' },
+      { name: 'Utilities', val: 410, color: '#b5503f' },
+      { name: 'Other', val: 430, color: '#c8c1b5' },
+    ];
+    const catTotal = cats.reduce((s, c) => s + c.val, 0);
+
+    const alloc = [
+      { name: 'Bitcoin', val: 11016, color: '#d8b26a' },
+      { name: 'Ethereum', val: 8112, color: '#5a8f73' },
+      { name: 'Apple', val: 4708, color: '#2f6f4f' },
+      { name: 'Vanguard S&P 500', val: 4482, color: '#8fae9c' },
+    ];
+    const allocTotal = alloc.reduce((s, a) => s + a.val, 0);
+
+    const nav = [
+      { id: 'cashflow', label: 'Cashflow' },
+      { id: 'chat', label: 'Chat' },
+      { id: 'investments', label: 'Investments' },
+      { id: 'settings', label: 'Settings' },
+    ];
+    const periods = [
+      { value: 'this_week', label: 'Week' },
+      { value: 'this_month', label: 'Month' },
+      { value: 'last_month', label: 'Last' },
+      { value: 'this_year', label: 'Year' },
+    ];
+    const provs = ['ollama', 'claude', 'openai'];
+    const modelBy = { ollama: 'gemma3:27b', claude: 'claude-haiku-4-5', openai: 'gpt-4o-mini' };
+
+    return {
+      // nav / tabs
+      navItems: nav.map(n => ({ label: n.label, icon: this.icon(n.id), style: this.navStyle(n.id), onClick: () => this.setTab(n.id) })),
+      isCashflow: this.state.tab === 'cashflow',
+      isChat: this.state.tab === 'chat',
+      isInvestments: this.state.tab === 'investments',
+      isSettings: this.state.tab === 'settings',
+      periods: periods.map(o => ({ label: o.label, style: this.pillStyle(o.value), onClick: () => this.setState({ period: o.value, p: 0 }, () => this.animate()) })),
+
+      // cashflow numbers
+      netWorth: this.money(50460 * p),
+      netDelta: this.money(3060 * p),
+      income: this.money(8240 * p),
+      expense: this.money(5180 * p),
+      net: this.money(3060 * p),
+
+      // charts
+      donut: this.donutEl(cats, catTotal, 130),
+      trend: this.trendEl(),
+      legend: cats.map(c => ({ name: c.name, color: c.color, amount: this.money(c.val) })),
+
+      accounts: [
+        { name: 'Everyday Checking', type: 'Chase · 4021', badge: 'EC', balance: this.money(12480), color: '#23201b', delta: '+$640', deltaColor: '#2f6f4f' },
+        { name: 'High-Yield Savings', type: 'Ally · 8817', badge: 'HY', balance: this.money(38900), color: '#23201b', delta: '+$210', deltaColor: '#2f6f4f' },
+        { name: 'Sapphire Card', type: 'Chase · 1109', badge: 'SC', balance: this.money(-1240), color: '#b5503f', delta: '-$1,240', deltaColor: '#b5503f' },
+        { name: 'Cash wallet', type: 'Manual', badge: '$', balance: this.money(320), color: '#23201b', delta: '—', deltaColor: '#a49c8c' },
+      ],
+      txs: [
+        { merchant: 'Whole Foods Market', category: 'Food & drink', date: 'Jul 16', amount: '-$84.20', color: '#b5503f', tint: '#f4ede0', icon: '🛒' },
+        { merchant: 'Monthly salary', category: 'Income', date: 'Jul 15', amount: '+$8,240.00', color: '#2f6f4f', tint: '#e6efe9', icon: '💼' },
+        { merchant: 'Pacific Gas & Electric', category: 'Utilities', date: 'Jul 14', amount: '-$132.40', color: '#b5503f', tint: '#f4ede0', icon: '⚡' },
+        { merchant: 'Uber', category: 'Transport', date: 'Jul 13', amount: '-$18.60', color: '#b5503f', tint: '#eef1ec', icon: '🚗' },
+        { merchant: 'Transfer to Savings', category: 'Transfer', date: 'Jul 12', amount: '-$1,000.00', color: '#8b8474', tint: '#eef1ec', icon: '↔' },
+      ],
+
+      // chat
+      traceOpen: this.state.traceOpen,
+      traceCaret: this.state.traceOpen ? '▴' : '▾',
+      toggleTrace: () => this.setState(s => ({ traceOpen: !s.traceOpen })),
+
+      // investments
+      investTotal: this.money(28318 * p),
+      investDelta: this.money(4318 * p),
+      allocDonut: this.donutEl(alloc, allocTotal, 120),
+      allocLegend: alloc.map(a => ({ name: a.name, color: a.color, pct: Math.round(a.val / allocTotal * 100) + '%' })),
+      holdings: [
+        { ticker: 'BTC', name: 'Bitcoin', color: '#d8b26a', units: '0.180', price: '$61,200', value: '$11,016', ret: '+28.1%' },
+        { ticker: 'ETH', name: 'Ethereum', color: '#5a8f73', units: '2.400', price: '$3,380', value: '$8,112', ret: '+12.7%' },
+        { ticker: 'AAPL', name: 'Apple', color: '#2f6f4f', units: '22.00', price: '$214.00', value: '$4,708', ret: '+12.6%' },
+        { ticker: 'VOO', name: 'Vanguard S&P 500', color: '#8fae9c', units: '9.000', price: '$498.00', value: '$4,482', ret: '+11.5%' },
+      ],
+
+      // settings
+      providers: provs.map(v => ({ label: v, style: this.segStyle(v), onClick: () => this.setState({ provider: v }) })),
+      model: modelBy[this.state.provider],
+      toggleLive: () => this.setState(s => ({ live: !s.live })),
+      toggleTrack: `width:44px;height:26px;border-radius:999px;padding:3px;cursor:pointer;transition:background .2s ease;background:${this.state.live ? '#2f6f4f' : '#d8d2c6'};`,
+      toggleKnob: `display:block;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .2s ease;transform:translateX(${this.state.live ? 18 : 0}px);`,
+    };
+  }
+}
+</script>
+</body>
+</html>
