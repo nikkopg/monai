@@ -193,11 +193,12 @@
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Schema Foundation + Auth | 3/3 | Complete   | 2026-06-21 |
-| 2. Agentic Loop + Confirm-Before-Write | 2/3 | In Progress|  |
+| 2. Agentic Loop + Confirm-Before-Write | 3/3 | Complete (verified 2026-07-16 — 7/7, 59 tests) | 2026-07-16 |
 | 3. Multi-Page UI Shell + Settings | 3/3 | Complete   | 2026-07-04 |
 | 4. Cashflow Dashboard + CRUD | 7/7 | Complete   | 2026-07-06 |
-| 5. Investment Subsystem | 6/6 | Complete   | 2026-07-11 |
+| 5. Investment Subsystem | 6/6 | Complete (verified 2026-07-16 — 6/6, 95 tests + live probes) | 2026-07-11 |
 | 6. MCP Server | 2/2 | Complete   | 2026-07-15 |
+| 7. Investment Subsystem v2 (multi-platform, multi-currency, cash, gold, viz) | 5/5 | Complete (3 human-verify visual items) | 2026-07-13 |
 
 ---
 
@@ -239,8 +240,9 @@
 | MCP-02 | Phase 6 |
 | MCP-03 | Phase 6 |
 | MCP-04 | Phase 6 |
+| INVX-01 | Phase 7 |
 
-All 30 v1 requirements mapped. No orphans.
+All 30 v1 requirements mapped, plus INVX-01 (promoted from v2 backlog into Phase 7). No orphans.
 
 ---
 

@@ -55,10 +55,10 @@ Requirements for this cycle. Each maps to a roadmap phase.
 
 ### Pages & Settings
 
-- [ ] **UI-01**: App has distinct Chat, Cashflow, Investment, and Settings pages
-- [ ] **UI-02**: Shared navigation lets the user move between all pages
-- [ ] **UI-03**: Settings page lets the user configure the LLM provider/model and API keys in-UI
-- [ ] **UI-04**: Settings page lets the user configure base currency and the price data source
+- [x] **UI-01**: App has distinct Chat, Cashflow, Investment, and Settings pages
+- [x] **UI-02**: Shared navigation lets the user move between all pages
+- [x] **UI-03**: Settings page lets the user configure the LLM provider/model and API keys in-UI
+- [x] **UI-04**: Settings page lets the user configure base currency and the price data source
 
 ## v2 Requirements
 
@@ -106,10 +106,10 @@ Which phases cover which requirements. Populated during roadmap creation.
 | CHAT-06 | Phase 2: Agentic Loop + Confirm-Before-Write | Complete |
 | CHAT-07 | Phase 2: Agentic Loop + Confirm-Before-Write | Complete |
 | CHAT-08 | Phase 2: Agentic Loop + Confirm-Before-Write | Complete |
-| UI-01 | Phase 3: Multi-Page UI Shell + Settings | Pending |
-| UI-02 | Phase 3: Multi-Page UI Shell + Settings | Pending |
-| UI-03 | Phase 3: Multi-Page UI Shell + Settings | Pending |
-| UI-04 | Phase 3: Multi-Page UI Shell + Settings | Pending |
+| UI-01 | Phase 3: Multi-Page UI Shell + Settings | Complete |
+| UI-02 | Phase 3: Multi-Page UI Shell + Settings | Complete |
+| UI-03 | Phase 3: Multi-Page UI Shell + Settings | Complete |
+| UI-04 | Phase 3: Multi-Page UI Shell + Settings | Complete |
 | CASH-01 | Phase 4: Cashflow Dashboard + CRUD | Complete |
 | CASH-02 | Phase 4: Cashflow Dashboard + CRUD | Complete |
 | CASH-03 | Phase 4: Cashflow Dashboard + CRUD | Complete |
@@ -118,13 +118,13 @@ Which phases cover which requirements. Populated during roadmap creation.
 | CASH-06 | Phase 4: Cashflow Dashboard + CRUD | Complete |
 | CASH-07 | Phase 4: Cashflow Dashboard + CRUD | Complete |
 | CASH-08 | Phase 4: Cashflow Dashboard + CRUD | Complete |
-| INV-01 | Phase 5: Investment Subsystem | In Progress |
-| INV-02 | Phase 5: Investment Subsystem | In Progress |
-| INV-03 | Phase 5: Investment Subsystem | In Progress |
-| INV-04 | Phase 5: Investment Subsystem | In Progress |
-| INV-05 | Phase 5: Investment Subsystem | In Progress |
-| INV-06 | Phase 5: Investment Subsystem | In Progress |
-| INV-07 | Phase 5: Investment Subsystem | In Progress |
+| INV-01 | Phase 5: Investment Subsystem | Complete |
+| INV-02 | Phase 5: Investment Subsystem | Complete |
+| INV-03 | Phase 5: Investment Subsystem | Complete |
+| INV-04 | Phase 5: Investment Subsystem | Complete |
+| INV-05 | Phase 5: Investment Subsystem | Complete |
+| INV-06 | Phase 5: Investment Subsystem | Complete |
+| INV-07 | Phase 5: Investment Subsystem | Complete |
 | CHAT-03 | Phase 5: Investment Subsystem | Complete |
 | INVX-01 | Phase 7: Investment Subsystem v2 | Complete |
 | MCP-01 | Phase 6: MCP Server | Complete |
