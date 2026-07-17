@@ -29,41 +29,21 @@ data without your say-so.
 - ✓ Multi-provider LLM config (Ollama / Claude / OpenAI) — existing
 - ✓ Full Docker Compose stack (Postgres + FastAPI + Next.js) — existing
 - ✓ Honest-refusal failure philosophy (refuse > confident wrong number) — existing
-- ✓ Alembic-managed schema (non-destructive on live data) + 5 forward-looking tables (audit_log, proposals, holdings, portfolio_events, price_cache) + Decimal money type + API-key auth on write endpoints with server-side Next.js proxy — validated in Phase 1 (FND-01/02/03)
+- ✓ Alembic-managed schema (non-destructive on live data) + 5 forward-looking tables (audit_log, proposals, holdings, portfolio_events, price_cache) + Decimal money type + API-key auth on write endpoints with server-side Next.js proxy — v1.0 (FND-01/02/03)
+- ✓ Agentic chat: multi-step reasoning loop that plans and chains multiple safe parameterized tools, never emits SQL, refuses honestly — v1.0 (CHAT-01/02/08)
+- ✓ Confirm-before-write agent edits (add/edit/delete transactions, accounts, categories, holdings) via single-use, operation-scoped proposal tokens + audit log — v1.0 (CHAT-04/05/06/07)
+- ✓ Spending↔portfolio correlation queries via chat — v1.0 (CHAT-03)
+- ✓ Single MCP server (FastMCP co-mounted in FastAPI) powering web chat + external clients; read-only tools to external clients, auth-required — v1.0 (MCP-01/02/03/04)
+- ✓ Cashflow dashboard (totals, category donut, income-vs-expense, month trend, per-account balances) + full transaction/account CRUD + category rename/merge + CSV upload — v1.0 (CASH-01..08)
+- ✓ Investment subsystem: holdings CRUD, live prices (CoinGecko/yfinance/manual fallback), staleness badges, portfolio value + per-holding P&L, portfolio events — v1.0 (INV-01..07)
+- ✓ Multi-platform / multi-currency (USD→IDR) holdings, cash + physical-gold asset types, allocation pie + historical value/P&L charts — v1.0 (INVX-01, Phase 7)
+- ✓ Four-page app (Chat / Cashflow / Investment / Settings) with shared nav; Settings configures LLM provider/model + API keys + base currency + price source in-UI — v1.0 (UI-01..04)
 
 ### Active
 
-<!-- This cycle's scope. Hypotheses until shipped and validated. -->
+<!-- Next cycle's scope. Empty until v1.1 requirements are defined. -->
 
-**Agentic chat + MCP**
-- [ ] Chat is agentic: a multi-step reasoning loop that plans, chains multiple tools, and reflects over results
-- [ ] Agent uses only safe parameterized tools — no free-form SQL (correctness-by-construction preserved)
-- [ ] Agent can answer spending↔portfolio correlation questions (e.g. "since I bought X, how has my eating-out changed?")
-- [ ] Agent can perform write actions: add/edit/delete transactions, accounts, categories, holdings
-- [ ] Every write is **confirm-before-applying**: agent proposes the exact change, nothing is written until the user approves in the UI
-- [ ] Writes are validated and recorded in an audit log
-- [ ] All tools exposed via a single MCP server
-- [ ] MCP server powers both the web chat and external MCP clients (Claude Desktop / IDE)
-- [ ] External MCP clients get read/query tools only; write tools are web-app-only
-
-**Cashflow tracker**
-- [ ] Dashboard: spending/income overview with charts and summaries
-- [ ] Full CRUD on transactions (create, edit, delete) in the UI
-- [ ] Account management (view, create, edit, delete) in the UI
-- [ ] Category management (view, rename, merge) in the UI
-- [ ] CSV import available from the UI (file upload)
-
-**Investments**
-- [ ] Holdings management: insert / edit / remove holdings (ticker, quantity, avg cost, purchase date, currency)
-- [ ] Fetch current live market prices for held instruments
-- [ ] Show current portfolio value and per-holding P&L
-- [ ] Cover IDX stocks, crypto, and mutual funds / other instruments
-- [ ] Manual / last-known-price fallback for instruments without a live price source
-
-**Pages & navigation**
-- [ ] Distinct pages: Chat, Cashflow, Investment, Settings
-- [ ] Shared navigation across pages
-- [ ] Settings page exposes configurable parameters in-UI (LLM provider/model, API keys, base currency, price data source)
+(None yet — define with `/gsd:new-milestone`. Deferred v2 candidates: QRY-01 recurring-charge detection, QRY-02 compare two arbitrary periods, QRY-03 token-by-token streaming, INVX-02 automated reksadana NAV feed.)
 
 ### Out of Scope
 
@@ -72,11 +52,19 @@ data without your say-so.
 - Multi-user / accounts & permissions — single-user self-hosted app by design
 - Bank sync / aggregation — PCI scope, out of project goals
 - Budget/envelope tracking — not core to the spending+investment AI value
-- Multi-currency normalization (`base_currency`/`fx_rate`) — parked; 0/5608 rows skipped, single-currency IDR holds. Revisit only if a foreign-currency account is added
+- Multi-currency normalization for *spending* — single-currency IDR holds (0/5608 rows skipped). NOTE: *investment* multi-currency (USD→IDR conversion, native-currency cost basis) shipped in v1.0 Phase 7; spending stays IDR-only
 - Weather correlation, AI market-news filtering — recorded as non-goals in prior design
 - Public v2 / open-source release (CI, Docker Hub, public README) — defer until this cycle is in daily use
 - Agent free-form SQL generation — deliberately excluded; reintroduces confident-wrong-number risk that caused the original tool-router pivot
 - Write tools over MCP to external clients — writes stay in the web app this cycle
+
+## Current State
+
+**Shipped v1.0** (2026-07-17) — Phases 1-7, 30 plans, 35/35 requirements, milestone audit passed. monai is now a four-page agentic personal-finance app (chat / cashflow / investments / settings) with confirm-before-write agent edits, a live-priced multi-platform/multi-currency investment subsystem (cash + gold, allocation + historical charts), and a read-only MCP server for external clients. Stack: FastAPI + PostgreSQL (Alembic-managed) + Next.js, LlamaIndex FunctionAgent, FastMCP.
+
+**Known non-blocking debt carried into v1.1:** `/mcp/` trailing-slash auth test suggested; `_execute_proposal_payload` delete_holding branch drift vs `writes.apply_delete_holding`; a few human-verify visual-only items (streaming ProposalCard render, staleness badge pixels, non-deterministic live-LLM tool selection) — backend contracts all verified programmatically.
+
+**Next milestone goals (v1.1 — to be defined via `/gsd:new-milestone`):** candidates are the deferred v2 items — recurring-charge/subscription detection (QRY-01), arbitrary two-period comparison (QRY-02), token-by-token streaming (QRY-03), automated reksadana NAV feed (INVX-02) — plus paying down the debt above.
 
 ## Context
 
@@ -101,13 +89,14 @@ data without your say-so.
 
 | Decision | Rationale | Outcome |
 |----------|-----------|---------|
-| Agent reasons + chains *safe parameterized tools* only (no free SQL) | Preserves the correctness-by-construction win from the original tool-router pivot | — Pending |
-| Agent writes use confirm-before-applying (human-in-the-loop) + audit log | Money app: never mutate user data without explicit approval | — Pending |
-| One MCP server powers web chat + external clients | Single tool surface, reusable from Claude Desktop/IDE | — Pending |
-| External MCP clients get read tools only; writes web-app-only | Keep destructive actions behind the app's confirmation UI; smaller attack surface | — Pending |
-| Spending↔portfolio correlation queries included (via chat) | The documented differentiator; agentic loop makes it natural | — Pending |
-| Investments cover IDX / crypto / mutual funds with manual price fallback | Matches the user's actual portfolio; IDX/reksadana lack reliable free price APIs | — Pending |
-| Settings page for in-UI configuration | Easier setup without editing env vars | — Pending |
+| Agent reasons + chains *safe parameterized tools* only (no free SQL) | Preserves the correctness-by-construction win from the original tool-router pivot | ✓ Good — v1.0 |
+| Agent writes use confirm-before-applying (human-in-the-loop) + audit log | Money app: never mutate user data without explicit approval | ✓ Good — v1.0 (UUID+TTL single-use tokens) |
+| One MCP server powers web chat + external clients | Single tool surface, reusable from Claude Desktop/IDE | ✓ Good — v1.0 (FastMCP co-mounted, live UAT 5/5) |
+| External MCP clients get read tools only; writes web-app-only | Keep destructive actions behind the app's confirmation UI; smaller attack surface | ✓ Good — v1.0 |
+| Spending↔portfolio correlation queries included (via chat) | The documented differentiator; agentic loop makes it natural | ✓ Good — v1.0 |
+| Investments cover IDX / crypto / mutual funds with manual price fallback | Matches the user's actual portfolio; IDX/reksadana lack reliable free price APIs | ✓ Good — v1.0 |
+| Settings page for in-UI configuration | Easier setup without editing env vars | ✓ Good — v1.0 |
+| Holdings identity = `(ticker, platform_id)`, native-currency cost basis, cash + gold asset types | Real dogfooding showed users hold the same asset across platforms and in multiple currencies | ✓ Good — v1.0 Phase 7 (added mid-milestone) |
 
 ## Evolution
 
@@ -127,4 +116,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-06-21 — Phase 1 (Schema Foundation + Auth) complete*
+*Last updated: 2026-07-17 after v1.0 milestone*
