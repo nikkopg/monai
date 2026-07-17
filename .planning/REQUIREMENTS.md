@@ -51,4 +51,17 @@ Design language (from the mockup, authoritative):
 
 ## Traceability
 
-<!-- Filled by the roadmapper: REQ-ID → Phase. -->
+| Requirement | Phase | Status |
+|-------------|-------|--------|
+| UIR-01 | Phase 8 | Pending |
+| UIR-02 | Phase 8 | Pending |
+| UIR-03 | Phase 8 | Pending |
+| UIR-04 | Phase 9 | Pending |
+| UIR-05 | Phase 9 | Pending |
+| UIR-06 | Phase 10 | Pending |
+| UIR-07 | Phase 10 | Pending |
+| UIR-08 | Phase 10 | Pending |
+| UIR-09 | Phase 10 | Pending |
+| UIR-10 | Phase 10 | Pending |
+
+**Coverage:** 10/10 v1.1 requirements mapped. No orphans.
