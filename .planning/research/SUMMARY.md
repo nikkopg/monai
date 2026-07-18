@@ -1,289 +1,172 @@
 # Project Research Summary
 
-**Project:** monai
-**Domain:** Self-hosted single-user agentic personal-finance app (cashflow + investments + MCP server)
-**Researched:** 2026-06-21
-**Confidence:** HIGH (core stack, architecture, agent patterns, Alembic, charting) / MEDIUM (IDX prices) / LOW (reksadana prices)
+**Project:** monai — v1.2 "Connected Ledger — Liquids ↔ Investments"
+**Domain:** Personal-finance web app; integrating typed accounts, paired transfers, atomic buy/sell, cross-currency entry, and a category hierarchy onto an existing live FastAPI + PostgreSQL + Next.js vertical slice
+**Researched:** 2026-07-18
+**Confidence:** HIGH
 
 ## Executive Summary
 
-monai is a brownfield FastAPI + PostgreSQL + Next.js personal-finance app being extended into a full agentic application with write capability, investment tracking, multi-page UI, and an MCP server. The established tool-router philosophy — LLM selects parameterized tools, never emits SQL — is load-bearing and must be carried through the agentic upgrade. All four research streams converge on the same build order: Alembic schema migrations first, then the agentic loop with confirm-before-write, then the multi-page UI, then the investment subsystem, and finally the MCP server as a thin wrapper over the already-proven tool registry.
+v1.2 is a schema-and-integration milestone, not a new-capability milestone. Every feature — net worth dashboard, account/platform managers, Records ledger, liquid↔investment transfers, atomic buy/sell, USD→IDR dual-amount entry, and first-class 3-level categories — is fully covered by the existing FastAPI + SQLAlchemy + Alembic + Next.js stack. Zero new dependencies are needed; the stack research is explicitly a "what NOT to add" defense (no virtualization libs, no table libs, no FX SDKs, no tree-view components, no state-management libs). The real work is disciplined data modeling and migration sequencing against a live 5-year, 5,608-row dataset with two known landmines confirmed today: 74 distinct category strings need a reviewed mapping (not an automatic one), and all 4 existing accounts have `type = NULL` and must be manually audited, not defaulted.
 
-The single biggest structural risk is **schema migration**: the existing `Base.metadata.create_all()` is a silent no-op on any column or table added to an existing Postgres volume. Alembic must be introduced before any new table (holdings, proposals, audit_log, price_cache) is defined. The second load-bearing safety requirement is **confirm-before-write**: every agent-initiated write must go through a backend-persisted `proposals` table with a single-use token scoped to the exact proposed operation — not a session-level or reusable approval. Shipping write tools without this gate is not an option.
+The architecture is already shaped for this: `backend/writes.py` is a proven single-choke-point mutation layer (`apply_*` functions, never self-committing), `_execute_proposal_payload` already loops multi-row payloads under one `db.commit()`, and `is_transfer` already excludes transfer rows from every spending/income read tool. The critical design insight from architecture research is that liquid→investment transfers should NOT be modeled as symmetric Transaction↔Transaction pairs (that would recreate a synthetic "platform cash account" and reintroduce the exact double-count bug this milestone fixes) — instead they're Transaction↔PortfolioEvent pairs via a new `portfolio_events.source_account_id` FK, while liquid↔liquid transfers keep the existing Transaction↔Transaction pairing via a new `transfer_pair_id` column (deliberately deferred from v1, now due).
 
-Price data is the highest-uncertainty area. CoinGecko (crypto) is solid and free. IDX stocks via yfinance are fragile but viable for MVP; Sectors.app is the production-quality IDX option pending free-tier confirmation. Indonesian reksadana has **no reliable free API** — manual last-known-price entry with a `fetched_at` + `price_source` staleness model is mandatory from day one, not a later refinement. All three price sources must store `fetched_at` and display freshness to the user; displaying a bare price number without provenance destroys trust in a money app.
+The dominant risk category is silent correctness regression, not build complexity: promoting `accounts.type` from decorative to load-bearing without an audit + CHECK constraint reintroduces the double-count bug on day one of the headline feature; migrating 74 free-string categories without a human-reviewed mapping either explodes into near-duplicate leaves or silently drops transactions from category totals — both directly violate the project's "never fabricate a number" principle. Mitigation is uniform across all of these: audit live data before writing migration DDL, use closed-set constraints instead of free strings, run row/sum parity assertions inside the migration itself, and route every new mutation through the existing `writes.py` + dual-tool-registration conventions this project has already been burned by twice (memory: `chat-tool-dual-registration`, `TOOLS registry mutates to 26`).
 
 ## Key Findings
 
 ### Recommended Stack
 
-The existing stack (FastAPI, PostgreSQL 16, SQLAlchemy 2 / psycopg3, Next.js 14.2 / React 18, LlamaIndex Core) is retained without re-platforming. All additions are additive packages.
-
-The agentic layer requires upgrading `llama-index-core` to `>=0.14.0` and using `AgentWorkflow` + `FunctionAgent` — the current LlamaIndex-endorsed pattern. `AgentRunner` and `FunctionCallingAgentWorker` are **explicitly deprecated and removed** in the 0.14 line. Do not install `llama-index-agent-openai` — it pins old versions and causes dependency conflicts. Human-in-the-loop is implemented via `InputRequiredEvent` / `HumanResponseEvent` from `llama_index.core.workflow`, which suspends the workflow until the user responds.
-
-The MCP server uses **FastMCP 3.4.2** (the official Pythonic MCP wrapper), mounted as an ASGI sub-app inside the existing FastAPI process at `/mcp` — one process, one port, no separate container. The Streamable HTTP transport (not SSE, not stdio) is the current MCP spec-recommended production transport. FastMCP 3.x requires its `lifespan` to be combined with FastAPI's lifespan or a `RuntimeError` at startup will result.
+No new dependencies. FastAPI, SQLAlchemy 2.0 + psycopg3, Alembic (migrations 009+), Next.js 14.2.15/React 18.3.1, and recharts cover every v1.2 feature via patterns already in the repo (`AccountManager.tsx`, `PlatformManager.tsx`, `TransactionModal.tsx`, `backend/fx.py`'s cache-first FX adapter). Explicitly rejected: virtualization libraries (dataset is 5,608 rows over 5 years; pagination caps rendered rows), table libraries (Records tab is a styled list, not a spreadsheet), FX/currency SDKs (`backend/fx.py` + `fx_rate_cache` already complete and tested), tree-view components (3 levels / ~100 category nodes fits a two-step `<select>`), icon libraries (app uses zero today), state-management libraries (existing fetch-on-mount + refetch-callback pattern suffices), and any Next.js/React major-version bump (pure risk, zero payoff this milestone).
 
 **Core technologies:**
-- `llama-index-core>=0.14.0`: `AgentWorkflow` + `FunctionAgent` + `InputRequiredEvent` / `HumanResponseEvent` — all agent and HITL primitives; no separate agent package needed
-- `fastmcp>=3.4.2`: MCP server; ASGI-mounted inside FastAPI; Streamable HTTP transport; one process/port
-- `alembic>=1.18.4`: schema migration — required before any new table is created; replaces `create_all`
-- `yfinance>=0.2.50`: IDX stock prices (`.JK` tickers); fragile but free; wrap every call in try/except
-- `httpx>=0.27.0`: CoinGecko REST calls (async-compatible); also for Sectors.app if adopted
-- `recharts^3.8.1`: React 18-compatible SVG charts (line, bar, donut); shadcn/ui-compatible; no canvas
-- No new package needed for reksadana — manual price entry is the correct choice
+- FastAPI + SQLAlchemy/psycopg3 — new endpoints and writes follow existing route/ORM patterns, no new abstractions needed
+- Alembic — migrations 009+ for categories table, `accounts.type` constraint, `transfer_pair_id`, `portfolio_events.source_account_id`
+- Next.js/React + recharts — new tabs/modals are compositions of existing components (`AccountManager.tsx`, `TransactionModal.tsx`, chart patterns from v1.0 Phase 7)
 
 ### Expected Features
 
-All four research areas agree on the feature scope and prioritization. The app has four surfaces: Cashflow Dashboard, Investment Tracker, Agentic Chat, and Settings.
+**Must have (table stakes, all P1 per FEATURES.md):**
+- `accounts.type` liquid/investment discriminator — fixes double-count, everything else depends on it
+- Account manager (liquid CRUD) + balance-adjustment records as a distinct, visible record type (not disguised as Expense)
+- Records tab: date-grouped ledger, transfer pairs shown as one collapsed row, filters, bulk actions
+- Record input modal (Expense/Income/Transfer segmented)
+- Platform manager (mirrors account manager) + platform detail (PnL + buy/sell history)
+- Liquid→investment transfers: paired, dual-amount cross-currency, user-overridable FX (never forced live-rate-only)
+- Buy/sell atomic write: one confirmation moves cash and updates holdings together
+- USD→IDR entry-time FX (dual-amount fields; existing FX cache for valuation only)
+- Categories as first-class 3-level hierarchy + management UI + migration
+- Category delete-reassignment guard: block-until-reassigned (matches BudgetBakers Wallet, the explicit reference product) — never silently orphan `category_id`
 
-**Must have (table stakes):**
-- Alembic migration baseline — prerequisite for everything else
-- API key auth (`MONAI_API_KEY`) on all write endpoints — prerequisite for write tools
-- Overview cards (income, expenses, net, account balances) — every finance app leads with this
-- Spending-by-category donut chart + income vs expense monthly bar chart — canonical finance visualizations
-- Transaction edit + delete (PUT/DELETE endpoints + inline UI) — users correct import errors constantly
-- Account CRUD — prerequisite for correct categorization
-- Category rename + merge — Wallet CSV categories are verbose; rename is prerequisite for merge
-- CSV upload from UI — without this, new installs require manual scripts
-- Holdings CRUD (ticker, quantity, avg cost, purchase date, currency, asset_type) — minimum viable investment tracker
-- Holdings table: current price, P&L, P&L%, portfolio total — derived from holdings x prices
-- `portfolio_events` log (buy/sell/dividend) — prerequisite for correlation queries
-- Manual / last-known-price fallback with `fetched_at` + `price_source` — mandatory for IDX and reksadana
-- Agentic multi-step loop (`AgentWorkflow` + `FunctionAgent`)
-- Confirm-before-write with backend-persisted `proposals` table + single-use token — non-negotiable safety gate
-- Audit log of applied writes — required for user trust
-- Read tools across both spending and investment domains
-- NL writes: add/edit/delete transaction, add/edit/delete holding (through proposal flow)
-- Settings page: LLM provider/model, API keys, price data source, Ollama base URL
-
-**Should have (differentiators):**
-- Spending + investment correlation queries ("since I bought BBCA, how has eating-out changed?") — the documented differentiator; no other self-hosted tool does this
-- Streaming / incremental chat response display — multi-step agent chains look like hangs without it
-- Holdings CSV import — faster than manual entry for existing portfolios
-- MCP server for external clients (Claude Desktop / IDE) — read tools only; unique in self-hosted finance
-- CoinGecko live price adapter (crypto) — well-served by free API
+**Should have (differentiators, P2 — not required for v1.2 completeness):**
+- Agentic chat can propose transfer/buy-sell/adjustment records (extends confirm-before-write pattern; depends on the write tools existing first)
+- Natural-language "why did net worth change" answers chaining existing spending/portfolio tools
 
 **Defer (v2+):**
-- Write tools over MCP to external clients — external clients get read-only tools this cycle
-- Richer trend tools: recurring-charge detection, period comparison, spend forecasting
-- Sectors.app / Bibit price adapters — depends on API key availability and free tier confirmation
-- Multi-currency normalization — 0/5608 rows are foreign-currency; not needed yet
-
-**Anti-features (explicitly excluded):**
-- Agent free-form SQL — reintroduces the confident-wrong-number failure mode
-- Bank sync / Open Banking — PCI scope
-- Multi-user — single-user self-hosted by design
-- Budget/envelope tracking — YNAB does this better
-- Real-time sub-minute price updates — no free API supports this for IDX; adds WebSocket complexity
+- Bank sync / auto-transfer-detection — explicitly out of scope (no bank feeds, high false-positive risk on manual/CSV data)
+- Bulk transfer-pair actions beyond delete (bulk re-date, bulk re-account)
+- Recurring-charge detection, automated reksadana NAV feed — already deferred elsewhere in PROJECT.md
 
 ### Architecture Approach
 
-The architecture follows a five-component backend pattern where `tools.py` is the single source of truth shared by both the web agent and the MCP server — no logic duplication. The agent (`agent.py`) runs the `FunctionAgent` loop; write tools return `ProposalDict` rather than writing to the DB; `proposals.py` stores pending writes in Postgres with a UUID token and TTL; the confirm endpoint validates the token, executes the write inside a single transaction, and logs to `audit_log`. The MCP server (`mcp_server.py`) imports only read tools from `tools.py` and is mounted at `/mcp` inside FastAPI.
-
-New tables: `proposals` (id, token, action, payload, preview, status, created_at, expires_at), `audit_log` (id, action, payload, source, proposal_id, committed_at), `holdings` (ticker, name, quantity, avg_cost, purchase_date, currency, asset_type, price_source, last_known_price, updated_at), `portfolio_events` (date, ticker, event_type, quantity, price, notes), `price_cache` (ticker, price, currency, source, fetched_at, ttl_seconds).
+Layered shape is unchanged; every new mutation must add one `apply_*` function to `backend/writes.py` (the single documented source of truth for both agent-proposal and direct-REST write paths) and route through the existing multi-row-payload/single-commit pattern in `_execute_proposal_payload`. The one architecturally load-bearing decision: liquid↔liquid transfers pair via `transactions.transfer_pair_id` (Transaction↔Transaction), while liquid→investment transfers pair via `portfolio_events.source_account_id` (Transaction↔PortfolioEvent) — investment money must never be modeled as a synthetic `accounts` row, or the double-count bug returns by construction. Because both transfer legs stay `is_transfer=true`, all 10+ existing `WHERE is_transfer=false` read-tool call sites need zero changes — a major point in the design's favor.
 
 **Major components:**
-1. `backend/tools.py` — single source of truth; pure functions; shared by agent loop and MCP server; no HTTP, no agent state
-2. `backend/agent.py` — `FunctionAgent` + `AgentWorkflow` wrapper; write tools return `ProposalDict`, not DB writes
-3. `backend/proposals.py` — `proposals` Postgres table + TTL + single-use token issuance and validation
-4. `backend/price_service.py` — pluggable adapters per asset class (CoinGecko / yfinance / manual); `price_cache` table with per-source TTL
-5. `backend/mcp_server.py` — FastMCP instance; read tools only; ASGI-mounted at `/mcp`
-6. `backend/migrations/` — Alembic env + versioned migration files; `create_all` removed from `db.py`
-7. `ui/app/` — four Next.js App Router pages (chat, cashflow, investments, settings) + shared Nav + ProposalBanner component
+1. `backend/writes.py` — gains `apply_add_transfer`, `apply_buy_with_funding`, `apply_sell_with_funding`, `apply_add_category`/`edit`/`delete`, `apply_add_balance_adjustment` — all following the existing never-self-commits convention
+2. `categories` table (new) — self-referential `parent_id` adjacency list, 3-level cap, migrated from the free-string `category`/`raw_category` columns via a human-reviewed mapping pass
+3. Tool registration triad — every new tool must land in `backend/tools.py` TOOLS dict, `backend/query.py` FunctionTool list, and (for reads only) stay correctly positioned relative to the `READ_TOOL_NAMES` snapshot line in `tools.py` (physical-ordering security boundary for MCP)
+4. UI — Records tab as a new top-level route (matches flat-route convention); `AccountManager.tsx`/`PlatformManager.tsx`/`TransactionModal.tsx` extended, not rebuilt; Categories management as a new component in Settings
 
 ### Critical Pitfalls
 
-All ten pitfalls in PITFALLS.md are project-specific and grounded in the existing codebase. The five most consequential:
-
-1. **No Alembic — `create_all` silently no-ops on existing tables** — Add Alembic and generate the baseline migration before touching any schema. The `create_all` in `db.py` must be removed. Run `pg_dump` before every migration. This is the first task of the milestone, not a setup chore.
-
-2. **API auth absent from write endpoints** — Add `MONAI_API_KEY` header check on all mutation endpoints (`POST`, `PUT`, `DELETE`, `PATCH`) before any write endpoint ships. Read endpoints can stay open. The current LAN-exposed unauthenticated API is acceptable for reads; it is a data-destruction risk for writes.
-
-3. **Confirm token must be operation-scoped, not session-scoped** — The backend `proposals` table stores the exact `{action, payload}` hash; the confirm token is single-use and bound to that specific proposed operation. If the agent re-plans and arguments change, a new token is issued and the old one is invalidated. A session-level "user confirmed something" approval is not sufficient.
-
-4. **Write tools must not directly mutate the DB** — Write tools in the agent context return a `ProposalDict`. The `proposals.confirm_proposal()` endpoint is the only code path that touches the DB for agent-initiated mutations. All writes in a confirmed bundle execute inside a single Postgres transaction — partial write + no rollback leaves data corrupt.
-
-5. **Price staleness displayed as current** — Every price in `price_cache` and `holdings` must carry `fetched_at` and `price_source`. The UI must display "Price as of [date]" with a staleness badge when `now() - fetched_at` exceeds the per-instrument TTL (crypto 5 min, IDX stock 1 business day, reksadana 2 business days). A bare portfolio total with no timestamp destroys user trust.
-
-Additional pitfalls to track: confirmation fatigue (show structured diff, not prose; delete requires explicit acknowledgment), prompt injection through note fields (sanitize tool output at the result boundary), MCP write tool accidental exposure (two explicit tool manifests: `READ_TOOLS` and `WRITE_TOOLS`; CI test that external client manifest contains zero write tools), float-in-transit on investment amounts (use `Decimal` in Pydantic; aggregate in Postgres, not Python), non-deterministic agent responses (temperature=0 for tool routing; `max_iterations=8`, `max_function_calls=12`; 10-question x 5-run determinism regression suite).
+1. **Transfer pairing drift** — editing/deleting one leg via existing single-row tools desyncs the pair. Avoid by adding `transfer_pair_id`, routing all transfer-leg mutations through pair-aware tools, and blocking plain `propose_edit_transaction`/`propose_delete_transaction` on any row where `transfer_pair_id IS NOT NULL`.
+2. **Double-count regression via `accounts.type`** — the column is nullable free-text today with unknown values across live rows (confirmed: all 4 accounts are `NULL`). Promoting it to a discriminator without an audit + closed-set CHECK constraint reintroduces the exact bug this milestone fixes. Must audit live values, fail loudly on unclassifiable rows, and run cent-exact reconciliation between pre/post-migration sums.
+3. **Category backfill mis-mapping** — 74 distinct category strings (confirmed today, `category == raw_category` in count) risk exploding into near-duplicate leaves or silently dropping transactions from totals. Requires a two-pass migration: human-reviewed mapping file first, then idempotent DDL/DML with row-count and sum-of-amount parity assertions baked into the migration, aborting on failure.
+4. **Atomicity failure in two-entry writes** — transfer and buy/sell-with-funding must use one proposal payload / one `db.commit()`, never two round trips. The codebase already has the right primitive (`payload["rows"]` loop, `db.flush()` for intermediate IDs); the risk is a one-off new write path that bypasses it.
+5. **`is_transfer` exclusion breakage** — any new write path that fails to set `is_transfer=true` on internal-money-movement legs silently pollutes `spending_total`/`income_total`/`monthly_trend`. Every new mutation needs an explicit regression test asserting spend/income totals are net-zero-affected by transfers and buy/sell funding legs.
 
 ## Implications for Roadmap
 
-The dependency graph across all four research files is unambiguous. The phase order below is not a suggestion — it is dictated by hard blockers.
+Based on combined research, suggested phase structure (7 phases, dependency-ordered per ARCHITECTURE.md's "Suggested Build Order"):
 
-### Phase 1: Schema Foundation + Auth
+### Phase 1: Category Hierarchy — Schema, Audit, Migration
+**Rationale:** Highest data-quality risk in the milestone (74 live category strings need human-reviewed mapping, touches every transaction row); must land first and in isolation so nothing else builds against an unstable `category_id`.
+**Delivers:** `categories` table (self-referential `parent_id`, 3-level cap), reviewed string→hierarchy mapping, `transactions.category_id` backfilled with row/sum parity assertions, `raw_category` preserved untouched.
+**Addresses:** FEATURES.md "Categories as first-class 3-level hierarchy," delete-reassignment guard groundwork.
+**Avoids:** PITFALLS Critical #3 (category mis-mapping); PITFALLS Pitfall 4 anti-pattern (dropping `category` before validating backfill — keep as two+ migrations with a manual checkpoint between them).
 
-**Rationale:** Everything downstream (agent writes, investment tracking, price caching, audit trail) depends on tables that do not exist yet. `create_all` silently no-ops on them. Alembic must exist before any new model is defined. API auth must exist before any write endpoint ships. These two prerequisites cannot be deferred.
+### Phase 2: Typed Accounts + Transfer/Funding Schema Foundations
+**Rationale:** Low-risk, additive/nullable schema changes that unblock everything downstream; grouped together because none requires a data-quality judgment call (unlike Phase 1).
+**Delivers:** `accounts.type` audited (4 live accounts, all currently NULL) and normalized to a closed `'liquid'|'investment'` set with CHECK constraint; `transactions.transfer_pair_id` (nullable UUID/FK, indexed); `portfolio_events.source_account_id` (nullable FK, indexed).
+**Addresses:** FEATURES.md net-worth "one row = one account" requirement.
+**Avoids:** PITFALLS Critical #2 (double-count regression) — audit-before-constrain, fail loudly on unclassifiable rows, cent-exact reconciliation.
 
-**Delivers:**
-- Alembic initialized; baseline migration from existing schema; `create_all` removed from `db.py`
-- Versioned migrations for: `audit_log`, `proposals`, `holdings`, `portfolio_events`, `price_cache`
-- `MONAI_API_KEY` header check on all mutation endpoints (existing `POST /transactions` and all future write routes)
-- `pg_dump` backup procedure documented
+### Phase 3: Shared Mutation Layer — Transfer, Buy/Sell-with-Funding, Adjustment Writes
+**Rationale:** `writes.py` is the single choke point every endpoint and agent tool calls through; building it before REST/tool surfaces avoids rework and enforces atomicity by construction.
+**Delivers:** `apply_add_transfer`, `apply_edit_transfer` (pair-aware), `apply_buy_with_funding`, `apply_sell_with_funding`, `apply_add_balance_adjustment`, `apply_add_category`/`edit`/`delete` in `backend/writes.py`, all following the never-self-commits / single-transaction convention.
+**Implements:** ARCHITECTURE.md Integration Points 2 & 3 (asymmetric pairing: Transaction↔Transaction for liquid↔liquid, Transaction↔PortfolioEvent for liquid→investment).
+**Avoids:** PITFALLS Critical #1 (pairing drift), Critical #5 (atomicity failure), Moderate #6 (`is_transfer` exclusion breakage) — enforce `is_transfer=true` on every internal-movement leg as an explicit test.
 
-**Addresses:** FEATURES.md — all write features (blocked on proposals table); holdings, portfolio_events (blocked on schema)
+### Phase 4: REST Endpoints + Agent/MCP Tool Registration
+**Rationale:** Must happen together (dual/triple registration is a known project failure mode — memory: `chat-tool-dual-registration`, `TOOLS registry mutates to 26`); doing it as one phase makes the checklist enforceable.
+**Delivers:** New REST endpoints wired to Phase 3's `apply_*` functions; new `_execute_proposal_payload` dispatch branches; `propose_*` tools registered in both `tools.py` TOOLS dict and `query.py` FunctionTool list, positioned correctly relative to the `READ_TOOL_NAMES` snapshot line; MCP description updates.
+**Uses:** Existing proposal-confirm chokepoint (`/proposals/{id}/confirm`), existing `TOOLS`/`FunctionTool` registry pattern.
+**Avoids:** PITFALLS Minor #1/#2 (dual-registration gaps, MCP read-surface drift) and Anti-Pattern 2 (write tool leaking above the `READ_TOOL_NAMES` snapshot).
 
-**Avoids:** PITFALLS P7 (Alembic/create_all), P10 (LAN write access without auth)
+### Phase 5: Net Worth Aggregation + Dashboard
+**Rationale:** Depends on Phase 2's `accounts.type` backfill being live and constrained; this is the headline feature and the one most exposed to Phase 2 risk, so it must not start until Phase 2's reconciliation checks pass.
+**Delivers:** `GET /net-worth` (or extended `/cashflow/summary`) summing liquid (`accounts.type='liquid'`, `is_transfer=false`) and investment (`holdings`/`portfolio_events`) totals as two structurally non-overlapping sums; dashboard UI cards/charts.
+**Addresses:** FEATURES.md "net worth = sum of exactly one record per real account/holding."
+**Avoids:** PITFALLS Critical #2 residual risk — dashboard SQL should assert its `type` filter matches 100% of accounts, never silently include/exclude ambiguous rows.
 
-**Research flag:** Standard patterns — skip research phase. Alembic + SQLAlchemy 2 is well-documented.
+### Phase 6: UI — Extend Existing Components (Account/Platform/Record Modals)
+**Rationale:** Depends on Phases 3–4 being callable; mechanical UI work layered on a stable backend contract.
+**Delivers:** `AccountManager.tsx` type handling, `PlatformManager.tsx` detail panel (PnL + buy/sell history tabs), `TransactionModal.tsx` Expense/Income/Transfer segmented control with dual-amount cross-currency fields.
+**Addresses:** FEATURES.md differentiator "Records ledger with transfer pairs visually distinguished."
 
----
-
-### Phase 2: Agentic Loop + Confirm-Before-Write
-
-**Rationale:** The agent loop is the centerpiece of the milestone. It can be built and validated on read tools first (low risk), then write tools added once the proposal flow is proven. The existing `query.py` single-shot router is replaced. This phase must complete before the MCP server (Phase 5) because the MCP server wraps the same tool registry and correctness must be validated via the web UI before external exposure.
-
-**Delivers:**
-- `backend/agent.py`: `FunctionAgent` + `AgentWorkflow` wrapping existing 9 read tools; replaces `query.py` on the `/chat` endpoint
-- `backend/proposals.py`: `create_proposal()`, `get_proposal()`, `confirm_proposal()`, `expire_proposals()` with Postgres-backed `proposals` table + UUID token + TTL
-- `POST /proposals/{id}/confirm` and `DELETE /proposals/{id}` endpoints
-- Write tool wrappers for add/edit/delete transaction (return `ProposalDict`, not DB mutations)
-- `audit_log` writes on every confirmed proposal
-- Determinism regression suite: 10 existing validated questions x 5 runs; same tool selection every run
-- `temperature=0` enforced; `max_iterations=8`, `max_function_calls=12` set
-
-**Uses:** `llama-index-core>=0.14.0`, `FunctionAgent`, `AgentWorkflow`, `InputRequiredEvent` / `HumanResponseEvent`
-
-**Implements:** Pattern 2 (agentic loop), Pattern 3 (confirm-before-write flow)
-
-**Avoids:** PITFALLS P1 (agent reasoning around safe tools), P2 (confirmation fatigue), P3 (partial writes), P4 (prompt injection), P9 (non-deterministic responses)
-
-**Research flag:** Needs research phase. LlamaIndex 0.14 `AgentWorkflow` / `FunctionAgent` API is new; HITL via `InputRequiredEvent` has implementation nuances. SSE vs WebSocket streaming for HITL is an open question (see Gaps).
-
----
-
-### Phase 3: Multi-Page UI
-
-**Rationale:** Static page scaffolding (nav, routing, four page shells) does not depend on the agent being complete. The cashflow page wires existing CRUD endpoints. The chat page integrates the Phase 2 agent. ProposalBanner is the confirm-before-write UI. Investments page can show "no holdings yet" until Phase 4 delivers data.
-
-**Delivers:**
-- Shared `Nav.tsx` and root layout for `/chat`, `/cashflow`, `/investments`, `/settings` routes
-- `ProposalBanner.tsx`: structured diff display (field | old value | new value); confirm/reject with 2-second delay enforced for destructive operations; token bound to exact operation
-- Cashflow page: overview cards (income, expenses, net), spending-by-category donut, income vs expense monthly bar (Recharts), recent transactions table, inline edit/delete, CSV upload widget
-- Chat page: message list with streaming display + ProposalBanner integration
-- Settings page: LLM provider/model, API keys (masked), price data source selector, Ollama base URL
-- Full transaction CRUD UI (edit/delete endpoints — PUT/DELETE `/transactions/{id}`)
-- Account CRUD UI and endpoints
-- Category rename + merge UI and endpoints
-
-**Uses:** `recharts^3.8.1`
-
-**Avoids:** PITFALLS P2 (confirmation fatigue — ProposalBanner shows structured diff, not prose)
-
-**Research flag:** Standard patterns — skip research phase. Recharts + Next.js App Router is well-documented. ProposalBanner design is load-bearing UX; invest time here.
-
----
-
-### Phase 4: Investment Subsystem
-
-**Rationale:** Depends on schema from Phase 1 (holdings, portfolio_events, price_cache tables) and the multi-page UI from Phase 3 (Investments page shell). The price service abstraction must support pluggable adapters from the start — IDX, crypto, and reksadana require different fetch strategies and TTL policies.
-
-**Delivers:**
-- `backend/price_service.py`: `get_price(ticker)`, `refresh_prices()`; adapter registry with CoinGecko (crypto), yfinance (IDX fallback), and manual; `price_cache` upsert with per-instrument TTL
-- Holdings CRUD endpoints (`GET/POST/PUT/DELETE /holdings`)
-- New read tools in `tools.py`: `portfolio_value`, `holdings_list`, `get_holding_detail`, `portfolio_events_by_ticker`
-- Write tools in `tools.py` (through proposal flow): `add_holding`, `edit_holding`, `delete_holding`
-- Investments page wired to real data: holdings table with ticker, quantity, avg cost, current price, value, P&L, P&L%; portfolio total with timestamp
-- Staleness badge: visual indicator on holdings where `now() - fetched_at > ttl`
-- `portfolio_events` CRUD (buy/sell events; foundation for correlation queries)
-- Holdings CSV import endpoint and UI
-- Spending + investment correlation tool: `spending_by_event_window(ticker, event_type, category)` — joins portfolio event date with spending period
-- All `amount`/`price`/`quantity`/`avg_cost` Pydantic fields changed from `float` to `Decimal`
-
-**Avoids:** PITFALLS P6 (stale price displayed as current — `fetched_at` + TTL + staleness badge), P8 (float-in-transit — Decimal throughout)
-
-**Research flag:** Needs research phase for IDX price source. Sectors.app free tier coverage and rate limits need direct verification. Ollama function-calling support question affects `FunctionAgent` vs `ReActAgent` choice. reksadana bibit-reksadana unofficial API should be tested against the user's specific funds before being wired in.
-
----
-
-### Phase 5: MCP Server
-
-**Rationale:** The MCP server is the final additive layer — it wraps the already-proven, already-tested tool registry from `tools.py`. It must come last because: (a) tool correctness is validated via the web UI first; (b) external client exposure of an unstable tool surface is a higher-risk surface to debug; (c) the read/write scope split must be enforced before any external client connects.
-
-**Delivers:**
-- `backend/mcp_server.py`: `FastMCP(name="monai")`; read tools registered from `READ_TOOLS` manifest; mounted at `/mcp` in `main.py`; Streamable HTTP transport; FastMCP lifespan combined with FastAPI lifespan
-- `READ_TOOLS` and `WRITE_TOOLS` as explicit separate manifests; external handler imports only `READ_TOOLS`
-- CI test: connect as external client, enumerate tools, assert zero write tools present
-- `mcp.http_app(transport="streamable-http", path="/")` bound to `127.0.0.1` in production
-- Correlation tools (`spending_by_event_window`) exposed via MCP for external clients
-- Claude Desktop connection verified
-
-**Uses:** `fastmcp>=3.4.2`, Streamable HTTP transport
-
-**Implements:** Pattern 4 (MCP co-mounted in FastAPI)
-
-**Avoids:** PITFALLS P5 (MCP write tools accidentally exposed — two explicit manifests + CI assertion)
-
-**Research flag:** Standard patterns for FastMCP mounting. FastMCP 3.x lifespan wiring is documented but finicky — treat as medium-risk implementation.
-
----
+### Phase 7: UI — New Surfaces (Records Tab, Categories Settings Manager)
+**Rationale:** Lowest risk, purely additive routes consuming the now-stable API; last because it has no other phase depending on it.
+**Delivers:** New `records/page.tsx` top-level route + nav entry (date-grouped, filters, bulk actions with server-side dependency-closure resolution); `CategoryTreeManager.tsx` in Settings with block-until-reassigned delete guard.
+**Avoids:** PITFALLS Moderate #7 (bulk-action footguns) — bulk ops must resolve transfer/portfolio-event dependency closures server-side and reuse the atomic multi-row payload pattern, never client-side loops of single-row proposals.
 
 ### Phase Ordering Rationale
 
-- **Alembic is a hard blocker.** Without it, adding any new table to an existing Docker volume is silent no-op or requires `docker compose down -v` (data destruction). Every subsequent phase adds tables.
-- **Auth is a hard blocker for write endpoints.** The write capability fundamentally changes the risk surface; auth cannot be deferred even one phase.
-- **Proposals table blocks write tools.** The confirm-before-write flow requires Postgres persistence — an in-memory dict loses proposals on restart.
-- **Agent loop before MCP.** The MCP server wraps the agent's tool registry; correctness must be validated with the full proposal + audit flow before any external client connects.
-- **UI (Phase 3) can overlap Phase 2.** Static page scaffolding (Nav, routing, page shells, Recharts charts) has no agent dependency. ProposalBanner needs the proposals endpoint from Phase 2 but can be built against a mock.
-- **Investment subsystem (Phase 4) after UI shell.** The Investments page can ship as "no holdings yet" while the backend price service is being built.
+- Schema-first, and within schema, data-quality-risk-first: categories (74 strings needing human review) before typed accounts (mechanical audit-and-constrain) — both must be *audited against live data*, not assumed, per the orchestrator-confirmed facts (74 distinct categories, 4 NULL-typed accounts).
+- Shared write layer before any endpoint/tool work, because `writes.py` is the proven atomicity primitive — building endpoints against it (not around it) prevents the "new one-off write path bypasses the convention" anti-pattern architecture research flagged explicitly.
+- Tool registration is grouped as its own phase specifically because this project has hit the dual-registration gap twice before (project memory); treating it as a single multi-file checklist item rather than incidental to each feature phase reduces recurrence risk.
+- Net worth dashboard is deliberately sequenced after typed-accounts reconciliation passes, not concurrently, because it's the feature the entire milestone is named for and the one most exposed to Pitfall 2 if sequenced too early.
+- UI phases are last and split into "extend existing" vs. "new surfaces" because the former is a strict prerequisite dependency (needs the API contract stable) while the latter is purely additive and could theoretically be reordered or parallelized if needed.
 
 ### Research Flags
 
-Phases needing deeper research during planning:
-- **Phase 2:** LlamaIndex 0.14 `AgentWorkflow` / `FunctionAgent` API specifics; `InputRequiredEvent` / `HumanResponseEvent` HITL wiring; SSE vs WebSocket decision for streaming
-- **Phase 4:** Sectors.app free tier coverage and quota for IDX (direct verification required); Ollama function-calling support (determines `FunctionAgent` vs `ReActAgent` for Ollama users); reksadana bibit-reksadana API availability test
+Needs deeper research during planning:
+- **Phase 1 (Category migration):** the 74-string mapping is a human-judgment task, not a research gap — but the migration mechanics (idempotent, re-runnable, parity-asserting Alembic data migration) should get a `--research-phase` pass to nail the exact Alembic idiom before touching live data.
+- **Phase 3 (Buy/sell-with-funding writes):** FX precision handling (authoritative-currency rule, avoiding the BTC price_cache USD/IDR conflation class of bug) is subtle enough to warrant a focused research/plan pass, even though the pattern to follow (`FxRateCache` insert-once) is already identified.
 
-Phases with standard patterns (skip research phase):
-- **Phase 1:** Alembic + SQLAlchemy 2 is well-documented; standard FastAPI setup
-- **Phase 3:** Recharts + Next.js App Router is well-documented; ProposalBanner is custom but straightforward
-- **Phase 5:** FastMCP 3.x mounting pattern is documented; lifespan wiring is the only finicky part
+Standard patterns (skip research-phase):
+- **Phase 2 (Schema foundations):** nullable→backfill→constrain is an established Alembic pattern already used in migration 008; no new research needed.
+- **Phase 4 (Tool registration):** mechanical checklist against a documented, previously-hit gotcha; no research needed, just discipline.
+- **Phase 6–7 (UI):** all identified as "extend, don't build" against existing components; standard React/Next.js patterns already proven in this codebase.
 
 ## Confidence Assessment
 
 | Area | Confidence | Notes |
 |------|------------|-------|
-| Stack | HIGH | All packages confirmed on PyPI/npm with version numbers; LlamaIndex 0.14 API verified against official docs; FastMCP 3.4.2 released June 2026 |
-| Features | HIGH | Validated against Firefly III, Ghostfolio, Wealthfolio; grounded in competitor analysis and PROJECT.md requirements |
-| Architecture | HIGH | Existing codebase confirmed; patterns verified against LlamaIndex, FastMCP, and Alembic official docs; component boundaries are clear |
-| Pitfalls | HIGH | Project-specific; grounded in direct codebase read (CONCERNS.md, existing code debt); MCP security grounded in OWASP docs |
-| IDX Prices | MEDIUM | yfinance reliability issues documented; Sectors.app coverage not directly verified for free tier |
-| Reksadana Prices | LOW | No reliable free API confirmed; manual fallback is the only safe choice; bibit-reksadana is unofficial and may break |
+| Stack | HIGH | Verified against live `requirements.txt`/`package.json` and direct source reads; explicit "zero new dependencies" conclusion cross-checked against every feature |
+| Features | MEDIUM | Cross-checked across 5 reference apps (Firefly III, Actual Budget, GnuCash, YNAB, BudgetBakers Wallet) via public docs/wikis, not primary source access to BudgetBakers' internals — UX behavior inferred, not confirmed from source |
+| Architecture | HIGH | Every finding verified against live source reads (`models.py`, `tools.py`, `writes.py`, `main.py`, `mcp_server.py`, `query.py`, UI components, Alembic migration 008) |
+| Pitfalls | HIGH | Grounded directly in monai's own schema/code and documented project incident history (memory), not generic best-practice guessing |
 
-**Overall confidence:** HIGH for the core build; MEDIUM for the price data layer
+**Overall confidence:** HIGH
 
 ### Gaps to Address
 
-- **Ollama function-calling support:** `FunctionAgent` uses native tool-calling APIs. If the user's local Ollama model (gemma4 or similar) does not support function calling, Phase 2 must use `ReActAgent` instead. Verify against the specific model before Phase 2 planning. This is an open question from all four research streams.
-- **IDX price source choice:** Sectors.app free tier quota and coverage for the user's specific IDX holdings must be verified directly at `sectors.app/api` before Phase 4. If free tier is insufficient, yfinance fallback is the only free option (fragile). This decision affects `price_service.py` adapter priority.
-- **SSE vs WebSocket for HITL streaming:** The Phase 2 agent loop emits events (thinking steps, tool calls, `InputRequiredEvent` proposals) that need to stream to the Next.js frontend. LlamaIndex's HITL pattern works with SSE or WebSocket; FastAPI supports both. The choice affects the Phase 3 UI event listener. Recommendation: start with SSE (simpler, unidirectional, HTTP-native) and upgrade to WebSocket only if bidirectional mid-stream responses are needed. Decide before Phase 2 backend is built.
-- **Sectors.app free tier:** Requires direct account creation + API test against `.JK` tickers to confirm coverage and quota before committing to it in Phase 4.
+- **Category mapping is not automatable:** the 74-distinct-string review (confirmed today) must be done by a human before Phase 1's migration DDL is written — flag this explicitly in Phase 1 planning as a blocking manual step, not a coding task.
+- **Account type audit:** the 4 live accounts (all NULL) must be manually classified during Phase 2, not defaulted — with only 4 accounts this is trivial but must not be skipped or auto-inferred.
+- **AccountManager.tsx type-field UX is an open decision:** architecture research flags that investment-typed `accounts` rows likely shouldn't exist at all (investment money lives in `platforms`), so whether the account manager UI needs a type dropdown or a fixed/hidden "liquid" field should be resolved during Phase 6 planning, not assumed.
+- **Records tab platform-detail deep-linking:** architecture research recommends a client-side detail panel (no new dynamic route) but flags this as open if shareable URLs to a specific platform turn out to matter — confirm during Phase 6/7 planning.
+- **BudgetBakers Wallet internal mechanics:** feature research is MEDIUM confidence specifically because Wallet's transfer/buy-sell/category-delete mechanics are inferred from public support docs, not source — if any Phase discovers the reference product actually behaves differently, prefer monai's own PROJECT.md decisions (already stated) over the inferred Wallet behavior.
 
 ## Sources
 
 ### Primary (HIGH confidence)
-- [LlamaIndex Agents docs](https://developers.llamaindex.ai/python/framework/module_guides/deploying/agents/) — `FunctionAgent`, `AgentWorkflow`, deprecation of `AgentRunner`/`FunctionCallingAgentWorker`
-- [LlamaIndex HITL docs](https://developers.llamaindex.ai/python/framework/understanding/agent/human_in_the_loop/) — `InputRequiredEvent`, `HumanResponseEvent` pattern
-- [llama-index-core PyPI](https://pypi.org/project/llama-index-core/) — version 0.14.22 confirmed (May 2026)
-- [FastMCP docs: FastAPI integration](https://gofastmcp.com/integrations/fastapi) — mounting, lifespan, transport options
-- [fastmcp PyPI](https://pypi.org/project/fastmcp/) — version 3.4.2 released June 6 2026
-- [alembic PyPI](https://pypi.org/project/alembic/) — version 1.18.4 released Feb 10 2026
-- [recharts npm](https://www.npmjs.com/package/recharts) — version 3.8.1 confirmed
-- [CoinGecko API pricing](https://www.coingecko.com/en/api/pricing) — Demo plan: 10K calls/month, ~30-100 calls/min, free
-- [OWASP MCP Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/MCP_Security_Cheat_Sheet.html) — tool poisoning, scope enforcement
-- Project codebase: `.planning/codebase/CONCERNS.md`, `.planning/codebase/ARCHITECTURE.md` — existing debt and patterns
-- [Smashing Magazine — Designing for Agentic AI: Practical UX Patterns](https://www.smashingmagazine.com/2026/02/designing-agentic-ai-practical-ux-patterns/) — confirm-before-write as canonical UX pattern
+- `backend/models.py`, `backend/tools.py`, `backend/writes.py`, `backend/main.py`, `backend/mcp_server.py`, `backend/query.py`, `backend/portfolio.py`, `backend/schemas.py`, `backend/fx.py` — full or targeted reads, live source of truth
+- `alembic/versions/008_fx_rate_cache.py` — migration authoring convention
+- `ui/app/components/Nav.tsx`, `ui/app/cashflow/{AccountManager,TransactionModal,CategoryManager}.tsx`, `ui/app/investments/PlatformManager.tsx`, `ui/app/styles.ts` — existing UI extension points
+- `.planning/PROJECT.md` — v1.2 scope, constraints, decisions D01–D17, FX-03/04/05 trail
+- Live DB checks (orchestrator-confirmed 2026-07-18): 74 distinct category strings (`category == raw_category` in count); 4 accounts, all `type IS NULL`
+- Project memory: BTC price_cache USD/IDR conflation incident, holdings.ticker double unique constraint+index, orphan NULL-platform_id holdings, chat-tool-dual-registration, TOOLS-registry-mutates-to-26
 
 ### Secondary (MEDIUM confidence)
-- [Sectors.app](https://sectors.app/) — IDX API coverage confirmed for stocks; free tier quota unverified
-- [yfinance reliability article](https://medium.com/@trading.dude/why-yfinance-keeps-getting-blocked-and-what-to-use-instead-92d84bb2cc01) — Feb 2025 Yahoo redesign breakage documented
-- [Ghostfolio open-source wealth management](https://github.com/ghostfolio/ghostfolio) — competitor feature baseline
-- [Wealthfolio open-source portfolio tracker](https://wealthfolio.app/) — competitor feature baseline
-- [Alembic autogenerate](https://alembic.sqlalchemy.org/en/latest/autogenerate.html) — migration workflow
+- Firefly III docs (transactions, exchange rates, currencies, reconciliation) — transfer/FX pairing patterns
+- Actual Budget docs + GitHub issue #5694 — split-transfer desync bug as a cautionary case study
+- GnuCash guide (stock transaction assistant, buying/selling shares) — cash-leg-required convention for buy/sell
+- YNAB support docs — balance-adjustment-as-named-record-type convention
+- BudgetBakers Wallet support articles — 3-level category hierarchy and hard-block category delete (explicit reference product)
 
 ### Tertiary (LOW confidence)
-- [Bibit Reksadana unofficial API](https://github.com/risan/bibit-reksadana) — reksadana NAV data; unofficial, no SLA, may break; use only as optional `price_source='live_reksadana'` code path with hard fallback
-- WebSearch results on reksadana API landscape — confirms no reliable free source exists as of June 2026
+- None flagged separately — the "net worth double-counting bug" framing as an industry-wide named failure mode is architectural inference (MEDIUM-HIGH per FEATURES.md), not a cited case study.
 
 ---
-*Research completed: 2026-06-21*
+*Research completed: 2026-07-18*
 *Ready for roadmap: yes*
