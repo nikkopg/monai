@@ -1,17 +1,16 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.1
-milestone_name: UI Redesign — Paper Aesthetic
-status: Awaiting next milestone
-stopped_at: v1.1 ROADMAP.md + STATE.md written, REQUIREMENTS.md traceability filled
-last_updated: "2026-07-18T03:40:51.039Z"
-last_activity: 2026-07-18 — Milestone v1.1 completed and archived
+milestone: v1.2
+milestone_name: Connected Ledger — Liquids ↔ Investments
+status: planning
+last_updated: "2026-07-18T08:43:32.783Z"
+last_activity: 2026-07-18
 progress:
-  total_phases: 3
-  completed_phases: 3
-  total_plans: 3
-  completed_plans: 3
-  percent: 100
+  total_phases: 0
+  completed_phases: 0
+  total_plans: 0
+  completed_plans: 0
+  percent: 0
 ---
 
 # Project State
@@ -25,10 +24,10 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 
 ## Current Position
 
-Phase: Milestone v1.1 complete
+Phase: Not started (defining requirements)
 Plan: —
-Status: Awaiting next milestone
-Last activity: 2026-07-18 — Milestone v1.1 completed and archived
+Status: Defining requirements
+Last activity: 2026-07-18 — Milestone v1.2 started
 
 ## Deferred Items
 

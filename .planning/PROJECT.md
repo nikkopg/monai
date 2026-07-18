@@ -15,9 +15,20 @@ You can understand and manage your entire financial life — spending and invest
 by talking to a trustworthy AI that never fabricates a number and never changes your
 data without your say-so.
 
-## Current Milestone
+## Current Milestone: v1.2 Connected Ledger — Liquids ↔ Investments
 
-**None active.** v1.1 ("Paper" UI Redesign) shipped 2026-07-18 — define the next with `/gsd-new-milestone`. Deferred v2 candidates remain: QRY-01 recurring-charge detection, QRY-02 arbitrary two-period comparison, QRY-03 token-by-token streaming, INVX-02 automated reksadana NAV feed.
+**Goal:** Restructure monai around a single trustworthy net worth: liquids and investments as two connected subsystems that never double-count, linked by real transfer/buy-sell mechanics, with BudgetBakers-grade record and category management.
+
+**Target features:**
+- Main dashboard — net worth = liquids + investments, each counted once (fixes the investment-account double-count by design; `accounts.type` becomes the liquid/investment discriminator)
+- Liquids: account manager (add/edit/remove; balance edits create adjustment records — balances stay derived) · Records tab (date-grouped ledger, daily nets, filters, transfer pairs, bulk actions) · record input modal (Expense/Income/Transfer segmented form) · existing summary dashboard rescoped
+- Investments: platform manager (same CRUD pattern as accounts) · platform detail view with PnL + buy/sell history tabs · totals across platforms
+- Connection layer: liquid→investment transfers (paired records, dual-amount cross-currency) · buy/sell modal picks liquid source/destination account, one confirmation applies both entries atomically · USD-denominated assets auto-convert to IDR (entry-time FX via dual-amount + FX cache for valuation)
+- Categories as first-class entities — 3-level hierarchy, color/icon/nature-of-spending/hide, management UI in Settings; migration from free-string `category` column
+
+**Reference:** BudgetBakers Wallet web app (dashboard, Records tab, Add-record modal, Settings > Categories) — captured live 2026-07-18. Deliberately trimmed from the reference: templates, payer, payment type/status (single-user YAGNI).
+
+Deferred v2 candidates remain: QRY-01 recurring-charge detection, QRY-02 arbitrary two-period comparison, QRY-03 token-by-token streaming, INVX-02 automated reksadana NAV feed.
 
 ## Requirements
 
@@ -46,9 +57,13 @@ data without your say-so.
 
 ### Active
 
-<!-- Next cycle's scope. Empty until the next milestone's requirements are defined. -->
+<!-- Next cycle's scope. REQ-IDs defined in REQUIREMENTS.md (v1.2). -->
 
-(None — v1.1 shipped. Define the next milestone with `/gsd-new-milestone`. Deferred v2 candidates: QRY-01 recurring-charge detection, QRY-02 compare two arbitrary periods, QRY-03 token-by-token streaming, INVX-02 automated reksadana NAV feed.)
+- Main dashboard: single-counted net worth (liquids + investments)
+- Liquids: account manager, Records tab, record input modal
+- Investments: platform manager, platform detail (PnL / buy-sell history)
+- Connection: liquid→investment transfers, buy/sell with liquid source account, USD→IDR entry-time FX
+- Categories: first-class 3-level hierarchy + management UI + migration
 
 ### Out of Scope
 
@@ -126,4 +141,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-18 after v1.1 milestone (UI Redesign — "Paper" Aesthetic)*
+*Last updated: 2026-07-18 at v1.2 milestone start (Connected Ledger — Liquids ↔ Investments)*
