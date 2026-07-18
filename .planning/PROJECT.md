@@ -15,19 +15,9 @@ You can understand and manage your entire financial life — spending and invest
 by talking to a trustworthy AI that never fabricates a number and never changes your
 data without your say-so.
 
-## Current Milestone: v1.1 UI Redesign — "Paper" Aesthetic
+## Current Milestone
 
-**Goal:** Re-skin all four pages + the nav shell to the Claude Design "paper" mockup — a warm editorial look — without changing any behavior, data, or endpoints.
-
-**Target features (all visual; functionality preserved):**
-- Design-token foundation (colors, Instrument Serif + Hanken Grotesk type, radii, spacing) driving `ui/app/styles.ts` as the single source of truth
-- Nav shell restyle (left sidebar, serif wordmark, synced footer card)
-- Cashflow page — dark net-worth hero, 6-month trend, stat cards, category donut, accounts list, recent transactions
-- Chat page — user/assistant bubbles, collapsible tool-trace, proposal card, sticky composer
-- Investments page — total-value hero, allocation donut, holdings table
-- Settings page — provider segmented control, API-key + preferences cards, live-refresh toggle
-
-**Key context:** Pixel-faithful to `.planning/design/monai-redesign.dc.html` (recreate the look, not the prototype's internals). Data stays real and IDR — the mockup's USD/fake numbers are illustrative. No backend, schema, or API changes; zero regressions to v1.0 behavior. Rollout is foundation-first: tokens → Nav → pages.
+**None active.** v1.1 ("Paper" UI Redesign) shipped 2026-07-18 — define the next with `/gsd-new-milestone`. Deferred v2 candidates remain: QRY-01 recurring-charge detection, QRY-02 arbitrary two-period comparison, QRY-03 token-by-token streaming, INVX-02 automated reksadana NAV feed.
 
 ## Requirements
 
@@ -52,14 +42,13 @@ data without your say-so.
 - ✓ Investment subsystem: holdings CRUD, live prices (CoinGecko/yfinance/manual fallback), staleness badges, portfolio value + per-holding P&L, portfolio events — v1.0 (INV-01..07)
 - ✓ Multi-platform / multi-currency (USD→IDR) holdings, cash + physical-gold asset types, allocation pie + historical value/P&L charts — v1.0 (INVX-01, Phase 7)
 - ✓ Four-page app (Chat / Cashflow / Investment / Settings) with shared nav; Settings configures LLM provider/model + API keys + base currency + price source in-UI — v1.0 (UI-01..04)
+- ✓ "Paper" UI redesign — token layer in `styles.ts` (single source of truth), Instrument Serif + Hanken Grotesk via `next/font`, sidebar shell, and all four pages restyled to the Claude Design mockup; behavior/data unchanged (real IDR); responsive down to 375px — v1.1 (UIR-01..10)
 
 ### Active
 
-<!-- v1.1 scope: visual redesign only. See .planning/REQUIREMENTS.md for REQ-IDs. -->
+<!-- Next cycle's scope. Empty until the next milestone's requirements are defined. -->
 
-- v1.1 UI Redesign ("paper" aesthetic) — design-token foundation + restyle of Nav and all four pages, pixel-faithful to the Claude Design mockup, functionality unchanged (UIR-* requirements).
-
-Deferred v2 candidates (still out of this cycle): QRY-01 recurring-charge detection, QRY-02 compare two arbitrary periods, QRY-03 token-by-token streaming, INVX-02 automated reksadana NAV feed.
+(None — v1.1 shipped. Define the next milestone with `/gsd-new-milestone`. Deferred v2 candidates: QRY-01 recurring-charge detection, QRY-02 compare two arbitrary periods, QRY-03 token-by-token streaming, INVX-02 automated reksadana NAV feed.)
 
 ### Out of Scope
 
@@ -76,7 +65,9 @@ Deferred v2 candidates (still out of this cycle): QRY-01 recurring-charge detect
 
 ## Current State
 
-**Shipped v1.0** (2026-07-17) — Phases 1-7, 30 plans, 35/35 requirements, milestone audit passed. monai is now a four-page agentic personal-finance app (chat / cashflow / investments / settings) with confirm-before-write agent edits, a live-priced multi-platform/multi-currency investment subsystem (cash + gold, allocation + historical charts), and a read-only MCP server for external clients. Stack: FastAPI + PostgreSQL (Alembic-managed) + Next.js, LlamaIndex FunctionAgent, FastMCP.
+**Shipped v1.1** (2026-07-18) — Phases 8-10, 3 plans, 10/10 UIR requirements, 3/3 phases verified, 27/27 e2e. The whole app was re-skinned to the Claude Design "paper" aesthetic (warm cream/serif editorial look) with a token layer in `ui/app/styles.ts`, `next/font` self-hosted Instrument Serif + Hanken Grotesk, a left-sidebar shell, and all four pages + secondary surfaces restyled — zero backend changes, all behavior/data preserved (real IDR), responsive to 375px. UI stack unchanged: Next.js App Router, inline `React.CSSProperties` + token-driven `styles.ts` (no CSS framework), recharts.
+
+**Shipped v1.0** (2026-07-17) — Phases 1-7, 30 plans, 35/35 requirements, milestone audit passed. monai is a four-page agentic personal-finance app (chat / cashflow / investments / settings) with confirm-before-write agent edits, a live-priced multi-platform/multi-currency investment subsystem (cash + gold, allocation + historical charts), and a read-only MCP server for external clients. Stack: FastAPI + PostgreSQL (Alembic-managed) + Next.js, LlamaIndex FunctionAgent, FastMCP.
 
 **Known non-blocking debt carried into v1.1:** `/mcp/` trailing-slash auth test suggested; `_execute_proposal_payload` delete_holding branch drift vs `writes.apply_delete_holding`; a few human-verify visual-only items (streaming ProposalCard render, staleness badge pixels, non-deterministic live-LLM tool selection) — backend contracts all verified programmatically.
 
@@ -113,6 +104,9 @@ Deferred v2 candidates (still out of this cycle): QRY-01 recurring-charge detect
 | Investments cover IDX / crypto / mutual funds with manual price fallback | Matches the user's actual portfolio; IDX/reksadana lack reliable free price APIs | ✓ Good — v1.0 |
 | Settings page for in-UI configuration | Easier setup without editing env vars | ✓ Good — v1.0 |
 | Holdings identity = `(ticker, platform_id)`, native-currency cost basis, cash + gold asset types | Real dogfooding showed users hold the same asset across platforms and in multiple currencies | ✓ Good — v1.0 Phase 7 (added mid-milestone) |
+| v1.1 redesign keeps inline-style + token-driven `styles.ts` (no Tailwind/CSS-framework migration) | Smallest diff that meets the paper mockup; preserves the established UI convention | ✓ Good — v1.1 |
+| Fonts self-hosted via `next/font` (not the mockup's Google `<link>`) | No runtime third-party calls — aligns with local-first/privacy | ✓ Good — v1.1 |
+| Sidebar footer kept honest; Settings live-refresh toggle omitted | Never-fabricate principle + presentation-only scope (no backend field to persist a toggle) | ✓ Good — v1.1 (revisit toggle if a backend setting is added) |
 
 ## Evolution
 
@@ -132,4 +126,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-18 — started milestone v1.1 (UI Redesign — "Paper" Aesthetic)*
+*Last updated: 2026-07-18 after v1.1 milestone (UI Redesign — "Paper" Aesthetic)*

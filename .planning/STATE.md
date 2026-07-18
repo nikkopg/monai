@@ -2,11 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: UI Redesign — Paper Aesthetic
-status: milestone_complete
-current_phase: "10"
-current_phase_name: Investments + Settings + Consistency Sweep
-last_updated: "2026-07-18T07:10:00.000Z"
-last_activity: 2026-07-18
+status: Awaiting next milestone
+stopped_at: v1.1 ROADMAP.md + STATE.md written, REQUIREMENTS.md traceability filled
+last_updated: "2026-07-18T03:40:51.039Z"
+last_activity: 2026-07-18 — Milestone v1.1 completed and archived
 progress:
   total_phases: 3
   completed_phases: 3
@@ -22,16 +21,34 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-18)
 
 **Core value:** You can understand and manage your entire financial life — spending and investments — by talking to a trustworthy AI that never fabricates a number and never changes your data without your say-so.
-**Current focus:** Milestone v1.1 — UI Redesign ("Paper" Aesthetic) — ✅ COMPLETE (Phases 8-10). Optional next: `/gsd-complete-milestone` to archive v1.1.
+**Current focus:** Between milestones — v1.1 shipped + archived (2026-07-18). Next: `/gsd-new-milestone`.
 
 ## Current Position
 
-Phase: 10 of 10 (Investments + Settings + Consistency Sweep) — ✅ complete
-Plan: 10-PLAN.md (1/1 done)
-Status: Milestone v1.1 complete — all 10 UIR requirements verified. tsc clean, 27/27 e2e, all four pages + shell match the mockup with real IDR data, 375px reflow no-overflow. Deferred (documented): live chat SSE round-trip re-observation; live-refresh toggle (no backend field).
-Last activity: 2026-07-18 — Phase 10 shipped: investments + settings restyled, consistency sweep, responsive shell
+Phase: Milestone v1.1 complete
+Plan: —
+Status: Awaiting next milestone
+Last activity: 2026-07-18 — Milestone v1.1 completed and archived
 
-Progress: [██████████] 100%
+## Deferred Items
+
+Acknowledged and deferred at v1.1 milestone close on 2026-07-18. All are
+pre-existing v1.0-era open artifacts (unrelated to the v1.1 redesign); carried
+forward for a future cleanup pass or the next milestone.
+
+| Category | Item | Status |
+|----------|------|--------|
+| debug | this-week-period-fails | diagnosed |
+| quick_task | 260703-f5b-patch-flat-commands-manifest-resolution | missing |
+| quick_task | 260703-fwr-fix-backend-dockerfile-copy-alembic-ini | missing |
+| quick_task | 260703-gco-add-find-transactions-read-tool | missing |
+| quick_task | 260703-grn-fix-agent-stream-to-use-tooloutput-raw | missing |
+| quick_task | 260703-ja8-harden-monai-api-key-misconfiguration | missing |
+| quick_task | 260711-k35-fix-log-event-modal-dropping-platform | missing |
+| quick_task | 260711-l41-add-optional-per-holding-coingecko-id | missing |
+| quick_task | 260711-rb2-multi-platform-holdings-same-asset | missing |
+| uat_gap | phase 04 | diagnosed |
+| uat_gap | phase 07 | resolved |
 
 ## Performance Metrics
 
@@ -98,3 +115,7 @@ Stopped at: v1.1 ROADMAP.md + STATE.md written, REQUIREMENTS.md traceability fil
 Resume file: None
 
 Next: `/gsd-plan-phase 8`
+
+## Operator Next Steps
+
+- Start the next milestone with /gsd-new-milestone
