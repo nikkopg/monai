@@ -92,13 +92,34 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| — | — | — |
+| NW-01 | Phase 15 | Pending |
+| NW-02 | Phase 15 | Pending |
+| ACCT-01 | Phase 16 | Pending |
+| ACCT-02 | Phase 13 | Pending |
+| ACCT-03 | Phase 12 | Pending |
+| REC-01 | Phase 17 | Pending |
+| REC-02 | Phase 17 | Pending |
+| REC-03 | Phase 17 | Pending |
+| REC-04 | Phase 16 | Pending |
+| REC-05 | Phase 17 | Pending |
+| CAT-01 | Phase 11 | Pending |
+| CAT-02 | Phase 11 | Pending |
+| CAT-03 | Phase 11 | Pending |
+| CAT-04 | Phase 11 | Pending |
+| PLAT-01 | Phase 17 | Pending |
+| PLAT-02 | Phase 16 | Pending |
+| XFER-01 | Phase 13 | Pending |
+| XFER-02 | Phase 13 | Pending |
+| XFER-03 | Phase 13 | Pending |
+| XFER-04 | Phase 13 | Pending |
+| XFER-05 | Phase 13 | Pending |
+| CHAT-09 | Phase 14 | Pending |
 
 **Coverage:**
-- v1.2 requirements: 20 total
-- Mapped to phases: 0
-- Unmapped: 20 ⚠️ (roadmap pending)
+- v1.2 requirements: 22 total
+- Mapped to phases: 22
+- Unmapped: 0 ✓ (roadmap: Phases 11-17)
 
 ---
 *Requirements defined: 2026-07-18*
-*Last updated: 2026-07-18 after initial definition*
+*Last updated: 2026-07-18 after v1.2 roadmap creation (Phases 11-17, 20/20 mapped)*

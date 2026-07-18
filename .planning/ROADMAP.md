@@ -6,6 +6,7 @@
 
 - ✅ **v1.0 — Agentic Chat + Investments + Multi-page UI + MCP** — Phases 1-7, 30 plans (shipped 2026-07-17). See [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md).
 - ✅ **v1.1 — UI Redesign ("Paper" Aesthetic)** — Phases 8-10, 3 plans (shipped 2026-07-18). See [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md).
+- 🚧 **v1.2 — Connected Ledger — Liquids ↔ Investments** — Phases 11-17 (in progress).
 
 ## Phases
 
@@ -35,6 +36,104 @@ Full phase detail: [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md)
 
 </details>
 
+### 🚧 v1.2 Connected Ledger — Liquids ↔ Investments (In Progress)
+
+**Milestone Goal:** Restructure monai around a single trustworthy net worth: liquids and
+investments as two connected subsystems that never double-count, linked by real
+transfer/buy-sell mechanics, with BudgetBakers-grade record and category management.
+
+- [ ] **Phase 11: Category Hierarchy — Schema, Audit, Migration** - First-class 3-level categories replace free-string `category`, migrated via human-reviewed mapping with parity checks
+- [ ] **Phase 12: Typed Accounts + Transfer/Funding Schema Foundations** - `accounts.type` audited + constrained to liquid/investment; additive columns for transfer pairing and funded portfolio events
+- [ ] **Phase 13: Shared Mutation Layer — Transfer, Buy/Sell-with-Funding, Adjustment Writes** - `writes.py` gains atomic, pair-aware `apply_*` functions for every new money-movement type
+- [ ] **Phase 14: REST Endpoints + Agent/MCP Tool Registration** - New endpoints wired to Phase 13's writes; write tools registered on the agent and kept off the MCP read-only surface
+- [ ] **Phase 15: Net Worth Aggregation + Dashboard** - Main dashboard shows net worth as liquid + investment sums that never overlap
+- [ ] **Phase 16: UI — Extend Existing Components** - Account manager, platform detail, and the record modal grow to cover typed accounts, PnL/buy-sell history, and Expense/Income/Transfer entry
+- [ ] **Phase 17: UI — New Surfaces (Records Tab, Categories Manager)** - Date-grouped Records ledger with filters/bulk actions; category tree manager in Settings
+
+## Phase Details
+
+### Phase 11: Category Hierarchy — Schema, Audit, Migration
+**Goal**: Categories exist as first-class, hierarchical entities that every existing transaction is correctly mapped onto, with zero data loss
+**Depends on**: Nothing (first phase of v1.2; builds on v1.1's shipped schema)
+**Requirements**: CAT-01, CAT-02, CAT-03, CAT-04
+**Success Criteria** (what must be TRUE):
+  1. Every one of the 74 existing category strings maps to a reviewed category in a 3-level hierarchy (name, color, icon, parent) — no transaction silently loses its category
+  2. Row-count and sum-of-amount parity holds between pre- and post-migration category totals (verified, not assumed)
+  3. User can add, edit, and delete categories in Settings; deleting a category with records in use is blocked until reassigned (no orphaned records)
+  4. Record forms, filters, and dashboard charts read from the new category hierarchy (not the free-string column)
+**Plans**: TBD
+**Research**: true — category migration mechanics (idempotent, re-runnable, parity-asserting Alembic data migration) need a focused pass; the 74-string mapping itself is a human-review task, not automatable
+
+### Phase 12: Typed Accounts + Transfer/Funding Schema Foundations
+**Goal**: The schema can distinguish liquid from investment accounts with certainty, and has the columns needed to pair transfers and funded portfolio events
+**Depends on**: Phase 11 (schema-first sequencing; independent data but shares migration discipline)
+**Requirements**: ACCT-03
+**Success Criteria** (what must be TRUE):
+  1. All 4 live accounts are manually audited and classified liquid/investment — none left NULL or auto-inferred
+  2. `accounts.type` is DB-enforced (closed set, CHECK constraint) and investment-typed accounts are excluded from every cashflow total (spending/income/net) — the double-count bug is structurally impossible, not just avoided by convention
+  3. `transactions.transfer_pair_id` and `portfolio_events.source_account_id` exist (nullable, indexed) so later phases can pair records without further migrations
+**Plans**: TBD
+**Research**: true — FX precision and account-type audit both carry data-quality risk on live financial data; confirm the Alembic nullable→backfill→constrain idiom before writing DDL
+
+### Phase 13: Shared Mutation Layer — Transfer, Buy/Sell-with-Funding, Adjustment Writes
+**Goal**: Every new kind of money movement (transfer, funded buy/sell, balance adjustment, category edit) can be written atomically through one trusted layer
+**Depends on**: Phase 12 (needs `transfer_pair_id`, `source_account_id`, constrained `accounts.type`)
+**Requirements**: ACCT-02, XFER-01, XFER-02, XFER-03, XFER-04, XFER-05
+**Success Criteria** (what must be TRUE):
+  1. A liquid→liquid transfer writes two paired transaction rows (via `transfer_pair_id`) in one DB transaction; editing or deleting one leg is blocked outside pair-aware functions
+  2. A liquid→investment transfer writes a transaction row linked to a portfolio deposit event (via `source_account_id`) in one DB transaction
+  3. A funded buy/sell writes the cash-leg transaction and the holding/portfolio-event update together, in one confirmation and one commit — never as two round trips
+  4. Setting an account's balance produces a visible "Adjustment" record reflecting the delta; the account balance itself stays derived, never stored
+  5. Cross-currency transfer/buy-sell entries accept dual amounts (sent + received, each with its own currency); no write path forces a live-only FX rate
+  6. Historical imported transfer rows are retro-paired by a migration pass (matched by date+amount); unmatched rows are flagged and left as-is, not guessed
+**Plans**: TBD
+
+### Phase 14: REST Endpoints + Agent/MCP Tool Registration
+**Goal**: Every new write from Phase 13 is reachable from the REST API and from agentic chat, with write tools correctly excluded from the external MCP read-only surface
+**Depends on**: Phase 13
+**Requirements**: CHAT-09
+**Success Criteria** (what must be TRUE):
+  1. User can trigger a transfer, funded buy/sell, balance adjustment, or category change via chat, going through the existing confirm-before-write proposal flow
+  2. Each new write tool is registered in both `tools.py`'s TOOLS dict and `query.py`'s FunctionTool list (no dual-registration gap)
+  3. New write tools do not appear on the MCP read-only surface exposed to external clients (correct position relative to `READ_TOOL_NAMES`)
+  4. REST endpoints for the new operations exist and route through Phase 13's `apply_*` functions, not ad-hoc SQL
+**Plans**: TBD
+
+### Phase 15: Net Worth Aggregation + Dashboard
+**Goal**: The user has one trustworthy number for their entire financial life, with visibility into how it splits
+**Depends on**: Phase 12 (needs `accounts.type` constrained and reconciled), Phase 13 (needs transfer/funding writes so balances reflect reality)
+**Requirements**: NW-01, NW-02
+**Success Criteria** (what must be TRUE):
+  1. User sees a main dashboard where net worth = liquid accounts + investment platforms, with each real account/holding counted exactly once
+  2. User sees the liquid vs investment split with a per-side breakdown (not just the combined total)
+  3. The net-worth query's account-type filter is asserted to cover 100% of accounts — no silently dropped or double-included row
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 16: UI — Extend Existing Components
+**Goal**: The account manager, platform manager, and transaction entry modal cover the full set of new record types without being rebuilt
+**Depends on**: Phase 14 (needs stable REST/agent contract for the new writes)
+**Requirements**: ACCT-01, PLAT-02, REC-04
+**Success Criteria** (what must be TRUE):
+  1. User can add, edit, and remove liquid accounts in the account manager
+  2. Platform manager reaches CRUD parity with the account manager (add/edit/remove platforms)
+  3. User can add a record via a modal with an Expense / Income / Transfer segmented form (amount + currency, account, category picker, date-time, note, "add another")
+**Plans**: TBD
+**UI hint**: yes
+
+### Phase 17: UI — New Surfaces (Records Tab, Categories Manager)
+**Goal**: The user can browse, filter, and bulk-manage their full transaction history, and drill into a platform's performance, on new purpose-built screens
+**Depends on**: Phase 16 (reuses the extended modals/managers), Phase 15 (Records tab surfaces transfer pairs and dashboard-consistent data)
+**Requirements**: REC-01, REC-02, REC-03, REC-05, PLAT-01
+**Success Criteria** (what must be TRUE):
+  1. User can browse all records in a date-grouped ledger showing a daily net per group
+  2. User can filter records by search, account, category, record type, amount range, and transfer visibility
+  3. User can select multiple records and bulk delete or bulk recategorize
+  4. Transfer pairs display as one logical unit; editing or deleting affects both legs atomically (single-leg edits blocked in the UI, matching the Phase 13 backend guarantee)
+  5. User can open a platform detail view with a PnL tab and a buy/sell history tab
+**Plans**: TBD
+**UI hint**: yes
+
 ## Backlog
 
 Deferred to v2 (see next milestone's requirements):
@@ -43,8 +142,14 @@ Deferred to v2 (see next milestone's requirements):
 - QRY-02: Compare two arbitrary periods side by side
 - QRY-03: Token-by-token streaming of agent responses
 - INVX-02: Automated reksadana NAV feed
+- REC-F1: Labels on records (free-form multi-tags separate from categories)
+- CAT-F1: Nature-of-Spending (Need/Want) classification per category
+- CAT-F2: Hide toggle for categories
 
 ## Progress
+
+**Execution Order:**
+Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 
 | Phase | Milestone | Plans Complete | Status | Completed |
 |-------|-----------|-----------------|--------|-----------|
@@ -58,6 +163,13 @@ Deferred to v2 (see next milestone's requirements):
 | 8. Design Foundation + App Shell | v1.1 | 1/1 | Complete | 2026-07-18 |
 | 9. Cashflow + Chat Restyle | v1.1 | 1/1 | Complete | 2026-07-18 |
 | 10. Investments + Settings + Consistency Sweep | v1.1 | 1/1 | Complete | 2026-07-18 |
+| 11. Category Hierarchy | v1.2 | 0/? | Not started | - |
+| 12. Typed Accounts + Transfer Schema | v1.2 | 0/? | Not started | - |
+| 13. Shared Mutation Layer | v1.2 | 0/? | Not started | - |
+| 14. REST + Agent/MCP Tools | v1.2 | 0/? | Not started | - |
+| 15. Net Worth Dashboard | v1.2 | 0/? | Not started | - |
+| 16. UI — Extend Existing | v1.2 | 0/? | Not started | - |
+| 17. UI — New Surfaces | v1.2 | 0/? | Not started | - |
 
 ---
-*Roadmap created: 2026-06-21 · v1.0 archived 2026-07-17 · v1.1 archived 2026-07-18*
+*Roadmap created: 2026-06-21 · v1.0 archived 2026-07-17 · v1.1 archived 2026-07-18 · v1.2 roadmap added 2026-07-18*
