@@ -61,7 +61,16 @@ transfer/buy-sell mechanics, with BudgetBakers-grade record and category managem
   2. Row-count and sum-of-amount parity holds between pre- and post-migration category totals (verified, not assumed)
   3. User can add, edit, and delete categories in Settings; deleting a category with records in use is blocked until reassigned (no orphaned records)
   4. Record forms, filters, and dashboard charts read from the new category hierarchy (not the free-string column)
-**Plans**: TBD
+**Plans**: 7 plans
+
+Plans:
+- [ ] 11-01-PLAN.md — Category schema + migration 009 with TDD'd mapping/parity helpers (CAT-01, CAT-03)
+- [ ] 11-02-PLAN.md — Draft 74-string mapping CSV, human review checkpoint (D-06), run migration with parity + idempotency proof (CAT-03)
+- [ ] 11-03-PLAN.md — Category write layer + REST CRUD with depth cap and block-or-reassign guard (CAT-01, CAT-02)
+- [ ] 11-04-PLAN.md — Hierarchy-aware agent tools (rollup, descendants, tree) + dual registration (CAT-04)
+- [ ] 11-05-PLAN.md — Dual-write category_id + Uncategorized fallback on all transaction write paths (CAT-03)
+- [ ] 11-06-PLAN.md — Settings expandable tree manager + 13-swatch palette, moved from Cashflow (CAT-02, CAT-04)
+- [ ] 11-07-PLAN.md — Cashflow summary rollup shape + CategoryDonut drill-down (CAT-04)
 **Research**: true — category migration mechanics (idempotent, re-runnable, parity-asserting Alembic data migration) need a focused pass; the 74-string mapping itself is a human-review task, not automatable
 
 ### Phase 12: Typed Accounts + Transfer/Funding Schema Foundations
