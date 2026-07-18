@@ -44,16 +44,16 @@ test.describe("/settings page", () => {
     ).toBeVisible();
   });
 
-  test("provider select offers ollama, claude, openai", async ({ page }) => {
+  test("provider segmented control offers ollama, claude, openai", async ({
+    page,
+  }) => {
     await page.goto("/settings");
-    const providerSelect = page.locator("select").filter({
-      has: page.locator("option[value='ollama']"),
-    });
-    await expect(providerSelect).toHaveCount(1);
-    const values = await providerSelect.locator("option").evaluateAll(
-      (opts) => opts.map((o) => (o as HTMLOptionElement).value)
-    );
-    expect(values).toEqual(["ollama", "claude", "openai"]);
+    // v1.1: provider is a segmented control (3 buttons), not a <select>.
+    for (const p of ["ollama", "claude", "openai"]) {
+      await expect(
+        page.getByRole("button", { name: p, exact: true })
+      ).toBeVisible();
+    }
   });
 
   test("price data source select offers coingecko, yfinance, manual", async ({

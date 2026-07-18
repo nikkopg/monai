@@ -13,9 +13,9 @@ type Props = {
   isStale: boolean;
 };
 
-const FRESH_DOT = "#9aa0a6"; // muted
-const STALE_DOT = "#f87171"; // destructive
-const BORDER = "#2a2e37";
+const FRESH_DOT = "#8b8474"; // muted
+const STALE_DOT = "#b5503f"; // destructive
+const BORDER = "#e7e1d5";
 
 // Hand-rolled relative-time helper (~15 lines, no npm dep). Coarse buckets are
 // plenty for an "as of" label.

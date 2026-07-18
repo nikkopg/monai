@@ -49,7 +49,7 @@ export default function ConfirmDialog({
         style={{ ...card, maxWidth: 360, width: "100%", padding: 24, margin: 0 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <p style={{ fontSize: 14, fontWeight: 400, margin: "0 0 16px", color: "#e6e8eb" }}>
+        <p style={{ fontSize: 14, fontWeight: 400, margin: "0 0 16px", color: "#23201b" }}>
           {message}
         </p>
         {children && <div style={{ marginBottom: 16 }}>{children}</div>}
@@ -59,7 +59,7 @@ export default function ConfirmDialog({
             onClick={onCancel}
             style={{
               background: "transparent",
-              color: "#9aa0a6",
+              color: "#8b8474",
               border: "none",
               padding: "8px 16px",
               fontSize: 14,

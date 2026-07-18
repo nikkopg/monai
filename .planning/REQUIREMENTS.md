@@ -23,16 +23,16 @@ Design language (from the mockup, authoritative):
 
 ### Pages
 
-- [ ] **UIR-04**: The Cashflow page is restyled to the mockup — dark net-worth hero with delta pill, period segmented control, 6-month income/expense trend, three stat cards (income / expenses / net), spending-by-category donut + legend, accounts list, and recent-transactions list — all bound to real data.
-- [ ] **UIR-05**: The Chat page is restyled to the mockup — right-aligned user bubbles, assistant answer block with the monai wordmark, collapsible "how I got this" tool-trace, a confirm-before-write proposal card (approve/reject), and a sticky composer — bound to the real chat and proposal flow.
-- [ ] **UIR-06**: The Investments page is restyled to the mockup — dark total-value hero with all-time delta, allocation donut + legend, and a holdings table (asset badge / units / price / value / return) — bound to real holdings.
-- [ ] **UIR-07**: The Settings page is restyled to the mockup — provider segmented control, model input, API-key cards, preferences (base currency, price source), and a live-refresh toggle with save actions — bound to the real settings endpoints.
+- [x] **UIR-04**: The Cashflow page is restyled to the mockup — dark net-worth hero with delta pill, period segmented control, 6-month income/expense trend, three stat cards (income / expenses / net), spending-by-category donut + legend, accounts list, and recent-transactions list — all bound to real data.
+- [x] **UIR-05**: The Chat page is restyled to the mockup — right-aligned user bubbles, assistant answer block with the monai wordmark, collapsible "how I got this" tool-trace, a confirm-before-write proposal card (approve/reject), and a sticky composer — bound to the real chat and proposal flow.
+- [x] **UIR-06**: The Investments page is restyled to the mockup — dark total-value hero with all-time delta, allocation donut + legend, and a holdings table (asset badge / units / price / value / return) — bound to real holdings.
+- [x] **UIR-07**: The Settings page is restyled to the mockup — provider segmented control, model input, API-key cards, preferences (base currency, price source), and a live-refresh toggle with save actions — bound to the real settings endpoints.
 
 ### Consistency & Safety
 
-- [ ] **UIR-08**: Secondary UI surfaces not drawn in the mockup (CRUD modals, CSV upload, managers, override dialogs, staleness badges, charts) adopt the new tokens so nothing looks like the old theme; each keeps its exact behavior.
-- [ ] **UIR-09**: No functional regressions — all v1.0 flows (transaction/account/category CRUD, CSV import, holdings CRUD + price overrides, provider/key/preferences save, agent confirm-before-write) work identically after the restyle; existing Playwright e2e specs pass.
-- [ ] **UIR-10**: The fixed 1240×820 mockup adapts gracefully to a real browser — max-width container, internal scrolling, and a usable narrow-viewport layout — without clipping or overflow.
+- [x] **UIR-08**: Secondary UI surfaces not drawn in the mockup (CRUD modals, CSV upload, managers, override dialogs, staleness badges, charts) adopt the new tokens so nothing looks like the old theme; each keeps its exact behavior.
+- [x] **UIR-09**: No functional regressions — all v1.0 flows (transaction/account/category CRUD, CSV import, holdings CRUD + price overrides, provider/key/preferences save, agent confirm-before-write) work identically after the restyle; existing Playwright e2e specs pass.
+- [x] **UIR-10**: The fixed 1240×820 mockup adapts gracefully to a real browser — max-width container, internal scrolling, and a usable narrow-viewport layout — without clipping or overflow.
 
 ## Future Requirements (deferred)
 
@@ -56,12 +56,12 @@ Design language (from the mockup, authoritative):
 | UIR-01 | Phase 8 | Complete |
 | UIR-02 | Phase 8 | Complete |
 | UIR-03 | Phase 8 | Complete |
-| UIR-04 | Phase 9 | Pending |
-| UIR-05 | Phase 9 | Pending |
-| UIR-06 | Phase 10 | Pending |
-| UIR-07 | Phase 10 | Pending |
-| UIR-08 | Phase 10 | Pending |
-| UIR-09 | Phase 10 | Pending |
-| UIR-10 | Phase 10 | Pending |
+| UIR-04 | Phase 9 | Complete |
+| UIR-05 | Phase 9 | Complete |
+| UIR-06 | Phase 10 | Complete |
+| UIR-07 | Phase 10 | Complete |
+| UIR-08 | Phase 10 | Complete |
+| UIR-09 | Phase 10 | Complete |
+| UIR-10 | Phase 10 | Complete |
 
 **Coverage:** 10/10 v1.1 requirements mapped. No orphans.

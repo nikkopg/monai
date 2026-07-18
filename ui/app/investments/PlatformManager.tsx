@@ -161,7 +161,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <tbody>
           {platforms.map((p) => (
-            <tr key={p.id} style={{ borderTop: "1px solid #2a2e37" }}>
+            <tr key={p.id} style={{ borderTop: "1px solid #e7e1d5" }}>
               <td style={{ padding: "8px 4px" }}>
                 {editingId === p.id ? (
                   <input
@@ -173,7 +173,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
                   <>
                     {p.name}
                     {p.kind && (
-                      <span style={{ color: "#9aa0a6", fontSize: 12, marginLeft: 8 }}>
+                      <span style={{ color: "#8b8474", fontSize: 12, marginLeft: 8 }}>
                         {p.kind}
                       </span>
                     )}
@@ -195,7 +195,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
                       onClick={() => setEditingId(null)}
                       style={{
                         background: "transparent",
-                        color: "#9aa0a6",
+                        color: "#8b8474",
                         border: "none",
                         fontSize: 12,
                         cursor: "pointer",
@@ -212,14 +212,14 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
                         setEditingId(p.id);
                         setEditName(p.name);
                       }}
-                      style={{ color: "#9aa0a6", cursor: "pointer", marginRight: 12, fontSize: 12 }}
+                      style={{ color: "#8b8474", cursor: "pointer", marginRight: 12, fontSize: 12 }}
                     >
                       Edit
                     </span>
                     <span
                       role="button"
                       onClick={() => setDeleteFlow({ stage: "confirm", platform: p })}
-                      style={{ color: "#f87171", cursor: "pointer", fontSize: 12 }}
+                      style={{ color: "#b5503f", cursor: "pointer", fontSize: 12 }}
                     >
                       Delete
                     </span>
@@ -232,7 +232,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
       </table>
 
       {platforms.length === 0 && !adding && (
-        <div style={{ color: "#9aa0a6", fontSize: 13, marginTop: 8 }}>
+        <div style={{ color: "#8b8474", fontSize: 13, marginTop: 8 }}>
           No platforms yet. Add a platform (e.g. your brokerage or crypto app) to
           start grouping holdings — or log a holding first and assign a platform
           later.
@@ -263,7 +263,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
               onClick={() => setAdding(false)}
               style={{
                 background: "transparent",
-                color: "#9aa0a6",
+                color: "#8b8474",
                 border: "none",
                 fontSize: 12,
                 cursor: "pointer",
@@ -280,7 +280,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
       </div>
 
       {error && (
-        <div style={{ color: "#f87171", fontSize: 12, marginTop: 8 }}>{error}</div>
+        <div style={{ color: "#b5503f", fontSize: 12, marginTop: 8 }}>{error}</div>
       )}
 
       {deleteFlow.stage === "confirm" && (
@@ -315,7 +315,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
               ))}
           </select>
           {reassignTargetName && (
-            <p style={{ color: "#9aa0a6", fontSize: 12, margin: "8px 0 0" }}>
+            <p style={{ color: "#8b8474", fontSize: 12, margin: "8px 0 0" }}>
               Reassign {deleteFlow.affectedCount} holdings to &quot;{reassignTargetName}&quot;
               and delete &quot;{deleteFlow.platform.name}&quot;?
             </p>

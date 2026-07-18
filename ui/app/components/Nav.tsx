@@ -99,8 +99,9 @@ export default function Nav() {
   }
 
   return (
-    <aside style={sidebar}>
+    <aside className="app-sidebar" style={sidebar}>
       <div
+        className="brand-word"
         style={{
           display: "flex",
           alignItems: "baseline",
@@ -120,7 +121,7 @@ export default function Nav() {
         />
       </div>
 
-      <div style={menuLabel}>Menu</div>
+      <div className="menu-label" style={menuLabel}>Menu</div>
 
       <nav style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {NAV_LINKS.map(({ href, label, icon }) => {
@@ -139,20 +140,21 @@ export default function Nav() {
             transition: "background .2s ease, color .2s ease",
           };
           return (
-            <Link key={href} href={href} style={itemStyle}>
+            <Link key={href} href={href} className="nav-item" style={itemStyle}>
               <span
                 style={{ display: "inline-flex", width: 20, height: 20 }}
                 aria-hidden
               >
                 <Icon name={icon} />
               </span>
-              <span>{label}</span>
+              <span className="nav-label">{label}</span>
             </Link>
           );
         })}
       </nav>
 
       <div
+        className="footer-card"
         style={{
           marginTop: "auto",
           padding: 14,

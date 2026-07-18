@@ -18,7 +18,7 @@ type Props = {
   onSaved: () => void;
 };
 
-const muted = "#9aa0a6";
+const muted = "#8b8474";
 
 export default function PriceOverrideDialog({ holding, onClose, onSaved }: Props) {
   const [price, setPrice] = useState("");
@@ -122,7 +122,7 @@ export default function PriceOverrideDialog({ holding, onClose, onSaved }: Props
               {saving ? "Saving…" : "Set price"}
             </button>
             {error && (
-              <span style={{ color: "#f87171", fontSize: 12 }}>{error}</span>
+              <span style={{ color: "#b5503f", fontSize: 12 }}>{error}</span>
             )}
           </div>
         </form>

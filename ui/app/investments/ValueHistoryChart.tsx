@@ -34,8 +34,8 @@ type Range = "1M" | "3M" | "6M" | "All";
 type View = "value" | "pnl";
 
 const RANGES: Range[] = ["1M", "3M", "6M", "All"];
-const tickStyle = { fill: "#9aa0a6", fontSize: 12 };
-const muted = "#9aa0a6";
+const tickStyle = { fill: "#8b8474", fontSize: 12 };
+const muted = "#8b8474";
 
 const fmtPlain = (n: number) => new Intl.NumberFormat("en-US").format(n);
 const fmtSigned = (n: number) =>
@@ -46,8 +46,8 @@ function pillStyle(active: boolean): React.CSSProperties {
     padding: "4px 12px",
     borderRadius: 6,
     fontSize: 12,
-    border: "1px solid #2a2e37",
-    background: active ? "#3b82f6" : "transparent",
+    border: "1px solid #e7e1d5",
+    background: active ? "#2f6f4f" : "transparent",
     color: active ? "white" : muted,
     cursor: "pointer",
   };
@@ -65,13 +65,13 @@ export default function ValueHistoryChart({
   const [view, setView] = useState<View>("value");
 
   const latestPnl = data.length > 0 ? data[data.length - 1].total_pnl : 0;
-  const pnlColor = latestPnl >= 0 ? "#4ade80" : "#f87171";
+  const pnlColor = latestPnl >= 0 ? "#2f6f4f" : "#b5503f";
 
   return (
     <section
       style={{
-        background: "#1a1d23",
-        border: "1px solid #2a2e37",
+        background: "#ffffff",
+        border: "1px solid #e7e1d5",
         borderRadius: 8,
         padding: 24,
         marginBottom: 24,
@@ -126,7 +126,7 @@ export default function ValueHistoryChart({
         <div style={{ width: "100%", height: 280 }}>
           <ResponsiveContainer>
             <LineChart data={data}>
-              <CartesianGrid stroke="#2a2e37" strokeDasharray="3 3" />
+              <CartesianGrid stroke="#e7e1d5" strokeDasharray="3 3" />
               <XAxis dataKey="date" tick={tickStyle} />
               <YAxis tick={tickStyle} />
               <Tooltip
@@ -138,17 +138,17 @@ export default function ValueHistoryChart({
                     : value
                 }
                 contentStyle={{
-                  background: "#1a1d23",
-                  border: "1px solid #2a2e37",
+                  background: "#ffffff",
+                  border: "1px solid #e7e1d5",
                   borderRadius: 8,
                   fontSize: 12,
-                  color: "#e6e8eb",
+                  color: "#23201b",
                 }}
               />
               {view === "value" ? (
                 <Line
                   dataKey="total_market_value"
-                  stroke="#3b82f6"
+                  stroke="#2f6f4f"
                   name="Portfolio value"
                   dot={false}
                 />

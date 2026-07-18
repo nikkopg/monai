@@ -167,7 +167,7 @@ export default function HoldingModal({ platforms, onClose, onSaved }: Props) {
                 ))}
               </select>
               {platforms.length === 0 && (
-                <p style={{ ...label, fontSize: 11, marginTop: 4, color: "#f87171" }}>
+                <p style={{ ...label, fontSize: 11, marginTop: 4, color: "#b5503f" }}>
                   Add a platform first
                 </p>
               )}
@@ -229,7 +229,7 @@ export default function HoldingModal({ platforms, onClose, onSaved }: Props) {
               onClick={onClose}
               style={{
                 background: "transparent",
-                color: "#9aa0a6",
+                color: "#8b8474",
                 border: "none",
                 padding: "8px 16px",
                 fontSize: 14,
@@ -242,7 +242,7 @@ export default function HoldingModal({ platforms, onClose, onSaved }: Props) {
               {saving ? "Saving…" : "Log event"}
             </button>
             {error && (
-              <span style={{ color: "#f87171", fontSize: 12 }}>{error}</span>
+              <span style={{ color: "#b5503f", fontSize: 12 }}>{error}</span>
             )}
           </div>
         </form>

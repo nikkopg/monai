@@ -5,7 +5,7 @@
 ## Milestones
 
 - ✅ **v1.0 — Agentic Chat + Investments + Multi-page UI + MCP** — Phases 1-7, 30 plans (shipped 2026-07-17). See [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md).
-- 🚧 **v1.1 — UI Redesign — "Paper" Aesthetic** — Phases 8-10 (in progress).
+- ✅ **v1.1 — UI Redesign — "Paper" Aesthetic** — Phases 8-10 (complete 2026-07-18).
 
 ## Phases
 
@@ -29,8 +29,8 @@ Full phase detail: [milestones/v1.0-ROADMAP.md](milestones/v1.0-ROADMAP.md)
 **Milestone Goal:** Re-skin all four pages + the nav shell to the Claude Design "paper" mockup (`.planning/design/monai-redesign.dc.html`) — a warm editorial look — without changing any behavior, data, or endpoints.
 
 - [x] **Phase 8: Design Foundation + App Shell** - Token layer, fonts, and the restyled sidebar/nav shell that every page depends on — completed 2026-07-18
-- [ ] **Phase 9: Cashflow + Chat Restyle** - The two primary-workflow pages restyled to the mockup, bound to real data
-- [ ] **Phase 10: Investments + Settings + Consistency Sweep** - Remaining pages, secondary surfaces (modals/managers/charts), responsive adaptation, and full regression pass
+- [x] **Phase 9: Cashflow + Chat Restyle** - The two primary-workflow pages restyled to the mockup, bound to real data — completed 2026-07-18
+- [x] **Phase 10: Investments + Settings + Consistency Sweep** - Remaining pages, secondary surfaces (modals/managers/charts), responsive adaptation, and full regression pass — completed 2026-07-18
 
 ## Phase Details
 

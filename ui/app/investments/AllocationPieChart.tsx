@@ -18,7 +18,7 @@ import { chartColors } from "../styles";
 
 export type AllocationSlice = { label: string; value: number };
 
-const muted = "#9aa0a6";
+const muted = "#8b8474";
 
 export default function AllocationPieChart({
   data,
@@ -56,11 +56,11 @@ export default function AllocationPieChart({
           <Tooltip
             formatter={(value) => fmt(value)}
             contentStyle={{
-              background: "#1a1d23",
-              border: "1px solid #2a2e37",
+              background: "#ffffff",
+              border: "1px solid #e7e1d5",
               borderRadius: 8,
               fontSize: 12,
-              color: "#e6e8eb",
+              color: "#23201b",
             }}
           />
         </PieChart>

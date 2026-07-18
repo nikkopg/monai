@@ -139,8 +139,8 @@ export default function CategoryManager({ onChanged }: Props) {
 
   const badgeStyle: React.CSSProperties = {
     fontSize: 12,
-    color: "#9aa0a6",
-    background: "#2a2e37",
+    color: "#8b8474",
+    background: "#e7e1d5",
     borderRadius: 999,
     padding: "2px 8px",
     marginLeft: 8,
@@ -155,7 +155,7 @@ export default function CategoryManager({ onChanged }: Props) {
           <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>
             No categories yet.
           </div>
-          <div style={{ color: "#9aa0a6", fontSize: 14 }}>
+          <div style={{ color: "#8b8474", fontSize: 14 }}>
             Categories appear automatically once transactions are
             categorized — add a transaction with a category to get started.
           </div>
@@ -164,7 +164,7 @@ export default function CategoryManager({ onChanged }: Props) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
           <tbody>
             {categories.map((name) => (
-              <tr key={name} style={{ borderTop: "1px solid #2a2e37" }}>
+              <tr key={name} style={{ borderTop: "1px solid #e7e1d5" }}>
                 <td style={{ padding: "8px 4px" }}>
                   {renamingName === name ? (
                     <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -185,7 +185,7 @@ export default function CategoryManager({ onChanged }: Props) {
                         onClick={() => setRenamingName(null)}
                         style={{
                           background: "transparent",
-                          color: "#9aa0a6",
+                          color: "#8b8474",
                           border: "none",
                           fontSize: 12,
                           cursor: "pointer",
@@ -210,14 +210,14 @@ export default function CategoryManager({ onChanged }: Props) {
                           setRenamingName(name);
                           setRenameValue(name);
                         }}
-                        style={{ color: "#9aa0a6", cursor: "pointer", marginRight: 12, fontSize: 12 }}
+                        style={{ color: "#8b8474", cursor: "pointer", marginRight: 12, fontSize: 12 }}
                       >
                         Rename
                       </span>
                       <span
                         role="button"
                         onClick={() => openMergePicker(name)}
-                        style={{ color: "#9aa0a6", cursor: "pointer", fontSize: 12 }}
+                        style={{ color: "#8b8474", cursor: "pointer", fontSize: 12 }}
                       >
                         Merge into…
                       </span>
@@ -231,7 +231,7 @@ export default function CategoryManager({ onChanged }: Props) {
       )}
 
       {error && (
-        <div style={{ color: "#f87171", fontSize: 12, marginTop: 8 }}>{error}</div>
+        <div style={{ color: "#b5503f", fontSize: 12, marginTop: 8 }}>{error}</div>
       )}
 
       {mergeFlow.stage === "picking" && (
@@ -251,7 +251,7 @@ export default function CategoryManager({ onChanged }: Props) {
             style={{ ...card, maxWidth: 360, width: "100%", padding: 24, margin: 0 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <p style={{ fontSize: 14, margin: "0 0 16px", color: "#e6e8eb" }}>
+            <p style={{ fontSize: 14, margin: "0 0 16px", color: "#23201b" }}>
               Merge &quot;{mergeFlow.from}&quot; into which category?
             </p>
             <select
@@ -275,7 +275,7 @@ export default function CategoryManager({ onChanged }: Props) {
                 onClick={() => setMergeFlow({ stage: "idle" })}
                 style={{
                   background: "transparent",
-                  color: "#9aa0a6",
+                  color: "#8b8474",
                   border: "none",
                   padding: "8px 16px",
                   fontSize: 14,

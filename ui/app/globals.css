@@ -1,0 +1,33 @@
+/* v1.1 "paper" redesign — shell responsiveness (UIR-10).
+   Most page grids use CSS `auto-fit minmax(...)` inline so they stack on narrow
+   viewports without media queries. These rules handle the app shell itself:
+   trim the frame padding on tablets, and collapse the sidebar to an icon rail
+   on phones so the content area stays usable. `!important` is required to win
+   over the inline styles the shell is built with. */
+
+@media (max-width: 760px) {
+  .app-frame {
+    padding: 8px !important;
+    align-items: stretch !important;
+  }
+  .app-panel {
+    border-radius: 14px !important;
+  }
+}
+
+@media (max-width: 560px) {
+  .app-sidebar {
+    width: 66px !important;
+    padding: 18px 10px !important;
+  }
+  .app-sidebar .brand-word,
+  .app-sidebar .menu-label,
+  .app-sidebar .nav-label,
+  .app-sidebar .footer-card {
+    display: none !important;
+  }
+  .app-sidebar .nav-item {
+    justify-content: center !important;
+    padding: 11px 0 !important;
+  }
+}

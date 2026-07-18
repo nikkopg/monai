@@ -2,14 +2,15 @@
 
 import { useEffect, useState } from "react";
 
-import { card, input, btn, label } from "../styles";
+import { tokens, card, input, btn } from "../styles";
 
 // ---------------------------------------------------------------------------
-// Settings page — three independently-saveable cards: LLM Provider & Model,
-// API Keys, Preferences. Loads current settings via GET /api/settings on
-// mount, and PUTs partial per-card updates through the existing catch-all
-// proxy (which injects MONAI_API_KEY server-side — the browser never adds an
-// auth header). Phase 3 Plan 03 (UI-03/UI-04).
+// Settings page — v1.1 "paper" redesign. Same three independently-saveable
+// cards (LLM Provider & Model, API Keys, Preferences), same GET/PUT
+// /api/settings wiring (the catch-all proxy injects MONAI_API_KEY server-side).
+// Provider is now a segmented control (UIR-07); the live-refresh toggle from
+// the mockup is intentionally omitted — there is no backend field for it and
+// this milestone is presentation-only (a non-persisting toggle would be fake).
 // ---------------------------------------------------------------------------
 
 type SettingsOut = {
@@ -27,33 +28,50 @@ const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
   openai: "gpt-4o-mini",
 };
 
-const disabledBtn: React.CSSProperties = {
-  ...btn,
-  background: "#374151",
-  cursor: "not-allowed",
+const PROVIDERS = ["ollama", "claude", "openai"] as const;
+
+type SaveState = {
+  status: "idle" | "saving" | "success" | "error";
+  message?: string;
 };
 
-type SaveState = { status: "idle" | "saving" | "success" | "error"; message?: string };
+const cardTitle: React.CSSProperties = {
+  fontSize: 15,
+  fontWeight: 600,
+  marginBottom: 4,
+};
+const cardSub: React.CSSProperties = {
+  fontSize: 13,
+  color: tokens.color.muted,
+  marginBottom: 16,
+};
+const fieldLabel: React.CSSProperties = {
+  fontSize: 12,
+  color: tokens.color.muted2,
+  marginBottom: 7,
+  display: "block",
+};
 
 export default function SettingsPage() {
   const [loadError, setLoadError] = useState(false);
 
-  // Card 1: LLM Provider & Model
   const [provider, setProvider] = useState("ollama");
   const [model, setModel] = useState(DEFAULT_MODEL_BY_PROVIDER.ollama);
-  const [providerState, setProviderState] = useState<SaveState>({ status: "idle" });
+  const [providerState, setProviderState] = useState<SaveState>({
+    status: "idle",
+  });
 
-  // Card 2: API Keys
   const [anthropicMasked, setAnthropicMasked] = useState<string | null>(null);
   const [openaiMasked, setOpenaiMasked] = useState<string | null>(null);
   const [anthropicKey, setAnthropicKey] = useState("");
   const [openaiKey, setOpenaiKey] = useState("");
   const [keysState, setKeysState] = useState<SaveState>({ status: "idle" });
 
-  // Card 3: Preferences
   const [baseCurrency, setBaseCurrency] = useState("IDR");
   const [priceDataSource, setPriceDataSource] = useState("coingecko");
-  const [preferencesState, setPreferencesState] = useState<SaveState>({ status: "idle" });
+  const [preferencesState, setPreferencesState] = useState<SaveState>({
+    status: "idle",
+  });
 
   useEffect(() => {
     async function loadSettings() {
@@ -99,7 +117,7 @@ export default function SettingsPage() {
           const errBody = await r.json();
           detail = errBody?.detail ?? detail;
         } catch {
-          // ignore body-parse failure, keep the status-based detail
+          // keep the status-based detail
         }
         setState({ status: "error", message: detail });
         return false;
@@ -131,8 +149,6 @@ export default function SettingsPage() {
     if (anthropicKey) body.anthropic_api_key = anthropicKey;
     if (openaiKey) body.openai_api_key = openaiKey;
     const ok = await putSettings(body, setKeysState);
-    // Only clear the inputs on success — otherwise the user would have to
-    // retype the whole key after a transient failure (WR-01).
     if (ok) {
       setAnthropicKey("");
       setOpenaiKey("");
@@ -150,60 +166,118 @@ export default function SettingsPage() {
 
   function statusMessage(state: SaveState) {
     if (state.status === "success") {
-      return <span style={{ color: "#4ade80", fontSize: 12 }}>Saved.</span>;
+      return (
+        <span style={{ color: tokens.color.green, fontSize: 12 }}>Saved.</span>
+      );
     }
     if (state.status === "error") {
       return (
-        <span style={{ color: "#f87171", fontSize: 12 }}>
-          Save failed: {state.message}. Your previous settings are unchanged — try again.
+        <span style={{ color: tokens.color.terracotta, fontSize: 12 }}>
+          Save failed: {state.message}. Your previous settings are unchanged — try
+          again.
         </span>
       );
     }
     return null;
   }
 
+  const saveBtn = (state: SaveState): React.CSSProperties =>
+    state.status === "saving" ? { ...btn, opacity: 0.6, cursor: "not-allowed" } : btn;
+
   return (
-    <main style={{ maxWidth: 760, margin: "0 auto", padding: "48px 24px" }}>
-      <h1 style={{ fontSize: 28, fontWeight: 600, marginTop: 0, marginBottom: 16 }}>
-        Settings
-      </h1>
+    <div className="tab-in" style={{ maxWidth: 720, margin: "0 auto", padding: "40px 44px 60px" }}>
+      <div style={{ marginBottom: 28 }}>
+        <div
+          style={{
+            fontSize: 12,
+            letterSpacing: ".12em",
+            textTransform: "uppercase",
+            color: tokens.color.muted2,
+            marginBottom: 6,
+          }}
+        >
+          Configuration
+        </div>
+        <h1
+          style={{
+            fontFamily: tokens.font.serif,
+            fontWeight: 400,
+            fontSize: 40,
+            margin: 0,
+            letterSpacing: "-.5px",
+          }}
+        >
+          Settings
+        </h1>
+      </div>
 
       {loadError && (
-        <section style={card}>
-          <p style={{ color: "#f87171", fontSize: 14, margin: 0 }}>
-            Couldn&apos;t load settings — check the backend is running and reload the page.
-          </p>
-        </section>
+        <div style={{ ...card, color: tokens.color.terracotta }}>
+          Couldn&apos;t load settings — check the backend is running and reload
+          the page.
+        </div>
       )}
 
       {/* Card 1: LLM Provider & Model */}
-      <section style={card}>
-        <label style={label}>LLM Provider &amp; Model</label>
+      <div style={card}>
+        <div style={cardTitle}>LLM Provider &amp; Model</div>
+        <div style={cardSub}>Which engine answers your questions.</div>
         <form onSubmit={saveProvider}>
-          <div style={{ marginBottom: 16 }}>
-            <label style={label}>Provider</label>
-            <select
-              style={input}
-              value={provider}
-              onChange={(e) => handleProviderChange(e.target.value)}
-            >
-              <option value="ollama">ollama</option>
-              <option value="claude">claude</option>
-              <option value="openai">openai</option>
-            </select>
+          <label style={fieldLabel}>Provider</label>
+          <div
+            style={{
+              display: "inline-flex",
+              background: tokens.color.sidebar,
+              border: `1px solid ${tokens.color.border2}`,
+              borderRadius: 12,
+              padding: 4,
+              marginBottom: 18,
+            }}
+          >
+            {PROVIDERS.map((p) => {
+              const active = provider === p;
+              return (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => handleProviderChange(p)}
+                  style={{
+                    border: "none",
+                    borderRadius: 9,
+                    padding: "8px 18px",
+                    fontSize: 14,
+                    fontWeight: active ? 600 : 500,
+                    cursor: "pointer",
+                    color: active ? tokens.color.ink : tokens.color.muted,
+                    background: active ? "#fff" : "transparent",
+                    boxShadow: active
+                      ? "0 1px 2px rgba(40,34,24,.12)"
+                      : "none",
+                    transition: "all .2s ease",
+                  }}
+                >
+                  {p}
+                </button>
+              );
+            })}
           </div>
-          <div style={{ marginBottom: 16 }}>
-            <label style={label}>Model</label>
-            <input
-              style={input}
-              type="text"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-            />
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <label style={fieldLabel}>Model</label>
+          <input
+            style={input}
+            type="text"
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+          />
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              marginTop: 18,
+            }}
+          >
             <button
-              style={providerState.status === "saving" ? disabledBtn : btn}
+              style={saveBtn(providerState)}
               type="submit"
               disabled={providerState.status === "saving"}
             >
@@ -212,40 +286,41 @@ export default function SettingsPage() {
             {statusMessage(providerState)}
           </div>
         </form>
-      </section>
+      </div>
 
       {/* Card 2: API Keys */}
-      <section style={card}>
-        <label style={label}>API Keys</label>
+      <div style={card}>
+        <div style={cardTitle}>API Keys</div>
+        <div style={cardSub}>
+          Stored encrypted. Leave blank to keep the current key.
+        </div>
         <form onSubmit={saveKeys}>
-          <div style={{ marginBottom: 16 }}>
-            <label style={label}>Anthropic API key</label>
-            <input
-              style={input}
-              type="password"
-              value={anthropicKey}
-              placeholder={
-                anthropicMasked ? anthropicMasked : "sk-ant-..."
-              }
-              onChange={(e) => setAnthropicKey(e.target.value)}
-            />
-          </div>
-          <div style={{ marginBottom: 8 }}>
-            <label style={label}>OpenAI API key</label>
-            <input
-              style={input}
-              type="password"
-              value={openaiKey}
-              placeholder={openaiMasked ? openaiMasked : "sk-..."}
-              onChange={(e) => setOpenaiKey(e.target.value)}
-            />
-          </div>
-          <p style={{ ...label, marginBottom: 16 }}>
-            Leave blank to keep the current key.
-          </p>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <label style={fieldLabel}>Anthropic API key</label>
+          <input
+            style={{ ...input, marginBottom: 14 }}
+            type="password"
+            value={anthropicKey}
+            placeholder={anthropicMasked ? anthropicMasked : "sk-ant-..."}
+            onChange={(e) => setAnthropicKey(e.target.value)}
+          />
+          <label style={fieldLabel}>OpenAI API key</label>
+          <input
+            style={input}
+            type="password"
+            value={openaiKey}
+            placeholder={openaiMasked ? openaiMasked : "sk-..."}
+            onChange={(e) => setOpenaiKey(e.target.value)}
+          />
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              marginTop: 18,
+            }}
+          >
             <button
-              style={keysState.status === "saving" ? disabledBtn : btn}
+              style={saveBtn(keysState)}
               type="submit"
               disabled={keysState.status === "saving"}
             >
@@ -254,45 +329,57 @@ export default function SettingsPage() {
             {statusMessage(keysState)}
           </div>
         </form>
-      </section>
+      </div>
 
       {/* Card 3: Preferences */}
-      <section style={card}>
-        <label style={label}>Preferences</label>
+      <div style={{ ...card, marginBottom: 0 }}>
+        <div style={cardTitle}>Preferences</div>
         <form onSubmit={savePreferences}>
-          <div style={{ marginBottom: 16 }}>
-            <label style={label}>Base currency</label>
-            <input
-              style={input}
-              type="text"
-              value={baseCurrency}
-              onChange={(e) => setBaseCurrency(e.target.value)}
-            />
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))",
+              gap: 16,
+              marginTop: 8,
+              marginBottom: 18,
+            }}
+          >
+            <div>
+              <label style={fieldLabel}>Base currency</label>
+              <input
+                style={input}
+                type="text"
+                value={baseCurrency}
+                onChange={(e) => setBaseCurrency(e.target.value)}
+              />
+            </div>
+            <div>
+              <label style={fieldLabel}>Price data source</label>
+              <select
+                style={input}
+                value={priceDataSource}
+                onChange={(e) => setPriceDataSource(e.target.value)}
+              >
+                <option value="coingecko">coingecko</option>
+                <option value="yfinance">yfinance</option>
+                <option value="manual">manual</option>
+              </select>
+            </div>
           </div>
-          <div style={{ marginBottom: 16 }}>
-            <label style={label}>Price data source</label>
-            <select
-              style={input}
-              value={priceDataSource}
-              onChange={(e) => setPriceDataSource(e.target.value)}
-            >
-              <option value="coingecko">coingecko</option>
-              <option value="yfinance">yfinance</option>
-              <option value="manual">manual</option>
-            </select>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <button
-              style={preferencesState.status === "saving" ? disabledBtn : btn}
+              style={saveBtn(preferencesState)}
               type="submit"
               disabled={preferencesState.status === "saving"}
             >
-              {preferencesState.status === "saving" ? "Saving…" : "Save Preferences"}
+              {preferencesState.status === "saving"
+                ? "Saving…"
+                : "Save Preferences"}
             </button>
             {statusMessage(preferencesState)}
           </div>
         </form>
-      </section>
-    </main>
+      </div>
+    </div>
   );
 }

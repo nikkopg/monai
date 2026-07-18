@@ -155,7 +155,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <tbody>
           {accounts.map((a) => (
-            <tr key={a.id} style={{ borderTop: "1px solid #2a2e37" }}>
+            <tr key={a.id} style={{ borderTop: "1px solid #e7e1d5" }}>
               <td style={{ padding: "8px 4px" }}>
                 {editingId === a.id ? (
                   <input
@@ -182,7 +182,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
                       onClick={() => setEditingId(null)}
                       style={{
                         background: "transparent",
-                        color: "#9aa0a6",
+                        color: "#8b8474",
                         border: "none",
                         fontSize: 12,
                         cursor: "pointer",
@@ -199,14 +199,14 @@ export default function AccountManager({ accounts, onChanged }: Props) {
                         setEditingId(a.id);
                         setEditName(a.name);
                       }}
-                      style={{ color: "#9aa0a6", cursor: "pointer", marginRight: 12, fontSize: 12 }}
+                      style={{ color: "#8b8474", cursor: "pointer", marginRight: 12, fontSize: 12 }}
                     >
                       Edit
                     </span>
                     <span
                       role="button"
                       onClick={() => setDeleteFlow({ stage: "confirm", account: a })}
-                      style={{ color: "#f87171", cursor: "pointer", fontSize: 12 }}
+                      style={{ color: "#b5503f", cursor: "pointer", fontSize: 12 }}
                     >
                       Delete
                     </span>
@@ -236,7 +236,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
               onClick={() => setAdding(false)}
               style={{
                 background: "transparent",
-                color: "#9aa0a6",
+                color: "#8b8474",
                 border: "none",
                 fontSize: 12,
                 cursor: "pointer",
@@ -253,7 +253,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
       </div>
 
       {error && (
-        <div style={{ color: "#f87171", fontSize: 12, marginTop: 8 }}>{error}</div>
+        <div style={{ color: "#b5503f", fontSize: 12, marginTop: 8 }}>{error}</div>
       )}
 
       {deleteFlow.stage === "confirm" && (

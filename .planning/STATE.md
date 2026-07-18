@@ -2,17 +2,17 @@
 gsd_state_version: 1.0
 milestone: v1.1
 milestone_name: UI Redesign — Paper Aesthetic
-status: in_progress
-current_phase: "08"
-current_phase_name: Design Foundation + App Shell
-last_updated: "2026-07-18T06:20:00.000Z"
+status: milestone_complete
+current_phase: "10"
+current_phase_name: Investments + Settings + Consistency Sweep
+last_updated: "2026-07-18T07:10:00.000Z"
 last_activity: 2026-07-18
 progress:
   total_phases: 3
-  completed_phases: 1
-  total_plans: 1
-  completed_plans: 1
-  percent: 33
+  completed_phases: 3
+  total_plans: 3
+  completed_plans: 3
+  percent: 100
 ---
 
 # Project State
@@ -22,16 +22,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-18)
 
 **Core value:** You can understand and manage your entire financial life — spending and investments — by talking to a trustworthy AI that never fabricates a number and never changes your data without your say-so.
-**Current focus:** Milestone v1.1 — UI Redesign ("Paper" Aesthetic); Phase 8 complete, Phase 9 (Cashflow + Chat Restyle) next
+**Current focus:** Milestone v1.1 — UI Redesign ("Paper" Aesthetic) — ✅ COMPLETE (Phases 8-10). Optional next: `/gsd-complete-milestone` to archive v1.1.
 
 ## Current Position
 
-Phase: 8 of 10 (Design Foundation + App Shell) — ✅ complete
-Plan: 08-PLAN.md (1/1 done)
-Status: Phase 8 verified (UIR-01/02/03; tsc clean, 27/27 e2e). Next: Phase 9 restyle Cashflow + Chat.
-Last activity: 2026-07-18 — Phase 8 shipped: paper token layer, next/font, sidebar shell
+Phase: 10 of 10 (Investments + Settings + Consistency Sweep) — ✅ complete
+Plan: 10-PLAN.md (1/1 done)
+Status: Milestone v1.1 complete — all 10 UIR requirements verified. tsc clean, 27/27 e2e, all four pages + shell match the mockup with real IDR data, 375px reflow no-overflow. Deferred (documented): live chat SSE round-trip re-observation; live-refresh toggle (no backend field).
+Last activity: 2026-07-18 — Phase 10 shipped: investments + settings restyled, consistency sweep, responsive shell
 
-Progress: [███░░░░░░░] 33%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 

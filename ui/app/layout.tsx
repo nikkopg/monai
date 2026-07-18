@@ -1,6 +1,7 @@
 import { Instrument_Serif, Hanken_Grotesk } from "next/font/google";
 import Nav from "./components/Nav";
 import { tokens } from "./styles";
+import "./globals.css";
 
 // Fonts self-hosted by next/font (no runtime Google calls — privacy-aligned).
 // Exposed as CSS variables consumed by tokens.font in styles.ts.
@@ -38,6 +39,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       >
         {/* Centered app frame — mockup shell geometry */}
         <div
+          className="app-frame"
           style={{
             minHeight: "100vh",
             display: "flex",
@@ -48,6 +50,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           }}
         >
           <div
+            className="app-panel"
             style={{
               width: 1240,
               maxWidth: "100%",

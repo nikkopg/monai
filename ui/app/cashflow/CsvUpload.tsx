@@ -91,13 +91,13 @@ export default function CsvUpload({ onImported }: Props) {
       {result && (
         <div style={{ fontSize: 14, marginTop: 12 }}>
           Parsed {result.parsed} · Inserted {result.inserted} ·{" "}
-          <span style={{ color: result.skipped > 0 ? "#f87171" : "#9aa0a6" }}>
+          <span style={{ color: result.skipped > 0 ? "#b5503f" : "#8b8474" }}>
             Skipped {result.skipped}
           </span>
         </div>
       )}
       {error && (
-        <div style={{ color: "#f87171", fontSize: 12, marginTop: 8 }}>{error}</div>
+        <div style={{ color: "#b5503f", fontSize: 12, marginTop: 8 }}>{error}</div>
       )}
     </section>
   );
