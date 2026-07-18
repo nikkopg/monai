@@ -3,8 +3,9 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
 status: planning
-last_updated: "2026-07-18T09:15:00.000Z"
-last_activity: 2026-07-18
+stopped_at: Phase 11 context gathered
+last_updated: "2026-07-18T13:46:58.827Z"
+last_activity: 2026-07-18 — ROADMAP.md created for v1.2 (7 phases, 20/20 requirements mapped)
 progress:
   total_phases: 7
   completed_phases: 0
@@ -110,8 +111,8 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-07-18T09:15:00.000Z
-Stopped at: v1.2 ROADMAP.md + STATE.md written (7 phases, 20/20 requirements mapped), REQUIREMENTS.md traceability filled
-Resume file: None
+Last session: 2026-07-18T13:46:58.794Z
+Stopped at: Phase 11 context gathered
+Resume file: .planning/phases/11-category-hierarchy-schema-audit-migration/11-CONTEXT.md
 
 Next: `/gsd-plan-phase 11`
