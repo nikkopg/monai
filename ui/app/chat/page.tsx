@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { card, input, btn, label } from "../styles";
+import { tokens, input, btn, btnGhost } from "../styles";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -37,7 +37,7 @@ type Proposal = {
 
 // ---------------------------------------------------------------------------
 // ProposalCard — inline card with before→after diff + Approve/Reject + expiry
-// (D-01, D-02, D-03, D-10)
+// (D-01, D-02, D-03, D-10). v1.1 "paper" redesign: green-accented card.
 // ---------------------------------------------------------------------------
 
 function ProposalCard({
@@ -64,18 +64,28 @@ function ProposalCard({
 
   const expired = now > proposal.expiresAt;
   const disabled = busy || status !== "pending" || expired;
+  const minsLeft = Math.max(
+    0,
+    Math.round((proposal.expiresAt.getTime() - now.getTime()) / 60000)
+  );
 
   const cardStyle: React.CSSProperties = {
-    ...card,
-    opacity: expired && status === "pending" ? 0.55 : 1,
+    background: tokens.color.card,
     border: `1px solid ${
       status === "applied"
-        ? "#4ade80"
+        ? tokens.color.green
         : status === "rejected"
-        ? "#f87171"
-        : "#3b82f6"
+        ? tokens.color.border2
+        : "#cfe0d6"
     }`,
+    borderLeft: `3px solid ${
+      status === "rejected" ? tokens.color.terracotta : tokens.color.green
+    }`,
+    borderRadius: 14,
+    padding: "18px 20px",
     marginTop: 16,
+    marginBottom: 26,
+    opacity: expired && status === "pending" ? 0.6 : 1,
   };
 
   async function handleApprove() {
@@ -126,51 +136,41 @@ function ProposalCard({
     }
   }
 
+  const del = { color: tokens.color.terracotta };
+  const add = { color: tokens.color.green };
+  const dim = { color: tokens.color.muted2 };
+  const rowBorder = (i: number) =>
+    i > 0 ? `1px solid ${tokens.color.borderInner}` : undefined;
+
   // Render before→after diff rows (D-02)
   function renderDiff() {
     const { rows } = proposal.payload;
     if (!rows || rows.length === 0) return null;
 
-    // Batch summary when > 1 rows (D-03)
     const batchSummary =
       rows.length > 1 ? (
-        <div
-          style={{
-            fontSize: 12,
-            color: "#9aa0a6",
-            marginBottom: 10,
-          }}
-        >
+        <div style={{ fontSize: 12, ...dim, marginBottom: 10 }}>
           {rows.length} rows affected
         </div>
       ) : null;
 
-    // Show at most 5 rows in the diff to keep the card compact; note remainder
     const displayRows = rows.slice(0, 5);
     const remainder = rows.length - displayRows.length;
 
     return (
-      <div style={{ fontSize: 13 }}>
+      <div style={{ fontSize: 14 }}>
         {batchSummary}
         {displayRows.map((row, i) => {
-          // rename_category / merge_category: use old_name/new_name etc.
           if (row.old_name !== undefined) {
             return (
-              <div
-                key={i}
-                style={{
-                  padding: "6px 0",
-                  borderTop: i > 0 ? "1px solid #2a2e37" : undefined,
-                }}
-              >
-                <span style={{ color: "#f87171" }}>{row.old_name}</span>
+              <div key={i} style={{ padding: "6px 0", borderTop: rowBorder(i) }}>
+                <span style={{ ...del, textDecoration: "line-through" }}>
+                  {row.old_name}
+                </span>
                 {" → "}
-                <span style={{ color: "#4ade80" }}>{row.new_name}</span>
+                <span style={{ ...add, fontWeight: 600 }}>{row.new_name}</span>
                 {row.affected_count !== undefined && (
-                  <span style={{ color: "#9aa0a6" }}>
-                    {" "}
-                    ({row.affected_count} tx)
-                  </span>
+                  <span style={dim}> ({row.affected_count} tx)</span>
                 )}
               </div>
             );
@@ -178,98 +178,64 @@ function ProposalCard({
           if (row.from_name !== undefined) {
             return (
               <div key={i} style={{ padding: "6px 0" }}>
-                merge{" "}
-                <span style={{ color: "#f87171" }}>{row.from_name}</span>
+                merge <span style={del}>{row.from_name}</span>
                 {" → "}
-                <span style={{ color: "#4ade80" }}>{row.into_name}</span>
+                <span style={{ ...add, fontWeight: 600 }}>{row.into_name}</span>
               </div>
             );
           }
-
-          // add: show after fields
           if (!row.before && row.after) {
             return (
-              <div
-                key={i}
-                style={{
-                  padding: "6px 0",
-                  borderTop: i > 0 ? "1px solid #2a2e37" : undefined,
-                }}
-              >
+              <div key={i} style={{ padding: "6px 0", borderTop: rowBorder(i) }}>
                 {Object.entries(row.after).map(([k, v]) => (
                   <div key={k}>
-                    <span style={{ color: "#9aa0a6" }}>{k}: </span>
-                    <span style={{ color: "#4ade80" }}>
-                      {String(v ?? "—")}
-                    </span>
+                    <span style={dim}>{k}: </span>
+                    <span style={add}>{String(v ?? "—")}</span>
                   </div>
                 ))}
               </div>
             );
           }
-
-          // delete: show before fields
           if (row.before && !row.after) {
             return (
-              <div
-                key={i}
-                style={{
-                  padding: "6px 0",
-                  borderTop: i > 0 ? "1px solid #2a2e37" : undefined,
-                }}
-              >
+              <div key={i} style={{ padding: "6px 0", borderTop: rowBorder(i) }}>
                 {Object.entries(row.before).map(([k, v]) => (
                   <div key={k}>
-                    <span style={{ color: "#9aa0a6" }}>{k}: </span>
-                    <span style={{ color: "#f87171" }}>
-                      {String(v ?? "—")}
-                    </span>
+                    <span style={dim}>{k}: </span>
+                    <span style={del}>{String(v ?? "—")}</span>
                   </div>
                 ))}
               </div>
             );
           }
-
-          // edit: show changed fields only (before → after)
           if (row.before && row.after) {
             const changedKeys = Object.keys(row.after).filter(
               (k) => String(row.after![k]) !== String(row.before![k])
             );
             if (changedKeys.length === 0) {
               return (
-                <div key={i} style={{ color: "#9aa0a6", fontSize: 12 }}>
+                <div key={i} style={{ ...dim, fontSize: 12 }}>
                   (no field changes detected)
                 </div>
               );
             }
             return (
-              <div
-                key={i}
-                style={{
-                  padding: "6px 0",
-                  borderTop: i > 0 ? "1px solid #2a2e37" : undefined,
-                }}
-              >
+              <div key={i} style={{ padding: "6px 0", borderTop: rowBorder(i) }}>
                 {changedKeys.map((k) => (
                   <div key={k}>
-                    <span style={{ color: "#9aa0a6" }}>{k}: </span>
-                    <span style={{ color: "#f87171" }}>
-                      {String(row.before![k] ?? "—")}
-                    </span>
+                    <span style={dim}>{k}: </span>
+                    <span style={del}>{String(row.before![k] ?? "—")}</span>
                     {" → "}
-                    <span style={{ color: "#4ade80" }}>
-                      {String(row.after![k] ?? "—")}
-                    </span>
+                    <span style={add}>{String(row.after![k] ?? "—")}</span>
                   </div>
                 ))}
               </div>
             );
           }
-
           return null;
         })}
         {remainder > 0 && (
-          <div style={{ color: "#9aa0a6", fontSize: 12, marginTop: 6 }}>
+          <div style={{ ...dim, fontSize: 12, marginTop: 6 }}>
             + {remainder} more row{remainder > 1 ? "s" : ""}
           </div>
         )}
@@ -279,57 +245,52 @@ function ProposalCard({
 
   return (
     <div style={cardStyle}>
-      {/* Card header */}
       <div
         style={{
           fontSize: 11,
+          letterSpacing: ".1em",
+          textTransform: "uppercase",
+          color: tokens.color.green,
           fontWeight: 700,
-          letterSpacing: "0.08em",
-          color: "#3b82f6",
-          marginBottom: 8,
-          textTransform: "uppercase" as const,
+          marginBottom: 10,
         }}
       >
-        PROPOSED {proposal.operation.replace(/_/g, " ")}
+        Proposed {proposal.operation.replace(/_/g, " ")}
       </div>
 
-      {/* Diff */}
       {renderDiff()}
 
-      {/* Expiry notice */}
       {expired && status === "pending" && (
-        <div style={{ color: "#9aa0a6", fontSize: 12, marginTop: 10 }}>
+        <div style={{ ...dim, fontSize: 12, marginTop: 10 }}>
           Expired — ask again to redo this
         </div>
       )}
-
-      {/* Status banners */}
       {status === "applied" && (
-        <div style={{ color: "#4ade80", fontSize: 13, marginTop: 10 }}>
+        <div style={{ color: tokens.color.green, fontSize: 13, marginTop: 10 }}>
           Applied successfully.
         </div>
       )}
       {status === "rejected" && (
-        <div style={{ color: "#9aa0a6", fontSize: 13, marginTop: 10 }}>
+        <div style={{ ...dim, fontSize: 13, marginTop: 10 }}>
           Rejected — no changes made.
         </div>
       )}
-
-      {/* Error */}
       {error && (
-        <div style={{ color: "#f87171", fontSize: 12, marginTop: 8 }}>
+        <div
+          style={{ color: tokens.color.terracotta, fontSize: 12, marginTop: 8 }}
+        >
           {error}
         </div>
       )}
 
-      {/* Buttons */}
       {status === "pending" && (
-        <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+        <div
+          style={{ display: "flex", gap: 10, marginTop: 16, alignItems: "center" }}
+        >
           <button
             style={{
               ...btn,
-              background: expired ? "#374151" : "#4ade80",
-              color: expired ? "#9aa0a6" : "#0f1115",
+              opacity: disabled ? 0.5 : 1,
               cursor: disabled ? "not-allowed" : "pointer",
             }}
             onClick={handleApprove}
@@ -339,9 +300,7 @@ function ProposalCard({
           </button>
           <button
             style={{
-              ...btn,
-              background: expired ? "#374151" : "#f87171",
-              color: expired ? "#9aa0a6" : "white",
+              ...btnGhost,
               cursor: disabled ? "not-allowed" : "pointer",
             }}
             onClick={handleReject}
@@ -349,6 +308,17 @@ function ProposalCard({
           >
             {busy ? "…" : "Reject"}
           </button>
+          {!expired && (
+            <span
+              style={{
+                marginLeft: "auto",
+                fontSize: 12,
+                color: tokens.color.muted2,
+              }}
+            >
+              expires in {minsLeft} min
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -356,12 +326,14 @@ function ProposalCard({
 }
 
 // ---------------------------------------------------------------------------
-// Chat page
+// Chat page — v1.1 "paper" redesign. Same single-turn SSE flow
+// (/api/query-stream), tool-trace, and confirm-before-write ProposalCard;
+// re-laid-out as user bubble + assistant answer block + sticky composer.
 // ---------------------------------------------------------------------------
 
 export default function ChatPage() {
-  // Query / streaming state
   const [question, setQuestion] = useState("");
+  const [askedQuestion, setAskedQuestion] = useState("");
   const [answer, setAnswer] = useState("");
   const [asking, setAsking] = useState(false);
   const [steps, setSteps] = useState<string[]>([]);
@@ -369,20 +341,16 @@ export default function ChatPage() {
   const [traceOpen, setTraceOpen] = useState(false);
   const [proposal, setProposal] = useState<Proposal | null>(null);
 
-  // Cancel ref — used to abort in-flight SSE reads on a new ask
   const cancelRef = useRef(false);
 
-  // ---------------------------------------------------------------------------
-  // SSE-backed ask() — replaces the old blocking fetch("/api/query")
-  // SSE is POST-based so we use fetch + ReadableStream reader, not EventSource
-  // (EventSource only supports GET — RESEARCH.md Code Examples)
-  // ---------------------------------------------------------------------------
-
+  // SSE-backed ask() — POST /api/query-stream (EventSource is GET-only).
   async function ask() {
-    if (!question.trim()) return;
+    const q = question.trim();
+    if (!q) return;
 
-    // Reset state for new question
     setAsking(true);
+    setAskedQuestion(q);
+    setQuestion("");
     setAnswer("");
     setSteps([]);
     setTrace([]);
@@ -394,7 +362,7 @@ export default function ChatPage() {
       const resp = await fetch("/api/query-stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question }),
+        body: JSON.stringify({ question: q }),
       });
 
       if (!resp.ok || !resp.body) {
@@ -413,7 +381,6 @@ export default function ChatPage() {
 
         buf += decoder.decode(value, { stream: true });
 
-        // SSE messages are delimited by double newlines
         const messages = buf.split("\n\n");
         buf = messages.pop() ?? "";
 
@@ -448,16 +415,17 @@ export default function ChatPage() {
             setAnswer(msg.text ?? "");
             if (msg.trace) setTrace(msg.trace);
             if (msg.proposal_id && msg.proposal_token) {
-              // Build Proposal from SSE answer event; compute client-side expiry
-              // (D-09/D-10: cosmetic — server enforces authoritatively on confirm)
+              // Build Proposal from SSE answer event; client-side expiry is
+              // cosmetic — server enforces authoritatively on confirm (D-09/D-10).
               setProposal({
                 id: msg.proposal_id,
                 token: msg.proposal_token,
-                operation: msg.trace?.find((s) =>
-                  s.result?.proposal_id === msg.proposal_id
-                )?.tool ?? "write",
-                payload: (msg.trace?.find((s) =>
-                  s.result?.proposal_id === msg.proposal_id
+                operation:
+                  msg.trace?.find(
+                    (s) => s.result?.proposal_id === msg.proposal_id
+                  )?.tool ?? "write",
+                payload: (msg.trace?.find(
+                  (s) => s.result?.proposal_id === msg.proposal_id
                 )?.result?.payload as Proposal["payload"]) ?? {
                   operation: "write",
                   rows: [],
@@ -475,144 +443,238 @@ export default function ChatPage() {
     }
   }
 
-  // ---------------------------------------------------------------------------
-  // Render
-  // ---------------------------------------------------------------------------
+  const conversationStarted = !!askedQuestion;
 
   return (
-    <main style={{ maxWidth: 760, margin: "0 auto", padding: "48px 24px" }}>
-      {/* Ask — SSE streaming chat */}
-      <section style={card}>
-        <label style={label}>Ask about your finances</label>
-        <div style={{ display: "flex", gap: 8 }}>
-          <input
-            style={input}
-            value={question}
-            placeholder="How much did I spend on food this year?"
-            onChange={(e) => setQuestion(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && ask()}
-          />
-          <button style={btn} onClick={ask} disabled={asking}>
-            {asking ? "…" : "Ask"}
-          </button>
+    <div
+      className="tab-in"
+      style={{
+        maxWidth: 760,
+        margin: "0 auto",
+        padding: "40px 44px 60px",
+        minHeight: "100%",
+        display: "flex",
+        flexDirection: "column",
+      }}
+    >
+      <div style={{ marginBottom: 26 }}>
+        <div
+          style={{
+            fontSize: 12,
+            letterSpacing: ".12em",
+            textTransform: "uppercase",
+            color: tokens.color.muted2,
+            marginBottom: 6,
+          }}
+        >
+          Assistant
         </div>
+        <h1
+          style={{
+            fontFamily: tokens.font.serif,
+            fontWeight: 400,
+            fontSize: 40,
+            margin: 0,
+            letterSpacing: "-.5px",
+          }}
+        >
+          Ask about your money
+        </h1>
+      </div>
 
-        {/* Progressive step indicator (D-08) */}
-        {asking && steps.length > 0 && (
-          <div style={{ marginTop: 12 }}>
-            {steps.map((s, i) => (
-              <div
-                key={i}
-                style={{
-                  fontSize: 12,
-                  color: "#9aa0a6",
-                  padding: "2px 0",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                <span style={{ color: "#3b82f6" }}>›</span>
-                {s}
-              </div>
-            ))}
+      {/* Conversation */}
+      <div style={{ flex: 1 }}>
+        {conversationStarted && (
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              marginBottom: 18,
+            }}
+          >
             <div
               style={{
-                fontSize: 12,
-                color: "#9aa0a6",
-                marginTop: 4,
-                fontStyle: "italic",
+                background: tokens.color.ink,
+                color: tokens.color.inkText,
+                padding: "12px 18px",
+                borderRadius: "16px 16px 4px 16px",
+                fontSize: 15,
+                maxWidth: "80%",
               }}
             >
-              thinking…
+              {askedQuestion}
             </div>
           </div>
         )}
 
-        {/* Answer (D-07: prominent) */}
-        {answer && (
-          <pre
-            style={{
-              whiteSpace: "pre-wrap",
-              marginTop: 16,
-              marginBottom: 0,
-              fontFamily: "inherit",
-              fontSize: 15,
-              lineHeight: 1.5,
-            }}
-          >
-            {answer}
-          </pre>
-        )}
-
-        {/* Collapsible tool-call trace — "▾ how I got this (N steps)" (D-07) */}
-        {trace.length > 0 && (
-          <div style={{ marginTop: 12 }}>
-            <button
-              onClick={() => setTraceOpen((o) => !o)}
+        {(asking || answer) && (
+          <div style={{ marginBottom: 16 }}>
+            <div
               style={{
-                background: "none",
-                border: "none",
-                color: "#9aa0a6",
-                cursor: "pointer",
-                fontSize: 12,
-                padding: 0,
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 10,
               }}
             >
-              {traceOpen ? "▴" : "▾"} how I got this ({trace.length} step
-              {trace.length !== 1 ? "s" : ""})
-            </button>
-            {traceOpen && (
-              <div
-                style={{
-                  marginTop: 8,
-                  borderLeft: "2px solid #2a2e37",
-                  paddingLeft: 12,
-                }}
-              >
-                {trace.map((step, i) => (
+              <span style={{ fontFamily: tokens.font.serif, fontSize: 18 }}>
+                monai
+              </span>
+              <span style={{ fontSize: 12, color: tokens.color.muted2 }}>
+                · {asking && !answer ? "thinking…" : "answered just now"}
+              </span>
+            </div>
+
+            {/* Progressive step indicator while streaming (D-08) */}
+            {asking && steps.length > 0 && !answer && (
+              <div style={{ marginBottom: 6 }}>
+                {steps.map((s, i) => (
                   <div
                     key={i}
                     style={{
-                      marginBottom: 8,
-                      fontSize: 12,
-                      color: "#9aa0a6",
+                      fontSize: 13,
+                      color: tokens.color.muted,
+                      padding: "2px 0",
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
                     }}
                   >
-                    <span style={{ color: "#3b82f6", fontWeight: 600 }}>
-                      {step.tool}
-                    </span>
-                    (
-                    {Object.entries(step.args ?? {})
-                      .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
-                      .join(", ")}
-                    ){" "}
-                    <span style={{ color: "#6b7280" }}>→</span>{" "}
-                    <span style={{ color: "#e6e8eb" }}>
-                      {JSON.stringify(step.result).slice(0, 120)}
-                    </span>
+                    <span style={{ color: tokens.color.green }}>›</span>
+                    {s}
                   </div>
                 ))}
               </div>
             )}
+
+            {/* Answer (D-07) */}
+            {answer && (
+              <div
+                style={{
+                  fontSize: 16,
+                  lineHeight: 1.6,
+                  margin: "0 0 14px",
+                  color: tokens.color.textSoft,
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {answer}
+              </div>
+            )}
+
+            {/* Collapsible tool-call trace (D-07) */}
+            {trace.length > 0 && (
+              <>
+                <button
+                  onClick={() => setTraceOpen((o) => !o)}
+                  style={{
+                    background: "none",
+                    border: "none",
+                    color: tokens.color.muted,
+                    cursor: "pointer",
+                    fontSize: 13,
+                    padding: 0,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 6,
+                  }}
+                >
+                  {traceOpen ? "▴" : "▾"} how I got this ({trace.length} step
+                  {trace.length !== 1 ? "s" : ""})
+                </button>
+                {traceOpen && (
+                  <div
+                    style={{
+                      marginTop: 10,
+                      borderLeft: `2px solid ${tokens.color.border2}`,
+                      paddingLeft: 14,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 8,
+                    }}
+                  >
+                    {trace.map((step, i) => (
+                      <div
+                        key={i}
+                        style={{
+                          fontSize: 12,
+                          color: tokens.color.muted,
+                          fontFamily: "ui-monospace, monospace",
+                        }}
+                      >
+                        <span
+                          style={{ color: tokens.color.green, fontWeight: 600 }}
+                        >
+                          {step.tool}
+                        </span>
+                        (
+                        {Object.entries(step.args ?? {})
+                          .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
+                          .join(", ")}
+                        ){" "}
+                        <span style={{ color: tokens.color.inkTextMuted }}>
+                          →
+                        </span>{" "}
+                        {JSON.stringify(step.result).slice(0, 120)}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* Inline ProposalCard (D-01) */}
+            {proposal && (
+              <ProposalCard
+                proposal={proposal}
+                onApplied={() => {
+                  // /cashflow re-fetches its own list on mount; nothing local.
+                }}
+                onRejected={() => {
+                  // nothing extra needed
+                }}
+              />
+            )}
           </div>
         )}
+      </div>
 
-        {/* Inline ProposalCard (D-01) */}
-        {proposal && (
-          <ProposalCard
-            proposal={proposal}
-            onApplied={() => {
-              // no local list to refresh on the chat page itself; cashflow's
-              // /cashflow route re-fetches its own recent-transactions list
-              // on mount.
-            }}
-            onRejected={() => {
-              // nothing extra needed
-            }}
-          />
-        )}
-      </section>
-    </main>
+      {/* Composer — sticky at the bottom of the scroll area */}
+      <div
+        style={{
+          position: "sticky",
+          bottom: 0,
+          display: "flex",
+          gap: 10,
+          background: tokens.color.panel,
+          paddingTop: 8,
+          paddingBottom: 2,
+        }}
+      >
+        <input
+          style={{ ...input, borderRadius: 14, padding: "14px 18px", fontSize: 15 }}
+          value={question}
+          placeholder="Ask anything about your finances…"
+          onChange={(e) => setQuestion(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && ask()}
+        />
+        <button
+          style={{
+            background: tokens.color.ink,
+            color: tokens.color.inkText,
+            border: "none",
+            borderRadius: 14,
+            padding: "0 24px",
+            fontSize: 15,
+            fontWeight: 600,
+            cursor: asking ? "not-allowed" : "pointer",
+          }}
+          onClick={ask}
+          disabled={asking}
+        >
+          {asking ? "…" : "Ask"}
+        </button>
+      </div>
+    </div>
   );
 }

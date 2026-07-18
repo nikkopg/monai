@@ -60,20 +60,26 @@ test.describe("/cashflow dashboard", () => {
     await expect(
       page.getByRole("heading", { name: "Cashflow" })
     ).toBeVisible();
-    await expect(page.getByText("Total Income", { exact: true })).toBeVisible();
+    // Stat-card captions are <div>s; scope to div so the trend legend's
+    // <span>Income/Expenses don't trip strict mode.
     await expect(
-      page.getByText("Total Expenses", { exact: true })
+      page.locator("div").filter({ hasText: /^Income$/ })
     ).toBeVisible();
-    await expect(page.getByText("Net", { exact: true })).toBeVisible();
+    await expect(
+      page.locator("div").filter({ hasText: /^Expenses$/ })
+    ).toBeVisible();
+    await expect(
+      page.locator("div").filter({ hasText: /^Net saved$/ })
+    ).toBeVisible();
   });
 
   test("renders at least one chart svg", async ({ page }) => {
     await mockSummary(page);
     await page.goto("/cashflow");
 
-    await expect(page.getByText("Spending by Category")).toBeVisible();
+    await expect(page.getByText("Spending by category")).toBeVisible();
     const chartsRow = page
-      .getByText("Spending by Category")
+      .getByText("Spending by category")
       .locator("xpath=ancestor::main");
     await expect(chartsRow.locator("svg").first()).toBeVisible();
   });
@@ -85,10 +91,12 @@ test.describe("/cashflow dashboard", () => {
     await page.goto("/cashflow");
 
     // Wait for the initial load (default period).
-    await expect(page.getByText("Total Income", { exact: true })).toBeVisible();
+    await expect(
+      page.locator("div").filter({ hasText: /^Income$/ })
+    ).toBeVisible();
     expect(requestedPeriods).toContain("this_month");
 
-    await page.getByRole("button", { name: "This year", exact: true }).click();
+    await page.getByRole("button", { name: "Year", exact: true }).click();
 
     await expect
       .poll(() => requestedPeriods.includes("this_year"))

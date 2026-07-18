@@ -112,7 +112,7 @@ test.describe("transaction create/edit/delete", () => {
     });
 
     await page.goto("/cashflow");
-    await page.getByRole("button", { name: "Add transaction", exact: true }).click();
+    await page.getByRole("button", { name: "+ Add transaction", exact: true }).click();
     await expect(page.getByText("Add transaction").first()).toBeVisible();
 
     // The category control is now a <select> populated from GET /api/categories.
@@ -195,7 +195,7 @@ test.describe("transaction create/edit/delete", () => {
     });
 
     await page.goto("/cashflow");
-    await page.getByRole("button", { name: "Add transaction", exact: true }).click();
+    await page.getByRole("button", { name: "+ Add transaction", exact: true }).click();
     await expect(page.getByText("Add transaction").first()).toBeVisible();
 
     const form = page.locator("form").filter({ hasText: "Add transaction" });
@@ -233,7 +233,7 @@ test.describe("transaction create/edit/delete", () => {
     });
 
     await page.goto("/cashflow");
-    await page.getByRole("button", { name: "Add transaction", exact: true }).click();
+    await page.getByRole("button", { name: "+ Add transaction", exact: true }).click();
     await expect(page.getByText("Add transaction").first()).toBeVisible();
 
     const form = page.locator("form").filter({ hasText: "Add transaction" });

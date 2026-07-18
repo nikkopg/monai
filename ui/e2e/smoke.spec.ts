@@ -26,7 +26,9 @@ test.describe("route rendering", () => {
   test("/chat renders the ask box", async ({ page }) => {
     const res = await page.goto("/chat");
     expect(res?.status()).toBeLessThan(400);
-    await expect(page.getByText("Ask about your finances")).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Ask about your money" })
+    ).toBeVisible();
   });
 
   test("/cashflow renders the recent transactions section", async ({ page }) => {

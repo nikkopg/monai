@@ -2,9 +2,8 @@
 
 import { useEffect, useState } from "react";
 
-import { card, btn, label } from "../styles";
+import { tokens, card, btnDark } from "../styles";
 import CategoryDonut from "./charts/CategoryDonut";
-import IncomeExpenseBar from "./charts/IncomeExpenseBar";
 import TrendChart from "./charts/TrendChart";
 import TransactionModal, { type Tx as ModalTx } from "./TransactionModal";
 import ConfirmDialog from "./ConfirmDialog";
@@ -36,10 +35,8 @@ type AccountBalance = {
 
 type TrendPoint = { month: string; income: number; expense: number };
 
-// GET /cashflow/summary (backend/schemas.py:CashflowSummary, D-08). Note:
-// by_category rows arrive as [category, total] tuples (spending_by_category's
-// existing tools.py shape, not objects) — mapped to {category,total} below
-// before being handed to CategoryDonut.
+// GET /cashflow/summary (backend/schemas.py:CashflowSummary, D-08). by_category
+// rows arrive as [category, total] tuples — mapped to {category,total} below.
 type CashflowSummary = {
   totals: { income: number; expense: number; net: number };
   by_category: [string, number][];
@@ -49,30 +46,27 @@ type CashflowSummary = {
 
 type Period = "this_week" | "this_month" | "last_month" | "this_year";
 
-const PERIOD_OPTIONS: { value: Period; label: string }[] = [
-  { value: "this_week", label: "This week" },
-  { value: "this_month", label: "This month" },
-  { value: "last_month", label: "Last month" },
-  { value: "this_year", label: "This year" },
+const PERIOD_OPTIONS: { value: Period; label: string; phrase: string }[] = [
+  { value: "this_week", label: "Week", phrase: "this week" },
+  { value: "this_month", label: "Month", phrase: "this month" },
+  { value: "last_month", label: "Last", phrase: "last month" },
+  { value: "this_year", label: "Year", phrase: "this year" },
 ];
 
 // ---------------------------------------------------------------------------
-// Cashflow page — dashboard (totals, per-account balances, charts, trend)
-// plus full CRUD (Plan 05): TransactionModal (create/edit), ConfirmDialog
-// (destructive confirmations), AccountManager, CategoryManager, and
-// CsvUpload. Every write refetches both the transactions list and the
-// summary (refreshAll, Pattern 5) so nothing requires a page reload.
+// Cashflow page — v1.1 "paper" redesign of the Phase 4 dashboard. Same data
+// (GET /cashflow/summary + /transactions) and same full CRUD (TransactionModal,
+// ConfirmDialog, AccountManager, CategoryManager, CsvUpload); every write still
+// refetches list + summary via refreshAll (Pattern 5) so nothing needs a reload.
 // ---------------------------------------------------------------------------
 
 export default function CashflowPage() {
-  // Dashboard state
   const [period, setPeriod] = useState<Period>("this_month");
   const [summary, setSummary] = useState<CashflowSummary | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
 
   const [txs, setTxs] = useState<Tx[]>([]);
 
-  // Transaction modal (create/edit, D-10) + delete confirm state
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTx, setEditingTx] = useState<ModalTx | null>(null);
   const [deletingTx, setDeletingTx] = useState<Tx | null>(null);
@@ -102,8 +96,7 @@ export default function CashflowPage() {
   }
 
   // Refetch BOTH the transactions list and the summary after every write, so
-  // the recent-transactions list AND the dashboard totals/per-account
-  // balances update immediately with no page reload (Pattern 5, D-08).
+  // the recent-transactions list AND the dashboard update with no page reload.
   async function refreshAll() {
     await Promise.all([loadTxs(), loadSummary(period)]);
   }
@@ -115,10 +108,6 @@ export default function CashflowPage() {
   useEffect(() => {
     loadSummary(period);
   }, [period]);
-
-  // ---------------------------------------------------------------------------
-  // Transaction delete
-  // ---------------------------------------------------------------------------
 
   async function confirmDeleteTx() {
     if (!deletingTx) return;
@@ -138,7 +127,9 @@ export default function CashflowPage() {
         } catch {
           // keep the status-based detail
         }
-        setDeleteError(`Couldn't save transaction: ${detail}. Nothing was changed.`);
+        setDeleteError(
+          `Couldn't save transaction: ${detail}. Nothing was changed.`
+        );
       }
     } catch (e) {
       setDeleteError(
@@ -149,339 +140,580 @@ export default function CashflowPage() {
     }
   }
 
-  const fmt = (n: number) =>
-    new Intl.NumberFormat("en-US", { signDisplay: "always" }).format(n);
+  // ---- formatting ----------------------------------------------------------
+  // Data is IDR (single-currency); no currency symbol is invented — plain
+  // grouped digits, matching v1.0. `signed` adds an explicit +/- for deltas.
+  const money = (n: number) =>
+    new Intl.NumberFormat("en-US").format(Math.round(n));
+  const signed = (n: number) =>
+    new Intl.NumberFormat("en-US", { signDisplay: "always" }).format(
+      Math.round(n)
+    );
+  const initials = (name: string) =>
+    name
+      .split(/\s+/)
+      .map((w) => w[0])
+      .filter(Boolean)
+      .slice(0, 2)
+      .join("")
+      .toUpperCase();
 
-  const signColor = (n: number) => (n < 0 ? "#f87171" : "#4ade80");
-
-  // ---------------------------------------------------------------------------
-  // Derived chart data
-  // ---------------------------------------------------------------------------
-
+  // ---- derived -------------------------------------------------------------
   const categoryData = (summary?.by_category ?? []).map(([category, total]) => ({
     category,
     total,
   }));
-  const incomeExpenseData = summary
-    ? [
-        {
-          label: "This period",
-          income: summary.totals.income,
-          expense: summary.totals.expense,
-        },
-      ]
-    : [];
   const trendData = summary?.trend ?? [];
   const hasActivity =
     !!summary &&
     (summary.totals.income !== 0 ||
       summary.totals.expense !== 0 ||
       categoryData.length > 0);
+  const netWorth = (summary?.accounts ?? []).reduce(
+    (s, a) => s + a.current_balance,
+    0
+  );
+  const netWorthDelta = (summary?.accounts ?? []).reduce(
+    (s, a) => s + a.period_net,
+    0
+  );
+  const periodPhrase =
+    PERIOD_OPTIONS.find((o) => o.value === period)?.phrase ?? "this period";
+
+  const catColor = (i: number) =>
+    ["#2f6f4f", "#5a8f73", "#d8b26a", "#8fae9c", "#b5503f", "#c8c1b5"][i % 6];
 
   // ---------------------------------------------------------------------------
   // Render
   // ---------------------------------------------------------------------------
 
   return (
-    <main style={{ maxWidth: 960, margin: "0 auto", padding: "48px 24px" }}>
-      {/* Page heading + period selector */}
+    <div className="tab-in" style={{ padding: "40px 44px 60px" }}>
+      {/* Header + period control */}
       <div
         style={{
           display: "flex",
           justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: 32,
+          alignItems: "flex-end",
+          marginBottom: 30,
         }}
       >
-        <h1 style={{ fontSize: 28, fontWeight: 600, margin: 0 }}>Cashflow</h1>
-        <div style={{ display: "flex", gap: 8 }}>
-          {PERIOD_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => setPeriod(opt.value)}
-              style={{
-                background: period === opt.value ? "#3b82f6" : "transparent",
-                color: period === opt.value ? "white" : "#9aa0a6",
-                border: "1px solid #2a2e37",
-                borderRadius: 999,
-                padding: "6px 14px",
-                fontSize: 13,
-                cursor: "pointer",
-              }}
-            >
-              {opt.label}
-            </button>
-          ))}
+        <div>
+          <div
+            style={{
+              fontSize: 12,
+              letterSpacing: ".12em",
+              textTransform: "uppercase",
+              color: tokens.color.muted2,
+              marginBottom: 6,
+            }}
+          >
+            Overview
+          </div>
+          <h1
+            style={{
+              fontFamily: tokens.font.serif,
+              fontWeight: 400,
+              fontSize: 40,
+              margin: 0,
+              letterSpacing: "-.5px",
+            }}
+          >
+            Cashflow
+          </h1>
+        </div>
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            background: "#efece4",
+            border: `1px solid ${tokens.color.border2}`,
+            borderRadius: 999,
+            padding: 4,
+          }}
+        >
+          {PERIOD_OPTIONS.map((opt) => {
+            const active = period === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setPeriod(opt.value)}
+                style={{
+                  border: "none",
+                  borderRadius: 999,
+                  padding: "7px 15px",
+                  fontSize: 13,
+                  fontWeight: active ? 600 : 500,
+                  cursor: "pointer",
+                  color: active ? tokens.color.inkText : tokens.color.muted,
+                  background: active ? tokens.color.ink : "transparent",
+                  transition: "all .2s ease",
+                }}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {summaryError && (
-        <div style={{ ...card, color: "#f87171" }}>{summaryError}</div>
+        <div style={{ ...card, color: tokens.color.terracotta }}>
+          {summaryError}
+        </div>
       )}
 
       {summary && !summaryError && (
         <>
-          {/* Summary row */}
+          {/* Hero: net worth + trend */}
           <div
             style={{
               display: "grid",
-              gridTemplateColumns: "repeat(3, 1fr)",
-              gap: 16,
-              marginBottom: 24,
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
+              gap: 18,
+              marginBottom: 18,
             }}
           >
-            <div style={{ ...card, marginBottom: 0 }}>
-              <label style={label}>Total Income</label>
-              <div
-                style={{ fontSize: 20, fontWeight: 600, color: "#4ade80" }}
-              >
-                {fmt(summary.totals.income)}
+            <div
+              style={{
+                background: tokens.color.ink,
+                color: tokens.color.inkText,
+                borderRadius: 18,
+                padding: "26px 28px",
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "space-between",
+              }}
+            >
+              <div>
+                <div
+                  style={{
+                    fontSize: 13,
+                    color: tokens.color.inkTextMuted,
+                    marginBottom: 10,
+                  }}
+                >
+                  Net worth
+                </div>
+                <div
+                  style={{
+                    fontFamily: tokens.font.serif,
+                    fontSize: 52,
+                    lineHeight: 1,
+                    letterSpacing: "-1px",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {money(netWorth)}
+                </div>
               </div>
-            </div>
-            <div style={{ ...card, marginBottom: 0 }}>
-              <label style={label}>Total Expenses</label>
-              <div
-                style={{ fontSize: 20, fontWeight: 600, color: "#f87171" }}
-              >
-                {fmt(-Math.abs(summary.totals.expense))}
-              </div>
-            </div>
-            <div style={{ ...card, marginBottom: 0 }}>
-              <label style={label}>Net</label>
               <div
                 style={{
-                  fontSize: 20,
-                  fontWeight: 600,
-                  color: signColor(summary.totals.net),
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginTop: 22,
                 }}
               >
-                {fmt(summary.totals.net)}
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    background: tokens.color.chipGreenBg,
+                    color:
+                      netWorthDelta < 0
+                        ? "#e6a99c"
+                        : tokens.color.chipGreenText,
+                    fontSize: 13,
+                    fontWeight: 600,
+                    padding: "4px 10px",
+                    borderRadius: 999,
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  {netWorthDelta < 0 ? "▼" : "▲"} {signed(netWorthDelta)}
+                </span>
+                <span
+                  style={{ fontSize: 13, color: tokens.color.inkTextMuted }}
+                >
+                  {periodPhrase}
+                </span>
+              </div>
+            </div>
+
+            <div
+              style={{
+                background: tokens.color.card,
+                border: `1px solid ${tokens.color.border}`,
+                borderRadius: 18,
+                padding: "22px 24px",
+              }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: 6,
+                }}
+              >
+                <div style={{ fontSize: 14, fontWeight: 600 }}>
+                  6-month trend
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 16,
+                    fontSize: 12,
+                    color: tokens.color.muted,
+                  }}
+                >
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 14,
+                        height: 2,
+                        background: tokens.color.green,
+                        display: "inline-block",
+                      }}
+                    />
+                    Income
+                  </span>
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 14,
+                        height: 0,
+                        borderTop: `2px dashed ${tokens.color.terracotta}`,
+                        display: "inline-block",
+                      }}
+                    />
+                    Expenses
+                  </span>
+                </div>
+              </div>
+              <TrendChart data={trendData} />
+            </div>
+          </div>
+
+          {/* Stat cards */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns:
+                "repeat(auto-fit, minmax(min(100%, 200px), 1fr))",
+              gap: 18,
+              marginBottom: 18,
+            }}
+          >
+            <div style={statCard}>
+              <div style={statLabel}>Income</div>
+              <div style={{ ...statValue, color: tokens.color.green }}>
+                {money(summary.totals.income)}
+              </div>
+            </div>
+            <div style={statCard}>
+              <div style={statLabel}>Expenses</div>
+              <div style={{ ...statValue, color: tokens.color.terracotta }}>
+                {money(summary.totals.expense)}
+              </div>
+            </div>
+            <div style={statCard}>
+              <div style={statLabel}>Net saved</div>
+              <div style={{ ...statValue, color: tokens.color.ink }}>
+                {signed(summary.totals.net)}
               </div>
             </div>
           </div>
 
-          {!hasActivity ? (
-            <section style={card}>
-              <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>
-                Nothing here for this period.
-              </div>
-              <div style={{ color: "#9aa0a6", fontSize: 14 }}>
-                Try a different period, or add a transaction to see it
-                reflected here.
-              </div>
-            </section>
-          ) : (
-            <>
-              {/* Per-account balances row */}
-              <section style={card}>
-                <label style={label}>Accounts</label>
-                <table
-                  style={{
-                    width: "100%",
-                    borderCollapse: "collapse",
-                    fontSize: 13,
-                  }}
+          {hasActivity && (
+            /* Category + accounts */
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(min(100%, 300px), 1fr))",
+                gap: 18,
+                marginBottom: 18,
+              }}
+            >
+              <div style={{ ...card, marginBottom: 0 }}>
+                <div
+                  style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}
                 >
-                  <thead>
-                    <tr>
-                      <th style={{ textAlign: "left", padding: "4px 4px" }} />
-                      <th
-                        style={{
-                          textAlign: "right",
-                          padding: "4px 4px",
-                          color: "#9aa0a6",
-                          fontWeight: 400,
-                        }}
-                      >
-                        Balance
-                      </th>
-                      <th
-                        style={{
-                          textAlign: "right",
-                          padding: "4px 4px",
-                          color: "#9aa0a6",
-                          fontWeight: 400,
-                        }}
-                      >
-                        This period
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {summary.accounts.map((a) => (
-                      <tr key={a.id} style={{ borderTop: "1px solid #2a2e37" }}>
-                        <td style={{ padding: "8px 4px" }}>{a.name}</td>
-                        <td
-                          style={{
-                            padding: "8px 4px",
-                            textAlign: "right",
-                            fontWeight: 600,
-                            fontVariantNumeric: "tabular-nums",
-                          }}
-                        >
-                          {fmt(a.current_balance)}
-                        </td>
-                        <td
-                          style={{
-                            padding: "8px 4px",
-                            textAlign: "right",
-                            fontWeight: 600,
-                            fontVariantNumeric: "tabular-nums",
-                            color: signColor(a.period_net),
-                          }}
-                        >
-                          {fmt(a.period_net)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </section>
-
-              {/* Charts row */}
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(2, 1fr)",
-                  gap: 16,
-                  marginBottom: 24,
-                }}
-              >
-                <div style={card}>
-                  <label style={label}>Spending by Category</label>
-                  <CategoryDonut data={categoryData} />
+                  Spending by category
                 </div>
-                <div style={card}>
-                  <label style={label}>Income vs Expense</label>
-                  <IncomeExpenseBar data={incomeExpenseData} />
+                <div
+                  style={{ display: "flex", alignItems: "center", gap: 22 }}
+                >
+                  <CategoryDonut data={categoryData} />
+                  <div
+                    style={{
+                      flex: 1,
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 9,
+                    }}
+                  >
+                    {categoryData.map((c, i) => (
+                      <div
+                        key={c.category}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 10,
+                          fontSize: 13,
+                        }}
+                      >
+                        <span
+                          style={{
+                            width: 9,
+                            height: 9,
+                            borderRadius: 3,
+                            background: catColor(i),
+                            flexShrink: 0,
+                          }}
+                        />
+                        <span style={{ flex: 1 }}>{c.category || "—"}</span>
+                        <span
+                          style={{
+                            color: tokens.color.muted,
+                            fontVariantNumeric: "tabular-nums",
+                          }}
+                        >
+                          {money(c.total)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
 
-              {/* Trend row */}
-              <section style={card}>
-                <label style={label}>6-Month Trend</label>
-                <TrendChart data={trendData} />
-              </section>
-            </>
+              <div style={{ ...card, marginBottom: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
+                  Accounts
+                </div>
+                {summary.accounts.map((a) => (
+                  <div
+                    key={a.id}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 12,
+                      padding: "11px 0",
+                      borderTop: `1px solid ${tokens.color.borderInner}`,
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 34,
+                        height: 34,
+                        borderRadius: 10,
+                        background: tokens.color.sidebar,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 13,
+                        fontWeight: 600,
+                        color: tokens.color.muted3,
+                      }}
+                    >
+                      {initials(a.name)}
+                    </span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 14, fontWeight: 500 }}>
+                        {a.name}
+                      </div>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div
+                        style={{
+                          fontSize: 14,
+                          fontWeight: 600,
+                          fontVariantNumeric: "tabular-nums",
+                          color:
+                            a.current_balance < 0
+                              ? tokens.color.terracotta
+                              : tokens.color.ink,
+                        }}
+                      >
+                        {money(a.current_balance)}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          fontVariantNumeric: "tabular-nums",
+                          color:
+                            a.period_net < 0
+                              ? tokens.color.terracotta
+                              : tokens.color.green,
+                        }}
+                      >
+                        {signed(a.period_net)}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </>
       )}
 
       {/* Recent transactions */}
-      <section style={card}>
+      <div style={{ ...card, marginBottom: 18 }}>
         <div
           style={{
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
-            marginBottom: 8,
+            marginBottom: 6,
           }}
         >
-          <label style={{ ...label, marginBottom: 0 }}>Recent transactions</label>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>
+            Recent transactions
+          </div>
           <button
             type="button"
-            style={{ ...btn, padding: "4px 12px", fontSize: 12 }}
+            style={btnDark}
             onClick={() => {
               setEditingTx(null);
               setModalOpen(true);
             }}
           >
-            Add transaction
+            + Add transaction
           </button>
         </div>
 
         {txs.length === 0 ? (
-          <div>
-            <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>
+          <div style={{ paddingTop: 10 }}>
+            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
               No transactions yet.
             </div>
-            <div style={{ color: "#9aa0a6", fontSize: 14 }}>
-              Add your first transaction above, or upload a Wallet CSV export
-              to get started.
+            <div style={{ color: tokens.color.muted, fontSize: 14 }}>
+              Add your first transaction above, or upload a Wallet CSV export to
+              get started.
             </div>
           </div>
         ) : (
-          <table
-            style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}
-          >
-            <tbody>
-              {txs.map((t) => (
-                <tr key={t.id} style={{ borderTop: "1px solid #2a2e37" }}>
-                  <td
+          txs.map((t) => {
+            const isIncome = t.amount >= 0 && !t.is_transfer;
+            const tint = t.is_transfer
+              ? tokens.color.tintNeutral
+              : isIncome
+              ? tokens.color.tintGreen
+              : tokens.color.tintWarm;
+            return (
+              <div
+                key={t.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 14,
+                  padding: "12px 0",
+                  borderTop: `1px solid ${tokens.color.borderInner}`,
+                }}
+              >
+                <span
+                  style={{
+                    width: 38,
+                    height: 38,
+                    borderRadius: 11,
+                    background: tint,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 13,
+                    fontWeight: 600,
+                    color: tokens.color.muted3,
+                    flexShrink: 0,
+                  }}
+                >
+                  {(t.category || t.merchant || "?").slice(0, 1).toUpperCase()}
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
                     style={{
-                      padding: "8px 4px",
-                      color: "#9aa0a6",
+                      fontSize: 14,
+                      fontWeight: 500,
                       whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
                     }}
                   >
-                    {t.date.slice(0, 10)}
-                  </td>
-                  <td style={{ padding: "8px 4px" }}>
-                    {t.category || "—"}
-                    {t.is_transfer ? " (transfer)" : ""}
-                    {t.merchant ? (
-                      <span style={{ color: "#9aa0a6" }}> · {t.merchant}</span>
-                    ) : null}
-                  </td>
-                  <td
+                    {t.merchant || t.category || "Transaction"}
+                  </div>
+                  <div style={{ fontSize: 12, color: tokens.color.muted2 }}>
+                    {(t.category || "Uncategorized") +
+                      (t.is_transfer ? " · transfer" : "")}{" "}
+                    · {t.date.slice(0, 10)}
+                  </div>
+                </div>
+                <div
+                  style={{
+                    fontSize: 14,
+                    fontWeight: 600,
+                    fontVariantNumeric: "tabular-nums",
+                    color:
+                      t.amount < 0
+                        ? tokens.color.terracotta
+                        : tokens.color.green,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {signed(t.amount)}
+                </div>
+                <div style={{ display: "flex", gap: 12, flexShrink: 0 }}>
+                  <span
+                    role="button"
+                    onClick={() => {
+                      setEditingTx(t);
+                      setModalOpen(true);
+                    }}
                     style={{
-                      padding: "8px 4px",
-                      textAlign: "right",
-                      color: t.amount < 0 ? "#f87171" : "#4ade80",
-                      fontVariantNumeric: "tabular-nums",
-                      whiteSpace: "nowrap",
+                      color: tokens.color.muted2,
+                      cursor: "pointer",
+                      fontSize: 12,
                     }}
                   >
-                    {fmt(t.amount)}
-                  </td>
-                  <td
+                    Edit
+                  </span>
+                  <span
+                    role="button"
+                    onClick={() => setDeletingTx(t)}
                     style={{
-                      padding: "8px 4px",
-                      textAlign: "right",
-                      whiteSpace: "nowrap",
+                      color: tokens.color.terracotta,
+                      cursor: "pointer",
+                      fontSize: 12,
                     }}
                   >
-                    <span
-                      role="button"
-                      onClick={() => {
-                        setEditingTx(t);
-                        setModalOpen(true);
-                      }}
-                      style={{
-                        color: "#9aa0a6",
-                        cursor: "pointer",
-                        marginRight: 12,
-                        fontSize: 12,
-                      }}
-                    >
-                      Edit
-                    </span>
-                    <span
-                      role="button"
-                      onClick={() => setDeletingTx(t)}
-                      style={{ color: "#f87171", cursor: "pointer", fontSize: 12 }}
-                    >
-                      Delete
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    Delete
+                  </span>
+                </div>
+              </div>
+            );
+          })
         )}
-      </section>
+      </div>
 
-      {/* Account manager */}
-      <AccountManager
-        accounts={summary?.accounts ?? []}
-        onChanged={refreshAll}
-      />
-
-      {/* Category manager */}
+      {/* Secondary management surfaces (re-themed in Phase 10) */}
+      <AccountManager accounts={summary?.accounts ?? []} onChanged={refreshAll} />
       <CategoryManager onChanged={refreshAll} />
-
-      {/* CSV upload — last section per UI-SPEC page structure */}
       <CsvUpload onImported={refreshAll} />
 
       {modalOpen && (
@@ -505,10 +737,29 @@ export default function CashflowPage() {
         />
       )}
       {deleteError && (
-        <div style={{ color: "#f87171", fontSize: 12, marginTop: 8 }}>
+        <div
+          style={{ color: tokens.color.terracotta, fontSize: 12, marginTop: 8 }}
+        >
           {deleteError}
         </div>
       )}
-    </main>
+    </div>
   );
 }
+
+const statCard: React.CSSProperties = {
+  background: tokens.color.card,
+  border: `1px solid ${tokens.color.border}`,
+  borderRadius: 16,
+  padding: "20px 22px",
+};
+const statLabel: React.CSSProperties = {
+  fontSize: 13,
+  color: tokens.color.muted,
+  marginBottom: 8,
+};
+const statValue: React.CSSProperties = {
+  fontSize: 28,
+  fontWeight: 600,
+  fontVariantNumeric: "tabular-nums",
+};
