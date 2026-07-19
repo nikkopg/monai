@@ -238,6 +238,56 @@ class PriceOverrideRequest(BaseModel):
     price: MoneyDecimal = Field(..., gt=0, description="New price per unit in IDR; positive")
 
 
+class CategoryCreate(BaseModel):
+    """Body for POST /categories (CAT-01). `kind` and `color` are required
+    only at root (parent_id=None); below root, kind is always forced to the
+    parent's root kind (D-03) and color may be omitted to inherit (D-14) —
+    enforced in apply_add_category, not here, since the requirement is
+    conditional on parent_id."""
+
+    name: str
+    parent_id: int | None = None
+    kind: str | None = None
+    color: str | None = None
+    icon: str | None = None
+
+
+class CategoryUpdate(BaseModel):
+    """Partial-update body for editing a category — all fields Optional.
+
+    Unlike AccountUpdate, the API layer reads this with model_dump(...,
+    exclude_unset=True) rather than exclude_none — an explicit parent_id
+    (including a future null-to-root case) must be distinguishable from
+    "not provided" (see apply_edit_category).
+    """
+
+    name: str | None = None
+    parent_id: int | None = None
+    kind: str | None = None
+    color: str | None = None
+    icon: str | None = None
+
+
+class CategoryNode(BaseModel):
+    """One node in the GET /categories tree response (CAT-01, D-14)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    parent_id: int | None
+    kind: str
+    color: str | None
+    effective_color: str | None
+    icon: str | None
+    is_system: bool
+    tx_count: int
+    children: list["CategoryNode"] = []
+
+
+CategoryNode.model_rebuild()
+
+
 class CategoryRenameRequest(BaseModel):
     old_name: str
     new_name: str

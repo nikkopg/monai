@@ -20,7 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.importer import _get_or_create_account
-from backend.models import Account, AuditLog, Holding, Platform, PortfolioEvent, PriceCache, Transaction
+from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, PriceCache, Transaction
 from backend.portfolio import recompute_holding_from_events
 
 
@@ -359,23 +359,273 @@ def apply_set_price(db: Session, ticker: str, price, source: str = "manual") -> 
     return row
 
 
+# ---------------------------------------------------------------------------
+# Categories (CAT-01/CAT-02) — self-referential hierarchy, 3-level depth cap.
+# ---------------------------------------------------------------------------
+
+def _category_depth(db: Session, category_id: int | None) -> int:
+    """1-based depth of an EXISTING category node (root = 1, child = 2, ...).
+
+    Walks the parent_id chain via bound-parameter SELECTs (the tree is tiny
+    — max depth 3 — so no recursive CTE is needed)."""
+    depth = 0
+    current = category_id
+    while current is not None:
+        row = db.execute(text("SELECT parent_id FROM categories WHERE id = :id"), {"id": current}).first()
+        if row is None:
+            break
+        depth += 1
+        current = row[0]
+    return depth
+
+
+def _subtree_height(db: Session, category_id: int) -> int:
+    """Height of category_id's own subtree (0 = leaf, 1 = has children, ...)."""
+    children = db.execute(
+        text("SELECT id FROM categories WHERE parent_id = :id"), {"id": category_id}
+    ).scalars().all()
+    if not children:
+        return 0
+    return 1 + max(_subtree_height(db, c) for c in children)
+
+
+def _root_kind(db: Session, category_id: int) -> str | None:
+    """Walk up the parent chain to the root and return ITS kind (D-03) —
+    every non-root category's kind is forced to inherit its root's."""
+    current = category_id
+    kind = None
+    while current is not None:
+        row = db.execute(text("SELECT kind, parent_id FROM categories WHERE id = :id"), {"id": current}).first()
+        if row is None:
+            break
+        kind, current = row[0], row[1]
+    return kind
+
+
+def _descendant_ids(db: Session, category_id: int) -> list[int]:
+    """category_id plus every descendant's id (includes itself — a
+    self-reference is treated as the degenerate case of "own descendant")."""
+    ids = [category_id]
+    children = db.execute(
+        text("SELECT id FROM categories WHERE parent_id = :id"), {"id": category_id}
+    ).scalars().all()
+    for c in children:
+        ids.extend(_descendant_ids(db, c))
+    return ids
+
+
+def apply_add_category(db: Session, after: dict) -> Category:
+    """Insert a category (CAT-01). Root requires kind ('expense'|'income') +
+    color; a child's kind is always forced to its root's kind (D-03) and its
+    color may be omitted to inherit the parent's swatch (D-14). Uniqueness
+    ((name, parent_id), or name alone at root) is pre-checked so a violation
+    surfaces as a ValueError, not a leaked IntegrityError."""
+    name = after["name"]
+    parent_id = after.get("parent_id")
+
+    if parent_id is not None:
+        parent = db.get(Category, parent_id)
+        if parent is None:
+            raise ValueError(f"Parent category {parent_id} not found")
+        if _category_depth(db, parent_id) >= 3:
+            raise ValueError("Category depth cap (3 levels) exceeded — cannot add under a level-3 category")
+        kind = _root_kind(db, parent_id)
+        color = after.get("color")
+    else:
+        kind = after.get("kind")
+        if kind not in ("expense", "income"):
+            raise ValueError("Root category requires kind 'expense' or 'income'")
+        color = after.get("color")
+        if not color:
+            raise ValueError("Root category requires a color")
+
+    collision = db.execute(
+        text("SELECT id FROM categories WHERE name = :name AND parent_id IS NOT DISTINCT FROM :pid"),
+        {"name": name, "pid": parent_id},
+    ).first()
+    if collision is not None:
+        raise ValueError(f"Category {name!r} already exists under this parent")
+
+    cat = Category(name=name, parent_id=parent_id, kind=kind, color=color, icon=after.get("icon"), is_system=False)
+    db.add(cat)
+    db.flush()  # LOAD-BEARING: populates cat.id before the AuditLog row below
+    db.add(AuditLog(entity="category", entity_id=cat.id, operation="add", before=None, after=after))
+    return cat
+
+
+def apply_edit_category(db: Session, cat_id: int, after: dict, before: dict | None) -> Category:
+    """Partial-update a category. `after` keys present (not their None-ness)
+    decide what changed — callers must pass exclude_unset, not exclude_none,
+    so an explicit parent_id (including a future re-root-to-None case) is
+    distinguishable from "not provided". System rows (is_system) reject
+    name/parent_id changes but allow color/icon (D-04). Re-parenting
+    re-validates the depth cap for the node's WHOLE subtree (not just
+    itself) and re-derives kind from the new root."""
+    cat = db.get(Category, cat_id)
+    if cat is None:
+        raise ValueError(f"Category {cat_id} not found")
+
+    renaming = "name" in after and after["name"] is not None and after["name"] != cat.name
+    reparenting = "parent_id" in after and after["parent_id"] != cat.parent_id
+
+    if cat.is_system and (renaming or reparenting):
+        raise ValueError("System categories (Transfer/Uncategorized) cannot be renamed or re-parented")
+
+    new_name = after["name"] if renaming else cat.name
+    new_parent_id = after["parent_id"] if reparenting else cat.parent_id
+
+    if renaming or reparenting:
+        collision = db.execute(
+            text(
+                "SELECT id FROM categories WHERE name = :name AND parent_id IS NOT DISTINCT FROM :pid "
+                "AND id != :id"
+            ),
+            {"name": new_name, "pid": new_parent_id, "id": cat_id},
+        ).first()
+        if collision is not None:
+            raise ValueError(f"Category {new_name!r} already exists under this parent")
+
+    new_kind = cat.kind
+    if reparenting:
+        height = _subtree_height(db, cat_id)
+        if new_parent_id is not None:
+            if db.get(Category, new_parent_id) is None:
+                raise ValueError(f"Parent category {new_parent_id} not found")
+            if new_parent_id in _descendant_ids(db, cat_id):
+                raise ValueError("Cannot re-parent a category under itself or its own descendant")
+            parent_depth = _category_depth(db, new_parent_id)
+            if parent_depth + 1 + height > 3:
+                raise ValueError("Category depth cap (3 levels) exceeded by this re-parent")
+            new_kind = _root_kind(db, new_parent_id)
+        else:
+            if 1 + height > 3:
+                raise ValueError("Category depth cap (3 levels) exceeded by this re-parent")
+            new_kind = after.get("kind") or cat.kind
+
+    cat.name = new_name
+    cat.parent_id = new_parent_id
+    cat.kind = new_kind
+    if "color" in after:
+        cat.color = after["color"]
+    if "icon" in after:
+        cat.icon = after["icon"]
+
+    db.add(AuditLog(entity="category", entity_id=cat_id, operation="edit", before=before, after=after))
+    return cat
+
+
+def apply_delete_category(db: Session, cat_id: int, before: dict | None, reassign_to: int | None = None) -> int:
+    """Delete a category, optionally reassigning its TRANSACTIONS first
+    (CAT-02). Mirrors apply_delete_account's shape. System rows are always
+    rejected. Deleting a category that still has child categories is a
+    caller-side precondition (main.py's child_count check) — reassign_to only
+    ever moves transactions.category_id, never subcategories, so a category
+    with children can never be safely deleted here (the parent_id FK has no
+    ondelete and RESTRICTs at the DB level as a backstop). The reassign
+    target must exist and must not be the node itself or one of its own
+    descendants."""
+    cat = db.get(Category, cat_id)
+    if cat is None:
+        raise ValueError(f"Category {cat_id} not found")
+    if cat.is_system:
+        raise ValueError("System categories (Transfer/Uncategorized) cannot be deleted")
+
+    reassigned_count = 0
+    audit_after: dict | None = None
+
+    if reassign_to is not None:
+        if reassign_to in _descendant_ids(db, cat_id):
+            raise ValueError("Cannot reassign to the category itself or one of its own descendants")
+        target = db.get(Category, reassign_to)
+        if target is None:
+            raise ValueError(f"Reassign target category {reassign_to} not found")
+
+        result = db.execute(
+            text("UPDATE transactions SET category_id = :reassign_to WHERE category_id = :cat_id"),
+            {"reassign_to": reassign_to, "cat_id": cat_id},
+        )
+        reassigned_count = result.rowcount
+        audit_after = {"reassign_to": reassign_to, "reassigned_count": reassigned_count}
+
+    db.delete(cat)
+    db.add(AuditLog(entity="category", entity_id=cat_id, operation="delete", before=before, after=audit_after))
+    return reassigned_count
+
+
 def apply_rename_category(db: Session, old_name: str, new_name: str) -> int:
-    """Rename a category across all transactions. Returns affected row count."""
-    result = db.execute(
-        text("UPDATE transactions SET category = :new WHERE category = :old"),
-        {"new": new_name, "old": old_name},
+    """Rename a category — a single-row UPDATE of categories.name (D-11).
+    Resolves old_name to a unique categories row (ambiguous — the same leaf
+    name under two different parents — or missing name raises ValueError);
+    system rows reject rename. Returns the count of transactions currently
+    attached via category_id — INFORMATIONAL only, this touches ZERO
+    transaction rows (they follow the rename via the FK, and their legacy
+    `transactions.category` string is never touched)."""
+    matches = db.execute(
+        text("SELECT id, parent_id, is_system FROM categories WHERE name = :name"), {"name": old_name}
+    ).fetchall()
+    if not matches:
+        raise ValueError(f"Category {old_name!r} not found")
+    if len(matches) > 1:
+        raise ValueError(f"Category name {old_name!r} is ambiguous ({len(matches)} matches) — resolve by id")
+    cat_id, parent_id, is_system = matches[0]
+    if is_system:
+        raise ValueError("System categories (Transfer/Uncategorized) cannot be renamed")
+
+    collision = db.execute(
+        text("SELECT id FROM categories WHERE name = :name AND parent_id IS NOT DISTINCT FROM :pid AND id != :id"),
+        {"name": new_name, "pid": parent_id, "id": cat_id},
+    ).first()
+    if collision is not None:
+        raise ValueError(f"Category {new_name!r} already exists under this parent")
+
+    affected = int(
+        db.execute(text("SELECT COUNT(*) FROM transactions WHERE category_id = :id"), {"id": cat_id}).scalar() or 0
     )
-    db.add(AuditLog(entity="category", entity_id=None, operation="rename",
+    db.execute(text("UPDATE categories SET name = :new WHERE id = :id"), {"new": new_name, "id": cat_id})
+    db.add(AuditLog(entity="category", entity_id=cat_id, operation="rename",
                     before={"category": old_name}, after={"category": new_name}))
-    return result.rowcount
+    return affected
 
 
 def apply_merge_category(db: Session, from_name: str, into_name: str) -> int:
-    """Merge one category into another across all transactions. Returns affected row count."""
-    result = db.execute(
-        text("UPDATE transactions SET category = :into WHERE category = :from"),
-        {"into": into_name, "from": from_name},
+    """Merge one category's transactions into another (D-11). Resolves both
+    names to unique categories rows (ambiguous/missing -> ValueError); a
+    source with child categories is rejected (merge subcategories first —
+    keeps the depth-cap invariant simple). Moves transactions.category_id
+    via one bound-parameter UPDATE, deletes the source row, and writes one
+    AuditLog row. Returns the moved transaction count."""
+    from_matches = db.execute(
+        text("SELECT id, is_system FROM categories WHERE name = :name"), {"name": from_name}
+    ).fetchall()
+    if not from_matches:
+        raise ValueError(f"Category {from_name!r} not found")
+    if len(from_matches) > 1:
+        raise ValueError(f"Category name {from_name!r} is ambiguous ({len(from_matches)} matches) — resolve by id")
+    from_id, from_is_system = from_matches[0]
+    if from_is_system:
+        raise ValueError("System categories (Transfer/Uncategorized) cannot be merged")
+
+    into_matches = db.execute(
+        text("SELECT id FROM categories WHERE name = :name"), {"name": into_name}
+    ).fetchall()
+    if not into_matches:
+        raise ValueError(f"Category {into_name!r} not found")
+    if len(into_matches) > 1:
+        raise ValueError(f"Category name {into_name!r} is ambiguous ({len(into_matches)} matches) — resolve by id")
+    into_id = into_matches[0][0]
+
+    child_count = int(
+        db.execute(text("SELECT COUNT(*) FROM categories WHERE parent_id = :id"), {"id": from_id}).scalar() or 0
     )
-    db.add(AuditLog(entity="category", entity_id=None, operation="merge",
+    if child_count > 0:
+        raise ValueError(f"Category {from_name!r} has subcategories — merge them first")
+
+    result = db.execute(
+        text("UPDATE transactions SET category_id = :into WHERE category_id = :from_id"),
+        {"into": into_id, "from_id": from_id},
+    )
+    moved = result.rowcount
+    db.execute(text("DELETE FROM categories WHERE id = :id"), {"id": from_id})
+    db.add(AuditLog(entity="category", entity_id=from_id, operation="merge",
                     before={"category": from_name}, after={"category": into_name}))
-    return result.rowcount
+    return moved
