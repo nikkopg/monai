@@ -11,6 +11,7 @@ migration file exists (Task 2).
 """
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,40 @@ import pytest
 MIGRATION_PATH = (
     Path(__file__).resolve().parents[2] / "alembic" / "versions" / "009_category_hierarchy.py"
 )
+REPO_ROOT = MIGRATION_PATH.parents[2]
+
+
+def _ensure_real_alembic_package() -> None:
+    """Bypass this repo's own `alembic/` scaffold directory (env.py +
+    versions/), which shares its top-level name with the pip-installed
+    `alembic` package. pytest's import mode prepends the repo root onto
+    sys.path (neither `backend/` nor `backend/tests/` reaches a directory
+    lacking `__init__.py` until the repo root), so a plain `import alembic`
+    resolves to the local scaffold (no `op` attribute) instead of the real
+    package once test collection has run. Deviation (Rule 3 — blocking
+    import issue) discovered while GREEN-implementing 009_category_hierarchy.py,
+    which needs `from alembic import op` to import cleanly.
+    """
+    cached = sys.modules.get("alembic")
+    if cached is not None and hasattr(cached, "op"):
+        return
+    if cached is not None:
+        del sys.modules["alembic"]
+    shadow_init = (REPO_ROOT / "alembic" / "__init__.py").resolve()
+    original_path = list(sys.path)
+    try:
+        sys.path = [
+            p for p in sys.path
+            if (Path(p or ".") / "alembic" / "__init__.py").resolve() != shadow_init
+        ]
+        import alembic  # noqa: F401  (populates sys.modules["alembic"] correctly)
+    finally:
+        sys.path = original_path
+    if not hasattr(sys.modules.get("alembic"), "op"):
+        raise ImportError(
+            "could not resolve the installed alembic package (only found this "
+            f"repo's own scaffold at {shadow_init})"
+        )
 
 
 @pytest.fixture(scope="module")
@@ -27,6 +62,7 @@ def migration():
     Fails with FileNotFoundError/ImportError until the migration file exists —
     that is the intended RED-phase failure (module missing, not a bug).
     """
+    _ensure_real_alembic_package()
     spec = importlib.util.spec_from_file_location("migration_009", MIGRATION_PATH)
     if spec is None or spec.loader is None:
         raise ImportError(f"could not load migration spec from {MIGRATION_PATH}")
