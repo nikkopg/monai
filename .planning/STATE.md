@@ -4,8 +4,8 @@ milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
 status: executing
 stopped_at: Phase 11 UI-SPEC approved
-last_updated: "2026-07-19T00:02:32.245Z"
-last_activity: 2026-07-19 -- Phase 11 planning complete
+last_updated: "2026-07-19T00:03:32.452Z"
+last_activity: 2026-07-19 -- Phase 11 execution started
 progress:
   total_phases: 7
   completed_phases: 0
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-18)
 
 **Core value:** You can understand and manage your entire financial life — spending and investments — by talking to a trustworthy AI that never fabricates a number and never changes your data without your say-so.
-**Current focus:** v1.2 roadmap created (Phases 11-17). Next: `/gsd-plan-phase 11`.
+**Current focus:** Phase 11 — Category Hierarchy — Schema, Audit, Migration
 
 ## Current Position
 
-Phase: 11 of 17 (Category Hierarchy — Schema, Audit, Migration)
-Plan: — (not yet planned)
-Status: Ready to execute
-Last activity: 2026-07-19 -- Phase 11 planning complete
+Phase: 11 (Category Hierarchy — Schema, Audit, Migration) — EXECUTING
+Plan: 1 of 7
+Status: Executing Phase 11
+Last activity: 2026-07-19 -- Phase 11 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
