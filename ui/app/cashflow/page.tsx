@@ -35,10 +35,21 @@ type AccountBalance = {
 type TrendPoint = { month: string; income: number; expense: number };
 
 // GET /cashflow/summary (backend/schemas.py:CashflowSummary, D-08). by_category
-// rows arrive as [category, total] tuples — mapped to {category,total} below.
+// is a hierarchy rollup (CAT-04, 11-07): each top-level group carries its own
+// identity color/icon plus a subcategory breakdown under children.
+export type CategoryRollupChild = {
+  id: number;
+  name: string;
+  color: string | null;
+  icon: string | null;
+  total: number;
+};
+export type CategoryRollup = CategoryRollupChild & {
+  children: CategoryRollupChild[];
+};
 type CashflowSummary = {
   totals: { income: number; expense: number; net: number };
-  by_category: [string, number][];
+  by_category: CategoryRollup[];
   accounts: AccountBalance[];
   trend: TrendPoint[];
 };
@@ -158,10 +169,7 @@ export default function CashflowPage() {
       .toUpperCase();
 
   // ---- derived -------------------------------------------------------------
-  const categoryData = (summary?.by_category ?? []).map(([category, total]) => ({
-    category,
-    total,
-  }));
+  const categoryData = summary?.by_category ?? [];
   const trendData = summary?.trend ?? [];
   const hasActivity =
     !!summary &&
@@ -178,9 +186,6 @@ export default function CashflowPage() {
   );
   const periodPhrase =
     PERIOD_OPTIONS.find((o) => o.value === period)?.phrase ?? "this period";
-
-  const catColor = (i: number) =>
-    ["#2f6f4f", "#5a8f73", "#d8b26a", "#8fae9c", "#b5503f", "#c8c1b5"][i % 6];
 
   // ---------------------------------------------------------------------------
   // Render
@@ -469,9 +474,9 @@ export default function CashflowPage() {
                       gap: 9,
                     }}
                   >
-                    {categoryData.map((c, i) => (
+                    {categoryData.map((c) => (
                       <div
-                        key={c.category}
+                        key={c.id}
                         style={{
                           display: "flex",
                           alignItems: "center",
@@ -484,11 +489,11 @@ export default function CashflowPage() {
                             width: 9,
                             height: 9,
                             borderRadius: 3,
-                            background: catColor(i),
+                            background: c.color ?? tokens.color.muted,
                             flexShrink: 0,
                           }}
                         />
-                        <span style={{ flex: 1 }}>{c.category || "—"}</span>
+                        <span style={{ flex: 1 }}>{c.name || "—"}</span>
                         <span
                           style={{
                             color: tokens.color.muted,
