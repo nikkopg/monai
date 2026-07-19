@@ -77,7 +77,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 11-03-PLAN.md — Category write layer + REST CRUD with depth cap and block-or-reassign guard (CAT-01, CAT-02)
+- [x] 11-03-PLAN.md — Category write layer + REST CRUD with depth cap and block-or-reassign guard (CAT-01, CAT-02)
 - [x] 11-04-PLAN.md — Hierarchy-aware agent tools (rollup, descendants, tree) + dual registration (CAT-04)
 
 **Wave 4** *(blocked on Wave 3 completion)*
@@ -208,7 +208,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 8. Design Foundation + App Shell | v1.1 | 1/1 | Complete | 2026-07-18 |
 | 9. Cashflow + Chat Restyle | v1.1 | 1/1 | Complete | 2026-07-18 |
 | 10. Investments + Settings + Consistency Sweep | v1.1 | 1/1 | Complete | 2026-07-18 |
-| 11. Category Hierarchy | v1.2 | 3/7 | In Progress|  |
+| 11. Category Hierarchy | v1.2 | 4/7 | In Progress|  |
 | 12. Typed Accounts + Transfer Schema | v1.2 | 0/? | Not started | - |
 | 13. Shared Mutation Layer | v1.2 | 0/? | Not started | - |
 | 14. REST + Agent/MCP Tools | v1.2 | 0/? | Not started | - |
