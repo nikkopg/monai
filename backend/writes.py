@@ -24,17 +24,46 @@ from backend.models import Account, AuditLog, Category, Holding, Platform, Portf
 from backend.portfolio import recompute_holding_from_events
 
 
+def resolve_category_id(db: Session, name: str | None) -> int:
+    """Resolve a category name to its id (D-08 dual-write helper, CAT-03).
+
+    Exact (untrimmed) match on categories.name at any level in the tree.
+    Multiple matches (the same name under two different parents) -> the
+    lowest id, deterministically — a documented tie-break, never a guess or
+    a raise. None, empty string, or no match at all -> the Uncategorized
+    system row's id (D-04/Pitfall 2): unknown or missing categories are
+    never left NULL and never raise an IntegrityError; the original string
+    (if any) is still preserved via the caller's legacy `category` column,
+    so nothing is lost.
+    """
+    if name:
+        row = db.execute(
+            text("SELECT id FROM categories WHERE name = :name ORDER BY id ASC LIMIT 1"),
+            {"name": name},
+        ).first()
+        if row is not None:
+            return row[0]
+    uncategorized = db.execute(
+        text("SELECT id FROM categories WHERE name = 'Uncategorized' AND is_system = true LIMIT 1")
+    ).first()
+    if uncategorized is None:
+        raise ValueError("Uncategorized system category not found — check migration 009 seeding")
+    return uncategorized[0]
+
+
 def apply_add_transaction(db: Session, after: dict) -> Transaction:
     """Insert a new transaction, resolving/creating its account by name."""
     account_name = after.get("account", "Unknown")
     currency = after.get("currency", "IDR")
     acc = _get_or_create_account(db, account_name, currency)
+    category_name = after.get("category")
     tx = Transaction(
         date=datetime.fromisoformat(after["date"]) if after.get("date") else datetime.now(timezone.utc),
         amount=Decimal(str(after["amount"])),  # LOAD-BEARING: str() before Decimal() avoids float artifacts
         currency=currency,
-        category=after.get("category"),
-        raw_category=after.get("category"),
+        category=category_name,
+        raw_category=category_name,
+        category_id=resolve_category_id(db, category_name),  # D-08 dual-write
         merchant=after.get("merchant"),
         notes=after.get("notes"),
         account_id=acc.id,
@@ -54,6 +83,7 @@ def apply_edit_transaction(db: Session, tx_id: int, after: dict, before: dict | 
         raise ValueError(f"Transaction {tx_id} not found during confirm")
     if after.get("category") is not None:
         tx.category = after["category"]
+        tx.category_id = resolve_category_id(db, after["category"])  # D-08 dual-write, re-resolve on change
     if after.get("merchant") is not None:
         tx.merchant = after["merchant"]
     if after.get("amount") is not None:
