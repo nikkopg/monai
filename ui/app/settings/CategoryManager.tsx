@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 
-import { tokens, card, input, btn, btnGhost, label, categoryPalette } from "../styles";
+import { tokens, card, input, btn, btnGhost, categoryPalette } from "../styles";
 import ConfirmDialog from "../cashflow/ConfirmDialog";
 
 // ---------------------------------------------------------------------------
 // CategoryManager (Settings) — recursive tree manager for the category
-// hierarchy (D-16). Replaces the old flat ui/app/cashflow/CategoryManager.tsx.
+// hierarchy (D-16). Replaces the old flat rename/merge table that used to
+// live under the Cashflow page.
 // Plain useState recursion, no tree library — ~100 rows total is trivial
 // (11-UI-SPEC.md's "Don't Hand-Roll" guidance). Implements UI-SPEC Component 1
 // verbatim: expand/collapse (collapsed by default), inline add/edit, the
@@ -561,9 +562,7 @@ export default function CategoryManager({ onChanged }: Props) {
   }
 
   return (
-    <section style={card}>
-      <label style={label}>Categories</label>
-
+    <>
       {loaded && tree.length === 0 ? (
         <div>
           <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>No categories yet.</div>
@@ -683,6 +682,6 @@ export default function CategoryManager({ onChanged }: Props) {
           onConfirm={submitMerge}
         />
       )}
-    </section>
+    </>
   );
 }

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { tokens, card, input, btn } from "../styles";
+import CategoryManager from "./CategoryManager";
 
 // ---------------------------------------------------------------------------
 // Settings page — v1.1 "paper" redesign. Same three independently-saveable
@@ -331,7 +332,14 @@ export default function SettingsPage() {
         </form>
       </div>
 
-      {/* Card 3: Preferences */}
+      {/* Card 3: Categories — expandable tree manager (D-16) */}
+      <div style={card}>
+        <div style={cardTitle}>Categories</div>
+        <div style={cardSub}>Manage the category hierarchy used across cashflow and chat.</div>
+        <CategoryManager onChanged={() => {}} />
+      </div>
+
+      {/* Card 4: Preferences */}
       <div style={{ ...card, marginBottom: 0 }}>
         <div style={cardTitle}>Preferences</div>
         <form onSubmit={savePreferences}>
