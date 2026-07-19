@@ -8,7 +8,6 @@ import TrendChart from "./charts/TrendChart";
 import TransactionModal, { type Tx as ModalTx } from "./TransactionModal";
 import ConfirmDialog from "./ConfirmDialog";
 import AccountManager from "./AccountManager";
-import CategoryManager from "./CategoryManager";
 import CsvUpload from "./CsvUpload";
 
 // ---------------------------------------------------------------------------
@@ -711,9 +710,9 @@ export default function CashflowPage() {
         )}
       </div>
 
-      {/* Secondary management surfaces (re-themed in Phase 10) */}
+      {/* Secondary management surfaces (re-themed in Phase 10). Category
+          management moved to Settings > Categories (D-16, plan 11-06). */}
       <AccountManager accounts={summary?.accounts ?? []} onChanged={refreshAll} />
-      <CategoryManager onChanged={refreshAll} />
       <CsvUpload onImported={refreshAll} />
 
       {modalOpen && (
