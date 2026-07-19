@@ -562,6 +562,55 @@ def list_transactions(limit: int = 50, db: Session = Depends(get_session)):
     )
 
 
+def _category_rollup(db: Session, rows: list, children: dict) -> list[dict]:
+    """Join id/color/icon onto spending_by_category's name-keyed rows+children
+    (11-04) to build the CategoryRollup shape (CAT-04). Root names are unique
+    (top_name is always a root, per _ROLLUP_FROM's COALESCE), so descendants
+    are collected per-root to avoid cross-root name collisions; color falls
+    back to the nearest ancestor's when NULL (D-14), same rule as GET /categories.
+    """
+    cats = db.execute(
+        text("SELECT id, name, parent_id, color, icon FROM categories")
+    ).fetchall()
+    by_id = {r[0]: {"id": r[0], "name": r[1], "parent_id": r[2], "color": r[3], "icon": r[4]} for r in cats}
+    children_of: dict[int | None, list[dict]] = {}
+    for node in by_id.values():
+        children_of.setdefault(node["parent_id"], []).append(node)
+    roots_by_name = {n["name"]: n for n in by_id.values() if n["parent_id"] is None}
+
+    def _effective_color(node: dict) -> str | None:
+        if node["color"] is not None or node["parent_id"] is None:
+            return node["color"]
+        return _effective_color(by_id[node["parent_id"]])
+
+    def _descendants(node_id: int, acc: dict[str, dict]) -> None:
+        for child in children_of.get(node_id, []):
+            acc[child["name"]] = child
+            _descendants(child["id"], acc)
+
+    result = []
+    for top_name, total in rows:
+        root = roots_by_name.get(top_name)
+        if root is None:
+            continue
+        descendants: dict[str, dict] = {}
+        _descendants(root["id"], descendants)
+        kids = []
+        for sub_name, sub_total in children.get(top_name, []):
+            node = descendants.get(sub_name)
+            if node is None:
+                continue
+            kids.append({
+                "id": node["id"], "name": node["name"],
+                "color": _effective_color(node), "icon": node["icon"], "total": sub_total,
+            })
+        result.append({
+            "id": root["id"], "name": root["name"], "color": root["color"],
+            "icon": root["icon"], "total": total, "children": kids,
+        })
+    return result
+
+
 @app.get("/cashflow/summary", response_model=CashflowSummary)
 def cashflow_summary(
     period: str = "this_month",
@@ -588,7 +637,8 @@ def cashflow_summary(
         "expense": spending_total(period, start_date, end_date)["total"],
         "net": net_total(period, start_date, end_date)["net"],
     }
-    by_category = spending_by_category(period, start_date, end_date, limit=10)["rows"]
+    by_cat_result = spending_by_category(period, start_date, end_date, limit=10)
+    by_category = _category_rollup(db, by_cat_result["rows"], by_cat_result["children"])
     accounts = account_balances(s, e)["rows"]
     trend = monthly_trend(6)["rows"]
     return CashflowSummary(totals=totals, by_category=by_category, accounts=accounts, trend=trend)

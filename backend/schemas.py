@@ -56,11 +56,34 @@ class AccountOut(BaseModel):
     currency: str | None
 
 
+class CategoryRollupChild(BaseModel):
+    """A subcategory's contribution to its top-level group's rollup (CAT-04)."""
+
+    id: int
+    name: str
+    color: str | None  # effective (inherited) swatch, never None in practice
+    icon: str | None
+    total: float
+
+
+class CategoryRollup(BaseModel):
+    """A top-level category group's spending rollup for the dashboard donut
+    (CAT-04) — id/color/icon join the hierarchy onto tools.py's
+    spending_by_category rows/children, ordered by total desc."""
+
+    id: int
+    name: str
+    color: str | None
+    icon: str | None
+    total: float
+    children: list[CategoryRollupChild]
+
+
 class CashflowSummary(BaseModel):
     """Single composed payload for GET /cashflow/summary (D-08)."""
 
     totals: dict  # {income, expense, net} as floats
-    by_category: list  # rows from spending_by_category
+    by_category: list[CategoryRollup]  # hierarchy rollup (CAT-04, was tuple rows)
     accounts: list  # rows from account_balances (id/name/current_balance/period_net)
     trend: list  # rows from monthly_trend (month/income/expense/net)
 
