@@ -153,3 +153,26 @@ export const chartColors = [
   tokens.color.terracotta,
   "#c8c1b5",
 ];
+
+// Closed 13-swatch category color palette (D-14) — one per BudgetBakers
+// top-level group plus the 2 system categories (Transfer, Uncategorized).
+// Subcategories inherit their parent's swatch by default; any override
+// picker is limited to this SAME set (no second palette). Hexes reuse
+// existing tokens where one already matches; the 4 "new" swatches are
+// same-family tints kept within the paper aesthetic's warm/muted range.
+// Source of truth: 11-UI-SPEC.md "Category Color Palette" table.
+export const categoryPalette: { name: string; hex: string }[] = [
+  { name: "Food & Drinks", hex: tokens.color.gold },
+  { name: "Shopping", hex: tokens.color.terracotta },
+  { name: "Housing", hex: tokens.color.sage },
+  { name: "Transportation", hex: tokens.color.sageLight },
+  { name: "Vehicle", hex: "#a8674a" },
+  { name: "Life & Entertainment", hex: "#8a6a8f" },
+  { name: "Communication / PC", hex: "#6b7f8f" },
+  { name: "Financial Expenses", hex: tokens.color.muted3 },
+  { name: "Investments", hex: "#c9973f" },
+  { name: "Income", hex: tokens.color.greenDark },
+  { name: "Others", hex: chartColors[5] },
+  { name: "Transfer", hex: tokens.color.muted2 },
+  { name: "Uncategorized", hex: tokens.color.muted },
+];
