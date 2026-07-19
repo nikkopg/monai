@@ -300,6 +300,73 @@ def test_cashflow_summary_no_auth_required(client):
     assert resp.status_code == 200
 
 
+def test_cashflow_summary_by_category_is_hierarchy_rollup(client, db_session):
+    """11-07/CAT-04: by_category entries are objects {id, name, color, icon,
+    total, children: [...]}, sourced from the category hierarchy (not tuples),
+    and no entry (root or child) is named Transfer (D-12)."""
+    from backend.models import Category, Transaction
+
+    root = Category(name="zzrolluptest-root", parent_id=None, kind="expense", is_system=False, color="#112233")
+    db_session.add(root)
+    db_session.flush()
+    child = Category(name="zzrolluptest-child", parent_id=root.id, kind="expense", is_system=False, icon="🍔")
+    db_session.add(child)
+    db_session.flush()
+    root_id, child_id = root.id, child.id
+
+    acc_id = _make_account(db_session, "RollupTestCFS")
+    tx_id = None
+    try:
+        # Far-future date + a custom period scoped to it, so this seeded row is
+        # the ONLY spend in the window regardless of how much real data the
+        # dev DB holds (avoids falling outside spending_by_category's limit=10).
+        tx = Transaction(
+            date=datetime.datetime(2099, 1, 15, 12, 0, 0),
+            amount=-30000,
+            currency="IDR",
+            category="zzrolluptest-child",
+            category_id=child_id,
+            merchant="rollup test",
+            account_id=acc_id,
+            is_transfer=False,
+        )
+        db_session.add(tx)
+        db_session.commit()
+        tx_id = tx.id
+
+        resp = client.get("/cashflow/summary?period=custom&start_date=2099-01-01&end_date=2099-01-31")
+        assert resp.status_code == 200, resp.text
+        by_category = resp.json()["by_category"]
+
+        entry = next((r for r in by_category if r["id"] == root_id), None)
+        assert entry is not None, "Seeded root category missing from by_category rollup"
+        assert entry["name"] == "zzrolluptest-root"
+        assert entry["color"] == "#112233"
+        assert entry["total"] == pytest.approx(30000.0)
+
+        child_entry = next((c for c in entry["children"] if c["id"] == child_id), None)
+        assert child_entry is not None, "Seeded child category missing from rollup children"
+        assert child_entry["icon"] == "🍔"
+        assert child_entry["color"] == "#112233", "Child with no own color must inherit the root's swatch (D-14)"
+        assert child_entry["total"] == pytest.approx(30000.0)
+
+        assert all(r["name"] != "Transfer" for r in by_category), "Transfer must never appear in by_category (D-12)"
+        for r in by_category:
+            assert all(c["name"] != "Transfer" for c in r["children"])
+    finally:
+        from backend.models import Transaction as _Tx, Account
+        if tx_id is not None:
+            t = db_session.get(_Tx, tx_id)
+            if t:
+                db_session.delete(t)
+        db_session.commit()
+        acc = db_session.get(Account, acc_id)
+        if acc:
+            db_session.delete(acc)
+        db_session.query(Category).filter(Category.id.in_([child_id, root_id])).delete(synchronize_session=False)
+        db_session.commit()
+
+
 def test_cashflow_summary_resolve_period_called_once():
     """resolve_period is called exactly once in the handler body (grep guard)."""
     import inspect
