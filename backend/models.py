@@ -27,11 +27,13 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -71,7 +73,60 @@ class Platform(Base):
     kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
+class Category(Base):
+    """Self-referential category hierarchy (up to 3 levels), CAT-01.
+
+    `parent_id` has no `ondelete` clause — Postgres's RESTRICT default means a
+    category with children (or transactions) cannot be dropped out from under
+    them; the app-level block-or-reassign delete guard (Phase 11 CRUD, not
+    built in this plan) pre-empts that FK violation with a clean 422. Depth
+    cap (3 levels) is enforced in the write-path helper, not DDL — Postgres
+    has no cheap way to declaratively cap self-reference depth (RESEARCH
+    Pattern 1).
+
+    `kind` is 'expense' | 'income' | 'transfer' (D-03) — 'transfer' is used
+    only by the single system "Transfer" row; every other category is
+    'expense' or 'income' inherited from its top-level group.
+
+    `color` NULL means "inherit the parent's swatch" (D-14); `icon` is an
+    emoji rendered as plain text (D-13). `is_system` is True only for the
+    "Transfer" and "Uncategorized" rows (D-04) — both are protected from
+    user deletion by the same reason a category can be marked non-deletable.
+
+    Uniqueness: `(name, parent_id)` covers sibling uniqueness under the same
+    parent, but Postgres treats NULL `parent_id` values as pairwise distinct
+    for a composite UNIQUE constraint — so root-level (parent_id IS NULL)
+    name uniqueness needs a separate partial unique index.
+    """
+
+    __tablename__ = "categories"
+    __table_args__ = (
+        UniqueConstraint("name", "parent_id", name="uq_categories_name_parent"),
+        Index(
+            "uq_categories_name_root",
+            "name",
+            unique=True,
+            postgresql_where=text("parent_id IS NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("categories.id"), nullable=True, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    color: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    icon: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
 class Transaction(Base):
+    # eager_defaults=False: part of the pre-migration category_id shim (see
+    # below) — stops SQLAlchemy from RETURNING server-default columns on
+    # INSERT. Transaction has no other server defaults, so this changes
+    # nothing else. Remove together with the shim in plan 11-05.
+    __mapper_args__ = {"eager_defaults": False}
     __tablename__ = "transactions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -88,6 +143,22 @@ class Transaction(Base):
         ForeignKey("accounts.id"), nullable=True, index=True
     )
     is_transfer: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    # Nullable this phase (CAT-03 D-04) — dual-write lands in a later plan;
+    # NOT NULL tightening is a separate destructive migration once every
+    # insert path resolves a category first. See migration 009 docstring.
+    #
+    # Pre-migration shim: the live DB doesn't have this column until
+    # migration 009 runs (plan 11-02). Three knobs keep every existing
+    # ORM read/write path working against the pre-migration schema:
+    #   deferred=True                 -> out of default SELECTs
+    #   server_default=text("NULL")   -> omitted from INSERTs when unset
+    #   eager_defaults=False (mapper) -> no post-INSERT RETURNING of it
+    # Explicit assignment still writes normally once the column exists.
+    # Plan 11-05 (dual-write) removes all three knobs post-migration.
+    category_id: Mapped[int | None] = mapped_column(
+        ForeignKey("categories.id"), nullable=True, index=True,
+        deferred=True, server_default=text("NULL"),
+    )
 
     account: Mapped["Account | None"] = relationship(
         back_populates="transactions"
