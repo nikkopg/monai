@@ -123,3 +123,13 @@ See `key-decisions` in frontmatter: PUT-for-edit vs. legacy rename endpoint, mer
 - No blockers for subsequent plans in this phase.
 
 ## Self-Check: PASSED
+
+- `ui/app/styles.ts` — FOUND, contains `categoryPalette` export
+- `ui/app/settings/CategoryManager.tsx` — FOUND
+- `ui/app/cashflow/CategoryManager.tsx` — CONFIRMED DELETED
+- Commit `b8ec4d4` (feat: categoryPalette) — FOUND
+- Commit `58064d0` (feat: tree manager component) — FOUND
+- Commit `adbebf0` (feat: mount/remove) — FOUND
+- Commit `e8c6bb3` (docs: this summary) — FOUND
+- `cd ui && npx tsc --noEmit` → clean (0 errors) — VERIFIED
+- Verify command (`test ! -f ... && ! grep -rn ...`) → printed "move complete" — VERIFIED
