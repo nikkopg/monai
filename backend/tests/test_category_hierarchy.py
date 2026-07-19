@@ -83,6 +83,14 @@ def _make_transaction(db, category_id, is_transfer=False):
     return tx.id
 
 
+def _category_exists(db, cat_id: int) -> bool:
+    """Raw-SQL existence check (NOT db.get()) — a strongly-referenced ORM
+    object deleted by another session raises ObjectDeletedError on
+    db.get(..) after expire_all() rather than returning None; a plain SELECT
+    sidesteps the identity-map refresh entirely."""
+    return db.execute(text("SELECT 1 FROM categories WHERE id = :id"), {"id": cat_id}).first() is not None
+
+
 def _audit_rows(db, entity_id: int, operation: str) -> int:
     return int(
         db.execute(
@@ -97,8 +105,16 @@ def _audit_rows(db, entity_id: int, operation: str) -> int:
 
 
 def _cleanup(db, *, category_ids=(), tx_ids=()):
-    """Delete transactions first, then categories in reverse creation order
-    (children before parents — FK RESTRICT on parent_id)."""
+    """Delete transactions first, then categories one at a time in reverse
+    creation order (children before parents — FK RESTRICT on parent_id).
+
+    Commits after EACH category delete individually: Category has no ORM
+    `relationship()` for its self-reference (only a plain parent_id column),
+    so SQLAlchemy's unit-of-work can't see the parent/child dependency and
+    will batch multiple pending Category deletes into one executemany in
+    arbitrary (non-creation) order — a child-before-parent ordering silently
+    becomes parent-before-child and trips the FK. One delete+commit per row
+    forces DB-level sequencing instead."""
     from backend.models import Category, Transaction
     for tx_id in tx_ids:
         tx = db.get(Transaction, tx_id)
@@ -109,7 +125,7 @@ def _cleanup(db, *, category_ids=(), tx_ids=()):
         cat = db.get(Category, cat_id)
         if cat:
             db.delete(cat)
-    db.commit()
+            db.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -230,15 +246,14 @@ def test_put_reparent_exceeds_depth_rejected(client, api_key, db_session):
 # ---------------------------------------------------------------------------
 
 def test_delete_leaf_no_tx_no_children_succeeds_and_audits(client, api_key, db_session):
-    from backend.models import Category
-
     cat = _make_category(db_session, _unique_cat("DeleteLeaf"), color="#112233")
-    resp = client.delete(f"/categories/{cat.id}", headers={"MONAI_API_KEY": api_key})
+    cat_id = cat.id  # capture BEFORE expire_all — cat.id after would re-trigger a refresh of a deleted row
+    resp = client.delete(f"/categories/{cat_id}", headers={"MONAI_API_KEY": api_key})
     assert resp.status_code == 200, resp.text
     assert resp.json()["status"] == "deleted"
     db_session.expire_all()
-    assert db_session.get(Category, cat.id) is None
-    assert _audit_rows(db_session, cat.id, "delete") == 1
+    assert not _category_exists(db_session, cat_id)
+    assert _audit_rows(db_session, cat_id, "delete") == 1
 
 
 def test_delete_with_transactions_no_reassign_blocked(client, api_key, db_session):
@@ -293,21 +308,22 @@ def test_delete_reassign_to_self_rejected(client, api_key, db_session):
 
 
 def test_delete_with_valid_reassign_moves_transactions(client, api_key, db_session):
-    from backend.models import Category, Transaction
+    from backend.models import Transaction
 
     src = _make_category(db_session, _unique_cat("DeleteReassignSrc"), color="#112233")
     dst = _make_category(db_session, _unique_cat("DeleteReassignDst"), color="#445566")
-    tx_ids = [_make_transaction(db_session, src.id) for _ in range(3)]
+    src_id = src.id  # capture BEFORE expire_all — src.id after would re-trigger a refresh of a deleted row
+    tx_ids = [_make_transaction(db_session, src_id) for _ in range(3)]
     try:
         resp = client.delete(
-            f"/categories/{src.id}?reassign_to={dst.id}",
+            f"/categories/{src_id}?reassign_to={dst.id}",
             headers={"MONAI_API_KEY": api_key},
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["reassigned"] == 3
 
         db_session.expire_all()
-        assert db_session.get(Category, src.id) is None
+        assert not _category_exists(db_session, src_id)
         for tx_id in tx_ids:
             assert db_session.get(Transaction, tx_id).category_id == dst.id
     finally:
@@ -370,13 +386,14 @@ def test_rename_collision_under_same_parent_rejected(client, api_key, db_session
 
 
 def test_merge_moves_transactions_and_deletes_source(client, api_key, db_session):
-    from backend.models import Category, Transaction
+    from backend.models import Transaction
 
     from_name = _unique_cat("HierMergeFrom")
     into_name = _unique_cat("HierMergeInto")
     from_cat = _make_category(db_session, from_name, color="#112233")
     into_cat = _make_category(db_session, into_name, color="#445566")
-    tx_ids = [_make_transaction(db_session, from_cat.id) for _ in range(2)]
+    from_cat_id = from_cat.id  # capture BEFORE expire_all — a deleted row can't be refreshed
+    tx_ids = [_make_transaction(db_session, from_cat_id) for _ in range(2)]
     try:
         resp = client.post(
             "/categories/merge",
@@ -387,7 +404,7 @@ def test_merge_moves_transactions_and_deletes_source(client, api_key, db_session
         assert resp.json()["affected_count"] == 2
 
         db_session.expire_all()
-        assert db_session.get(Category, from_cat.id) is None
+        assert not _category_exists(db_session, from_cat_id)
         for tx_id in tx_ids:
             assert db_session.get(Transaction, tx_id).category_id == into_cat.id
     finally:

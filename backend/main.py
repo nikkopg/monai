@@ -16,9 +16,12 @@ Endpoints:
     POST /transactions          create one (logs new spending)
     PUT  /transactions/{id}     partial-update a transaction (requires API key)
     DELETE /transactions/{id}   delete a transaction (requires API key)
-    GET  /categories            distinct category names (public)
-    GET  /categories/{name}/affected-count  count of transactions in a category (public)
-    POST /categories/rename     rename a category across all transactions (requires API key)
+    GET  /categories            category tree, tx_count + effective color, ?kind= filter (public)
+    POST /categories            create a category (requires API key)
+    PUT  /categories/{id}       edit a category (requires API key)
+    DELETE /categories/{id}     delete (reassign-then-delete via ?reassign_to=) (requires API key)
+    GET  /categories/{name}/affected-count  tx count for a category + its descendants (public)
+    POST /categories/rename     rename a category (single-row, D-11) (requires API key)
     POST /categories/merge      merge one category into another (requires API key)
     POST /import                multipart CSV upload (Wallet export)
     POST /query                 natural-language question over your data
@@ -49,20 +52,23 @@ from backend.auth import require_api_key
 from backend.mcp_server import build_mcp
 from backend.db import get_session
 from backend.importer import _get_or_create_account, import_csv_text
-from backend.models import Account, AuditLog, Holding, Platform, Proposal, Transaction
+from backend.models import Account, AuditLog, Category, Holding, Platform, Proposal, Transaction
 from backend.portfolio import portfolio_summary as compose_portfolio_summary
 from backend.portfolio import value_history_series
 from backend.writes import (
     apply_add_account,
+    apply_add_category,
     apply_add_holding,
     apply_add_platform,
     apply_add_portfolio_event,
     apply_add_transaction,
     apply_delete_account,
+    apply_delete_category,
     apply_delete_holding,
     apply_delete_platform,
     apply_delete_transaction,
     apply_edit_account,
+    apply_edit_category,
     apply_edit_holding,
     apply_edit_platform,
     apply_edit_transaction,
@@ -76,8 +82,11 @@ from backend.schemas import (
     AccountUpdate,
     AffectedCountResponse,
     CashflowSummary,
+    CategoryCreate,
     CategoryMergeRequest,
+    CategoryNode,
     CategoryRenameRequest,
+    CategoryUpdate,
     ConfirmRequest,
     ImportResponse,
     HoldingCreate,
@@ -660,25 +669,183 @@ def delete_transaction(tx_id: int, db: Session = Depends(get_session)):
     return {"status": "deleted"}
 
 
-@app.get("/categories")
-def list_category_names(db: Session = Depends(get_session)):
-    """Distinct category names across all transactions (open read).
+@app.get("/categories", response_model=list[CategoryNode])
+def list_categories(kind: str | None = None, db: Session = Depends(get_session)):
+    """Category tree (open read, CAT-01): per-node tx_count is the node's
+    OWN direct transaction count only (NOT summed into ancestors — that
+    rollup lives in tools.py's spending_by_category for the chat/cashflow
+    aggregates, not here); `color` is the row's own value, `effective_color`
+    inherits the nearest ancestor's when NULL (D-14). Optional ?kind=
+    filters ROOT categories by kind (D-03)."""
+    rows = db.execute(
+        text("SELECT id, name, parent_id, kind, color, icon, is_system FROM categories ORDER BY name")
+    ).fetchall()
+    counts = dict(
+        db.execute(
+            text(
+                "SELECT category_id, COUNT(*) FROM transactions "
+                "WHERE category_id IS NOT NULL GROUP BY category_id"
+            )
+        ).fetchall()
+    )
+    nodes = {
+        r[0]: {
+            "id": r[0], "name": r[1], "parent_id": r[2], "kind": r[3],
+            "color": r[4], "effective_color": r[4], "icon": r[5], "is_system": r[6],
+            "tx_count": counts.get(r[0], 0), "children": [],
+        }
+        for r in rows
+    }
+    roots: list[dict] = []
+    for r in rows:
+        (roots if r[2] is None else nodes[r[2]]["children"]).append(nodes[r[0]])
 
-    The deterministic enumeration source Plan 05's CategoryManager consumes
-    (WARNING 2 fix) — reuses the same parameterized-SQL approach as
-    list_categories() in tools.py rather than hand-building SQL here.
+    def _inherit(node: dict, color: str | None) -> None:
+        if node["effective_color"] is None:
+            node["effective_color"] = color
+        for child in node["children"]:
+            _inherit(child, node["effective_color"])
+
+    for root in roots:
+        _inherit(root, None)
+
+    if kind:
+        roots = [r for r in roots if r["kind"] == kind]
+    return roots
+
+
+@app.post("/categories", status_code=201, dependencies=[Depends(require_api_key)])
+def create_category(payload: CategoryCreate, db: Session = Depends(get_session)):
+    """Create a category (CAT-01). Depth cap + kind/color inheritance
+    enforced in apply_add_category; violations surface as 422."""
+    try:
+        cat = apply_add_category(db, payload.model_dump(mode="json"))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(cat)
+    from backend.query import reset_engine
+    reset_engine()
+    return {
+        "id": cat.id, "name": cat.name, "parent_id": cat.parent_id, "kind": cat.kind,
+        "color": cat.color, "icon": cat.icon, "is_system": cat.is_system,
+    }
+
+
+@app.put("/categories/{category_id}", dependencies=[Depends(require_api_key)])
+def update_category(category_id: int, payload: CategoryUpdate, db: Session = Depends(get_session)):
+    """Partial-update a category (CAT-01). System rows only allow color/icon
+    changes; re-parenting re-checks the depth cap for the node's subtree
+    (apply_edit_category). exclude_unset (not exclude_none) so an explicit
+    parent_id is distinguishable from "not provided"."""
+    cat = db.get(Category, category_id)
+    if cat is None:
+        raise HTTPException(status_code=404, detail=f"Category {category_id} not found")
+    before = {
+        "id": cat.id, "name": cat.name, "parent_id": cat.parent_id,
+        "kind": cat.kind, "color": cat.color, "icon": cat.icon,
+    }
+    try:
+        apply_edit_category(db, category_id, payload.model_dump(mode="json", exclude_unset=True), before)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(cat)
+    from backend.query import reset_engine
+    reset_engine()
+    return {
+        "id": cat.id, "name": cat.name, "parent_id": cat.parent_id, "kind": cat.kind,
+        "color": cat.color, "icon": cat.icon, "is_system": cat.is_system,
+    }
+
+
+@app.delete("/categories/{category_id}", dependencies=[Depends(require_api_key)])
+def delete_category(category_id: int, reassign_to: int | None = None, db: Session = Depends(get_session)):
+    """Delete a category with reassign-then-delete (CAT-02, Pitfall 3).
+
+    - System row (Transfer/Uncategorized) -> 422 always (D-04).
+    - Has subcategories -> 422 always, WITH child_count alongside
+      affected_count: reassign_to only ever moves TRANSACTIONS, never
+      subcategories, so a category with children can never be deleted via
+      this endpoint (merge/re-parent the children first).
+    - Leaf with transactions and no reassign_to -> 422 with affected_count.
+    - reassign_to set -> transactions reassigned + source deleted in ONE
+      audited helper call (apply_delete_category), mirroring
+      apply_delete_account (WARNING 1 fix carried over from accounts).
     """
-    sql = "SELECT DISTINCT category FROM transactions WHERE category IS NOT NULL ORDER BY category"
-    rows = db.execute(text(sql)).fetchall()
-    return {"categories": [r[0] for r in rows]}
+    cat = db.get(Category, category_id)
+    if cat is None:
+        raise HTTPException(status_code=404, detail=f"Category {category_id} not found")
+    if cat.is_system:
+        raise HTTPException(status_code=422, detail="System categories (Transfer/Uncategorized) cannot be deleted")
+    before = {
+        "id": cat.id, "name": cat.name, "parent_id": cat.parent_id,
+        "kind": cat.kind, "color": cat.color, "icon": cat.icon,
+    }
+
+    tx_count = int(
+        db.execute(
+            text("SELECT COUNT(*) FROM transactions WHERE category_id = :cid"), {"cid": category_id}
+        ).scalar() or 0
+    )
+    child_count = int(
+        db.execute(
+            text("SELECT COUNT(*) FROM categories WHERE parent_id = :cid"), {"cid": category_id}
+        ).scalar() or 0
+    )
+
+    if child_count > 0:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": f"{child_count} subcategories use this category — remove or re-parent them first",
+                "affected_count": tx_count,
+                "child_count": child_count,
+            },
+        )
+
+    if tx_count > 0:
+        if reassign_to is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": f"{tx_count} transactions use this category — reassign or delete them first",
+                    "affected_count": tx_count,
+                },
+            )
+        target = db.get(Category, reassign_to)
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"Reassign target category {reassign_to} not found")
+
+    try:
+        reassigned = apply_delete_category(db, category_id, before, reassign_to=reassign_to)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    db.commit()
+    from backend.query import reset_engine
+    reset_engine()
+    return {"status": "deleted", "reassigned": reassigned}
 
 
 @app.get("/categories/{name}/affected-count", response_model=AffectedCountResponse)
 def category_affected_count(name: str, db: Session = Depends(get_session)):
-    """Count of transactions currently in the given category (open read, D-09)."""
+    """Count of transactions in a category AND its descendants (open read,
+    D-09). Unknown name -> 0 (matches the pre-hierarchy endpoint's behavior
+    of never 404ing on a read)."""
+    row = db.execute(text("SELECT id FROM categories WHERE name = :name LIMIT 1"), {"name": name}).first()
+    if row is None:
+        return AffectedCountResponse(category=name, affected_count=0)
     count = int(
         db.execute(
-            text("SELECT COUNT(*) FROM transactions WHERE category = :cat"), {"cat": name}
+            text(
+                "WITH RECURSIVE descendants AS ("
+                "  SELECT id FROM categories WHERE id = :cat_id"
+                "  UNION ALL"
+                "  SELECT c.id FROM categories c JOIN descendants d ON c.parent_id = d.id"
+                ") SELECT COUNT(*) FROM transactions WHERE category_id IN (SELECT id FROM descendants)"
+            ),
+            {"cat_id": row[0]},
         ).scalar()
         or 0
     )
@@ -687,8 +854,12 @@ def category_affected_count(name: str, db: Session = Depends(get_session)):
 
 @app.post("/categories/rename", dependencies=[Depends(require_api_key)])
 def rename_category(req: CategoryRenameRequest, db: Session = Depends(get_session)):
-    """Rename a category across all matching transactions (CASH-06)."""
-    count = apply_rename_category(db, req.old_name, req.new_name)
+    """Rename a category (single-row UPDATE, D-11); ValueError (ambiguous
+    name, missing name, system row, or name collision) -> 422."""
+    try:
+        count = apply_rename_category(db, req.old_name, req.new_name)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     db.commit()
     from backend.query import reset_engine
     reset_engine()
@@ -697,8 +868,12 @@ def rename_category(req: CategoryRenameRequest, db: Session = Depends(get_sessio
 
 @app.post("/categories/merge", dependencies=[Depends(require_api_key)])
 def merge_category(req: CategoryMergeRequest, db: Session = Depends(get_session)):
-    """Merge one category into another across all matching transactions (CASH-07)."""
-    count = apply_merge_category(db, req.from_name, req.into_name)
+    """Merge one category into another (D-11); ValueError (ambiguous/missing
+    name, system row, or source has children) -> 422."""
+    try:
+        count = apply_merge_category(db, req.from_name, req.into_name)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     db.commit()
     from backend.query import reset_engine
     reset_engine()
