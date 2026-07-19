@@ -1,73 +1,35 @@
 ---
 phase: 11-category-hierarchy-schema-audit-migration
-verified: 2026-07-19T15:29:09Z
-status: gaps_found
-score: 3/4 roadmap truths verified (1 failed)
+verified: 2026-07-20T09:00:00Z
+status: human_needed
+score: 4/4 roadmap truths verified
 behavior_unverified: 0
 overrides_applied: 0
-gaps:
-  - truth: "Record forms, filters, and dashboard charts read from the new category hierarchy (ROADMAP criterion 4 — record-forms clause)"
-    status: failed
-    reason: >
-      TransactionModal.tsx (the live Add/Edit Transaction modal, mounted and used
-      on the Cashflow page) still fetches GET /categories expecting the
-      pre-phase-11 response shape `{ categories: string[] }`. Plan 11-03 changed
-      this exact endpoint to `response_model=list[CategoryNode]` — a bare JSON
-      array of tree nodes, not an object with a `categories` key. No plan in this
-      phase touched TransactionModal.tsx (confirmed: zero matches for
-      "TransactionModal" across all 7 PLAN/SUMMARY files). The result:
-      `data.categories` is always `undefined`, so the category `<select>` in the
-      transaction form is permanently empty of real categories (only
-      "(no category)", "+ New category…", and — in edit mode only — the
-      transaction's current legacy string survive). This is not merely "the
-      improved hierarchy picker hasn't been built yet" (that full D-15/Phase-16
-      picker build is legitimately out of this phase's scope, per
-      11-RESEARCH.md's Architectural Responsibility Map) — it is a working
-      feature from before this phase that this phase's own endpoint-contract
-      change silently broke and never re-wired. Compounding this: `TransactionOut`
-      (backend/schemas.py) still exposes only the legacy `category` string, not
-      `category_id` or a hierarchy-derived name, so the transaction list also has
-      no read path onto the new hierarchy. The "+ New category…" free-text
-      affordance is now doubly misleading: typing a brand-new name does not
-      create a Category row — `resolve_category_id` (plan 11-05) only exact-matches
-      existing `categories.name` rows and silently resolves anything else to
-      Uncategorized, so the transaction is filed as Uncategorized while the UI
-      still shows the user's typed string via the legacy column.
-    artifacts:
-      - path: "ui/app/cashflow/TransactionModal.tsx"
-        issue: >
-          Line ~97: `const data: { categories: string[] } = await r.json();` —
-          consumes a response shape that no longer exists after 11-03's
-          `GET /categories` change (`response_model=list[CategoryNode]`, a bare
-          array). `setCategories(data.categories ?? [])` always resolves to `[]`.
-          File was never modified by any of the phase's 7 plans.
-      - path: "backend/schemas.py"
-        issue: >
-          `TransactionOut` (line ~35) exposes `category: str | None` (the legacy
-          free-text column) but no `category_id` or hierarchy-derived name —
-          the transaction list has no read path onto the new hierarchy either.
-    missing:
-      - "Update TransactionModal.tsx to consume the actual list[CategoryNode] shape (flatten the tree into selectable name options, at minimum) so users can select an existing category when adding/editing a transaction — this restores parity with pre-phase behavior without requiring the full searchable grouped-list picker (D-15), which remains legitimately deferred to Phase 16."
-      - "Decide and document what the '+ New category…' affordance should do now that categories are hierarchy rows, not implicit free strings (e.g., disable it, or route it through POST /categories at a chosen parent) — as currently wired it silently mis-files new-category attempts into Uncategorized while displaying the typed string, which contradicts the never-fabricate principle."
-deferred:
-  - truth: "Filters read from the new category hierarchy (ROADMAP criterion 4 — filters clause)"
-    addressed_in: "Phase 17"
-    evidence: "Phase 17 goal: 'The user can browse, filter, and bulk-manage their full transaction history...'; Success Criterion 2: 'User can filter records by search, account, category, record type, amount range, and transfer visibility.' No category filter UI exists anywhere in the codebase today (pre- or post-phase 11) — confirmed by grep across ui/app; this was never phase 11's job per 11-RESEARCH.md's Architectural Responsibility Map ('Category picker (record forms, filters) ... Out of full-build scope this phase ... record modal is Phase 16')."
+re_verification:
+  previous_status: gaps_found
+  previous_score: 3/4 roadmap truths verified (1 failed)
+  gaps_closed:
+    - "Record forms read from the new category hierarchy (ROADMAP criterion 4 — record-forms clause): TransactionModal.tsx now consumes list[CategoryNode] via flattenCategories()"
+  gaps_remaining: []
+  regressions: []
 human_verification:
   - test: "Settings > Categories: expand/collapse groups, add/edit/delete a category, trigger the block-or-reassign flow on a category with transactions and one with subcategories, confirm system-row (Transfer/Uncategorized) delete is disabled"
     expected: "Tree renders per 11-UI-SPEC Component 1; reassign flow shows both affected_count and child_count per the 422 payload; system rows show the exact copy 'System category — can't be deleted.'"
-    why_human: "Visual layout, hover-reveal interactions, and modal flows require a live browser render; 11-06's own SUMMARY explicitly deferred this to phase UAT after docker compose up -d --build (shared host-network container stack, not rebuilt mid-wave)."
+    why_human: "Visual layout, hover-reveal interactions, and modal flows require a live browser render; deferred to phase UAT after docker compose up -d --build (the running container on :8001 is stale pre-phase-11 code). Carried unchanged from the initial pass."
   - test: "Cashflow dashboard donut: confirm top-level slices use identity-stable swatch colors, click a slice with children to drill into its subcategories, confirm the '‹ Back' link returns to the rollup, and confirm no 'Transfer' slice ever appears"
     expected: "Rollup/drill-down/back per 11-UI-SPEC Component 3; Transfer absent at both levels"
-    why_human: "11-07's own SUMMARY marks this coverage item `human_judgment: true` — tsc only proves the types compile, not that the chart looks/behaves right; deferred to phase UAT."
+    why_human: "Chart look/behavior requires a live browser render; tsc only proves types compile. Carried unchanged from the initial pass."
+  - test: "Add/Edit Transaction modal (Cashflow page): open the modal, confirm the Category dropdown is now populated with real, indented categories (not empty), select a subcategory, submit, and re-open the same transaction in edit mode to confirm the selection persisted and pre-selects correctly"
+    expected: "Dropdown shows non-system categories at all depths with visual indentation; selecting and saving a category round-trips correctly; editing an existing transaction pre-selects its current category"
+    why_human: "This session verified the fix via source inspection (flattenCategories logic, resolve_category_id any-level exact match, a clean tsc --noEmit, and a live single-named backend unit test on the GET /categories tree shape) rather than a live browser render, since the only running backend on :8001 is stale pre-phase-11 code. A live click-through after docker compose up -d --build would give direct visual confirmation; recommended, not required, given the strength of the static evidence."
 ---
 
 # Phase 11: Category Hierarchy — Schema, Audit, Migration Verification Report
 
 **Phase Goal:** Categories exist as first-class, hierarchical entities that every existing transaction is correctly mapped onto, with zero data loss.
-**Verified:** 2026-07-19T15:29:09Z
-**Status:** gaps_found
-**Re-verification:** No — initial verification
+**Verified:** 2026-07-20T09:00:00Z
+**Status:** human_needed
+**Re-verification:** Yes — after gap closure (commit `1825143`, "fix(11): consume category tree shape in TransactionModal")
 
 ## Goal Achievement
 
@@ -75,81 +37,98 @@ human_verification:
 
 | # | Truth | Status | Evidence |
 |---|-------|--------|----------|
-| 1 | Every one of the 74 existing category strings maps to a reviewed category in a 3-level hierarchy — no transaction silently loses its category | ✓ VERIFIED | `alembic/data/category_mapping.csv` has exactly 74 data rows across the 12 groups used (`Communication / PC, Financial Expenses, Food & Drinks, Housing, Income, Investments, Life & Entertainment, Others, Shopping, Transfer, Transportation, Vehicle`). Live DB: `alembic_version = e5f6a7b8c9d0` (head); `SELECT COUNT(*) FROM transactions WHERE category_id IS NULL` → **0** (independently re-queried, read-only). Migration file (`alembic/versions/009_category_hierarchy.py`) contains real `find_unmapped`/`RuntimeError` abort-on-unknown logic (not vestigial — confirmed by grep of the actual `upgrade()` body). |
-| 2 | Row-count and sum-of-amount parity holds between pre- and post-migration category totals (verified, not assumed) | ✓ VERIFIED | Independently re-queried live DB (read-only, this session): `COUNT(*), SUM(amount)` = **5728, 194694800.00** — matches 11-02-SUMMARY's recorded pre-migration snapshot exactly. `assert_parity()` (raises `RuntimeError` naming the exact string + both count/sum pairs on mismatch) is present in the migration and covered by unit tests (`test_assert_parity_passes_when_equal`, `test_assert_parity_raises_on_mismatch...`). TRANSFER→Transfer count independently re-verified: **668** (matches). `raw_category IS NULL` count independently re-verified: **14** (matches, D-08 untouched). |
-| 3 | User can add, edit, and delete categories in Settings; deleting a category with records in use is blocked until reassigned (no orphaned records) | ✓ VERIFIED | `ui/app/settings/page.tsx` imports and mounts `CategoryManager` (687 lines) inside a "Categories" card; old `ui/app/cashflow/CategoryManager.tsx` confirmed deleted. Backend: `POST/PUT/DELETE /categories` all carry `Depends(require_api_key)` + `reset_engine()` (grep-verified against the actual handler bodies, not just the SUMMARY's claim). Delete guard (`backend/main.py` ~L843-864): reads `child_count` and unconditionally blocks any category with subcategories (422), and `affected_count` for a childless category with transactions (422) — matches 28 tests in `test_category_hierarchy.py`. System rows (`is_system`) rejected on delete/rename in `writes.py` (`_category_depth`, `is_system` guard checks at L501, L560, L601, L635). Live visual walkthrough of the tree UI is deferred to human UAT (see Human Verification). |
-| 4 | Record forms, filters, and dashboard charts read from the new category hierarchy (not the free-string column) | ✗ FAILED (partial) | **Dashboard charts: VERIFIED** — `CashflowSummary.by_category` is `list[CategoryRollup]` (`backend/schemas.py`), sourced from `spending_by_category`'s hierarchy join (Transfer/system excluded server-side, grep-confirmed at `tools.py` L241-242); `CategoryDonut.tsx` renders identity-stable colors + a "‹ Back" drill-down affordance (grep-confirmed). **Filters: legitimately DEFERRED** to Phase 17 (see Deferred Items) — no category-filter UI exists anywhere in the codebase, and this was never phase 11's job per 11-RESEARCH.md. **Record forms: FAILED** — see Gaps below. TransactionModal.tsx (the live Add/Edit Transaction modal) was never updated for 11-03's `GET /categories` contract change and is now functionally broken for category selection. |
+| 1 | Every one of the 74 existing category strings maps to a reviewed category in a 3-level hierarchy — no transaction silently loses its category | ✓ VERIFIED | Regression check: DB independently re-queried this session — `SELECT COUNT(*) FROM transactions WHERE category_id IS NULL` → **0**; `alembic_version` → `e5f6a7b8c9d0` (head, unchanged). `git diff --stat` between the prior-verification commit and HEAD shows exactly one file changed (`TransactionModal.tsx`, binary-mode diff only — the NUL-byte removal) — nothing touching the migration, mapping CSV, or models was altered. |
+| 2 | Row-count and sum-of-amount parity holds between pre- and post-migration category totals (verified, not assumed) | ✓ VERIFIED | Regression check: independently re-queried live DB (read-only) this session — `COUNT(*), SUM(amount)` = **5728, 194694800.00**, unchanged from the previous verification pass. No plan/commit since then touched the migration or transaction data. |
+| 3 | User can add, edit, and delete categories in Settings; deleting a category with records in use is blocked until reassigned (no orphaned records) | ✓ VERIFIED | Regression check: `ui/app/settings/CategoryManager.tsx` and `backend/writes.py`'s delete-guard logic (`_category_depth`, `child_count`/`affected_count` 422s, `is_system` rejection) are untouched by the gap-closure commit (confirmed via `git diff --stat`). No behavior change here since the initial pass. |
+| 4 | Record forms, filters, and dashboard charts read from the new category hierarchy (not the free-string column) | ✓ VERIFIED (record forms fixed; filters legitimately deferred) | **Record forms — FIXED, verified by reading the actual file:** `ui/app/cashflow/TransactionModal.tsx` now defines a `CategoryNode` type matching `backend/schemas.py`'s `CategoryNode` exactly (`id`, `name`, `parent_id`, `kind`, `color`, `effective_color`, `icon`, `is_system: bool`, `children: list[CategoryNode]` — field-by-field confirmed) and a depth-first `flattenCategories()` that recurses into `children`, skips `is_system` nodes, and returns `{name, depth}` pairs, rendered as `<option>`s indented by non-breaking spaces per depth (D-01: any level assignable). The `useEffect` fetch parses `const tree: CategoryNode[] = await r.json()` — the correct bare-array shape 11-03 introduced — and calls `setCategories(flattenCategories(tree ?? []))`. Submit sends the selected option's exact `name` string as `category`; traced this against `backend/writes.py:resolve_category_id()` (`SELECT id FROM categories WHERE name = :name ... LIMIT 1`, **no depth restriction** — matches at any hierarchy level, exactly what the flattened options expose) — falls back to the Uncategorized system row id on no-match/empty, never raises, never fabricates. Edit-mode preselection: `categorySelection` initializes to `editingTx?.category ?? ""`, and `categoryOptions` unshifts the transaction's current category name if the fetched list doesn't (yet) contain it — so opening the edit modal on an existing transaction never blanks the current selection. The stale "+ New category…" affordance and `NEW_CATEGORY_SENTINEL` are fully gone (full-file read + grep confirm zero references) — documented in the file's own top comment as intentional post-hierarchy behavior (unknown names resolve to Uncategorized server-side; creation now lives in Settings > Categories). File integrity: `file` reports "Unicode text, UTF-8 text" (previously registered as binary due to a literal NUL byte; now confirmed 0 NUL bytes by direct byte count). `cd ui && npx tsc --noEmit` → clean, exit 0, zero errors. Ran the one directly relevant backend unit test live: `test_get_categories_tree_shape_and_effective_color` → **1 passed** (confirms the tree shape TransactionModal now depends on is real, not assumed). **Dashboard charts:** unchanged since initial pass, still VERIFIED (`CategoryRollup`-typed `by_category`, `CategoryDonut.tsx` drill-down). **Filters:** still legitimately DEFERRED to Phase 17 (unchanged — see Deferred Items). |
 
-**Score:** 3/4 roadmap truths verified (1 failed — see Gaps)
+**Score:** 4/4 roadmap truths verified
 
 ### Deferred Items
 
 | # | Item | Addressed In | Evidence |
 |---|------|-------------|----------|
-| 1 | Filters read from the new category hierarchy | Phase 17 | Phase 17 success criterion 2: "User can filter records by search, account, category, record type, amount range, and transfer visibility." No filter UI exists today; 11-RESEARCH.md's Architectural Responsibility Map explicitly scopes the category picker (record forms, filters) build out of phase 11. |
+| 1 | Filters read from the new category hierarchy | Phase 17 | Phase 17 success criterion 2: "User can filter records by search, account, category, record type, amount range, and transfer visibility." No filter UI exists today; 11-RESEARCH.md's Architectural Responsibility Map explicitly scopes the category picker (record forms, filters) build out of phase 11. Unchanged since initial verification. |
 
 ### Required Artifacts
 
 | Artifact | Expected | Status | Details |
 |----------|----------|--------|---------|
-| `backend/models.py` | `Category` model + `Transaction.category_id` | ✓ VERIFIED | `class Category` present; import check confirms `Category.__tablename__ == "categories"`; pre-migration ORM shim (deferred/server_default/eager_defaults) confirmed removed per 11-05. |
-| `alembic/versions/009_category_hierarchy.py` | Idempotent schema+data migration, testable helpers | ✓ VERIFIED | `load_mapping`, `find_unmapped`, `assert_parity`, `kind_for_group`, `GROUP_META` all present; `upgrade()` body contains real abort/parity/zero-NULL assertions (not stubs). |
-| `alembic/data/category_mapping.csv` | 74-key human-reviewed mapping | ✓ VERIFIED | Exactly 74 data rows, keyed by exact raw strings, 12 groups used, matches live DB's distinct-category-string set. |
-| `backend/writes.py` | Audited category write layer | ✓ VERIFIED | `apply_add_category`, `apply_edit_category`, `apply_delete_category`, reworked `apply_rename_category`/`apply_merge_category`, `resolve_category_id`, `_category_depth` all present and grep-confirmed. |
-| `backend/main.py` | Category CRUD + hierarchy-aware summary | ✓ VERIFIED | `GET/POST/PUT/DELETE /categories`, `/categories/{name}/affected-count`, `/categories/rename`, `/categories/merge` all present with correct auth/cache-invalidation wiring. |
-| `backend/schemas.py` | `CategoryNode`/`CategoryCreate`/`CategoryUpdate`/`CategoryRollup`/`CategoryRollupChild` | ✓ VERIFIED | All classes present (grep-confirmed at their declared line numbers). |
-| `backend/tools.py` / `backend/query.py` | Hierarchy-aware agent tools, dual registration | ✓ VERIFIED | `registry OK 26` (15 read + 11 write, unchanged); `list_categories`/`spending_by_category` in `READ_TOOL_NAMES`; no `propose_*` leaked onto the read surface (executed the actual assertion script, not just trusted the SUMMARY). |
-| `ui/app/settings/CategoryManager.tsx` | Recursive tree manager with CRUD + delete-guard flows | ✓ VERIFIED | 687 lines; fetches `/api/categories`; mounted in `ui/app/settings/page.tsx`. `ui/app/cashflow/CategoryManager.tsx` confirmed deleted (no dangling references). |
-| `ui/app/cashflow/charts/CategoryDonut.tsx` | Rollup + drill-down donut, identity colors | ✓ VERIFIED | Contains `drilled` state, `‹ Back` text, click-to-drill logic (grep-confirmed). |
-| `ui/app/cashflow/TransactionModal.tsx` | (not a phase-11 artifact, but a consumer of a phase-11-changed contract) | ✗ HOLLOW (regressed) | Fetches `GET /categories` expecting the old `{categories: string[]}` shape; now always resolves to an empty list. See Gaps. |
+| `backend/models.py` | `Category` model + `Transaction.category_id` | ✓ VERIFIED | Unchanged since initial pass; not touched by the gap-closure commit. |
+| `alembic/versions/009_category_hierarchy.py` | Idempotent schema+data migration, testable helpers | ✓ VERIFIED | Unchanged; not touched by the gap-closure commit. |
+| `alembic/data/category_mapping.csv` | 74-key human-reviewed mapping | ✓ VERIFIED | Unchanged; not touched. |
+| `backend/writes.py` | Audited category write layer, `resolve_category_id` any-level exact match | ✓ VERIFIED | Re-read this session; `resolve_category_id` confirmed to match `categories.name` at ANY level (no parent/depth filter in the SQL), which is exactly what the newly-fixed frontend's flattened multi-level options rely on. |
+| `backend/main.py` | Category CRUD + hierarchy-aware summary; `GET /categories` → `response_model=list[CategoryNode]` | ✓ VERIFIED | Re-confirmed at `main.py:724`: `@app.get("/categories", response_model=list[CategoryNode])` — unchanged since 11-03, and now correctly consumed on both sides (Settings tree manager AND TransactionModal). |
+| `backend/schemas.py` | `CategoryNode` w/ `is_system`, `children` | ✓ VERIFIED | Re-read this session: `id, name, parent_id, kind, color, effective_color, icon, is_system: bool, children: list["CategoryNode"] = []` — every field the frontend's `CategoryNode` type and `flattenCategories()` depend on is present and correctly typed. |
+| `ui/app/settings/CategoryManager.tsx` | Recursive tree manager with CRUD + delete-guard flows | ✓ VERIFIED | Unchanged since initial pass. |
+| `ui/app/cashflow/charts/CategoryDonut.tsx` | Rollup + drill-down donut, identity colors | ✓ VERIFIED | Unchanged since initial pass. |
+| `ui/app/cashflow/TransactionModal.tsx` | Category `<select>` populated from the hierarchy, any-level assignable, edit-mode preselection preserved | ✓ VERIFIED (gap closed) | Full file read this session (352 lines). Defines `CategoryNode` matching the backend shape field-for-field; `flattenCategories()` is a correct depth-first traversal that skips `is_system` nodes and preserves depth for indentation; fetch parses the bare tree array (not the old `{categories: [...]}` envelope); submit path sends the exact selected name, which `resolve_category_id` matches at any depth; edit-mode preselection logic (`categoryOptions` unshift-if-missing) is sound. `tsc --noEmit` clean. 0 NUL bytes (previously binary-flagged). No dangling references to the retired `NEW_CATEGORY_SENTINEL`/`newCategory` state. |
 
 ### Key Link Verification
 
 | From | To | Via | Status | Details |
 |------|-----|-----|--------|---------|
-| `alembic/versions/009_category_hierarchy.py` | `alembic/data/category_mapping.csv` | `load_mapping` reads CSV relative to migration file | ✓ WIRED | Migration ran successfully against the live DB per 11-02-SUMMARY and independently re-verified DB state. |
-| `backend/tests/test_category_migration.py` | `alembic/versions/009_category_hierarchy.py` | `importlib.util.spec_from_file_location` | ✓ WIRED | Full suite run this session: these tests pass as part of the 236-passed total. |
-| `backend/main.py` | `backend/writes.py` | `apply_*_category` helpers, `ValueError` → 422 | ✓ WIRED | Grep-confirmed handler bodies call the helpers; guard tests pass. |
-| `backend/main.py` | `backend/query.py` | `reset_engine()` after every category mutation commit | ✓ WIRED | Confirmed on all 5 mutating category endpoints. |
-| `backend/tools.py` | `backend/query.py` | Dual registration (`FunctionTool.from_defaults`) | ✓ WIRED | Registry assertion executed directly: `registry OK 26`. |
-| `ui/app/settings/CategoryManager.tsx` | `backend/main.py GET /categories` | fetch of the tree | ✓ WIRED | Correctly consumes `list[CategoryNode]` (built for this exact shape in 11-06). |
-| `ui/app/cashflow/page.tsx` | `ui/app/cashflow/charts/CategoryDonut.tsx` | `summary.by_category` objects → donut | ✓ WIRED | `CategoryRollup[]` typed and passed through, grep-confirmed. |
-| `ui/app/cashflow/TransactionModal.tsx` | `backend/main.py GET /categories` | fetch expecting `{categories: string[]}` | ✗ NOT_WIRED | Endpoint shape changed in 11-03 to `list[CategoryNode]`; consumer never updated. This is the core of the Gap below. |
+| `alembic/versions/009_category_hierarchy.py` | `alembic/data/category_mapping.csv` | `load_mapping` reads CSV relative to migration file | ✓ WIRED | Unchanged since initial pass. |
+| `backend/main.py` | `backend/writes.py` | `apply_*_category` helpers, `ValueError` → 422 | ✓ WIRED | Unchanged since initial pass. |
+| `ui/app/settings/CategoryManager.tsx` | `backend/main.py GET /categories` | fetch of the tree | ✓ WIRED | Unchanged since initial pass. |
+| `ui/app/cashflow/page.tsx` | `ui/app/cashflow/charts/CategoryDonut.tsx` | `summary.by_category` objects → donut | ✓ WIRED | Unchanged since initial pass. |
+| `ui/app/cashflow/TransactionModal.tsx` | `backend/main.py GET /categories` | fetch parses `list[CategoryNode]`, flattens via `flattenCategories()`, renders as indented `<option>`s | ✓ WIRED (gap closed) | Previously ✗ NOT_WIRED — consumer expected `{categories: string[]}` against an endpoint that had moved to a bare tree array. Now reads `const tree: CategoryNode[] = await r.json()` and correctly flattens/renders it. Confirmed by full-file read, not by SUMMARY claim. |
+| `ui/app/cashflow/TransactionModal.tsx` | `backend/writes.py resolve_category_id()` | submitted `category` name string → any-level exact match on `categories.name` | ✓ WIRED | New link traced this session: the option value submitted is the exact stored category name at whatever depth the user picked; `resolve_category_id`'s SQL has no depth/parent restriction, so any-level selection (D-01) resolves correctly. Falls back to Uncategorized on no-match (D-04), never raises. |
 
 ### Behavioral Spot-Checks
 
 | Behavior | Command | Result | Status |
 |----------|---------|--------|--------|
-| Full backend test suite | `pytest backend/tests -q` (run once, live) | `236 passed, 1 failed` (pre-existing `test_settings.py::test_put_settings_requires_key`, documented in `deferred-items.md`, verified failing at base commit before any phase-11 work) | ✓ PASS (no regression) |
-| Category mapping CSV coverage | Python one-liner counting rows | `74 data rows` | ✓ PASS |
-| Category registry invariants | `python -c "from backend.tools import TOOLS, READ_TOOL_NAMES; ..."` | `registry OK 26` | ✓ PASS |
-| Frontend typecheck | `cd ui && npx tsc --noEmit` | clean, 0 errors | ✓ PASS (does not catch the runtime shape-mismatch bug below — `r.json()` is `any`) |
-| Live DB zero-NULL / parity | `psql` read-only queries (independently re-run this session) | `category_id IS NULL` = 0; `COUNT/SUM` = 5728/194694800.00; Transfer rows = 668; `raw_category IS NULL` = 14 | ✓ PASS — all match the SUMMARY's claimed figures |
+| Frontend typecheck (regression + gap-closure check) | `cd ui && npx tsc --noEmit` | Clean, exit 0, 0 errors | ✓ PASS |
+| GET /categories tree-shape contract that TransactionModal now depends on | `pytest backend/tests/test_category_hierarchy.py::test_get_categories_tree_shape_and_effective_color -q` (single named test, run once) | `1 passed` | ✓ PASS |
+| File integrity (NUL byte removal claim) | `file ...TransactionModal.tsx` + Python byte-count | "Unicode text, UTF-8 text"; `NUL bytes: 0` | ✓ PASS |
+| Live DB zero-NULL / parity regression check | `psql` read-only queries (independently re-run this session) | `category_id IS NULL` = 0; `COUNT/SUM` = 5728/194694800.00; `alembic_version` = e5f6a7b8c9d0 (head) | ✓ PASS — unchanged from prior verification, no regression from the gap-closure commit |
+| Scope of the gap-closure commit | `git diff --stat` between prior-verification HEAD and current HEAD | Exactly 1 file changed: `TransactionModal.tsx` | ✓ PASS — confirms no other surface was touched, so no new regression risk introduced |
 
 ### Requirements Coverage
 
 | Requirement | Source Plan(s) | Description | Status | Evidence |
 |-------------|-----------------|-------------|--------|----------|
-| CAT-01 | 11-01, 11-03 | Categories are first-class entities (name, color, icon, parent) with up to 3 hierarchy levels | ✓ SATISFIED | `Category` model + depth-cap enforcement (`_category_depth`, blocked at depth ≥ 3) verified in code. |
-| CAT-02 | 11-03, 11-06 | User can manage categories in Settings — add, edit, delete with a block-or-reassign guard | ✓ SATISFIED | Settings tree manager + backend guard both verified; live visual walkthrough deferred to human UAT. |
-| CAT-03 | 11-01, 11-02, 11-05 | 74 category strings migrate onto the hierarchy via human-reviewed mapping with row/sum parity checks | ✓ SATISFIED | Migration ran, parity independently re-verified this session, dual-write on all 4 write paths confirmed. |
-| CAT-04 | 11-04, 11-06, 11-07 | Record forms, filters, and dashboard charts use the hierarchical category picker | ✗ BLOCKED | Dashboard charts and the agent/chat tool layer are hierarchy-backed (verified). Record forms are **regressed** (TransactionModal.tsx broken by the 11-03 contract change). Filters are deferred to Phase 17 (documented, not a phase-11 gap). |
+| CAT-01 | 11-01, 11-03 | Categories are first-class entities (name, color, icon, parent) with up to 3 hierarchy levels | ✓ SATISFIED | Unchanged since initial pass. |
+| CAT-02 | 11-03, 11-06 | User can manage categories in Settings — add, edit, delete with a block-or-reassign guard | ✓ SATISFIED | Unchanged since initial pass; live visual walkthrough still deferred to human UAT. |
+| CAT-03 | 11-01, 11-02, 11-05 | 74 category strings migrate onto the hierarchy via human-reviewed mapping with row/sum parity checks | ✓ SATISFIED | Unchanged since initial pass; regression-checked this session. |
+| CAT-04 | 11-04, 11-06, 11-07 | Record forms, filters, and dashboard charts use the hierarchical category picker | ✓ SATISFIED | **Upgraded from BLOCKED.** Dashboard charts and the agent/chat tool layer remain hierarchy-backed (unchanged). Record forms are now fixed — `TransactionModal.tsx` correctly consumes and flattens the `list[CategoryNode]` tree, submits names `resolve_category_id` resolves at any depth, and preserves edit-mode preselection. Filters remain legitimately deferred to Phase 17 (documented, not a phase-11 gap). |
 
 No orphaned requirements found — all four CAT-0x IDs are claimed and accounted for across the phase's 7 plans.
 
 ### Anti-Patterns Found
 
-No `TODO`/`FIXME`/`XXX`/`HACK`/placeholder debt markers found in any phase-11-modified backend or frontend file (scanned: `models.py`, `009_category_hierarchy.py`, `writes.py`, `schemas.py`, `main.py`, `tools.py`, `query.py`, `importer.py`, `styles.ts`, `CategoryManager.tsx`, `settings/page.tsx`, `cashflow/page.tsx`, `CategoryDonut.tsx`, `category_mapping.csv`). The `placeholder="..."` hits found are legitimate HTML input placeholder attributes, not stub markers.
+No `TODO`/`FIXME`/`XXX`/`HACK`/placeholder debt markers found in `ui/app/cashflow/TransactionModal.tsx` (full-file read this session). No stale references to the retired `NEW_CATEGORY_SENTINEL` or `newCategory` state anywhere in `ui/app/cashflow/` or `ui/app/settings/` (grep-confirmed). No other files were touched by the gap-closure commit.
 
-**Live-DB housekeeping note (not a blocker):** the live dev database currently has **119** rows in `categories`, not the 76 the phase's summaries describe (13 roots + 63 subcategories). The extra 43 rows are leftover randomized-name fixtures from earlier `test_category_hierarchy.py` runs (e.g. `DepthRoot-67e4936e`, `DupParent-edc1dce1`) that were not cleaned up in some prior session. Re-running the full suite this session did **not** add further orphans (confirmed: count unchanged at 119 before/after), and zero transactions reference any of these 43 rows — so the "zero data loss" and parity claims for real transaction data are unaffected. However, these rows are real, visible nodes and would currently clutter the Settings > Categories tree for the actual user. Recommend a one-time manual cleanup (`DELETE FROM categories WHERE id > 76`, after confirming no legitimate categories were added above id 76) before/at milestone close.
+**Live-DB housekeeping note (carried forward, not a blocker):** the live dev database still has 119 rows in `categories` vs. the expected 76 (43 leftover randomized-name test fixtures, zero transactions reference them). Unchanged since the initial verification pass; recommended one-time cleanup before/at milestone close, not a phase-11 gap.
+
+**Stale runtime note (carried forward):** the backend process on port 8001 is still pre-Phase-11 code (serves the old `{"categories": [...]}` envelope). This verification was performed against source and the database directly, not against that stale running process, per the task's instructions. A `docker compose up -d --build` is required before any live browser UAT.
+
+## Human Verification Required
+
+### 1. Settings > Categories tree walkthrough
+
+**Test:** Expand/collapse groups, add/edit/delete a category, trigger the block-or-reassign flow on a category with transactions and one with subcategories, confirm system-row (Transfer/Uncategorized) delete is disabled.
+**Expected:** Tree renders per 11-UI-SPEC Component 1; reassign flow shows both `affected_count` and `child_count` per the 422 payload; system rows show the exact copy "System category — can't be deleted."
+**Why human:** Visual layout, hover-reveal interactions, and modal flows require a live browser render; requires `docker compose up -d --build` first since the running container is stale pre-phase-11 code. Carried unchanged from the initial pass.
+
+### 2. Cashflow dashboard donut rollup/drill-down
+
+**Test:** Confirm top-level slices use identity-stable swatch colors, click a slice with children to drill into its subcategories, confirm the "‹ Back" link returns to the rollup, and confirm no "Transfer" slice ever appears.
+**Expected:** Rollup/drill-down/back per 11-UI-SPEC Component 3; Transfer absent at both levels.
+**Why human:** Chart look/behavior requires a live browser render; `tsc` only proves types compile, not that it looks/behaves right. Carried unchanged from the initial pass.
+
+### 3. Add/Edit Transaction modal — live click-through of the fixed dropdown
+
+**Test:** Open the Add/Edit Transaction modal on the Cashflow page, confirm the Category dropdown is populated with real, visually-indented categories (not empty), select a subcategory, submit, then re-open the same transaction in edit mode to confirm the selection persisted and pre-selects correctly.
+**Expected:** Dropdown shows non-system categories at all depths, indented; a selection round-trips through save and reload; editing an existing transaction pre-selects its current category.
+**Why human:** This re-verification confirmed the fix via source inspection (traced `flattenCategories()`, `resolve_category_id`'s any-level exact match, a clean `tsc --noEmit`, and a live single-named backend unit test on the `GET /categories` tree shape) rather than a live browser render — the only running backend is stale pre-phase-11 code, so an actual click-through isn't possible without a rebuild first. The static evidence is strong (the previous gap's root cause — response-shape mismatch — is directly and correctly addressed), so this is a recommended confirmation rather than a reason to doubt the fix.
 
 ## Gaps Summary
 
-Phase 11 delivers a solid, well-tested backend and migration core: the Category model, the 009 migration (idempotent, parity-asserting, abort-on-unknown), the 74-string human-reviewed mapping, the Settings tree manager, the hierarchy-aware agent tools, universal dual-write, and the dashboard donut rollup/drill-down are all real, wired, and independently confirmed against the live database and codebase — not just SUMMARY claims. Truths 1-3 and the dashboard-charts portion of truth 4 hold up under adversarial re-checking.
-
-The one confirmed gap is narrow but real: **plan 11-03 changed `GET /categories`'s response contract** (from `{"categories": [string, ...]}` to a bare `list[CategoryNode]` tree) **to serve the new Settings tree manager, but no plan in the phase noticed or updated the other live consumer of that same endpoint** — `ui/app/cashflow/TransactionModal.tsx`, the Add/Edit Transaction modal actually mounted and used on the Cashflow page today. The result is a silent regression: the category `<select>` in that modal is now always empty of real categories. This is distinct from the legitimately-deferred Phase 16/17 work (the fancy searchable grouped-list picker, and record filtering) — it is a currently-broken piece of previously-working functionality that this phase's own change caused, sitting on the phase's own touched surface (`GET /categories`), and it should be closed before the phase is considered complete rather than carried forward silently.
+The single gap from the initial verification — `TransactionModal.tsx` silently breaking the Add/Edit Transaction category dropdown after 11-03 changed `GET /categories`'s response contract — is now closed. Commit `1825143` adds a `CategoryNode` type mirroring the backend schema field-for-field, a correct depth-first `flattenCategories()` that respects D-01 (any-level assignment) and omits system rows, and retires the no-longer-meaningful "+ New category…" affordance in favor of routing category creation through Settings. Tracing the submit path against `backend/writes.py:resolve_category_id()` confirms the selected name resolves correctly regardless of hierarchy depth, with a safe Uncategorized fallback — never fabricating, never raising. `tsc --noEmit` is clean, the file is valid UTF-8 with no NUL bytes, a directly-relevant backend unit test passes, and `git diff --stat` confirms this was the only file touched (no new regression surface). All four ROADMAP success criteria and all four CAT-0x requirements now hold. The phase's only remaining open items are three human-verification items (two carried unchanged from the initial pass — Settings tree UI and dashboard donut, both requiring a container rebuild for live browser UAT — plus one new item recommending, not requiring, a live click-through confirmation of this specific fix). None of these are gaps; they route to human sign-off rather than blocking the phase.
 
 ---
 
-_Verified: 2026-07-19T15:29:09Z_
+_Verified: 2026-07-20T09:00:00Z_
 _Verifier: Claude (gsd-verifier)_
