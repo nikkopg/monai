@@ -122,11 +122,6 @@ class Category(Base):
 
 
 class Transaction(Base):
-    # eager_defaults=False: part of the pre-migration category_id shim (see
-    # below) — stops SQLAlchemy from RETURNING server-default columns on
-    # INSERT. Transaction has no other server defaults, so this changes
-    # nothing else. Remove together with the shim in plan 11-05.
-    __mapper_args__ = {"eager_defaults": False}
     __tablename__ = "transactions"
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -143,21 +138,15 @@ class Transaction(Base):
         ForeignKey("accounts.id"), nullable=True, index=True
     )
     is_transfer: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
-    # Nullable this phase (CAT-03 D-04) — dual-write lands in a later plan;
-    # NOT NULL tightening is a separate destructive migration once every
-    # insert path resolves a category first. See migration 009 docstring.
-    #
-    # Pre-migration shim: the live DB doesn't have this column until
-    # migration 009 runs (plan 11-02). Three knobs keep every existing
-    # ORM read/write path working against the pre-migration schema:
-    #   deferred=True                 -> out of default SELECTs
-    #   server_default=text("NULL")   -> omitted from INSERTs when unset
-    #   eager_defaults=False (mapper) -> no post-INSERT RETURNING of it
-    # Explicit assignment still writes normally once the column exists.
-    # Plan 11-05 (dual-write) removes all three knobs post-migration.
+    # Nullable this phase (CAT-03 D-04) — every insert path now resolves a
+    # category via resolve_category_id (plan 11-05, D-08 dual-write) before
+    # writing, so no row is ever created NULL in practice; NOT NULL
+    # tightening remains a separate destructive migration for later. The
+    # pre-migration shim (deferred/server_default/eager_defaults=False) that
+    # kept this column out of ORM reads/writes before migration 009 ran is
+    # removed now that the column exists on every environment.
     category_id: Mapped[int | None] = mapped_column(
         ForeignKey("categories.id"), nullable=True, index=True,
-        deferred=True, server_default=text("NULL"),
     )
 
     account: Mapped["Account | None"] = relationship(
