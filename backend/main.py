@@ -75,6 +75,7 @@ from backend.writes import (
     apply_merge_category,
     apply_rename_category,
     apply_set_price,
+    resolve_category_id,
 )
 from backend.schemas import (
     AccountCreate,
@@ -602,6 +603,7 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_ses
         currency=payload.currency,
         category=payload.category,
         raw_category=payload.category,
+        category_id=resolve_category_id(db, payload.category),  # D-08 dual-write
         merchant=payload.merchant,
         notes=payload.notes,
         account_id=acc.id,
