@@ -82,8 +82,8 @@ Plans:
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 11-05-PLAN.md — Dual-write category_id + Uncategorized fallback on all transaction write paths (CAT-03)
-- [ ] 11-06-PLAN.md — Settings expandable tree manager + 13-swatch palette, moved from Cashflow (CAT-02, CAT-04)
+- [x] 11-05-PLAN.md — Dual-write category_id + Uncategorized fallback on all transaction write paths (CAT-03)
+- [x] 11-06-PLAN.md — Settings expandable tree manager + 13-swatch palette, moved from Cashflow (CAT-02, CAT-04)
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
@@ -208,7 +208,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 8. Design Foundation + App Shell | v1.1 | 1/1 | Complete | 2026-07-18 |
 | 9. Cashflow + Chat Restyle | v1.1 | 1/1 | Complete | 2026-07-18 |
 | 10. Investments + Settings + Consistency Sweep | v1.1 | 1/1 | Complete | 2026-07-18 |
-| 11. Category Hierarchy | v1.2 | 4/7 | In Progress|  |
+| 11. Category Hierarchy | v1.2 | 6/7 | In Progress|  |
 | 12. Typed Accounts + Transfer Schema | v1.2 | 0/? | Not started | - |
 | 13. Shared Mutation Layer | v1.2 | 0/? | Not started | - |
 | 14. REST + Agent/MCP Tools | v1.2 | 0/? | Not started | - |
