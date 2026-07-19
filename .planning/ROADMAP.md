@@ -42,7 +42,7 @@ Full phase detail: [milestones/v1.1-ROADMAP.md](milestones/v1.1-ROADMAP.md)
 investments as two connected subsystems that never double-count, linked by real
 transfer/buy-sell mechanics, with BudgetBakers-grade record and category management.
 
-- [ ] **Phase 11: Category Hierarchy — Schema, Audit, Migration** - First-class 3-level categories replace free-string `category`, migrated via human-reviewed mapping with parity checks
+- [x] **Phase 11: Category Hierarchy — Schema, Audit, Migration** - First-class 3-level categories replace free-string `category`, migrated via human-reviewed mapping with parity checks (completed 2026-07-19)
 - [ ] **Phase 12: Typed Accounts + Transfer/Funding Schema Foundations** - `accounts.type` audited + constrained to liquid/investment; additive columns for transfer pairing and funded portfolio events
 - [ ] **Phase 13: Shared Mutation Layer — Transfer, Buy/Sell-with-Funding, Adjustment Writes** - `writes.py` gains atomic, pair-aware `apply_*` functions for every new money-movement type
 - [ ] **Phase 14: REST Endpoints + Agent/MCP Tool Registration** - New endpoints wired to Phase 13's writes; write tools registered on the agent and kept off the MCP read-only surface
@@ -87,7 +87,7 @@ Plans:
 
 **Wave 5** *(blocked on Wave 4 completion)*
 
-- [ ] 11-07-PLAN.md — Cashflow summary rollup shape + CategoryDonut drill-down (CAT-04)
+- [x] 11-07-PLAN.md — Cashflow summary rollup shape + CategoryDonut drill-down (CAT-04)
 
 **Research**: true — category migration mechanics (idempotent, re-runnable, parity-asserting Alembic data migration) need a focused pass; the 74-string mapping itself is a human-review task, not automatable
 
@@ -208,7 +208,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 8. Design Foundation + App Shell | v1.1 | 1/1 | Complete | 2026-07-18 |
 | 9. Cashflow + Chat Restyle | v1.1 | 1/1 | Complete | 2026-07-18 |
 | 10. Investments + Settings + Consistency Sweep | v1.1 | 1/1 | Complete | 2026-07-18 |
-| 11. Category Hierarchy | v1.2 | 6/7 | In Progress|  |
+| 11. Category Hierarchy | v1.2 | 7/7 | Complete   | 2026-07-19 |
 | 12. Typed Accounts + Transfer Schema | v1.2 | 0/? | Not started | - |
 | 13. Shared Mutation Layer | v1.2 | 0/? | Not started | - |
 | 14. REST + Agent/MCP Tools | v1.2 | 0/? | Not started | - |
