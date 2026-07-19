@@ -29,6 +29,10 @@ export default function CategoryDonut({ data }: { data: CategorySlice[] }) {
             outerRadius={65}
             paddingAngle={2}
             stroke="none"
+            // See AllocationPieChart.tsx — recharts 3.x collapses sectors to a
+            // zero-width angle at animation t=0, which renders no <path> at
+            // all, and the rAF-driven clock can leave it stuck there forever.
+            isAnimationActive={false}
           >
             {data.map((_, i) => (
               <Cell key={i} fill={chartColors[i % chartColors.length]} />
