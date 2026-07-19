@@ -514,3 +514,122 @@ def test_get_categories_kind_filter(client, db_session):
         assert expense_root.id not in ids
     finally:
         _cleanup(db_session, category_ids=[income_root.id, expense_root.id])
+
+
+# ---------------------------------------------------------------------------
+# resolve_category_id + dual-write on agent transaction writes (11-05, CAT-03)
+# ---------------------------------------------------------------------------
+
+def _uncategorized_id(db) -> int:
+    row = db.execute(
+        text("SELECT id FROM categories WHERE name = 'Uncategorized' AND is_system = true")
+    ).first()
+    assert row is not None, "expected the Uncategorized system category (migration 009)"
+    return row[0]
+
+
+def test_resolve_category_id_exact_match(db_session):
+    from backend.writes import resolve_category_id
+    name = _unique_cat("ResolveExact")
+    cat = _make_category(db_session, name, color="#112233")
+    try:
+        assert resolve_category_id(db_session, name) == cat.id
+    finally:
+        _cleanup(db_session, category_ids=[cat.id])
+
+
+def test_resolve_category_id_none_returns_uncategorized(db_session):
+    from backend.writes import resolve_category_id
+    assert resolve_category_id(db_session, None) == _uncategorized_id(db_session)
+
+
+def test_resolve_category_id_empty_string_returns_uncategorized(db_session):
+    from backend.writes import resolve_category_id
+    assert resolve_category_id(db_session, "") == _uncategorized_id(db_session)
+
+
+def test_resolve_category_id_unknown_name_returns_uncategorized(db_session):
+    from backend.writes import resolve_category_id
+    assert resolve_category_id(db_session, _unique_cat("NonexistentXyz")) == _uncategorized_id(db_session)
+
+
+def test_resolve_category_id_ambiguous_name_picks_lowest_id(db_session):
+    """Same leaf name under two different parents -> deterministic lowest-id
+    pick (documented tie-break; resolve_category_id never guesses/raises)."""
+    from backend.writes import resolve_category_id
+    root_a = _make_category(db_session, _unique_cat("AmbigRootA"), color="#112233")
+    root_b = _make_category(db_session, _unique_cat("AmbigRootB"), color="#445566")
+    shared_name = _unique_cat("AmbigShared")
+    cat_a = _make_category(db_session, shared_name, parent_id=root_a.id)
+    cat_b = _make_category(db_session, shared_name, parent_id=root_b.id)
+    try:
+        expected = min(cat_a.id, cat_b.id)
+        assert resolve_category_id(db_session, shared_name) == expected
+    finally:
+        _cleanup(db_session, category_ids=[root_a.id, root_b.id, cat_a.id, cat_b.id])
+
+
+def test_resolve_category_id_apply_add_transaction_dual_write(db_session):
+    """apply_add_transaction sets BOTH the legacy category string AND category_id."""
+    from backend.writes import apply_add_transaction
+    name = _unique_cat("ResolveAddDual")
+    cat = _make_category(db_session, name, color="#112233")
+    tx = None
+    try:
+        tx = apply_add_transaction(db_session, {
+            "date": "2024-01-15T12:00:00",
+            "amount": "-1000",
+            "currency": "IDR",
+            "category": name,
+            "account": "ResolveAddDualAcct",
+        })
+        db_session.commit()
+        db_session.refresh(tx)
+        assert tx.category == name
+        assert tx.category_id == cat.id
+    finally:
+        _cleanup(db_session, category_ids=[cat.id], tx_ids=[tx.id] if tx else [])
+
+
+def test_resolve_category_id_apply_add_transaction_no_category_uses_uncategorized(db_session):
+    """A transaction added without a category name lands in Uncategorized, never NULL (D-04)."""
+    from backend.writes import apply_add_transaction
+    tx = None
+    try:
+        tx = apply_add_transaction(db_session, {
+            "date": "2024-01-15T12:00:00",
+            "amount": "-1000",
+            "currency": "IDR",
+            "account": "ResolveAddNoneAcct",
+        })
+        db_session.commit()
+        db_session.refresh(tx)
+        assert tx.category_id == _uncategorized_id(db_session)
+    finally:
+        _cleanup(db_session, tx_ids=[tx.id] if tx else [])
+
+
+def test_resolve_category_id_apply_edit_transaction_reresolves(db_session):
+    """apply_edit_transaction re-resolves category_id when the category name changes."""
+    from backend.writes import apply_add_transaction, apply_edit_transaction
+    old_name = _unique_cat("ResolveEditOld")
+    new_name = _unique_cat("ResolveEditNew")
+    old_cat = _make_category(db_session, old_name, color="#112233")
+    new_cat = _make_category(db_session, new_name, color="#445566")
+    tx = None
+    try:
+        tx = apply_add_transaction(db_session, {
+            "date": "2024-01-15T12:00:00",
+            "amount": "-1000",
+            "currency": "IDR",
+            "category": old_name,
+            "account": "ResolveEditAcct",
+        })
+        db_session.commit()
+        apply_edit_transaction(db_session, tx.id, {"category": new_name}, None)
+        db_session.commit()
+        db_session.refresh(tx)
+        assert tx.category == new_name
+        assert tx.category_id == new_cat.id
+    finally:
+        _cleanup(db_session, category_ids=[old_cat.id, new_cat.id], tx_ids=[tx.id] if tx else [])
