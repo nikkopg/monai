@@ -53,93 +53,129 @@ transfer/buy-sell mechanics, with BudgetBakers-grade record and category managem
 ## Phase Details
 
 ### Phase 11: Category Hierarchy — Schema, Audit, Migration
+
 **Goal**: Categories exist as first-class, hierarchical entities that every existing transaction is correctly mapped onto, with zero data loss
 **Depends on**: Nothing (first phase of v1.2; builds on v1.1's shipped schema)
 **Requirements**: CAT-01, CAT-02, CAT-03, CAT-04
 **Success Criteria** (what must be TRUE):
+
   1. Every one of the 74 existing category strings maps to a reviewed category in a 3-level hierarchy (name, color, icon, parent) — no transaction silently loses its category
   2. Row-count and sum-of-amount parity holds between pre- and post-migration category totals (verified, not assumed)
   3. User can add, edit, and delete categories in Settings; deleting a category with records in use is blocked until reassigned (no orphaned records)
   4. Record forms, filters, and dashboard charts read from the new category hierarchy (not the free-string column)
+
 **Plans**: 7 plans
 
 Plans:
+**Wave 1**
+
 - [ ] 11-01-PLAN.md — Category schema + migration 009 with TDD'd mapping/parity helpers (CAT-01, CAT-03)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 11-02-PLAN.md — Draft 74-string mapping CSV, human review checkpoint (D-06), run migration with parity + idempotency proof (CAT-03)
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 11-03-PLAN.md — Category write layer + REST CRUD with depth cap and block-or-reassign guard (CAT-01, CAT-02)
 - [ ] 11-04-PLAN.md — Hierarchy-aware agent tools (rollup, descendants, tree) + dual registration (CAT-04)
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 11-05-PLAN.md — Dual-write category_id + Uncategorized fallback on all transaction write paths (CAT-03)
 - [ ] 11-06-PLAN.md — Settings expandable tree manager + 13-swatch palette, moved from Cashflow (CAT-02, CAT-04)
+
+**Wave 5** *(blocked on Wave 4 completion)*
+
 - [ ] 11-07-PLAN.md — Cashflow summary rollup shape + CategoryDonut drill-down (CAT-04)
+
 **Research**: true — category migration mechanics (idempotent, re-runnable, parity-asserting Alembic data migration) need a focused pass; the 74-string mapping itself is a human-review task, not automatable
 
 ### Phase 12: Typed Accounts + Transfer/Funding Schema Foundations
+
 **Goal**: The schema can distinguish liquid from investment accounts with certainty, and has the columns needed to pair transfers and funded portfolio events
 **Depends on**: Phase 11 (schema-first sequencing; independent data but shares migration discipline)
 **Requirements**: ACCT-03
 **Success Criteria** (what must be TRUE):
+
   1. All 4 live accounts are manually audited and classified liquid/investment — none left NULL or auto-inferred
   2. `accounts.type` is DB-enforced (closed set, CHECK constraint) and investment-typed accounts are excluded from every cashflow total (spending/income/net) — the double-count bug is structurally impossible, not just avoided by convention
   3. `transactions.transfer_pair_id` and `portfolio_events.source_account_id` exist (nullable, indexed) so later phases can pair records without further migrations
+
 **Plans**: TBD
 **Research**: true — FX precision and account-type audit both carry data-quality risk on live financial data; confirm the Alembic nullable→backfill→constrain idiom before writing DDL
 
 ### Phase 13: Shared Mutation Layer — Transfer, Buy/Sell-with-Funding, Adjustment Writes
+
 **Goal**: Every new kind of money movement (transfer, funded buy/sell, balance adjustment, category edit) can be written atomically through one trusted layer
 **Depends on**: Phase 12 (needs `transfer_pair_id`, `source_account_id`, constrained `accounts.type`)
 **Requirements**: ACCT-02, XFER-01, XFER-02, XFER-03, XFER-04, XFER-05
 **Success Criteria** (what must be TRUE):
+
   1. A liquid→liquid transfer writes two paired transaction rows (via `transfer_pair_id`) in one DB transaction; editing or deleting one leg is blocked outside pair-aware functions
   2. A liquid→investment transfer writes a transaction row linked to a portfolio deposit event (via `source_account_id`) in one DB transaction
   3. A funded buy/sell writes the cash-leg transaction and the holding/portfolio-event update together, in one confirmation and one commit — never as two round trips
   4. Setting an account's balance produces a visible "Adjustment" record reflecting the delta; the account balance itself stays derived, never stored
   5. Cross-currency transfer/buy-sell entries accept dual amounts (sent + received, each with its own currency); no write path forces a live-only FX rate
   6. Historical imported transfer rows are retro-paired by a migration pass (matched by date+amount); unmatched rows are flagged and left as-is, not guessed
+
 **Plans**: TBD
 
 ### Phase 14: REST Endpoints + Agent/MCP Tool Registration
+
 **Goal**: Every new write from Phase 13 is reachable from the REST API and from agentic chat, with write tools correctly excluded from the external MCP read-only surface
 **Depends on**: Phase 13
 **Requirements**: CHAT-09
 **Success Criteria** (what must be TRUE):
+
   1. User can trigger a transfer, funded buy/sell, balance adjustment, or category change via chat, going through the existing confirm-before-write proposal flow
   2. Each new write tool is registered in both `tools.py`'s TOOLS dict and `query.py`'s FunctionTool list (no dual-registration gap)
   3. New write tools do not appear on the MCP read-only surface exposed to external clients (correct position relative to `READ_TOOL_NAMES`)
   4. REST endpoints for the new operations exist and route through Phase 13's `apply_*` functions, not ad-hoc SQL
+
 **Plans**: TBD
 
 ### Phase 15: Net Worth Aggregation + Dashboard
+
 **Goal**: The user has one trustworthy number for their entire financial life, with visibility into how it splits
 **Depends on**: Phase 12 (needs `accounts.type` constrained and reconciled), Phase 13 (needs transfer/funding writes so balances reflect reality)
 **Requirements**: NW-01, NW-02
 **Success Criteria** (what must be TRUE):
+
   1. User sees a main dashboard where net worth = liquid accounts + investment platforms, with each real account/holding counted exactly once
   2. User sees the liquid vs investment split with a per-side breakdown (not just the combined total)
   3. The net-worth query's account-type filter is asserted to cover 100% of accounts — no silently dropped or double-included row
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 16: UI — Extend Existing Components
+
 **Goal**: The account manager, platform manager, and transaction entry modal cover the full set of new record types without being rebuilt
 **Depends on**: Phase 14 (needs stable REST/agent contract for the new writes)
 **Requirements**: ACCT-01, PLAT-02, REC-04
 **Success Criteria** (what must be TRUE):
+
   1. User can add, edit, and remove liquid accounts in the account manager
   2. Platform manager reaches CRUD parity with the account manager (add/edit/remove platforms)
   3. User can add a record via a modal with an Expense / Income / Transfer segmented form (amount + currency, account, category picker, date-time, note, "add another")
+
 **Plans**: TBD
 **UI hint**: yes
 
 ### Phase 17: UI — New Surfaces (Records Tab, Categories Manager)
+
 **Goal**: The user can browse, filter, and bulk-manage their full transaction history, and drill into a platform's performance, on new purpose-built screens
 **Depends on**: Phase 16 (reuses the extended modals/managers), Phase 15 (Records tab surfaces transfer pairs and dashboard-consistent data)
 **Requirements**: REC-01, REC-02, REC-03, REC-05, PLAT-01
 **Success Criteria** (what must be TRUE):
+
   1. User can browse all records in a date-grouped ledger showing a daily net per group
   2. User can filter records by search, account, category, record type, amount range, and transfer visibility
   3. User can select multiple records and bulk delete or bulk recategorize
   4. Transfer pairs display as one logical unit; editing or deleting affects both legs atomically (single-leg edits blocked in the UI, matching the Phase 13 backend guarantee)
   5. User can open a platform detail view with a PnL tab and a buy/sell history tab
+
 **Plans**: TBD
 **UI hint**: yes
 

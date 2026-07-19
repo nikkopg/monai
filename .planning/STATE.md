@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
-status: planning
-stopped_at: Phase 11 context gathered
-last_updated: "2026-07-18T13:46:58.827Z"
-last_activity: 2026-07-18 — ROADMAP.md created for v1.2 (7 phases, 20/20 requirements mapped)
+status: executing
+stopped_at: Phase 11 UI-SPEC approved
+last_updated: "2026-07-19T00:02:32.245Z"
+last_activity: 2026-07-19 -- Phase 11 planning complete
 progress:
   total_phases: 7
   completed_phases: 0
-  total_plans: 0
+  total_plans: 7
   completed_plans: 0
   percent: 0
 ---
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 
 Phase: 11 of 17 (Category Hierarchy — Schema, Audit, Migration)
 Plan: — (not yet planned)
-Status: Ready to plan
-Last activity: 2026-07-18 — ROADMAP.md created for v1.2 (7 phases, 20/20 requirements mapped)
+Status: Ready to execute
+Last activity: 2026-07-19 -- Phase 11 planning complete
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -111,8 +111,8 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-07-18T13:46:58.794Z
-Stopped at: Phase 11 context gathered
-Resume file: .planning/phases/11-category-hierarchy-schema-audit-migration/11-CONTEXT.md
+Last session: 2026-07-18T14:07:06.963Z
+Stopped at: Phase 11 UI-SPEC approved
+Resume file: .planning/phases/11-category-hierarchy-schema-audit-migration/11-UI-SPEC.md
 
 Next: `/gsd-plan-phase 11`
