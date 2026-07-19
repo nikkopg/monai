@@ -166,8 +166,89 @@ def net_total(period="all_time", start_date=None, end_date=None) -> dict:
     return {"tool": "net_total", "net": total, "period": _period_label(period, s, e)}
 
 
+def _category_tree() -> list[dict]:
+    """Build the full category tree from one SELECT over `categories`.
+
+    Node shape: {id, name, kind, icon, color, is_system, children}. `color` is
+    the EFFECTIVE swatch — a NULL own color inherits the nearest ancestor's
+    (D-14). Children are alphabetical within a level (rows are name-ordered).
+    """
+    sql = (
+        "SELECT id, name, parent_id, kind, color, icon, is_system "
+        "FROM categories ORDER BY name"
+    )
+    with engine.connect() as c:
+        rows = c.execute(text(sql)).fetchall()
+    nodes = {
+        r[0]: {"id": r[0], "name": r[1], "kind": r[3], "icon": r[5],
+               "color": r[4], "is_system": r[6], "children": []}
+        for r in rows
+    }
+    roots: list[dict] = []
+    for r in rows:
+        (roots if r[2] is None else nodes[r[2]]["children"]).append(nodes[r[0]])
+
+    def _inherit(node: dict, color: str | None) -> None:
+        if node["color"] is None:
+            node["color"] = color
+        for child in node["children"]:
+            _inherit(child, node["color"])
+
+    for root in roots:
+        _inherit(root, None)
+    return roots
+
+
+def _find_category_node(name: str) -> dict | None:
+    """Resolve a user/LLM-supplied name to a tree node.
+
+    Case-insensitive exact match first, then substring (keeps the old
+    "food" -> "Food & Drinks" ergonomics). None when nothing matches.
+    """
+    target = (name or "").strip().lower()
+    flat: list[dict] = []
+
+    def _walk(nodes: list[dict]) -> None:
+        for n in nodes:
+            flat.append(n)
+            _walk(n["children"])
+
+    _walk(_category_tree())
+    for n in flat:
+        if n["name"].lower() == target:
+            return n
+    matches = [n for n in flat if target and target in n["name"].lower()]
+    return matches[0] if matches else None
+
+
+def _descendant_ids(node: dict) -> list[int]:
+    """The node's id plus every descendant's, via in-Python tree walk."""
+    ids = [node["id"]]
+    for child in node["children"]:
+        ids.extend(_descendant_ids(child))
+    return ids
+
+
+# Shared joins for hierarchy rollup: walk up to two parents (depth cap is 3,
+# so two LEFT JOINs always reach the top-level group). Top node is
+# COALESCE(p2, p1, c); Transfer/system trees and is_transfer rows excluded
+# from every spending total (D-12).
+_ROLLUP_FROM = (
+    "FROM transactions t "
+    "JOIN categories c ON c.id = t.category_id "
+    "LEFT JOIN categories p1 ON p1.id = c.parent_id "
+    "LEFT JOIN categories p2 ON p2.id = p1.parent_id "
+    "WHERE t.amount < 0 AND t.is_transfer = false "
+    "AND COALESCE(p2.is_system, p1.is_system, c.is_system) = false"
+)
+
+
 def spending_by_category(period="all_time", start_date=None, end_date=None, limit=5) -> dict:
-    """Top spending categories (expenses only) in a period.
+    """Top spending categories (expenses only) in a period, rolled up to
+    TOP-LEVEL category groups via the category hierarchy — a group's total
+    includes all its subcategories' transactions. Each group's per-subcategory
+    breakdown is returned under "children". Transfers and system categories
+    (Transfer/Uncategorized) are excluded from totals.
 
     period: one of all_time, this_month, last_month, this_year, last_year,
       last_30_days, last_90_days, or "custom". For a specific month/year/range
@@ -175,18 +256,33 @@ def spending_by_category(period="all_time", start_date=None, end_date=None, limi
     """
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {"lim": max(1, min(int(limit), 50))}
+    date_pred = _date_clause(s, e, p)  # `date` is unambiguous: only transactions has it
+    top = "COALESCE(p2.name, p1.name, c.name)"
     sql = (
-        "SELECT category, SUM(-amount) AS total FROM transactions "
-        "WHERE amount < 0 AND is_transfer = false" + _date_clause(s, e, p) +
-        " GROUP BY category ORDER BY total DESC LIMIT :lim"
+        f"SELECT {top} AS top_name, SUM(-t.amount) AS total "
+        + _ROLLUP_FROM + date_pred +
+        " GROUP BY 1 ORDER BY total DESC LIMIT :lim"
     )
-    with engine.connect() as c:
-        rows = [(r[0], float(r[1])) for r in c.execute(text(sql), p).fetchall()]
-    return {"tool": "spending_by_category", "rows": rows, "period": _period_label(period, s, e)}
+    child_sql = (
+        f"SELECT {top} AS top_name, c.name, SUM(-t.amount) AS total "
+        + _ROLLUP_FROM + date_pred +
+        " GROUP BY 1, c.name ORDER BY total DESC"
+    )
+    with engine.connect() as conn:
+        rows = [(r[0], float(r[1])) for r in conn.execute(text(sql), p).fetchall()]
+        crows = conn.execute(text(child_sql), p).fetchall()
+    children: dict[str, list] = {name: [] for name, _ in rows}
+    for top_name, sub_name, total in crows:
+        if top_name in children:
+            children[top_name].append((sub_name, float(total)))
+    return {"tool": "spending_by_category", "rows": rows, "children": children,
+            "period": _period_label(period, s, e)}
 
 
 def spending_in_category(category: str, period="all_time", start_date=None, end_date=None) -> dict:
-    """Total spent in a specific category (substring match on category/raw_category).
+    """Total spent in a category INCLUDING all of its descendant
+    subcategories — a parent/group name sums its entire subtree (name match
+    is case-insensitive, exact first then substring). Transfers excluded.
 
     period: one of all_time, this_month, last_month, this_year, last_year,
       last_30_days, last_90_days, or "custom". For a specific month/year/range
@@ -196,11 +292,16 @@ def spending_in_category(category: str, period="all_time", start_date=None, end_
       year on record and returns a wrong, inflated total.
     """
     s, e = resolve_period(period, start_date, end_date)
-    p: dict = {"cat": f"%{category}%"}
+    node = _find_category_node(category)
+    if node is None:
+        return {"tool": "spending_in_category", "category": category,
+                "error": f"No category matching '{category}' found. "
+                         "Use list_categories to see the category tree."}
+    p: dict = {"ids": _descendant_ids(node)}
     sql = (
         "SELECT COALESCE(SUM(-amount), 0) FROM transactions "
         "WHERE amount < 0 AND is_transfer = false "
-        "AND (category ILIKE :cat OR raw_category ILIKE :cat)" + _date_clause(s, e, p)
+        "AND category_id = ANY(:ids)" + _date_clause(s, e, p)
     )
     with engine.connect() as c:
         total = float(c.execute(text(sql), p).scalar() or 0)
@@ -248,6 +349,12 @@ def spending_before_after_purchase(ticker: str, category: str) -> dict:
     after = spending_in_category(category, period="custom",
                                  start_date=pivot.isoformat(),
                                  end_date=today.isoformat())
+
+    # spending_in_category returns an error dict for an unknown category name —
+    # propagate it instead of fabricating (or crashing on) a number.
+    if "error" in before or "error" in after:
+        return {"tool": "spending_before_after_purchase",
+                "error": before.get("error") or after.get("error")}
 
     delta = after["total"] - before["total"]
     return {
@@ -398,15 +505,13 @@ def account_balances(period_start=None, period_end=None) -> dict:
 
 
 def list_categories() -> dict:
-    """List distinct expense categories with their total spend (helps map vague terms)."""
-    sql = (
-        "SELECT category, SUM(-amount) AS total FROM transactions "
-        "WHERE amount < 0 AND is_transfer = false "
-        "GROUP BY category ORDER BY total DESC LIMIT 40"
-    )
-    with engine.connect() as c:
-        rows = [(r[0], float(r[1])) for r in c.execute(text(sql)).fetchall()]
-    return {"tool": "list_categories", "rows": rows}
+    """The full category TREE (not a flat list): top-level groups with nested
+    children. Each node has id, name, kind (expense/income/transfer), icon
+    (emoji), effective color (inherits the parent's when unset), is_system,
+    and children. Includes the Transfer and Uncategorized system nodes. Use
+    this to map a vague term to a real category or group name.
+    """
+    return {"tool": "list_categories", "categories": _category_tree()}
 
 
 def find_transactions(
@@ -803,12 +908,35 @@ def propose_delete_account(account_id: int) -> dict:
 
 
 def propose_rename_category(old_name: str, new_name: str) -> dict:
-    """Propose renaming a category across all transactions. Non-orphaning — always allowed.
-    Returns a proposal for user confirmation. Does NOT change any data — user must approve.
+    """Propose renaming a category. A rename edits the categories row once;
+    every transaction follows via its category_id FK. old_name must be an
+    existing category; new_name must not collide with a sibling under the
+    same parent. Returns a proposal for user confirmation. Does NOT change
+    any data — user must approve.
     """
-    count_sql = "SELECT COUNT(*) FROM transactions WHERE category = :cat"
     with engine.connect() as c:
-        affected_count = int(c.execute(text(count_sql), {"cat": old_name}).scalar() or 0)
+        row = c.execute(
+            text("SELECT id, parent_id FROM categories WHERE name = :n LIMIT 1"),
+            {"n": old_name},
+        ).fetchone()
+        if row is None:
+            return {"tool": "propose_rename_category",
+                    "error": f"Category '{old_name}' not found. "
+                             "Use list_categories to see the category tree."}
+        cat_id, parent_id = row[0], row[1]
+        collision = c.execute(
+            text("SELECT 1 FROM categories WHERE name = :n "
+                 "AND parent_id IS NOT DISTINCT FROM :p AND id != :id"),
+            {"n": new_name, "p": parent_id, "id": cat_id},
+        ).fetchone()
+        if collision is not None:
+            return {"tool": "propose_rename_category",
+                    "error": f"A category named '{new_name}' already exists "
+                             "under the same parent."}
+        affected_count = int(c.execute(
+            text("SELECT COUNT(*) FROM transactions WHERE category_id = :cid"),
+            {"cid": cat_id},
+        ).scalar() or 0)
 
     payload = {
         "operation": "rename_category",
@@ -826,13 +954,41 @@ def propose_rename_category(old_name: str, new_name: str) -> dict:
 
 
 def propose_merge_category(from_name: str, into_name: str) -> dict:
-    """Propose merging one category into another. Non-orphaning — always allowed.
-    All transactions in from_name will be recategorized to into_name.
-    Returns a proposal for user confirmation. Does NOT change any data — user must approve.
+    """Propose merging one category into another: transactions on from_name
+    are repointed to into_name's category node. Both must be existing
+    categories, and from_name must have no child subcategories (merge or move
+    those first). Returns a proposal for user confirmation. Does NOT change
+    any data — user must approve.
     """
-    count_sql = "SELECT COUNT(*) FROM transactions WHERE category = :cat"
     with engine.connect() as c:
-        affected_count = int(c.execute(text(count_sql), {"cat": from_name}).scalar() or 0)
+        src = c.execute(
+            text("SELECT id FROM categories WHERE name = :n LIMIT 1"),
+            {"n": from_name},
+        ).fetchone()
+        if src is None:
+            return {"tool": "propose_merge_category",
+                    "error": f"Category '{from_name}' not found. "
+                             "Use list_categories to see the category tree."}
+        dst = c.execute(
+            text("SELECT id FROM categories WHERE name = :n LIMIT 1"),
+            {"n": into_name},
+        ).fetchone()
+        if dst is None:
+            return {"tool": "propose_merge_category",
+                    "error": f"Category '{into_name}' not found. "
+                             "Use list_categories to see the category tree."}
+        child_count = int(c.execute(
+            text("SELECT COUNT(*) FROM categories WHERE parent_id = :id"),
+            {"id": src[0]},
+        ).scalar() or 0)
+        if child_count > 0:
+            return {"tool": "propose_merge_category",
+                    "error": f"Category '{from_name}' has {child_count} "
+                             "subcategories — merge or move those first."}
+        affected_count = int(c.execute(
+            text("SELECT COUNT(*) FROM transactions WHERE category_id = :cid"),
+            {"cid": src[0]},
+        ).scalar() or 0)
 
     payload = {
         "operation": "merge_category",
@@ -982,6 +1138,8 @@ def format_answer(result: dict, currency: str | None = None) -> str:
     """Render a tool result dict as a natural-language answer with correct currency."""
     cur = currency or _currency()
     tool = result.get("tool")
+    if result.get("error"):
+        return result["error"]
     period = result.get("period", "")
     suffix = f" ({period})" if period and period != "all time" else (" (all time)" if period == "all time" else "")
 
@@ -1017,7 +1175,12 @@ def format_answer(result: dict, currency: str | None = None) -> str:
         return (f"You spent an average of {_fmt(result['average'], cur)} per day "
                 f"over {result['days']} days{suffix} (total {_fmt(result['total'], cur)}).")
     if tool == "list_categories":
-        lines = [f"- {c}: {_fmt(t, cur)}" for c, t in result["rows"][:20]]
-        return "Your expense categories by total spend:\n" + "\n".join(lines)
+        lines: list[str] = []
+        stack = [(n, 0) for n in reversed(result["categories"])]
+        while stack:
+            node, depth = stack.pop()
+            lines.append("  " * depth + f"- {node['name']}")
+            stack.extend((ch, depth + 1) for ch in reversed(node["children"]))
+        return "Your categories:\n" + "\n".join(lines)
 
     return str(result)

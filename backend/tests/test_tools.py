@@ -154,14 +154,24 @@ class TestToolSQL:
         assert all(r["amount"] > 0 for r in income_rows)
 
     def test_find_transactions_category_exact_match(self, db_available):
-        from backend.tools import list_categories, find_transactions
-        cats = list_categories()["rows"]
-        if not cats:
+        # find_transactions still filters on the legacy category string, so
+        # seed the filter value straight from transactions (list_categories
+        # now returns the hierarchy tree, not legacy strings).
+        from sqlalchemy import text
+        from backend.db import engine
+        from backend.tools import find_transactions
+
+        with engine.connect() as c:
+            row = c.execute(text(
+                "SELECT category FROM transactions "
+                "WHERE category IS NOT NULL AND is_transfer = false LIMIT 1"
+            )).fetchone()
+        if not row:
             return
-        category_name = cats[0][0]
+        category_name = row[0]
         rows = find_transactions(category=category_name, limit=20)["rows"]
-        for row in rows:
-            assert row["category"] == category_name
+        for r in rows:
+            assert r["category"] == category_name
 
     def test_find_transactions_merchant_partial_match(self, db_available):
         from backend.tools import find_transactions
@@ -274,20 +284,27 @@ def test_spending_before_after_purchase(db_available):
                  "VALUES (:d, :t, 'buy', 1, 100, :pid)"),
             {"d": pivot, "t": TICKER, "pid": plat_id},
         )
+        # spending_in_category is hierarchy-backed (11-04): the category must
+        # exist as a categories node and transactions must carry category_id.
+        cat_id = c.execute(
+            text("INSERT INTO categories (name, parent_id, kind, is_system) "
+                 "VALUES (:n, NULL, 'expense', false) RETURNING id"),
+            {"n": CATEGORY},
+        ).scalar()
         c.execute(
-            text("INSERT INTO transactions (date, amount, currency, category, is_transfer) "
-                 "VALUES (:d, -100, 'IDR', :cat, false)"),
-            {"d": before_day, "cat": CATEGORY},
+            text("INSERT INTO transactions (date, amount, currency, category, category_id, is_transfer) "
+                 "VALUES (:d, -100, 'IDR', :cat, :cid, false)"),
+            {"d": before_day, "cat": CATEGORY, "cid": cat_id},
         )
         c.execute(
-            text("INSERT INTO transactions (date, amount, currency, category, is_transfer) "
-                 "VALUES (:d, -300, 'IDR', :cat, false)"),
-            {"d": after_day, "cat": CATEGORY},
+            text("INSERT INTO transactions (date, amount, currency, category, category_id, is_transfer) "
+                 "VALUES (:d, -300, 'IDR', :cat, :cid, false)"),
+            {"d": after_day, "cat": CATEGORY, "cid": cat_id},
         )
         c.execute(
-            text("INSERT INTO transactions (date, amount, currency, category, is_transfer) "
-                 "VALUES (:d, -50, 'IDR', :cat, false)"),
-            {"d": pivot, "cat": CATEGORY},  # boundary: pivot day counts as "after"
+            text("INSERT INTO transactions (date, amount, currency, category, category_id, is_transfer) "
+                 "VALUES (:d, -50, 'IDR', :cat, :cid, false)"),
+            {"d": pivot, "cat": CATEGORY, "cid": cat_id},  # boundary: pivot day counts as "after"
         )
 
     try:
@@ -309,6 +326,7 @@ def test_spending_before_after_purchase(db_available):
         with engine.begin() as c:
             c.execute(text("DELETE FROM portfolio_events WHERE ticker = :t"), {"t": TICKER})
             c.execute(text("DELETE FROM transactions WHERE category = :cat"), {"cat": CATEGORY})
+            c.execute(text("DELETE FROM categories WHERE name = :cat"), {"cat": CATEGORY})
 
 
 # --------------------------------------------------------------------------

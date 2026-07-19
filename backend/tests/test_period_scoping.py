@@ -34,11 +34,24 @@ def seeded_scoping_data():
     June alpha total: 10_000 + 20_000 = 30_000  (plus a May row of 500_000 outside June)
     June beta  total: 5_000 + 7_000  = 12_000   (plus a July row of 900_000 outside June)
     """
+    from backend.models import Category
+
     db = SessionLocal()
     inserted_ids: list[int] = []
+    category_ids: list[int] = []
     try:
         acc = _get_or_create_account(db, "zzscopetest-account", _CURRENCY)
         db.flush()
+
+        # spending_in_category is hierarchy-backed (11-04): each test category
+        # must exist as a categories node, and transactions carry category_id.
+        cat_ids: dict[str, int] = {}
+        for name in (_CAT_ALPHA, _CAT_BETA):
+            cat = Category(name=name, parent_id=None, kind="expense", is_system=False)
+            db.add(cat)
+            db.flush()
+            cat_ids[name] = cat.id
+            category_ids.append(cat.id)
 
         rows = [
             # (category, date, amount)  amount negative = expense
@@ -56,6 +69,7 @@ def seeded_scoping_data():
                 currency=_CURRENCY,
                 category=category,
                 raw_category=category,
+                category_id=cat_ids[category],
                 merchant="scopetest",
                 notes=None,
                 account_id=acc.id,
@@ -72,6 +86,9 @@ def seeded_scoping_data():
         try:
             cleanup.query(Transaction).filter(
                 Transaction.id.in_(inserted_ids)
+            ).delete(synchronize_session=False)
+            cleanup.query(Category).filter(
+                Category.id.in_(category_ids)
             ).delete(synchronize_session=False)
             cleanup.commit()
         finally:

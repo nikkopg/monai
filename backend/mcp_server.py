@@ -28,9 +28,15 @@ MCP_DESCRIPTIONS: dict[str, str] = {
     "spending_total": "Total money spent (expenses only, transfers excluded) over a period. " + _PERIOD_HELP,
     "income_total": "Total money received (income only, transfers excluded) over a period. " + _PERIOD_HELP,
     "net_total": "Net cash flow (income minus expenses, transfers excluded) over a period. " + _PERIOD_HELP,
-    "spending_by_category": "Top spending categories (expenses only) over a period, ranked by total. " + _PERIOD_HELP,
+    "spending_by_category": (
+        "Top spending categories (expenses only) over a period, rolled up to top-level "
+        "category groups — each group's total includes all its descendant subcategories; "
+        "per-subcategory breakdown under 'children'. Transfers and system categories "
+        "excluded. " + _PERIOD_HELP
+    ),
     "spending_in_category": (
-        "Total spent in a specific category (substring match on category/raw_category) over a period. "
+        "Total spent in one category INCLUDING all of its descendant subcategories — a "
+        "parent/group name sums its entire subtree (case-insensitive name match). "
         + _PERIOD_HELP
     ),
     "spending_before_after_purchase": (
@@ -54,7 +60,10 @@ MCP_DESCRIPTIONS: dict[str, str] = {
         "[period_start, period_end) window). Transfers excluded from both sums. Accounts with no "
         "transactions appear with 0/0."
     ),
-    "list_categories": "List distinct expense categories with their total spend (helps map a vague term to a real category).",
+    "list_categories": (
+        "The full category tree: top-level groups with nested children (id, name, kind, "
+        "icon, effective color). Helps map a vague term to a real category or group name."
+    ),
     "find_transactions": (
         "Search/filter individual transactions by merchant, category, period, and kind (all | expense | "
         "income); returns ids, dates, amounts, categories, merchants, and account ids. Rows are ordered "

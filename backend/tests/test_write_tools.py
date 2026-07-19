@@ -330,19 +330,33 @@ def test_propose_rename_category_creates_proposal(db_session):
 
 
 def test_propose_merge_category_creates_proposal(db_session):
-    """propose_merge_category returns a proposal for a non-orphaning merge."""
+    """propose_merge_category returns a proposal for a non-orphaning merge.
+
+    Hierarchy-backed (11-04): both names must be real categories rows and the
+    source must be childless, so seed two throwaway leaf categories.
+    """
     from backend.tools import propose_merge_category
-    from backend.models import Proposal
+    from backend.models import Category, Proposal
     from uuid import UUID
 
-    result = propose_merge_category("Shopping", "Retail")
-    assert "proposal_id" in result
-    assert "proposal_token" in result
-    assert "error" not in result
+    src = Category(name="ZZ Merge Source WTT", parent_id=None, kind="expense", is_system=False)
+    dst = Category(name="ZZ Merge Target WTT", parent_id=None, kind="expense", is_system=False)
+    db_session.add_all([src, dst])
+    db_session.commit()
 
-    p = db_session.get(Proposal, UUID(result["proposal_id"]))
-    if p:
-        db_session.delete(p)
+    try:
+        result = propose_merge_category("ZZ Merge Source WTT", "ZZ Merge Target WTT")
+        assert "proposal_id" in result
+        assert "proposal_token" in result
+        assert "error" not in result
+
+        p = db_session.get(Proposal, UUID(result["proposal_id"]))
+        if p:
+            db_session.delete(p)
+            db_session.commit()
+    finally:
+        db_session.delete(src)
+        db_session.delete(dst)
         db_session.commit()
 
 
