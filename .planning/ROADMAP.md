@@ -73,7 +73,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 11-02-PLAN.md — Draft 74-string mapping CSV, human review checkpoint (D-06), run migration with parity + idempotency proof (CAT-03)
+- [x] 11-02-PLAN.md — Draft 74-string mapping CSV, human review checkpoint (D-06), run migration with parity + idempotency proof (CAT-03)
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -208,7 +208,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 8. Design Foundation + App Shell | v1.1 | 1/1 | Complete | 2026-07-18 |
 | 9. Cashflow + Chat Restyle | v1.1 | 1/1 | Complete | 2026-07-18 |
 | 10. Investments + Settings + Consistency Sweep | v1.1 | 1/1 | Complete | 2026-07-18 |
-| 11. Category Hierarchy | v1.2 | 1/7 | In Progress|  |
+| 11. Category Hierarchy | v1.2 | 2/7 | In Progress|  |
 | 12. Typed Accounts + Transfer Schema | v1.2 | 0/? | Not started | - |
 | 13. Shared Mutation Layer | v1.2 | 0/? | Not started | - |
 | 14. REST + Agent/MCP Tools | v1.2 | 0/? | Not started | - |
