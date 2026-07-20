@@ -58,12 +58,6 @@ export default function CategoryDonut({ data }: { data: CategoryGroup[] }) {
               outerRadius={65}
               paddingAngle={2}
               stroke="none"
-              // recharts 3.x collapses every sector to startAngle === endAngle
-              // at animation t=0 and Sector returns null for that, so the pie is
-              // zero <path>s until a frame lands. The clock is rAF-based, so a tab
-              // that never gets a frame stays permanently blank and does not
-              // self-heal. Render final geometry on first paint instead.
-              isAnimationActive={false}
             >
               {slices.map((s, i) => (
                 <Cell

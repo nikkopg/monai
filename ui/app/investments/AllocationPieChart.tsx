@@ -55,7 +55,6 @@ export default function AllocationPieChart({
             // animation is pending leaves the pie permanently invisible (and
             // it does not self-heal when frames resume). Final geometry on
             // first render instead.
-            isAnimationActive={false}
           >
             {data.map((_, i) => (
               <Cell key={i} fill={chartColors[i % chartColors.length]} />
