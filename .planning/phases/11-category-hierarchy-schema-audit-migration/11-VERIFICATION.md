@@ -1,7 +1,8 @@
 ---
 phase: 11-category-hierarchy-schema-audit-migration
 verified: 2026-07-20T09:00:00Z
-status: human_needed
+status: passed
+human_verification_resolved: 2026-07-20 — all 3 UAT items pass (see 11-HUMAN-UAT.md)
 score: 4/4 roadmap truths verified
 behavior_unverified: 0
 overrides_applied: 0

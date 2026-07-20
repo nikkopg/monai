@@ -1,5 +1,5 @@
 ---
-status: partial
+status: resolved
 phase: 11-category-hierarchy-schema-audit-migration
 source: [11-VERIFICATION.md]
 started: 2026-07-20
@@ -9,7 +9,8 @@ tested_by: claude (browser-driven, live stack after docker compose up -d --build
 
 ## Current Test
 
-[agent-run UAT complete — 2 pass, 1 blocked by a pre-existing chart bug]
+[agent-run UAT complete — 3/3 pass; the blocked chart item cleared after the
+recharts fix landed via merge 9f63b12]
 
 ## Tests
 
@@ -39,7 +40,9 @@ result: **PASS**
 ### 2. Cashflow dashboard donut
 expected: top-level groups, click-to-drill-down, "‹ Back" while drilled,
 palette colours, no Transfer slice.
-result: **BLOCKED — pre-existing chart bug, not a Phase 11 defect**
+result: **PASS** (retested after the recharts fix merged — see "Retest" below)
+
+Original run: **BLOCKED — pre-existing chart bug, not a Phase 11 defect**
 - Data layer is correct: the summary returns 8 top-level groups (Financial
   Expenses, Life & Entertainment, Others, Investments, Food & Drinks, Shopping,
   Transportation, Communication / PC) with children and colours, and **no
@@ -50,8 +53,27 @@ result: **BLOCKED — pre-existing chart bug, not a Phase 11 defect**
 - **Not caused by this phase.** The Investments allocation pie (Phase 7 code,
   untouched in Phase 11) shows the identical symptom: 3 sectors, 0 paths. Line
   charts render fine. Stack: recharts 3.9.2 + React 18.3.1.
-- Follow-up: track as its own bug (recharts Pie rendering), affects the whole
-  app, not category-specific.
+- Follow-up: tracked and fixed as its own quick task (recharts Pie rendering),
+  app-wide rather than category-specific.
+
+**Retest after fix (merge 9f63b12, stack rebuilt):**
+- Root cause was `isAnimationActive` — recharts 3.x collapses every sector to
+  `startAngle === endAngle` at t=0 and `Sector` returns null for that, so the
+  rAF-driven clock can leave the ring permanently empty. Fix sets
+  `isAnimationActive={false}` on both Pie components.
+- Merge conflict resolved in favour of the Phase 11-07 donut rewrite (drill-down
+  + identity colours preserved) with the one fix line ported onto it.
+- Donut now renders **7 slices** with 7 distinct palette swatches.
+- Drill-down verified end-to-end: clicking a group scopes the ring to its
+  children, "‹ Back" appears, Back restores all 7 slices and removes the link.
+- Drilled ring renders monochrome (children `#6f6857` = parent `#6f6857`) —
+  matches UI-SPEC Component 3's "expected, not a bug" note on colour inheritance.
+- No Transfer slice at either level (D-12).
+- Observation, not a defect: while drilled, the legend beside the chart still
+  lists the top-level groups. UI-SPEC Component 3 governs only the ring and is
+  silent on the legend, and the legend lives in `page.tsx` outside the donut's
+  drill state — so this is spec-compliant, but worth a look if the split reads
+  oddly in daily use.
 
 ### 3. Add/Edit Transaction category dropdown
 expected: real categories listed (groups + indented children), any level
@@ -74,16 +96,15 @@ stale page render and was incorrect.
 ## Summary
 
 total: 3
-passed: 2
+passed: 3
 issues: 0
 pending: 0
 skipped: 0
-blocked: 1
+blocked: 0
 
 ## Gaps
 
-None attributable to Phase 11. One out-of-phase bug surfaced:
-
-- **recharts Pie renders no sectors app-wide** (cashflow donut + investments
-  allocation). Pre-existing, reproduced on Phase 7 code. Needs its own fix;
-  does not block Phase 11's data or interaction contracts.
+None. The one out-of-phase bug surfaced during testing (recharts Pie rendering
+no sectors app-wide, pre-existing and reproduced on Phase 7 code) was fixed in
+its own quick task and merged as 9f63b12; the donut item was retested and
+passes.
