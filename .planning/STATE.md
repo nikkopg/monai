@@ -86,6 +86,10 @@ None yet.
 
 See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for earlier quick-task logs.
 
+| Date | Slug | Description |
+|------|------|-------------|
+| 2026-07-20 | recharts-pie-no-slices | Pie charts rendered zero `<path>`s — recharts 3.9 collapses sectors to a zero-width angle at animation t=0 and the rAF clock can leave them stuck there. Fixed with `isAnimationActive={false}` on both `<Pie>`s. |
+
 ## Deferred Items
 
 | Category | Item | Status | Deferred At |
