@@ -40,9 +40,10 @@ result: **PASS**
 ### 2. Cashflow dashboard donut
 expected: top-level groups, click-to-drill-down, "‹ Back" while drilled,
 palette colours, no Transfer slice.
-result: **PASS** (retested after the recharts fix merged — see "Retest" below)
+result: **PASS** — data and interaction contracts verified; the original
+BLOCKED call was a false positive from the test harness (see Correction below)
 
-Original run: **BLOCKED — pre-existing chart bug, not a Phase 11 defect**
+Original run (incorrect): BLOCKED — reported as a pre-existing chart bug
 - Data layer is correct: the summary returns 8 top-level groups (Financial
   Expenses, Life & Entertainment, Others, Investments, Food & Drinks, Shopping,
   Transportation, Communication / PC) with children and colours, and **no
@@ -56,24 +57,32 @@ Original run: **BLOCKED — pre-existing chart bug, not a Phase 11 defect**
 - Follow-up: tracked and fixed as its own quick task (recharts Pie rendering),
   app-wide rather than category-specific.
 
-**Retest after fix (merge 9f63b12, stack rebuilt):**
-- Root cause was `isAnimationActive` — recharts 3.x collapses every sector to
-  `startAngle === endAngle` at t=0 and `Sector` returns null for that, so the
-  rAF-driven clock can leave the ring permanently empty. Fix sets
-  `isAnimationActive={false}` on both Pie components.
-- Merge conflict resolved in favour of the Phase 11-07 donut rewrite (drill-down
-  + identity colours preserved) with the one fix line ported onto it.
-- Donut now renders **7 slices** with 7 distinct palette swatches.
-- Drill-down verified end-to-end: clicking a group scopes the ring to its
-  children, "‹ Back" appears, Back restores all 7 slices and removes the link.
-- Drilled ring renders monochrome (children `#6f6857` = parent `#6f6857`) —
-  matches UI-SPEC Component 3's "expected, not a bug" note on colour inheritance.
-- No Transfer slice at either level (D-12).
-- Observation, not a defect: while drilled, the legend beside the chart still
-  lists the top-level groups. UI-SPEC Component 3 governs only the ring and is
-  silent on the legend, and the legend lives in `page.tsx` outside the donut's
-  drill state — so this is spec-compliant, but worth a look if the split reads
-  oddly in daily use.
+**Correction — the donut was never broken (2026-07-20):**
+- The original BLOCKED finding above was an artifact of the automated browser
+  pane used for this UAT. That pane runs the tab with `visibilityState:
+  "hidden"`, so `requestAnimationFrame` never fires. recharts 3.x collapses Pie
+  sectors to `startAngle === endAngle` at animation t=0 and `Sector` returns
+  null for that, so with no rAF frame the ring stays at zero `<path>`s forever.
+  In any visible browser the clock runs and the pie animates and paints
+  normally — confirmed by the user's direct report that it worked before any
+  fix.
+- The quick-task fix (`isAnimationActive={false}`) was itself verified "under a
+  stubbed-out requestAnimationFrame", i.e. against the same artificial
+  condition. It removed the entrance and drill-down animations — a real UX
+  regression — to solve a problem real users never had. Reverted in 59f0bd5.
+- What the merge legitimately proved while animation was disabled: 7 slices in
+  7 distinct palette swatches, drill-down into a group's children with a
+  working "‹ Back" round-trip, monochrome drilled ring (children `#6f6857` =
+  parent `#6f6857`, matching UI-SPEC Component 3), and no Transfer slice at
+  either level. Those data/interaction contracts hold; only the animation
+  behaviour changed and has been restored.
+- **Limitation of this UAT:** Pie rendering cannot be validated from the
+  headless pane. Visual confirmation of the donut and its animation requires a
+  visible browser — user-confirmed working.
+- Observation, unchanged: while drilled, the legend beside the chart still
+  lists the top-level groups. UI-SPEC Component 3 governs only the ring and the
+  legend lives in `page.tsx` outside the donut's drill state, so this is
+  spec-compliant, but worth a look if the split reads oddly in daily use.
 
 ### 3. Add/Edit Transaction category dropdown
 expected: real categories listed (groups + indented children), any level
@@ -104,7 +113,10 @@ blocked: 0
 
 ## Gaps
 
-None. The one out-of-phase bug surfaced during testing (recharts Pie rendering
-no sectors app-wide, pre-existing and reproduced on Phase 7 code) was fixed in
-its own quick task and merged as 9f63b12; the donut item was retested and
-passes.
+None attributable to Phase 11.
+
+Correction on record: the "recharts Pie renders no sectors app-wide" bug
+reported during this UAT was not real — it reproduced only under the headless
+pane's non-firing requestAnimationFrame. The quick-task fix that disabled Pie
+animations was merged (9f63b12) and then reverted (59f0bd5) once the user
+reported the animation loss; the pie works, and animates, in a visible browser.
