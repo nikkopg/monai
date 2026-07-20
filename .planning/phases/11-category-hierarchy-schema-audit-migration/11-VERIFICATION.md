@@ -13,16 +13,20 @@ re_verification:
     - "Record forms read from the new category hierarchy (ROADMAP criterion 4 — record-forms clause): TransactionModal.tsx now consumes list[CategoryNode] via flattenCategories()"
   gaps_remaining: []
   regressions: []
+human_verification_status: resolved — all 3 items tested 2026-07-20, 3/3 pass (11-HUMAN-UAT.md)
 human_verification:
   - test: "Settings > Categories: expand/collapse groups, add/edit/delete a category, trigger the block-or-reassign flow on a category with transactions and one with subcategories, confirm system-row (Transfer/Uncategorized) delete is disabled"
     expected: "Tree renders per 11-UI-SPEC Component 1; reassign flow shows both affected_count and child_count per the 422 payload; system rows show the exact copy 'System category — can't be deleted.'"
     why_human: "Visual layout, hover-reveal interactions, and modal flows require a live browser render; deferred to phase UAT after docker compose up -d --build (the running container on :8001 is stale pre-phase-11 code). Carried unchanged from the initial pass."
+    result: pass — tree, guards, colour inheritance all verified live
   - test: "Cashflow dashboard donut: confirm top-level slices use identity-stable swatch colors, click a slice with children to drill into its subcategories, confirm the '‹ Back' link returns to the rollup, and confirm no 'Transfer' slice ever appears"
     expected: "Rollup/drill-down/back per 11-UI-SPEC Component 3; Transfer absent at both levels"
     why_human: "Chart look/behavior requires a live browser render; tsc only proves types compile. Carried unchanged from the initial pass."
+    result: pass — retested after recharts fix (merge 9f63b12): 7 slices, drill-down + Back, monochrome children, no Transfer
   - test: "Add/Edit Transaction modal (Cashflow page): open the modal, confirm the Category dropdown is now populated with real, indented categories (not empty), select a subcategory, submit, and re-open the same transaction in edit mode to confirm the selection persisted and pre-selects correctly"
     expected: "Dropdown shows non-system categories at all depths with visual indentation; selecting and saving a category round-trips correctly; editing an existing transaction pre-selects its current category"
     why_human: "This session verified the fix via source inspection (flattenCategories logic, resolve_category_id any-level exact match, a clean tsc --noEmit, and a live single-named backend unit test on the GET /categories tree shape) rather than a live browser render, since the only running backend on :8001 is stale pre-phase-11 code. A live click-through after docker compose up -d --build would give direct visual confirmation; recommended, not required, given the strength of the static evidence."
+    result: pass — 75 options, 63 indented children, edit-mode preselect confirmed in a live browser
 ---
 
 # Phase 11: Category Hierarchy — Schema, Audit, Migration Verification Report
