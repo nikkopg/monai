@@ -4,17 +4,17 @@ milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
 current_phase: 12
 current_phase_name: Typed Accounts + Transfer/Funding Schema Foundations
-status: executing
-stopped_at: Completed 12-02-PLAN.md
-last_updated: "2026-07-25T12:11:53.608Z"
+status: verifying
+stopped_at: Completed 12-03-PLAN.md
+last_updated: "2026-07-25T12:20:53.021Z"
 last_activity: 2026-07-25
 last_activity_desc: Phase 12 execution started
 progress:
   total_phases: 7
-  completed_phases: 1
+  completed_phases: 2
   total_plans: 10
-  completed_plans: 9
-  percent: 14
+  completed_plans: 10
+  percent: 29
 ---
 
 # Project State
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 
 Phase: 12 (Typed Accounts + Transfer/Funding Schema Foundations) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-25 -- Phase 12 execution started
 
 Progress: [░░░░░░░░░░] 0%
@@ -60,6 +60,7 @@ Progress: [░░░░░░░░░░] 0%
 *Updated after each plan completion*
 | Phase 12 P01 | 20min | 2 tasks | 2 files |
 | Phase 12 P02 | 35min | 2 tasks | 6 files |
+| Phase 12 P03 | 20min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -83,6 +84,8 @@ Recent decisions affecting current work:
 - [Phase ?]: Phase 12 Plan 02: migration 010 (f1a2b3c4d5e6, down_revision=e5f6a7b8c9d0) backfills ACCOUNT_TYPE={1:liquid,2:liquid,3:investment,559:liquid} per locked D-02 map, no auto-inference
 - [Phase ?]: Phase 12 Plan 02: transfer_pair_id carries NO foreign key (plain indexed Integer) — pairing semantics deferred to Phase 13
 - [Phase ?]: Phase 12 Plan 02: cashflow_transactions view created after pairing columns so SELECT t.* is the full superset; NOT EXISTS keyed on type='investment' keeps NULL-account_id rows
+- [Phase 12]: Phase 12 Plan 03: switched 10 FROM-clause sites (spending_total, income_total, net_total, spending_by_category, spending_in_category, transaction_count, largest_transactions, average_daily_spending total, monthly_trend, find_transactions) from transactions to cashflow_transactions; account_balances, currency probe, date-span query, and delete-guard COUNTs left on the base table intentionally
+- [Phase 12]: Plan 03: resolved a plan-drafting mislabel where the 10th switch site was described as 'spending_by_category's grand-total denominator' but actually belongs to spending_in_category (line number and SQL pattern were correct, function name was not) — switched spending_in_category since it is genuinely a cashflow total
 
 ### Pending Todos
 
@@ -128,8 +131,8 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-07-25T12:11:53.595Z
-Stopped at: Completed 12-02-PLAN.md
+Last session: 2026-07-25T12:20:53.008Z
+Stopped at: Completed 12-03-PLAN.md
 Resume file: None
 
 Next: `/gsd-plan-phase 11`

@@ -43,7 +43,7 @@ investments as two connected subsystems that never double-count, linked by real
 transfer/buy-sell mechanics, with BudgetBakers-grade record and category management.
 
 - [x] **Phase 11: Category Hierarchy — Schema, Audit, Migration** - First-class 3-level categories replace free-string `category`, migrated via human-reviewed mapping with parity checks (completed 2026-07-19)
-- [ ] **Phase 12: Typed Accounts + Transfer/Funding Schema Foundations** - `accounts.type` audited + constrained to liquid/investment; additive columns for transfer pairing and funded portfolio events
+- [x] **Phase 12: Typed Accounts + Transfer/Funding Schema Foundations** - `accounts.type` audited + constrained to liquid/investment; additive columns for transfer pairing and funded portfolio events (completed 2026-07-25)
 - [ ] **Phase 13: Shared Mutation Layer — Transfer, Buy/Sell-with-Funding, Adjustment Writes** - `writes.py` gains atomic, pair-aware `apply_*` functions for every new money-movement type
 - [ ] **Phase 14: REST Endpoints + Agent/MCP Tool Registration** - New endpoints wired to Phase 13's writes; write tools registered on the agent and kept off the MCP read-only surface
 - [ ] **Phase 15: Net Worth Aggregation + Dashboard** - Main dashboard shows net worth as liquid + investment sums that never overlap
@@ -102,11 +102,11 @@ Plans:
   2. `accounts.type` is DB-enforced (closed set, CHECK constraint) and investment-typed accounts are excluded from every cashflow total (spending/income/net) — the double-count bug is structurally impossible, not just avoided by convention
   3. `transactions.transfer_pair_id` and `portfolio_events.source_account_id` exist (nullable, indexed) so later phases can pair records without further migrations
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 
 - [x] 12-01-PLAN.md — Wave 0 validation scaffold: test_typed_accounts.py + test_cashflow_view.py encoding all 3 success criteria (RED-first)
 - [x] 12-02-PLAN.md — Migration 010 (backfill→assert→constrain accounts.type, add pairing columns, NOT EXISTS view) + models.py ORM match
-- [ ] 12-03-PLAN.md — Switch every cashflow total in tools.py to FROM cashflow_transactions (application-layer exclusion)
+- [x] 12-03-PLAN.md — Switch every cashflow total in tools.py to FROM cashflow_transactions (application-layer exclusion)
 
 **Research**: true — FX precision and account-type audit both carry data-quality risk on live financial data; confirm the Alembic nullable→backfill→constrain idiom before writing DDL
 
@@ -214,7 +214,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 9. Cashflow + Chat Restyle | v1.1 | 1/1 | Complete | 2026-07-18 |
 | 10. Investments + Settings + Consistency Sweep | v1.1 | 1/1 | Complete | 2026-07-18 |
 | 11. Category Hierarchy | v1.2 | 7/7 | Complete    | 2026-07-20 |
-| 12. Typed Accounts + Transfer Schema | v1.2 | 2/3 | In Progress|  |
+| 12. Typed Accounts + Transfer Schema | v1.2 | 3/3 | Complete   | 2026-07-25 |
 | 13. Shared Mutation Layer | v1.2 | 0/? | Not started | - |
 | 14. REST + Agent/MCP Tools | v1.2 | 0/? | Not started | - |
 | 15. Net Worth Dashboard | v1.2 | 0/? | Not started | - |
