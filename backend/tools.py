@@ -124,7 +124,7 @@ def spending_total(period="all_time", start_date=None, end_date=None) -> dict:
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {}
     sql = (
-        "SELECT COALESCE(SUM(-amount), 0) FROM transactions "
+        "SELECT COALESCE(SUM(-amount), 0) FROM cashflow_transactions "
         "WHERE amount < 0 AND is_transfer = false" + _date_clause(s, e, p)
     )
     with engine.connect() as c:
@@ -141,7 +141,7 @@ def income_total(period="all_time", start_date=None, end_date=None) -> dict:
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {}
     sql = (
-        "SELECT COALESCE(SUM(amount), 0) FROM transactions "
+        "SELECT COALESCE(SUM(amount), 0) FROM cashflow_transactions "
         "WHERE amount > 0 AND is_transfer = false" + _date_clause(s, e, p)
     )
     with engine.connect() as c:
@@ -158,7 +158,7 @@ def net_total(period="all_time", start_date=None, end_date=None) -> dict:
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {}
     sql = (
-        "SELECT COALESCE(SUM(amount), 0) FROM transactions "
+        "SELECT COALESCE(SUM(amount), 0) FROM cashflow_transactions "
         "WHERE is_transfer = false" + _date_clause(s, e, p)
     )
     with engine.connect() as c:
@@ -234,7 +234,7 @@ def _descendant_ids(node: dict) -> list[int]:
 # COALESCE(p2, p1, c); Transfer/system trees and is_transfer rows excluded
 # from every spending total (D-12).
 _ROLLUP_FROM = (
-    "FROM transactions t "
+    "FROM cashflow_transactions t "
     "JOIN categories c ON c.id = t.category_id "
     "LEFT JOIN categories p1 ON p1.id = c.parent_id "
     "LEFT JOIN categories p2 ON p2.id = p1.parent_id "
@@ -299,7 +299,7 @@ def spending_in_category(category: str, period="all_time", start_date=None, end_
                          "Use list_categories to see the category tree."}
     p: dict = {"ids": _descendant_ids(node)}
     sql = (
-        "SELECT COALESCE(SUM(-amount), 0) FROM transactions "
+        "SELECT COALESCE(SUM(-amount), 0) FROM cashflow_transactions "
         "WHERE amount < 0 AND is_transfer = false "
         "AND category_id = ANY(:ids)" + _date_clause(s, e, p)
     )
@@ -380,7 +380,7 @@ def transaction_count(period="all_time", start_date=None, end_date=None, kind="a
     p: dict = {}
     sign = {"expense": " AND amount < 0", "income": " AND amount > 0", "all": ""}.get(kind, "")
     sql = (
-        "SELECT COUNT(*) FROM transactions WHERE is_transfer = false"
+        "SELECT COUNT(*) FROM cashflow_transactions WHERE is_transfer = false"
         + sign + _date_clause(s, e, p)
     )
     with engine.connect() as c:
@@ -400,7 +400,7 @@ def largest_transactions(period="all_time", start_date=None, end_date=None, limi
     sign = "amount < 0" if kind == "expense" else "amount > 0"
     order = "amount ASC" if kind == "expense" else "amount DESC"
     sql = (
-        "SELECT date, ABS(amount) AS mag, category, merchant FROM transactions "
+        "SELECT date, ABS(amount) AS mag, category, merchant FROM cashflow_transactions "
         f"WHERE {sign} AND is_transfer = false" + _date_clause(s, e, p) +
         f" ORDER BY {order} LIMIT :lim"
     )
@@ -423,7 +423,7 @@ def average_daily_spending(period="this_month", start_date=None, end_date=None) 
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {}
     total_sql = (
-        "SELECT COALESCE(SUM(-amount), 0) FROM transactions "
+        "SELECT COALESCE(SUM(-amount), 0) FROM cashflow_transactions "
         "WHERE amount < 0 AND is_transfer = false" + _date_clause(s, e, p)
     )
     with engine.connect() as c:
@@ -431,6 +431,8 @@ def average_daily_spending(period="this_month", start_date=None, end_date=None) 
         if s is not None and e is not None:
             days = (e - s).days
         else:
+            # Date span, not a total — leave on the base table so the
+            # denominator (days on record) isn't shrunk by the exclusion view.
             row = c.execute(text("SELECT MIN(date), MAX(date) FROM transactions")).fetchone()
             days = ((row[1].date() - row[0].date()).days + 1) if row and row[0] else 1
     days = max(days, 1)
@@ -451,7 +453,7 @@ def monthly_trend(months: int = 6) -> dict:
         "SELECT date_trunc('month', date) AS month, "
         "COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0) AS income, "
         "COALESCE(SUM(-amount) FILTER (WHERE amount < 0), 0) AS expense "
-        "FROM transactions "
+        "FROM cashflow_transactions "
         "WHERE is_transfer = false "
         "AND date >= date_trunc('month', CURRENT_DATE) - (:months || ' months')::interval "
         "GROUP BY 1 ORDER BY 1"
@@ -488,6 +490,10 @@ def account_balances(period_start=None, period_end=None) -> dict:
         period_parts.append("t.date < :period_end")
         p["period_end"] = period_end.isoformat()
     period_predicate = (" AND " + " AND ".join(period_parts)) if period_parts else ""
+    # Per-account list (not a cashflow total) — intentionally reads the base
+    # `transactions` table, not `cashflow_transactions`, so investment
+    # accounts still show their own balance here. The liquid/investment
+    # net-worth split is Phase 15 (CONTEXT discretion item D).
     sql = (
         "SELECT a.id, a.name, "
         "COALESCE(SUM(t.amount), 0) AS current_balance, "
@@ -544,7 +550,7 @@ def find_transactions(
     if sign:
         clauses.append(sign)
     sql = (
-        "SELECT id, date, amount, category, merchant, account_id FROM transactions WHERE "
+        "SELECT id, date, amount, category, merchant, account_id FROM cashflow_transactions WHERE "
         + " AND ".join(clauses) + _date_clause(s, e, p) +
         " ORDER BY date DESC LIMIT :lim"
     )
