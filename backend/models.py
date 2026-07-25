@@ -48,7 +48,10 @@ class Account(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # DB-enforced liquid/investment discriminator (ACCT-03, migration 010):
+    # CHECK ck_accounts_type + NOT NULL + server_default 'liquid' — mirrors
+    # PortfolioEvent.currency's server_default idiom.
+    type: Mapped[str] = mapped_column(String(64), nullable=False, server_default="liquid")
     currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
 
     transactions: Mapped[list["Transaction"]] = relationship(
@@ -147,6 +150,12 @@ class Transaction(Base):
     # removed now that the column exists on every environment.
     category_id: Mapped[int | None] = mapped_column(
         ForeignKey("categories.id"), nullable=True, index=True,
+    )
+    # Liquid<->liquid transfer pairing (ACCT-03, migration 010). Plain
+    # Integer, NO FK — pairing semantics (self-ref vs group) decided in
+    # Phase 13.
+    transfer_pair_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True,
     )
 
     account: Mapped["Account | None"] = relationship(
@@ -261,6 +270,12 @@ class PortfolioEvent(Base):
     # validated against the parent holding's currency at write time (Plan 02).
     currency: Mapped[str | None] = mapped_column(
         String(8), server_default="IDR", nullable=True
+    )
+    # Liquid->investment funding pairing (ACCT-03, migration 010): mirrors
+    # Holding.platform_id's FK idiom but nullable — links a buy/sell event
+    # back to the liquid account that funded it.
+    source_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("accounts.id"), nullable=True, index=True,
     )
 
 

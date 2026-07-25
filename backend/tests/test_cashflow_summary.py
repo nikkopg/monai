@@ -73,7 +73,7 @@ def _make_account(db, name: str = "Test Account CFS") -> int:
     if existing:
         db.delete(existing)
         db.commit()
-    acc = Account(name=name, type="checking", currency="IDR")
+    acc = Account(name=name, type="liquid", currency="IDR")
     db.add(acc)
     db.commit()
     db.refresh(acc)

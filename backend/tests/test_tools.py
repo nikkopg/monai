@@ -228,7 +228,7 @@ class TestToolSQL:
 
         with engine.connect() as c:
             c.execute(text(
-                "INSERT INTO accounts (name, type, currency) VALUES ('ZZ Test BCA', 'bank', 'IDR') "
+                "INSERT INTO accounts (name, type, currency) VALUES ('ZZ Test BCA', 'liquid', 'IDR') "
                 "ON CONFLICT (name) DO NOTHING"
             ))
             c.commit()

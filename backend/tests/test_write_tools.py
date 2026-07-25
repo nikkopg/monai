@@ -73,7 +73,7 @@ def _make_account(db, name: str = "Test Account WTT") -> int:
     if existing:
         db.delete(existing)
         db.commit()
-    acc = Account(name=name, type="checking", currency="IDR")
+    acc = Account(name=name, type="liquid", currency="IDR")
     db.add(acc)
     db.commit()
     db.refresh(acc)
@@ -206,7 +206,7 @@ def test_propose_add_account_creates_proposal(db_session):
     from backend.models import Proposal
     from uuid import UUID
 
-    result = propose_add_account(name="New Test Bank", type="savings", currency="IDR")
+    result = propose_add_account(name="New Test Bank", type="liquid", currency="IDR")
     assert "proposal_id" in result
     assert "proposal_token" in result
     assert "error" not in result

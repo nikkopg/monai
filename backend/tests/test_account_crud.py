@@ -48,7 +48,7 @@ def _unique_name(prefix: str) -> str:
 
 def _make_account(db, name: str) -> int:
     from backend.models import Account
-    acc = Account(name=name, type="checking", currency="IDR")
+    acc = Account(name=name, type="liquid", currency="IDR")
     db.add(acc)
     db.commit()
     db.refresh(acc)
@@ -110,7 +110,7 @@ def test_post_creates_and_audits(client, api_key, db_session):
     name = _unique_name("AccCreate")
     resp = client.post(
         "/accounts",
-        json={"name": name, "type": "savings", "currency": "IDR"},
+        json={"name": name, "type": "liquid", "currency": "IDR"},
         headers={"MONAI_API_KEY": api_key},
     )
     assert resp.status_code == 201, resp.text
