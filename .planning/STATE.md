@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
-status: executing
-stopped_at: Phase 11 executed and verified 4/4; awaiting human UAT (3 items)
-last_updated: "2026-07-19T21:53:18.716Z"
-last_activity: 2026-07-19 -- Phase 11 execution started
+status: planning
+stopped_at: Phase 12 context gathered
+last_updated: "2026-07-25T07:51:58.755Z"
+last_activity: 2026-07-20
 progress:
   total_phases: 7
   completed_phases: 1
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-18)
 
 **Core value:** You can understand and manage your entire financial life — spending and investments — by talking to a trustworthy AI that never fabricates a number and never changes your data without your say-so.
-**Current focus:** Phase 11 — Category Hierarchy — Schema, Audit, Migration
+**Current focus:** Phase 12 — typed accounts + transfer/funding schema foundations
 
 ## Current Position
 
-Phase: 11 (Category Hierarchy — Schema, Audit, Migration) — EXECUTING
-Plan: 1 of 7
-Status: Executing Phase 11
-Last activity: 2026-07-19 -- Phase 11 execution started
+Phase: 12
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-07-20
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -47,6 +47,7 @@ Progress: [░░░░░░░░░░] 0%
 | 1-7 (v1.0) | 30 | — | — |
 | 8-10 (v1.1) | 3 | — | — |
 | 11-17 (v1.2) | 0 | — | — |
+| 11 | 7 | - | - |
 
 **Recent Trend:**
 
@@ -115,8 +116,8 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-07-19T21:53:18.695Z
-Stopped at: Phase 11 executed and verified 4/4; awaiting human UAT (3 items)
-Resume file: .planning/phases/11-category-hierarchy-schema-audit-migration/11-HUMAN-UAT.md
+Last session: 2026-07-25T07:51:58.731Z
+Stopped at: Phase 12 context gathered
+Resume file: .planning/phases/12-typed-accounts-transfer-funding-schema-foundations/12-CONTEXT.md
 
 Next: `/gsd-plan-phase 11`
