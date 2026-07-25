@@ -96,11 +96,16 @@ def test_account_type_map():
 
 
 def test_account_classification():
-    """Every live accounts row is classified: no NULLs, and the 4 audited
-    ids land on the exact D-02 type."""
+    """Every live accounts row is classified: no NULLs, the original liquid
+    ids stay liquid, and there is exactly one investment account ('Investments').
+
+    The investment account's surrogate id is intentionally NOT asserted — it is
+    not load-bearing and changes if the account is ever deleted+recreated (it
+    moved 3 -> 994 after an accidental delete/restore). The D-02 classification
+    invariant is what matters, not the id."""
     with engine.connect() as conn:
-        rows = conn.execute(text("SELECT id, type FROM accounts")).fetchall()
-    types_by_id = {row[0]: row[1] for row in rows}
+        rows = conn.execute(text("SELECT id, name, type FROM accounts")).fetchall()
+    types_by_id = {row[0]: row[2] for row in rows}
 
     assert all(t in {"liquid", "investment"} for t in types_by_id.values()), (
         f"non-liquid/investment types present: {types_by_id}"
@@ -111,7 +116,10 @@ def test_account_classification():
     assert types_by_id.get(1) == "liquid"
     assert types_by_id.get(2) == "liquid"
     assert types_by_id.get(559) == "liquid"
-    assert types_by_id.get(3) == "investment"
+
+    investments = [(row[0], row[1]) for row in rows if row[2] == "investment"]
+    assert len(investments) == 1, f"expected exactly one investment account, got {investments}"
+    assert investments[0][1] == "Investments", f"investment account misnamed: {investments}"
 
 
 # ---------------------------------------------------------------------------
