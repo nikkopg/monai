@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "frontend",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd ui && MONAI_API=http://localhost:8001 MONAI_API_KEY=$(docker exec monai-backend printenv MONAI_API_KEY) npm run dev -- -p 3002"
+      ],
+      "port": 3002
+    }
+  ]
+}

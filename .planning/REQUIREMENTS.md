@@ -30,10 +30,10 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Categories (CAT)
 
-- [ ] **CAT-01**: Categories are first-class entities (name, color, icon, parent) with up to 3 hierarchy levels
-- [ ] **CAT-02**: User can manage categories in Settings — add, edit, delete with a block-or-reassign guard (no orphaned records)
-- [ ] **CAT-03**: The 74 existing category strings migrate onto the hierarchy via a human-reviewed mapping with row/sum parity checks; destructive column drop is a separate later migration
-- [ ] **CAT-04**: Record forms, filters, and dashboard charts use the hierarchical category picker
+- [x] **CAT-01**: Categories are first-class entities (name, color, icon, parent) with up to 3 hierarchy levels
+- [x] **CAT-02**: User can manage categories in Settings — add, edit, delete with a block-or-reassign guard (no orphaned records)
+- [x] **CAT-03**: The 74 existing category strings migrate onto the hierarchy via a human-reviewed mapping with row/sum parity checks; destructive column drop is a separate later migration
+- [x] **CAT-04**: Record forms, filters, and dashboard charts use the hierarchical category picker
 
 ### Platforms (PLAT)
 
@@ -102,10 +102,10 @@ Which phases cover which requirements. Updated during roadmap creation.
 | REC-03 | Phase 17 | Pending |
 | REC-04 | Phase 16 | Pending |
 | REC-05 | Phase 17 | Pending |
-| CAT-01 | Phase 11 | Pending |
-| CAT-02 | Phase 11 | Pending |
-| CAT-03 | Phase 11 | Pending |
-| CAT-04 | Phase 11 | Pending |
+| CAT-01 | Phase 11 | Complete |
+| CAT-02 | Phase 11 | Complete |
+| CAT-03 | Phase 11 | Complete |
+| CAT-04 | Phase 11 | Complete |
 | PLAT-01 | Phase 17 | Pending |
 | PLAT-02 | Phase 16 | Pending |
 | XFER-01 | Phase 13 | Pending |

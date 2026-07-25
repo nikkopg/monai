@@ -2,14 +2,14 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
-status: planning
+status: executing
 stopped_at: Phase 12 context gathered
-last_updated: "2026-07-25T07:51:58.755Z"
-last_activity: 2026-07-20
+last_updated: "2026-07-25T11:45:37.244Z"
+last_activity: 2026-07-25 -- Phase 12 planning complete
 progress:
   total_phases: 7
   completed_phases: 1
-  total_plans: 7
+  total_plans: 10
   completed_plans: 7
   percent: 14
 ---
@@ -27,8 +27,8 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 
 Phase: 12
 Plan: Not started
-Status: Ready to plan
-Last activity: 2026-07-20
+Status: Ready to execute
+Last activity: 2026-07-25 -- Phase 12 planning complete
 
 Progress: [░░░░░░░░░░] 0%
 
