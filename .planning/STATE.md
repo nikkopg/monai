@@ -5,15 +5,15 @@ milestone_name: Connected Ledger — Liquids ↔ Investments
 current_phase: 12
 current_phase_name: Typed Accounts + Transfer/Funding Schema Foundations
 status: executing
-stopped_at: Completed 12-01-PLAN.md
-last_updated: "2026-07-25T11:56:12.719Z"
+stopped_at: Completed 12-02-PLAN.md
+last_updated: "2026-07-25T12:11:53.608Z"
 last_activity: 2026-07-25
 last_activity_desc: Phase 12 execution started
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 10
-  completed_plans: 8
+  completed_plans: 9
   percent: 14
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 ## Current Position
 
 Phase: 12 (Typed Accounts + Transfer/Funding Schema Foundations) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-07-25 -- Phase 12 execution started
 
@@ -59,6 +59,7 @@ Progress: [░░░░░░░░░░] 0%
 
 *Updated after each plan completion*
 | Phase 12 P01 | 20min | 2 tasks | 2 files |
+| Phase 12 P02 | 35min | 2 tasks | 6 files |
 
 ## Accumulated Context
 
@@ -79,6 +80,9 @@ Recent decisions affecting current work:
 - [Phase ?]: Phase 12 Plan 01: both new test files query/introspect live Postgres directly (no mocking, no fresh-migrate fixture) — matches test_tools.py idiom
 - [Phase ?]: Phase 12 Plan 01: test_type_check_and_default explicitly rolls back both probe inserts so the live accounts table is never mutated by the test suite
 - [Phase ?]: Phase 12 Plan 01: test_double_count_delta derives the investment-expense magnitude live via SQL, never hard-codes the ~45.9M figure from RESEARCH.md
+- [Phase ?]: Phase 12 Plan 02: migration 010 (f1a2b3c4d5e6, down_revision=e5f6a7b8c9d0) backfills ACCOUNT_TYPE={1:liquid,2:liquid,3:investment,559:liquid} per locked D-02 map, no auto-inference
+- [Phase ?]: Phase 12 Plan 02: transfer_pair_id carries NO foreign key (plain indexed Integer) — pairing semantics deferred to Phase 13
+- [Phase ?]: Phase 12 Plan 02: cashflow_transactions view created after pairing columns so SELECT t.* is the full superset; NOT EXISTS keyed on type='investment' keeps NULL-account_id rows
 
 ### Pending Todos
 
@@ -89,6 +93,7 @@ None yet.
 - [Phase 11 planning]: 74-category mapping is a human-judgment task — must be done before migration DDL is written, not automated
 - [Phase 12 planning]: Confirm exact Alembic nullable→backfill→constrain idiom before touching live `accounts.type` data (established pattern from migration 008, but needs a plan-time check)
 - [Phase 13 planning]: FX precision handling on buy/sell-with-funding is subtle (BTC price_cache USD/IDR conflation class of bug); flagged for research pass
+- test_settings.py::test_put_settings_requires_key fails 503 vs 401 — pre-existing, confirmed unrelated to Phase 12 Plan 02 via git-stash bisection, logged in deferred-items.md
 
 ### Quick Tasks Completed
 
@@ -123,8 +128,8 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-07-25T11:55:48.560Z
-Stopped at: Completed 12-01-PLAN.md
+Last session: 2026-07-25T12:11:53.595Z
+Stopped at: Completed 12-02-PLAN.md
 Resume file: None
 
 Next: `/gsd-plan-phase 11`

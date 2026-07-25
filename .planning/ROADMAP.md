@@ -102,10 +102,10 @@ Plans:
   2. `accounts.type` is DB-enforced (closed set, CHECK constraint) and investment-typed accounts are excluded from every cashflow total (spending/income/net) — the double-count bug is structurally impossible, not just avoided by convention
   3. `transactions.transfer_pair_id` and `portfolio_events.source_account_id` exist (nullable, indexed) so later phases can pair records without further migrations
 
-**Plans**: 1/3 plans executed
+**Plans**: 2/3 plans executed
 
 - [x] 12-01-PLAN.md — Wave 0 validation scaffold: test_typed_accounts.py + test_cashflow_view.py encoding all 3 success criteria (RED-first)
-- [ ] 12-02-PLAN.md — Migration 010 (backfill→assert→constrain accounts.type, add pairing columns, NOT EXISTS view) + models.py ORM match
+- [x] 12-02-PLAN.md — Migration 010 (backfill→assert→constrain accounts.type, add pairing columns, NOT EXISTS view) + models.py ORM match
 - [ ] 12-03-PLAN.md — Switch every cashflow total in tools.py to FROM cashflow_transactions (application-layer exclusion)
 
 **Research**: true — FX precision and account-type audit both carry data-quality risk on live financial data; confirm the Alembic nullable→backfill→constrain idiom before writing DDL
@@ -214,7 +214,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 9. Cashflow + Chat Restyle | v1.1 | 1/1 | Complete | 2026-07-18 |
 | 10. Investments + Settings + Consistency Sweep | v1.1 | 1/1 | Complete | 2026-07-18 |
 | 11. Category Hierarchy | v1.2 | 7/7 | Complete    | 2026-07-20 |
-| 12. Typed Accounts + Transfer Schema | v1.2 | 1/3 | In Progress|  |
+| 12. Typed Accounts + Transfer Schema | v1.2 | 2/3 | In Progress|  |
 | 13. Shared Mutation Layer | v1.2 | 0/? | Not started | - |
 | 14. REST + Agent/MCP Tools | v1.2 | 0/? | Not started | - |
 | 15. Net Worth Dashboard | v1.2 | 0/? | Not started | - |
