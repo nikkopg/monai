@@ -4,9 +4,9 @@ milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
 current_phase: 12
 current_phase_name: Typed Accounts + Transfer/Funding Schema Foundations
-status: verifying
-stopped_at: Completed 12-03-PLAN.md
-last_updated: "2026-07-25T12:20:53.021Z"
+status: ready_to_plan
+stopped_at: Phase 12 complete (3/3) — ready to discuss Phase 13
+last_updated: 2026-07-25T12:34:10.811Z
 last_activity: 2026-07-25
 last_activity_desc: Phase 12 execution started
 progress:
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-18)
 
 **Core value:** You can understand and manage your entire financial life — spending and investments — by talking to a trustworthy AI that never fabricates a number and never changes your data without your say-so.
-**Current focus:** Phase 12 — Typed Accounts + Transfer/Funding Schema Foundations
+**Current focus:** Phase 13 — shared mutation layer — transfer, buy/sell with funding, adjustment writes
 
 ## Current Position
 
-Phase: 12 (Typed Accounts + Transfer/Funding Schema Foundations) — EXECUTING
-Plan: 3 of 3
-Status: Phase complete — ready for verification
-Last activity: 2026-07-25 -- Phase 12 execution started
+Phase: 13
+Plan: Not started
+Status: Ready to plan
+Last activity: 2026-07-25
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -51,6 +51,7 @@ Progress: [░░░░░░░░░░] 0%
 | 8-10 (v1.1) | 3 | — | — |
 | 11-17 (v1.2) | 0 | — | — |
 | 11 | 7 | - | - |
+| 12 | 3 | - | - |
 
 **Recent Trend:**
 

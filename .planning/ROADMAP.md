@@ -214,7 +214,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 9. Cashflow + Chat Restyle | v1.1 | 1/1 | Complete | 2026-07-18 |
 | 10. Investments + Settings + Consistency Sweep | v1.1 | 1/1 | Complete | 2026-07-18 |
 | 11. Category Hierarchy | v1.2 | 7/7 | Complete    | 2026-07-20 |
-| 12. Typed Accounts + Transfer Schema | v1.2 | 3/3 | Complete   | 2026-07-25 |
+| 12. Typed Accounts + Transfer Schema | v1.2 | 3/3 | Complete    | 2026-07-25 |
 | 13. Shared Mutation Layer | v1.2 | 0/? | Not started | - |
 | 14. REST + Agent/MCP Tools | v1.2 | 0/? | Not started | - |
 | 15. Net Worth Dashboard | v1.2 | 0/? | Not started | - |
