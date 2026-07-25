@@ -18,7 +18,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 - [ ] **ACCT-01**: User can add, edit, and remove liquid accounts in a dedicated account manager
 - [ ] **ACCT-02**: User can set an account's balance; the delta is stored as a visible "Adjustment" record (balances stay derived, never a stored field)
-- [ ] **ACCT-03**: Accounts are typed liquid/investment (DB-enforced after live audit + backfill); investment-typed accounts are excluded from cashflow totals — the double-count fix
+- [x] **ACCT-03**: Accounts are typed liquid/investment (DB-enforced after live audit + backfill); investment-typed accounts are excluded from cashflow totals — the double-count fix
 
 ### Records (REC)
 
@@ -96,7 +96,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | NW-02 | Phase 15 | Pending |
 | ACCT-01 | Phase 16 | Pending |
 | ACCT-02 | Phase 13 | Pending |
-| ACCT-03 | Phase 12 | Pending |
+| ACCT-03 | Phase 12 | Complete |
 | REC-01 | Phase 17 | Pending |
 | REC-02 | Phase 17 | Pending |
 | REC-03 | Phase 17 | Pending |
@@ -116,6 +116,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CHAT-09 | Phase 14 | Pending |
 
 **Coverage:**
+
 - v1.2 requirements: 22 total
 - Mapped to phases: 22
 - Unmapped: 0 ✓ (roadmap: Phases 11-17)

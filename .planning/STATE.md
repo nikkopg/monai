@@ -2,15 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
+current_phase: 12
+current_phase_name: Typed Accounts + Transfer/Funding Schema Foundations
 status: executing
-stopped_at: Phase 12 context gathered
-last_updated: "2026-07-25T11:45:37.244Z"
-last_activity: 2026-07-25 -- Phase 12 planning complete
+stopped_at: Completed 12-01-PLAN.md
+last_updated: "2026-07-25T11:56:12.719Z"
+last_activity: 2026-07-25
+last_activity_desc: Phase 12 execution started
 progress:
   total_phases: 7
   completed_phases: 1
   total_plans: 10
-  completed_plans: 7
+  completed_plans: 8
   percent: 14
 ---
 
@@ -21,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-18)
 
 **Core value:** You can understand and manage your entire financial life — spending and investments — by talking to a trustworthy AI that never fabricates a number and never changes your data without your say-so.
-**Current focus:** Phase 12 — typed accounts + transfer/funding schema foundations
+**Current focus:** Phase 12 — Typed Accounts + Transfer/Funding Schema Foundations
 
 ## Current Position
 
-Phase: 12
-Plan: Not started
+Phase: 12 (Typed Accounts + Transfer/Funding Schema Foundations) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-07-25 -- Phase 12 planning complete
+Last activity: 2026-07-25 -- Phase 12 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -55,6 +58,7 @@ Progress: [░░░░░░░░░░] 0%
 - Trend: —
 
 *Updated after each plan completion*
+| Phase 12 P01 | 20min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -72,6 +76,9 @@ Recent decisions affecting current work:
 - [v1.2 pre-roadmap]: `accounts.type` promoted from decorative to a DB-enforced discriminator only after manual audit of all 4 live (currently NULL) accounts — no auto-inference
 - [v1.2 pre-roadmap]: 74 free-string categories migrate via a human-reviewed mapping, not an automatic one, with row/sum parity assertions baked into the migration
 - [v1.1 pre-roadmap]: Visual-only re-skin — no backend/schema/API changes that milestone; `ui/app/styles.ts` remains the single token source (no CSS framework migration)
+- [Phase ?]: Phase 12 Plan 01: both new test files query/introspect live Postgres directly (no mocking, no fresh-migrate fixture) — matches test_tools.py idiom
+- [Phase ?]: Phase 12 Plan 01: test_type_check_and_default explicitly rolls back both probe inserts so the live accounts table is never mutated by the test suite
+- [Phase ?]: Phase 12 Plan 01: test_double_count_delta derives the investment-expense magnitude live via SQL, never hard-codes the ~45.9M figure from RESEARCH.md
 
 ### Pending Todos
 
@@ -116,8 +123,8 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-07-25T07:51:58.731Z
-Stopped at: Phase 12 context gathered
-Resume file: .planning/phases/12-typed-accounts-transfer-funding-schema-foundations/12-CONTEXT.md
+Last session: 2026-07-25T11:55:48.560Z
+Stopped at: Completed 12-01-PLAN.md
+Resume file: None
 
 Next: `/gsd-plan-phase 11`
