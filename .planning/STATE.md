@@ -2,13 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
-current_phase: 12
-current_phase_name: Typed Accounts + Transfer/Funding Schema Foundations
-status: ready_to_plan
-stopped_at: Phase 12 complete (3/3) — ready to discuss Phase 13
-last_updated: 2026-07-25T12:34:10.811Z
+status: planning
+stopped_at: Phase 13 context gathered
+last_updated: "2026-07-25T23:16:05.197Z"
 last_activity: 2026-07-25
-last_activity_desc: Phase 12 execution started
 progress:
   total_phases: 7
   completed_phases: 2
@@ -132,8 +129,8 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-07-25T12:20:53.008Z
-Stopped at: Completed 12-03-PLAN.md
-Resume file: None
+Last session: 2026-07-25T23:16:05.162Z
+Stopped at: Phase 13 context gathered
+Resume file: .planning/phases/13-shared-mutation-layer-transfer-buy-sell-with-funding-adjustm/13-CONTEXT.md
 
 Next: `/gsd-plan-phase 11`
