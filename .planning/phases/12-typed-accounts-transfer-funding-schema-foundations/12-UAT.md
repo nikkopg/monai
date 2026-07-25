@@ -1,15 +1,15 @@
 ---
-status: partial
+status: complete
 phase: 12-typed-accounts-transfer-funding-schema-foundations
 source: [12-01-SUMMARY.md, 12-02-SUMMARY.md, 12-03-SUMMARY.md]
 started: 2026-07-26T06:10:00Z
-updated: 2026-07-26T06:20:00Z
+updated: 2026-07-26T06:30:00Z
 tester: claude (self-driven at user request; human-visual test deferred)
 ---
 
 ## Current Test
 
-[testing complete — 1 item deferred to human]
+[testing complete]
 
 ## Tests
 
@@ -51,15 +51,15 @@ evidence: test_typed_accounts.py + test_cashflow_view.py = 8 passed; full backen
 
 ### 8. Cashflow page renders correctly in the browser (human visual)
 expected: Open the cashflow page; the spending/income/net totals no longer include the investment money, and the numbers look right to you.
-result: skipped
-reason: needs-human — subjective visual confirmation in the browser; user opted to skip this one. All underlying data/API behavior is proven by tests 1–7. (Note: the "Net worth" hero still combines liquid + investment balances; the liquid/investment display split is Phase 15, not a Phase 12 defect.)
+result: pass
+evidence: user confirmed the cashflow page renders correctly ("pass"). (Note: the "Net worth" hero still combines liquid + investment balances; the liquid/investment display split is Phase 15, not a Phase 12 defect.)
 
 ## Summary
 
 total: 8
-passed: 7
+passed: 8
 issues: 0
-skipped: 1
+skipped: 0
 blocked: 0
 pending: 0
 
