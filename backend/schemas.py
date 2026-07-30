@@ -180,6 +180,79 @@ class PortfolioEventOut(BaseModel):
     price: MoneyDecimal
 
 
+# ---------------------------------------------------------------------------
+# Phase 14 direct-write bodies (CHAT-09/XFER-01..03/ACCT-02) — REST path
+# parallel to the confirm-before-write agent path (14-02). Every positive
+# magnitude uses Field(..., gt=0); the apply_* primitives own sign
+# normalization, these schemas only reject negative/zero at the boundary.
+# ---------------------------------------------------------------------------
+
+
+class TransferCreate(BaseModel):
+    """Body for POST /transactions/transfer (XFER-01)."""
+
+    from_account: str
+    to_account: str
+    amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude; sign is applied per leg")
+    currency: str = "IDR"
+    date: str | None = None
+    notes: str | None = None
+
+
+class InvestmentTransferCreate(BaseModel):
+    """Body for POST /transactions/investment-transfer (XFER-02)."""
+
+    from_account: str
+    platform_id: int = Field(..., description="Required — no by-name resolution, mirrors account-id precedent")
+    amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude")
+    currency: str = "IDR"
+    date: str | None = None
+    notes: str | None = None
+
+
+class FundedBuyCreate(BaseModel):
+    """Body for POST /portfolio-events/funded-buy (XFER-03)."""
+
+    source_account_name: str
+    platform_id: int = Field(..., description="Required — position identity is (ticker, platform_id)")
+    ticker: str
+    quantity: MoneyDecimal = Field(..., gt=0, description="Units; must be positive")
+    price: MoneyDecimal = Field(..., gt=0, description="Price per unit in the event's native currency")
+    cash_amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude; the primitive always debits")
+    cash_currency: str = "IDR"
+    event_currency: str = "IDR"
+    date: str | None = None
+    notes: str | None = None
+    asset_type: str | None = None
+
+
+class FundedSellCreate(BaseModel):
+    """Body for POST /portfolio-events/funded-sell (XFER-03)."""
+
+    source_account_name: str
+    platform_id: int = Field(..., description="Required — position identity is (ticker, platform_id)")
+    ticker: str
+    quantity: MoneyDecimal = Field(..., gt=0, description="Units; must be positive")
+    price: MoneyDecimal = Field(..., gt=0, description="Price per unit in the event's native currency")
+    cash_amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude; the primitive always credits")
+    cash_currency: str = "IDR"
+    event_currency: str = "IDR"
+    date: str | None = None
+    notes: str | None = None
+    asset_type: str | None = None
+
+
+class BalanceAdjustmentCreate(BaseModel):
+    """Body for POST /accounts/{account_id}/adjust-balance (ACCT-02).
+
+    NO gt=0 on target_balance — a target balance may legitimately be zero or
+    negative (e.g. a liability account). account_id comes from the path, not
+    the body.
+    """
+
+    target_balance: MoneyDecimal
+
+
 class HoldingCreate(BaseModel):
     """Direct holding override body (D-03 escape hatch)."""
 
