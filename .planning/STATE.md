@@ -4,17 +4,17 @@ milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
 current_phase: 13
 current_phase_name: shared-mutation-layer-transfer-buy-sell-with-funding-adjustm
-status: executing
+status: verifying
 stopped_at: Completed 13-03-PLAN.md
-last_updated: "2026-07-30T06:46:09.816Z"
+last_updated: "2026-07-30T06:53:27.623Z"
 last_activity: 2026-07-30
 last_activity_desc: Phase 13 execution started
 progress:
   total_phases: 7
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 15
-  completed_plans: 14
-  percent: 29
+  completed_plans: 15
+  percent: 43
 ---
 
 # Project State
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 
 Phase: 13 (shared-mutation-layer-transfer-buy-sell-with-funding-adjustm) — EXECUTING
 Plan: 5 of 5
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-30 -- Phase 13 execution started
 
 Progress: [░░░░░░░░░░] 0%
@@ -66,6 +66,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 13 P02 | 25min | 2 tasks | 2 files |
 | Phase 13 P03 | 20min | 2 tasks | 1 files |
 | Phase 13 P04 | 25min | 2 tasks | 1 files |
+| Phase 13 P05 | 20min | 1 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -100,6 +101,8 @@ Recent decisions affecting current work:
 - [Phase 13]: apply_add_transfer forces is_transfer=True on both legs defensively (not just trusting caller dicts), per PATTERNS.md's explicit-True rule
 - [Phase 13]: apply_add_funded_buy/_sell negate/abs the raw cash_amount before handing to apply_add_transaction — Decimal() conversion happens once inside the primitive, so AuditLog's JSON-serialized after snapshot never contains a Decimal
 - [Phase 13]: apply_add_funded_sell implemented alongside apply_add_funded_buy for symmetry even though only funded_buy has a plan-01 RED test
+- [Phase 13]: apply_add_balance_adjustment composes apply_add_transaction (never hand-rolls insert) — inherits Decimal idiom, account resolution, and single AuditLog row for free
+- [Phase 13]: Balance-adjustment delta computed via a fresh, dedicated, UNFILTERED SUM(amount) query — never reuse tools.py:account_balances, which excludes is_transfer rows and would produce a wrong delta
 
 ### Pending Todos
 
@@ -145,7 +148,7 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-07-30T06:45:19.689Z
+Last session: 2026-07-30T06:52:39.259Z
 Stopped at: Completed 13-03-PLAN.md
 Resume file: None
 
