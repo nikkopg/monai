@@ -526,7 +526,11 @@ explicitly delegated to the planner by CONTEXT.md's "Claude's Discretion"
 section — they are not risk-bearing unknowns, they are open discretion
 points this research narrows but does not close.
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> Both questions carry a "Recommendation:" adopted by the plans (13-02 Task 2:
+> report-only flag, no new column; 13-04 Task 2: `category="Investment"` cash-leg
+> disambiguator). Neither blocks execution.
 
 1. **Should the retro-pairing migration's "flagged" marker be a DB column or
    a log-only report?**
