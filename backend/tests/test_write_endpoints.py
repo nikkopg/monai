@@ -379,6 +379,28 @@ def test_funded_buy_rejects_zero_cash_amount(client, api_key, db_session):
         _cleanup_platform(db_session, plat_id)
 
 
+def test_funded_buy_rejects_nonexistent_platform(client, api_key, db_session):
+    """POST /portfolio-events/funded-buy with a nonexistent platform_id ->
+    422, not 500 (T-14-07)."""
+    name = "zz14test-BadPlatformSrc"
+    ticker = "ZZ14BADPLAT"
+    acc_id = _make_account(db_session, name)
+    try:
+        resp = client.post(
+            "/portfolio-events/funded-buy",
+            json={
+                "source_account_name": name, "platform_id": 999999999, "ticker": ticker,
+                "quantity": 10, "price": 100000, "cash_amount": 1000000,
+                "cash_currency": "IDR", "event_currency": "IDR", "date": "2024-03-19",
+            },
+            headers={"MONAI_API_KEY": api_key},
+        )
+        assert resp.status_code == 422, f"Expected 422, got {resp.status_code}: {resp.text}"
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name)
+
+
 def test_transfer_missing_api_key_401(client, api_key, db_session):
     """POST /transactions/transfer without MONAI_API_KEY header -> 401 (V2).
 
