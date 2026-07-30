@@ -46,7 +46,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 - [ ] **XFER-02**: User can transfer liquid → investment platform (transaction linked to a portfolio deposit event via `source_account_id`)
 - [ ] **XFER-03**: Buy/sell requires choosing a liquid source/destination account; one confirmation writes both entries in one DB transaction
 - [ ] **XFER-04**: Cross-currency entry uses dual amounts (sent + received, each with currency); USD assets valued in IDR via existing FX cache
-- [ ] **XFER-05**: Historical imported transfer rows are retro-paired by migration (matched by date+amount; unmatched flagged, left as-is)
+- [x] **XFER-05**: Historical imported transfer rows are retro-paired by migration (matched by date+amount; unmatched flagged, left as-is)
 
 ### Chat (CHAT — continues v1.0 numbering)
 
@@ -112,7 +112,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | XFER-02 | Phase 13 | Pending |
 | XFER-03 | Phase 13 | Pending |
 | XFER-04 | Phase 13 | Pending |
-| XFER-05 | Phase 13 | Pending |
+| XFER-05 | Phase 13 | Complete |
 | CHAT-09 | Phase 14 | Pending |
 
 **Coverage:**
