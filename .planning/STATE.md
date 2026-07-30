@@ -6,14 +6,14 @@ current_phase: 14
 current_phase_name: REST Endpoints + Agent/MCP Tool Registration
 status: executing
 stopped_at: Completed 13-03-PLAN.md
-last_updated: "2026-07-30T22:44:44.930Z"
+last_updated: "2026-07-30T22:52:37.802Z"
 last_activity: 2026-07-30
 last_activity_desc: Phase 14 execution started
 progress:
   total_phases: 7
   completed_phases: 3
   total_plans: 18
-  completed_plans: 16
+  completed_plans: 17
   percent: 43
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 ## Current Position
 
 Phase: 14 (REST Endpoints + Agent/MCP Tool Registration) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-07-30 -- Phase 14 execution started
 
@@ -68,6 +68,7 @@ Progress: [██████████] 100%
 | Phase 13 P04 | 25min | 2 tasks | 1 files |
 | Phase 13 P05 | 20min | 1 tasks | 1 files |
 | Phase 14 P01 | 45min | 2 tasks | 3 files |
+| Phase 14 P02 | 35min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -107,6 +108,9 @@ Recent decisions affecting current work:
 - [Phase 14]: propose_add_funded_buy/_sell test calls omit a notes kwarg per the plan's literal Task-1 signature list
 - [Phase 14]: test_confirm_malformed_funded_buy_returns_422 is green today by design; becomes the KeyError regression guard once Plan 14-02 wires the add_funded_buy dispatch branch
 - [Phase 14]: Investment-transfer test cleanup scoped to (platform_id, ticker='CASH') not a global ticker purge — CASH is now a real production sentinel, not a disposable test placeholder
+- [Phase 14]: propose_add_funded_buy/sell coerce cash_amount/quantity/price via abs(float(x)) to keep payload as JSON numbers (never str) since apply_add_funded_buy/_sell call abs()/negation before Decimal conversion
+- [Phase 14]: propose_add_investment_transfer's deposit event uses the documented CASH sentinel (ticker=CASH, event_type=deposit, asset_type=cash, price=1) matching the existing asset_type==cash 1:1 valuation convention
+- [Phase 14]: Grouped all 5 new confirm-dispatch branches under one elif operation in (...) block with a single try/except (KeyError, TypeError) guard rather than repeating it 5 times
 
 ### Pending Todos
 
@@ -152,7 +156,7 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-07-30T22:42:51.735Z
+Last session: 2026-07-30T22:51:15.142Z
 Stopped at: Completed 13-03-PLAN.md
 Resume file: None
 

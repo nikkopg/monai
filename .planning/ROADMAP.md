@@ -156,7 +156,7 @@ Plans:
   3. New write tools do not appear on the MCP read-only surface exposed to external clients (correct position relative to `READ_TOOL_NAMES`)
   4. REST endpoints for the new operations exist and route through Phase 13's `apply_*` functions, not ad-hoc SQL
 
-**Plans**: 1/3 plans executed
+**Plans**: 2/3 plans executed
 
 Plans:
 **Wave 1**
@@ -165,7 +165,7 @@ Plans:
 
 **Wave 2** *(blocked on 14-01)*
 
-- [ ] 14-02-PLAN.md — Agent path: 5 propose_* tools (exact apply_* payload shapes), dual registration, confirm dispatch + KeyError→422 guard (CHAT-09)
+- [x] 14-02-PLAN.md — Agent path: 5 propose_* tools (exact apply_* payload shapes), dual registration, confirm dispatch + KeyError→422 guard (CHAT-09)
 
 **Wave 3** *(blocked on 14-02 — shared main.py)*
 
@@ -247,7 +247,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 11. Category Hierarchy | v1.2 | 7/7 | Complete    | 2026-07-20 |
 | 12. Typed Accounts + Transfer Schema | v1.2 | 3/3 | Complete    | 2026-07-25 |
 | 13. Shared Mutation Layer | v1.2 | 5/5 | Complete   | 2026-07-30 |
-| 14. REST + Agent/MCP Tools | v1.2 | 1/3 | In Progress|  |
+| 14. REST + Agent/MCP Tools | v1.2 | 2/3 | In Progress|  |
 | 15. Net Worth Dashboard | v1.2 | 0/? | Not started | - |
 | 16. UI — Extend Existing | v1.2 | 0/? | Not started | - |
 | 17. UI — New Surfaces | v1.2 | 0/? | Not started | - |
