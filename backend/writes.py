@@ -159,6 +159,82 @@ def apply_add_investment_transfer(
     return tx, ev
 
 
+def apply_add_funded_buy(db: Session, after: dict) -> dict:
+    """Insert a funded 'buy' — cash leg + portfolio event, one commit boundary (XFER-03).
+
+    `after` carries both the cash side (source_account_name, cash_currency,
+    cash_amount) and the investment side (ticker, quantity, price,
+    platform_id, event_currency) as one dict (locked contract, Plan 13-01).
+    The cash leg DEBITS the liquid source account (negative amount,
+    is_transfer=True, category='Investment' — the human-readable
+    disambiguator that keeps the leg out of spending/income totals while
+    remaining distinguishable from a plain transfer, D-08/Open-Question-2).
+    The investment leg is a 'buy' PortfolioEvent, which already triggers
+    `recompute_holding_from_events` internally (D-06) — this function never
+    hand-rolls a holding update. The cash-leg `Transaction.currency` and the
+    `PortfolioEvent.currency` are set independently from the two `after`
+    inputs (D-09 dual-currency) — no live FX rate is ever called here
+    (D-10); `recompute_holding_from_events` resolves historical, date-keyed
+    rates itself when it needs an IDR valuation. Does NOT commit.
+    """
+    cash_amount = -abs(after["cash_amount"])  # buy DEBITS the source; Decimal() happens inside apply_add_transaction
+    tx = apply_add_transaction(db, {
+        "account": after["source_account_name"],
+        "amount": cash_amount,
+        "currency": after["cash_currency"],
+        "category": "Investment",
+        "is_transfer": True,
+        "date": after.get("date"),
+        "notes": after.get("notes"),
+    })
+    ev = apply_add_portfolio_event(db, {
+        "ticker": after["ticker"],
+        "event_type": "buy",
+        "quantity": after["quantity"],
+        "price": after["price"],
+        "platform_id": after["platform_id"],
+        "currency": after.get("event_currency"),
+        "date": after.get("date"),
+        "asset_type": after.get("asset_type"),
+    })
+    ev.source_account_id = tx.account_id
+    return {"transaction": tx, "portfolio_event": ev}
+
+
+def apply_add_funded_sell(db: Session, after: dict) -> dict:
+    """Insert a funded 'sell' — cash leg + portfolio event, one commit boundary (XFER-03).
+
+    Near-mirror of `apply_add_funded_buy`: the cash leg CREDITS the liquid
+    destination account (positive amount) instead of debiting it, and the
+    investment leg is a 'sell' PortfolioEvent (which already realizes P&L via
+    `recompute_holding_from_events`, D-06 — never hand-rolled here). Same
+    is_transfer/category tagging, dual-currency handling (D-09), and no-live-FX
+    contract (D-10) as the buy side. Does NOT commit.
+    """
+    cash_amount = abs(after["cash_amount"])  # sell CREDITS the destination; Decimal() happens inside apply_add_transaction
+    tx = apply_add_transaction(db, {
+        "account": after["source_account_name"],
+        "amount": cash_amount,
+        "currency": after["cash_currency"],
+        "category": "Investment",
+        "is_transfer": True,
+        "date": after.get("date"),
+        "notes": after.get("notes"),
+    })
+    ev = apply_add_portfolio_event(db, {
+        "ticker": after["ticker"],
+        "event_type": "sell",
+        "quantity": after["quantity"],
+        "price": after["price"],
+        "platform_id": after["platform_id"],
+        "currency": after.get("event_currency"),
+        "date": after.get("date"),
+        "asset_type": after.get("asset_type"),
+    })
+    ev.source_account_id = tx.account_id
+    return {"transaction": tx, "portfolio_event": ev}
+
+
 def apply_add_account(db: Session, after: dict) -> Account:
     """Insert a new account."""
     acc = Account(
