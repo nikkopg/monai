@@ -136,6 +136,29 @@ def apply_add_transfer(db: Session, leg_a_after: dict, leg_b_after: dict) -> tup
     return leg_a, leg_b
 
 
+def apply_add_investment_transfer(
+    db: Session, cash_leg_after: dict, event_after: dict
+) -> tuple[Transaction, PortfolioEvent]:
+    """Insert a liquid->investment funding transfer (XFER-02/D-05).
+
+    Composes `apply_add_transaction` for the cash leg on the liquid SOURCE
+    account (resolved by name, is_transfer=True per the caller's after-dict)
+    with `apply_add_portfolio_event` for a 'deposit' event on the target
+    platform. After the event flushes (its primitive already flushes to
+    populate `.id`), `event.source_account_id` is set directly to the cash
+    leg's `account_id` — the composition-then-mutate-in-place idiom (mirrors
+    apply_add_portfolio_event's own asset_type post-hoc set). Investment
+    money is NEVER turned into a synthetic `accounts` row (D-05) — it stays a
+    PortfolioEvent linked back to its funding account. No extra top-level
+    audit row — each primitive already writes its own (D-02). Does NOT
+    commit — caller owns the transaction boundary (D-01).
+    """
+    tx = apply_add_transaction(db, cash_leg_after)
+    ev = apply_add_portfolio_event(db, event_after)
+    ev.source_account_id = tx.account_id
+    return tx, ev
+
+
 def apply_add_account(db: Session, after: dict) -> Account:
     """Insert a new account."""
     acc = Account(
