@@ -410,3 +410,61 @@ def test_cashflow_summary_unknown_period_returns_422_not_500(client):
     resp = client.get("/cashflow/summary?period=fortnight")
     assert resp.status_code == 422, resp.text
     assert "fortnight" in str(resp.json().get("detail", ""))
+
+
+# ---------------------------------------------------------------------------
+# Phase 13 Plan 01: ACCT-02/D-08 RED-first scaffold — apply_add_balance_
+# adjustment does not exist yet (Plan 13-05 implements it). This test targets
+# the exclusion contract: a balance adjustment must be invisible to
+# spending_total/income_total/net_total (is_transfer=true) while still
+# counting toward the account's derived (unfiltered SUM) balance.
+# ---------------------------------------------------------------------------
+
+
+def test_adjustment_excluded_from_cashflow(db_session):
+    """A balance adjustment is excluded from spending/income/net totals but
+    still counted in the account's derived (unfiltered) balance (D-08). RED
+    until Plan 13-05 implements apply_add_balance_adjustment."""
+    from decimal import Decimal
+    from backend.tools import spending_total, income_total, net_total
+    from backend.models import Transaction, Account, AuditLog
+
+    acc_id = _make_account(db_session, "zz13test-AdjustCFS")
+    try:
+        before_sum = Decimal(str(db_session.execute(
+            text("SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE account_id = :id"),
+            {"id": acc_id},
+        ).scalar()))
+        before_spending = spending_total("all_time")["total"]
+        before_income = income_total("all_time")["total"]
+        before_net = net_total("all_time")["net"]
+
+        from backend.writes import apply_add_balance_adjustment  # RED: not implemented until Plan 13-05
+        target = before_sum + Decimal("123456")
+        apply_add_balance_adjustment(db_session, acc_id, target)
+        db_session.commit()
+
+        after_spending = spending_total("all_time")["total"]
+        after_income = income_total("all_time")["total"]
+        after_net = net_total("all_time")["net"]
+        assert after_spending == before_spending, "adjustment leaked into spending_total"
+        assert after_income == before_income, "adjustment leaked into income_total"
+        assert after_net == before_net, "adjustment leaked into net_total"
+
+        after_sum = Decimal(str(db_session.execute(
+            text("SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE account_id = :id"),
+            {"id": acc_id},
+        ).scalar()))
+        assert after_sum == target, "adjustment must still count toward the derived (unfiltered) balance"
+    finally:
+        db_session.rollback()
+        tx_ids = [r.id for r in db_session.query(Transaction).filter(Transaction.account_id == acc_id).all()]
+        if tx_ids:
+            db_session.query(AuditLog).filter(
+                AuditLog.entity == "transaction", AuditLog.entity_id.in_(tx_ids)
+            ).delete(synchronize_session=False)
+            db_session.query(Transaction).filter(Transaction.id.in_(tx_ids)).delete(synchronize_session=False)
+        acc = db_session.get(Account, acc_id)
+        if acc:
+            db_session.delete(acc)
+        db_session.commit()

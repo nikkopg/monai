@@ -1524,3 +1524,80 @@ def test_apply_add_balance_adjustment_delta(db_session):
         db_session.rollback()
         _cleanup_account(db_session, name)
 
+
+# ---------------------------------------------------------------------------
+# XFER-01/D-04: leg-protection guard on apply_edit_transaction /
+# apply_delete_transaction. RED until Plan 13-03 adds the allow_paired guard.
+# ---------------------------------------------------------------------------
+
+
+def test_paired_leg_edit_blocked(db_session):
+    """Editing one leg of a paired transfer without allow_paired=True raises
+    ValueError mentioning the pair; the same edit with allow_paired=True
+    proceeds without raising (D-04)."""
+    import datetime as _dt
+    from backend.models import Transaction
+
+    name = "zz13test-PairedEditAcc"
+    acc_id = _make_account(db_session, name)
+    tx = Transaction(
+        date=_dt.datetime(2024, 3, 1, 12, 0, 0), amount=-10000, currency="IDR",
+        category=None, account_id=acc_id, is_transfer=True,
+    )
+    db_session.add(tx)
+    db_session.commit()
+    db_session.refresh(tx)
+    tx.transfer_pair_id = tx.id
+    db_session.commit()
+    tx_id = tx.id
+    try:
+        from backend.writes import apply_edit_transaction
+
+        with pytest.raises(ValueError, match="pair"):
+            apply_edit_transaction(db_session, tx_id, {"notes": "edited"}, None)
+        db_session.rollback()
+
+        apply_edit_transaction(db_session, tx_id, {"notes": "edited"}, None, allow_paired=True)
+        db_session.commit()
+
+        db_session.expire_all()
+        assert db_session.get(Transaction, tx_id).notes == "edited"
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name)
+
+
+def test_paired_leg_delete_blocked(db_session):
+    """Deleting one leg of a paired transfer without allow_paired=True raises
+    ValueError mentioning the pair; the same delete with allow_paired=True
+    proceeds without raising (D-04)."""
+    import datetime as _dt
+    from backend.models import Transaction
+
+    name = "zz13test-PairedDeleteAcc"
+    acc_id = _make_account(db_session, name)
+    tx = Transaction(
+        date=_dt.datetime(2024, 3, 2, 12, 0, 0), amount=-20000, currency="IDR",
+        category=None, account_id=acc_id, is_transfer=True,
+    )
+    db_session.add(tx)
+    db_session.commit()
+    db_session.refresh(tx)
+    tx.transfer_pair_id = tx.id
+    db_session.commit()
+    tx_id = tx.id
+    try:
+        from backend.writes import apply_delete_transaction
+
+        with pytest.raises(ValueError, match="pair"):
+            apply_delete_transaction(db_session, tx_id, None)
+        db_session.rollback()
+
+        apply_delete_transaction(db_session, tx_id, None, allow_paired=True)
+        db_session.commit()
+
+        db_session.expire_all()
+        assert db_session.get(Transaction, tx_id) is None
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name)
