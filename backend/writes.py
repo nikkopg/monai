@@ -76,6 +76,37 @@ def apply_add_transaction(db: Session, after: dict) -> Transaction:
     return tx
 
 
+def apply_add_balance_adjustment(db: Session, account_id: int, target_balance) -> Transaction:
+    """Reconcile an account's derived balance to `target_balance` (ACCT-02, D-07).
+
+    Writes ONE 'Adjustment'-tagged Transaction whose amount is the delta
+    between `target_balance` and the account's current derived balance — a
+    FRESH, UNFILTERED SUM(amount) over ALL of the account's transactions,
+    transfer rows included (Finding 2: `tools.py:account_balances` excludes
+    is_transfer rows and is the WRONG basis for this delta). The row is
+    tagged `is_transfer=True` so it is excluded from spending/income/net
+    cashflow totals (D-08) while still counting toward the unfiltered
+    derived-balance SUM. No stored balance column is written — the balance
+    stays derived.
+    """
+    current = db.execute(
+        text("SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE account_id = :id"),
+        {"id": account_id},
+    ).scalar()
+    delta = Decimal(str(target_balance)) - Decimal(str(current))
+    account = db.get(Account, account_id)
+    after = {
+        "account": account.name if account is not None else "Unknown",
+        "currency": account.currency if account is not None else "IDR",
+        # LOAD-BEARING: str(), not the Decimal itself — AuditLog JSON-serializes
+        # `after`, and apply_add_transaction re-applies Decimal(str(x)) on its own.
+        "amount": str(delta),
+        "category": "Adjustment",
+        "is_transfer": True,
+    }
+    return apply_add_transaction(db, after)
+
+
 def apply_edit_transaction(
     db: Session, tx_id: int, after: dict, before: dict | None, allow_paired: bool = False
 ) -> Transaction:
