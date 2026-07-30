@@ -29,7 +29,7 @@
     "skip_discuss": true,
     "code_review": true,
     "code_review_depth": "standard",
-    "_auto_chain_active": true,
+    "_auto_chain_active": false,
     "tdd_mode": false,
     "pattern_mapper": true,
     "ai_integration_phase": true,
@@ -79,7 +79,8 @@
     "enabled": false
   },
   "model_overrides": {
-    "gsd-planner": "fable",
-    "gsd-debugger": "fable"
+    "gsd-planner": "opus",
+    "gsd-debugger": "opus",
+    "gsd-plan-checker": "opus"
   }
 }
