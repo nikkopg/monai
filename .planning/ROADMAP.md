@@ -45,7 +45,7 @@ transfer/buy-sell mechanics, with BudgetBakers-grade record and category managem
 - [x] **Phase 11: Category Hierarchy — Schema, Audit, Migration** - First-class 3-level categories replace free-string `category`, migrated via human-reviewed mapping with parity checks (completed 2026-07-19)
 - [x] **Phase 12: Typed Accounts + Transfer/Funding Schema Foundations** - `accounts.type` audited + constrained to liquid/investment; additive columns for transfer pairing and funded portfolio events (completed 2026-07-25)
 - [x] **Phase 13: Shared Mutation Layer — Transfer, Buy/Sell-with-Funding, Adjustment Writes** - `writes.py` gains atomic, pair-aware `apply_*` functions for every new money-movement type (completed 2026-07-30)
-- [ ] **Phase 14: REST Endpoints + Agent/MCP Tool Registration** - New endpoints wired to Phase 13's writes; write tools registered on the agent and kept off the MCP read-only surface
+- [x] **Phase 14: REST Endpoints + Agent/MCP Tool Registration** - New endpoints wired to Phase 13's writes; write tools registered on the agent and kept off the MCP read-only surface (completed 2026-07-30)
 - [ ] **Phase 15: Net Worth Aggregation + Dashboard** - Main dashboard shows net worth as liquid + investment sums that never overlap
 - [ ] **Phase 16: UI — Extend Existing Components** - Account manager, platform detail, and the record modal grow to cover typed accounts, PnL/buy-sell history, and Expense/Income/Transfer entry
 - [ ] **Phase 17: UI — New Surfaces (Records Tab, Categories Manager)** - Date-grouped Records ledger with filters/bulk actions; category tree manager in Settings
@@ -156,7 +156,7 @@ Plans:
   3. New write tools do not appear on the MCP read-only surface exposed to external clients (correct position relative to `READ_TOOL_NAMES`)
   4. REST endpoints for the new operations exist and route through Phase 13's `apply_*` functions, not ad-hoc SQL
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 
 Plans:
 **Wave 1**
@@ -169,7 +169,7 @@ Plans:
 
 **Wave 3** *(blocked on 14-02 — shared main.py)*
 
-- [ ] 14-03-PLAN.md — Direct REST path: 5 *Create schemas + 5 require_api_key routes through apply_* with 422/401 validation (CHAT-09)
+- [x] 14-03-PLAN.md — Direct REST path: 5 *Create schemas + 5 require_api_key routes through apply_* with 422/401 validation (CHAT-09)
 
 ### Phase 15: Net Worth Aggregation + Dashboard
 
@@ -247,7 +247,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 11. Category Hierarchy | v1.2 | 7/7 | Complete    | 2026-07-20 |
 | 12. Typed Accounts + Transfer Schema | v1.2 | 3/3 | Complete    | 2026-07-25 |
 | 13. Shared Mutation Layer | v1.2 | 5/5 | Complete   | 2026-07-30 |
-| 14. REST + Agent/MCP Tools | v1.2 | 2/3 | In Progress|  |
+| 14. REST + Agent/MCP Tools | v1.2 | 3/3 | Complete   | 2026-07-30 |
 | 15. Net Worth Dashboard | v1.2 | 0/? | Not started | - |
 | 16. UI — Extend Existing | v1.2 | 0/? | Not started | - |
 | 17. UI — New Surfaces | v1.2 | 0/? | Not started | - |

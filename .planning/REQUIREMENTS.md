@@ -50,7 +50,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Chat (CHAT — continues v1.0 numbering)
 
-- [ ] **CHAT-09**: User can perform the new operations (records, transfers, funded buy/sell, category changes) via chat with the existing confirm-before-write flow; new write tools registered on the agent and kept off the MCP read-only surface
+- [x] **CHAT-09**: User can perform the new operations (records, transfers, funded buy/sell, category changes) via chat with the existing confirm-before-write flow; new write tools registered on the agent and kept off the MCP read-only surface
 
 ## Future Requirements
 
@@ -113,7 +113,7 @@ Which phases cover which requirements. Updated during roadmap creation.
 | XFER-03 | Phase 13 | Complete |
 | XFER-04 | Phase 13 | Complete |
 | XFER-05 | Phase 13 | Complete |
-| CHAT-09 | Phase 14 | Pending |
+| CHAT-09 | Phase 14 | Complete |
 
 **Coverage:**
 

@@ -4,17 +4,17 @@ milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
 current_phase: 14
 current_phase_name: REST Endpoints + Agent/MCP Tool Registration
-status: executing
+status: verifying
 stopped_at: Completed 13-03-PLAN.md
-last_updated: "2026-07-30T22:52:37.802Z"
+last_updated: "2026-07-30T23:03:15.820Z"
 last_activity: 2026-07-30
 last_activity_desc: Phase 14 execution started
 progress:
   total_phases: 7
-  completed_phases: 3
+  completed_phases: 4
   total_plans: 18
-  completed_plans: 17
-  percent: 43
+  completed_plans: 18
+  percent: 57
 ---
 
 # Project State
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 
 Phase: 14 (REST Endpoints + Agent/MCP Tool Registration) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-30 -- Phase 14 execution started
 
 Progress: [██████████] 100%
@@ -69,6 +69,7 @@ Progress: [██████████] 100%
 | Phase 13 P05 | 20min | 1 tasks | 1 files |
 | Phase 14 P01 | 45min | 2 tasks | 3 files |
 | Phase 14 P02 | 35min | 2 tasks | 3 files |
+| Phase 14 P03 | 25min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -111,6 +112,7 @@ Recent decisions affecting current work:
 - [Phase 14]: propose_add_funded_buy/sell coerce cash_amount/quantity/price via abs(float(x)) to keep payload as JSON numbers (never str) since apply_add_funded_buy/_sell call abs()/negation before Decimal conversion
 - [Phase 14]: propose_add_investment_transfer's deposit event uses the documented CASH sentinel (ticker=CASH, event_type=deposit, asset_type=cash, price=1) matching the existing asset_type==cash 1:1 valuation convention
 - [Phase 14]: Grouped all 5 new confirm-dispatch branches under one elif operation in (...) block with a single try/except (KeyError, TypeError) guard rather than repeating it 5 times
+- [Phase 14]: Corrected plan constraint: funded-buy/sell REST bodies must coerce quantity/price/cash_amount to float not Decimal before calling apply_add_funded_buy/apply_add_funded_sell, since the primitive inner after-dict flows into AuditLog.after JSONB and raw Decimal breaks serialization regardless of REST vs proposal path
 
 ### Pending Todos
 
@@ -156,7 +158,7 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-07-30T22:51:15.142Z
+Last session: 2026-07-30T23:02:08.569Z
 Stopped at: Completed 13-03-PLAN.md
 Resume file: None
 
