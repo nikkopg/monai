@@ -2,18 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
-current_phase: 13
-current_phase_name: shared-mutation-layer-transfer-buy-sell-with-funding-adjustm
-status: verified
-stopped_at: Phase 13 re-verified — passed 6/6
-last_updated: "2026-07-30T10:00:00.000Z"
+current_phase: 14
+current_phase_name: REST Endpoints + Agent/MCP Tool Registration
+status: executing
+stopped_at: Completed 13-03-PLAN.md
+last_updated: "2026-07-30T22:44:44.930Z"
 last_activity: 2026-07-30
-last_activity_desc: Phase 13 re-verified (passed 6/6); ready to plan Phase 14
+last_activity_desc: Phase 14 execution started
 progress:
   total_phases: 7
   completed_phases: 3
-  total_plans: 15
-  completed_plans: 15
+  total_plans: 18
+  completed_plans: 16
   percent: 43
 ---
 
@@ -24,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-18)
 
 **Core value:** You can understand and manage your entire financial life — spending and investments — by talking to a trustworthy AI that never fabricates a number and never changes your data without your say-so.
-**Current focus:** Phase 13 — shared-mutation-layer-transfer-buy-sell-with-funding-adjustm
+**Current focus:** Phase 14 — REST Endpoints + Agent/MCP Tool Registration
 
 ## Current Position
 
-Phase: 13 (shared-mutation-layer-transfer-buy-sell-with-funding-adjustm) — VERIFIED (passed 6/6)
-Plan: 5 of 5
-Status: Phase complete + re-verified — ready to plan Phase 14
-Last activity: 2026-07-30 -- Phase 13 re-verified on /gsd-verify-phase 13
+Phase: 14 (REST Endpoints + Agent/MCP Tool Registration) — EXECUTING
+Plan: 2 of 3
+Status: Ready to execute
+Last activity: 2026-07-30 -- Phase 14 execution started
 
 Progress: [██████████] 100%
 
@@ -67,6 +67,7 @@ Progress: [██████████] 100%
 | Phase 13 P03 | 20min | 2 tasks | 1 files |
 | Phase 13 P04 | 25min | 2 tasks | 1 files |
 | Phase 13 P05 | 20min | 1 tasks | 1 files |
+| Phase 14 P01 | 45min | 2 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -103,6 +104,9 @@ Recent decisions affecting current work:
 - [Phase 13]: apply_add_funded_sell implemented alongside apply_add_funded_buy for symmetry even though only funded_buy has a plan-01 RED test
 - [Phase 13]: apply_add_balance_adjustment composes apply_add_transaction (never hand-rolls insert) — inherits Decimal idiom, account resolution, and single AuditLog row for free
 - [Phase 13]: Balance-adjustment delta computed via a fresh, dedicated, UNFILTERED SUM(amount) query — never reuse tools.py:account_balances, which excludes is_transfer rows and would produce a wrong delta
+- [Phase 14]: propose_add_funded_buy/_sell test calls omit a notes kwarg per the plan's literal Task-1 signature list
+- [Phase 14]: test_confirm_malformed_funded_buy_returns_422 is green today by design; becomes the KeyError regression guard once Plan 14-02 wires the add_funded_buy dispatch branch
+- [Phase 14]: Investment-transfer test cleanup scoped to (platform_id, ticker='CASH') not a global ticker purge — CASH is now a real production sentinel, not a disposable test placeholder
 
 ### Pending Todos
 
@@ -148,7 +152,7 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-07-30T06:52:39.259Z
+Last session: 2026-07-30T22:42:51.735Z
 Stopped at: Completed 13-03-PLAN.md
 Resume file: None
 
