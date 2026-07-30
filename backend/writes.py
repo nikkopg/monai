@@ -76,11 +76,18 @@ def apply_add_transaction(db: Session, after: dict) -> Transaction:
     return tx
 
 
-def apply_edit_transaction(db: Session, tx_id: int, after: dict, before: dict | None) -> Transaction:
+def apply_edit_transaction(
+    db: Session, tx_id: int, after: dict, before: dict | None, allow_paired: bool = False
+) -> Transaction:
     """Partial-update an existing transaction. None fields in `after` are left unchanged."""
     tx = db.get(Transaction, tx_id)
     if tx is None:
         raise ValueError(f"Transaction {tx_id} not found during confirm")
+    if tx.transfer_pair_id is not None and not allow_paired:
+        raise ValueError(
+            f"Transaction {tx_id} is one leg of transfer pair {tx.transfer_pair_id} — "
+            "use the pair-aware transfer function, or pass allow_paired=True (D-04)"
+        )
     if after.get("category") is not None:
         tx.category = after["category"]
         tx.category_id = resolve_category_id(db, after["category"])  # D-08 dual-write, re-resolve on change
@@ -95,10 +102,15 @@ def apply_edit_transaction(db: Session, tx_id: int, after: dict, before: dict | 
     return tx
 
 
-def apply_delete_transaction(db: Session, tx_id: int, before: dict | None) -> None:
+def apply_delete_transaction(db: Session, tx_id: int, before: dict | None, allow_paired: bool = False) -> None:
     """Delete a transaction by id (no-op if already gone) and audit it."""
     tx = db.get(Transaction, tx_id)
     if tx is not None:
+        if tx.transfer_pair_id is not None and not allow_paired:
+            raise ValueError(
+                f"Transaction {tx_id} is one leg of transfer pair {tx.transfer_pair_id} — "
+                "use the pair-aware transfer function, or pass allow_paired=True (D-04)"
+            )
         db.delete(tx)
     db.add(AuditLog(entity="transaction", entity_id=tx_id, operation="delete",
                     before=before, after=None))
