@@ -87,6 +87,7 @@ from backend.schemas import (
     AccountOut,
     AccountUpdate,
     AffectedCountResponse,
+    BalanceAdjustmentCreate,
     CashflowSummary,
     CategoryCreate,
     CategoryMergeRequest,
@@ -94,10 +95,13 @@ from backend.schemas import (
     CategoryRenameRequest,
     CategoryUpdate,
     ConfirmRequest,
+    FundedBuyCreate,
+    FundedSellCreate,
     ImportResponse,
     HoldingCreate,
     HoldingOut,
     HoldingUpdate,
+    InvestmentTransferCreate,
     PlatformCreate,
     PlatformOut,
     PlatformUpdate,
@@ -113,6 +117,7 @@ from backend.schemas import (
     TransactionCreate,
     TransactionOut,
     TransactionUpdate,
+    TransferCreate,
     ValueHistoryResponse,
 )
 from backend.tools import (
@@ -246,6 +251,24 @@ def update_account(account_id: int, payload: AccountUpdate, db: Session = Depend
     from backend.query import reset_engine
     reset_engine()
     return acc
+
+
+@app.post("/accounts/{account_id}/adjust-balance", status_code=201, dependencies=[Depends(require_api_key)])
+def adjust_account_balance(account_id: int, payload: BalanceAdjustmentCreate, db: Session = Depends(get_session)):
+    """Reconcile an account's derived balance to a target (ACCT-02, CHAT-09).
+
+    Routes through apply_add_balance_adjustment — the delta is computed there
+    via a fresh unfiltered SUM(amount), never re-derived here.
+    """
+    try:
+        tx = apply_add_balance_adjustment(db, account_id, payload.target_balance)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(tx)
+    from backend.query import reset_engine
+    reset_engine()
+    return {"transaction_id": tx.id, "amount": str(tx.amount)}
 
 
 @app.delete("/accounts/{account_id}", dependencies=[Depends(require_api_key)])
@@ -417,6 +440,62 @@ def create_portfolio_event(payload: PortfolioEventCreate, db: Session = Depends(
     from backend.query import reset_engine
     reset_engine()
     return ev
+
+
+@app.post("/portfolio-events/funded-buy", status_code=201, dependencies=[Depends(require_api_key)])
+def create_funded_buy(payload: FundedBuyCreate, db: Session = Depends(get_session)):
+    """Direct (non-agent) funded 'buy' — cash leg + portfolio event (CHAT-09/XFER-03).
+
+    Coerces quantity/price/cash_amount to float before calling apply_add_funded_buy
+    (see LOAD-BEARING comment below) — apply_add_transaction/apply_add_portfolio_event
+    write their `after` dict straight into AuditLog.after (JSONB), so a raw Decimal
+    would break serialization even on this non-proposal REST path.
+    """
+    # LOAD-BEARING: coerce to float, not Decimal — apply_add_funded_buy builds an
+    # inner after-dict that flows straight into AuditLog.after (JSONB); a raw
+    # Decimal there raises TypeError on write (auditlog-decimal-json-gotcha).
+    # float is JSON-serializable and still supports the primitive's own abs()/
+    # negation, matching 14-02's propose_add_funded_buy convention exactly.
+    after = {
+        "source_account_name": payload.source_account_name, "platform_id": payload.platform_id,
+        "ticker": payload.ticker, "quantity": float(payload.quantity), "price": float(payload.price),
+        "cash_amount": float(payload.cash_amount), "cash_currency": payload.cash_currency,
+        "event_currency": payload.event_currency, "date": payload.date,
+        "notes": payload.notes, "asset_type": payload.asset_type,
+    }
+    try:
+        result = apply_add_funded_buy(db, after)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(result["transaction"])
+    db.refresh(result["portfolio_event"])
+    from backend.query import reset_engine
+    reset_engine()
+    return {"transaction_id": result["transaction"].id, "portfolio_event_id": result["portfolio_event"].id}
+
+
+@app.post("/portfolio-events/funded-sell", status_code=201, dependencies=[Depends(require_api_key)])
+def create_funded_sell(payload: FundedSellCreate, db: Session = Depends(get_session)):
+    """Direct (non-agent) funded 'sell' — cash leg + portfolio event (CHAT-09/XFER-03)."""
+    # LOAD-BEARING: float, not Decimal — see create_funded_buy's comment above.
+    after = {
+        "source_account_name": payload.source_account_name, "platform_id": payload.platform_id,
+        "ticker": payload.ticker, "quantity": float(payload.quantity), "price": float(payload.price),
+        "cash_amount": float(payload.cash_amount), "cash_currency": payload.cash_currency,
+        "event_currency": payload.event_currency, "date": payload.date,
+        "notes": payload.notes, "asset_type": payload.asset_type,
+    }
+    try:
+        result = apply_add_funded_sell(db, after)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(result["transaction"])
+    db.refresh(result["portfolio_event"])
+    from backend.query import reset_engine
+    reset_engine()
+    return {"transaction_id": result["transaction"].id, "portfolio_event_id": result["portfolio_event"].id}
 
 
 @app.post("/holdings", response_model=HoldingOut, status_code=201, dependencies=[Depends(require_api_key)])
@@ -724,6 +803,63 @@ def delete_transaction(tx_id: int, db: Session = Depends(get_session)):
     from backend.query import reset_engine
     reset_engine()
     return {"status": "deleted"}
+
+
+@app.post("/transactions/transfer", status_code=201, dependencies=[Depends(require_api_key)])
+def create_transfer(payload: TransferCreate, db: Session = Depends(get_session)):
+    """Direct (non-agent) liquid<->liquid transfer (CHAT-09/XFER-01).
+
+    Routes through apply_add_transfer — a confirm-free write path parallel to
+    the chat proposal flow, gated by require_api_key instead of a token.
+    """
+    leg_a_after = {
+        "account": payload.from_account, "amount": str(-abs(payload.amount)),
+        "currency": payload.currency, "date": payload.date, "notes": payload.notes,
+    }
+    leg_b_after = {
+        "account": payload.to_account, "amount": str(abs(payload.amount)),
+        "currency": payload.currency, "date": payload.date, "notes": payload.notes,
+    }
+    try:
+        leg_a, leg_b = apply_add_transfer(db, leg_a_after, leg_b_after)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(leg_a)
+    db.refresh(leg_b)
+    from backend.query import reset_engine
+    reset_engine()
+    return {"leg_a_id": leg_a.id, "leg_b_id": leg_b.id, "transfer_pair_id": leg_a.transfer_pair_id}
+
+
+@app.post("/transactions/investment-transfer", status_code=201, dependencies=[Depends(require_api_key)])
+def create_investment_transfer(payload: InvestmentTransferCreate, db: Session = Depends(get_session)):
+    """Direct (non-agent) liquid->investment funding transfer (CHAT-09/XFER-02).
+
+    Cash leg debits the liquid source account; the investment side is a
+    'deposit' PortfolioEvent using the documented CASH sentinel (ticker=CASH,
+    asset_type=cash, price=1, quantity=amount — matches the existing
+    asset_type=='cash' 1:1 valuation convention).
+    """
+    cash_leg = {
+        "account": payload.from_account, "amount": str(-abs(payload.amount)),
+        "currency": payload.currency, "date": payload.date, "notes": payload.notes,
+    }
+    event = {
+        "ticker": "CASH", "event_type": "deposit", "quantity": str(abs(payload.amount)),
+        "price": "1", "platform_id": payload.platform_id, "currency": payload.currency,
+        "date": payload.date, "asset_type": "cash",
+    }
+    try:
+        tx, ev = apply_add_investment_transfer(db, cash_leg, event)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(tx)
+    db.refresh(ev)
+    from backend.query import reset_engine
+    reset_engine()
+    return {"transaction_id": tx.id, "portfolio_event_id": ev.id}
 
 
 @app.get("/categories", response_model=list[CategoryNode])
