@@ -4,11 +4,11 @@ milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
 current_phase: 13
 current_phase_name: shared-mutation-layer-transfer-buy-sell-with-funding-adjustm
-status: verifying
-stopped_at: Completed 13-03-PLAN.md
-last_updated: "2026-07-30T06:53:27.623Z"
+status: verified
+stopped_at: Phase 13 re-verified — passed 6/6
+last_updated: "2026-07-30T10:00:00.000Z"
 last_activity: 2026-07-30
-last_activity_desc: Phase 13 execution started
+last_activity_desc: Phase 13 re-verified (passed 6/6); ready to plan Phase 14
 progress:
   total_phases: 7
   completed_phases: 3
@@ -28,12 +28,12 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 
 ## Current Position
 
-Phase: 13 (shared-mutation-layer-transfer-buy-sell-with-funding-adjustm) — EXECUTING
+Phase: 13 (shared-mutation-layer-transfer-buy-sell-with-funding-adjustm) — VERIFIED (passed 6/6)
 Plan: 5 of 5
-Status: Phase complete — ready for verification
-Last activity: 2026-07-30 -- Phase 13 execution started
+Status: Phase complete + re-verified — ready to plan Phase 14
+Last activity: 2026-07-30 -- Phase 13 re-verified on /gsd-verify-phase 13
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 

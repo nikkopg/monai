@@ -1,6 +1,7 @@
 ---
 phase: 13-shared-mutation-layer-transfer-buy-sell-with-funding-adjustm
 verified: 2026-07-30T14:10:00Z
+reverified: 2026-07-30T10:00:00Z
 status: passed
 score: 6/6 must-haves verified
 behavior_unverified: 0
@@ -12,7 +13,7 @@ overrides_applied: 0
 **Phase Goal:** Every new kind of money movement (transfer, funded buy/sell, balance adjustment, category edit) can be written atomically through one trusted layer (`backend/writes.py`). Backend mutation layer + one migration only — REST/agent/MCP wiring is Phase 14 and MUST NOT be present.
 **Verified:** 2026-07-30T14:10:00Z
 **Status:** passed
-**Re-verification:** No — initial verification
+**Re-verification:** Yes — re-run 2026-07-30 on explicit `/gsd-verify-phase 13`. All 6 success criteria independently re-derived against the current codebase; every `apply_*` function present and behaving as claimed (minor line-number shifts only, no logic drift). Test suite: **257 passed, 1 failed** (up from 256 — the +1 is `test_apply_add_funded_sell_one_commit_boundary`, the Nyquist test from commit 0a20481 that closed the sole prior gap). The 1 failure is the documented pre-existing, unrelated `test_settings.py::test_put_settings_requires_key` (503 vs 401), NOT a Phase 13 regression. No new gaps.
 
 ## Goal Achievement
 
