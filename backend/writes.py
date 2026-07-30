@@ -431,6 +431,9 @@ def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
     average-cost pool. An event that omits its own currency defaults to the
     holding's currency (or "IDR" if this is the position's first event).
     """
+    if db.get(Platform, after["platform_id"]) is None:
+        raise ValueError(f"platform {after['platform_id']} not found")
+
     existing_holding = db.query(Holding).filter(
         Holding.ticker == after["ticker"], Holding.platform_id == after["platform_id"]
     ).one_or_none()
