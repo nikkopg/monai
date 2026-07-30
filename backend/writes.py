@@ -173,7 +173,8 @@ def apply_add_investment_transfer(
     """Insert a liquid->investment funding transfer (XFER-02/D-05).
 
     Composes `apply_add_transaction` for the cash leg on the liquid SOURCE
-    account (resolved by name, is_transfer=True per the caller's after-dict)
+    account (resolved by name; the layer forces is_transfer=True, mirroring
+    apply_add_transfer — T-13-07, not left to the caller's after-dict)
     with `apply_add_portfolio_event` for a 'deposit' event on the target
     platform. After the event flushes (its primitive already flushes to
     populate `.id`), `event.source_account_id` is set directly to the cash
@@ -184,7 +185,7 @@ def apply_add_investment_transfer(
     audit row — each primitive already writes its own (D-02). Does NOT
     commit — caller owns the transaction boundary (D-01).
     """
-    tx = apply_add_transaction(db, cash_leg_after)
+    tx = apply_add_transaction(db, {**cash_leg_after, "is_transfer": True})
     ev = apply_add_portfolio_event(db, event_after)
     ev.source_account_id = tx.account_id
     return tx, ev
