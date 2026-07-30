@@ -1472,6 +1472,54 @@ def test_funded_buy_dual_currency_legs(db_session):
             db_session.commit()
 
 
+def test_apply_add_funded_sell_one_commit_boundary(db_session):
+    """apply_add_funded_sell(db, after) CREDITS a liquid destination account
+    (positive amount, is_transfer=true — mirror of the funded-buy debit),
+    records a 'sell' PortfolioEvent linked back via source_account_id, all
+    below ONE caller commit with no internal db.commit() (XFER-03/D-06). This
+    is the sell-side mirror the phase implemented for symmetry (writes.py
+    apply_add_funded_sell) but never RED-pinned."""
+    from decimal import Decimal
+    from backend.models import Transaction, PortfolioEvent, Platform
+
+    name = "zz13test-FundedSellDest"
+    ticker = "ZZ13FUNDEDSELL"
+    acc_id = _make_account(db_session, name)
+    plat_id = _make_platform(db_session, "zz13test-FundedSellPlatform")
+    _cleanup_ticker(db_session, ticker)
+    try:
+        from backend.writes import apply_add_funded_sell
+
+        after = {
+            "source_account_name": name, "cash_currency": "IDR", "cash_amount": 1000000,
+            "ticker": ticker, "quantity": 10, "price": 100000, "platform_id": plat_id,
+            "event_currency": "IDR", "date": "2024-01-27",
+        }
+
+        result = apply_add_funded_sell(db_session, after)
+        assert result["transaction"].id is not None
+        assert result["portfolio_event"].id is not None
+        db_session.commit()
+
+        db_session.expire_all()
+        tx = db_session.query(Transaction).filter(Transaction.account_id == acc_id).one()
+        assert tx.is_transfer is True
+        # sell CREDITS the destination — positive, the sign that distinguishes it from a funded buy
+        assert tx.amount == Decimal("1000000")
+
+        ev = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
+        assert ev.event_type == "sell"
+        assert ev.source_account_id == acc_id
+    finally:
+        db_session.rollback()
+        _cleanup_ticker(db_session, ticker)
+        _cleanup_account(db_session, name)
+        plat = db_session.get(Platform, plat_id)
+        if plat is not None:
+            db_session.delete(plat)
+            db_session.commit()
+
+
 def test_apply_add_balance_adjustment_delta(db_session):
     """apply_add_balance_adjustment(db, account_id, target_balance) inserts
     exactly one 'Adjustment'-tagged Transaction whose amount equals
