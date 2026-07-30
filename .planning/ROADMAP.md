@@ -124,7 +124,25 @@ Plans:
   5. Cross-currency transfer/buy-sell entries accept dual amounts (sent + received, each with its own currency); no write path forces a live-only FX rate
   6. Historical imported transfer rows are retro-paired by a migration pass (matched by date+amount); unmatched rows are flagged and left as-is, not guessed
 
-**Plans**: TBD
+**Plans**: 5 plans
+
+Plans:
+**Wave 1**
+
+- [ ] 13-01-PLAN.md — RED test scaffold for all 5 writes.py apply_* functions + leg guard + D-08 exclusion (ACCT-02, XFER-01..04)
+- [ ] 13-02-PLAN.md — Retro-pairing migration 011 + standalone matching-logic test (XFER-05)
+
+**Wave 2** *(blocked on 13-01)*
+
+- [ ] 13-03-PLAN.md — apply_add_transfer (paired liquid→liquid) + allow_paired leg-protection guard (XFER-01)
+
+**Wave 3** *(blocked on 13-03 — shared writes.py)*
+
+- [ ] 13-04-PLAN.md — apply_add_investment_transfer + apply_add_funded_buy/sell (XFER-02, XFER-03, XFER-04)
+
+**Wave 4** *(blocked on 13-04 — shared writes.py)*
+
+- [ ] 13-05-PLAN.md — apply_add_balance_adjustment (unfiltered derived-balance delta) (ACCT-02)
 
 ### Phase 14: REST Endpoints + Agent/MCP Tool Registration
 
