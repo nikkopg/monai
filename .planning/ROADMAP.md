@@ -124,7 +124,7 @@ Plans:
   5. Cross-currency transfer/buy-sell entries accept dual amounts (sent + received, each with its own currency); no write path forces a live-only FX rate
   6. Historical imported transfer rows are retro-paired by a migration pass (matched by date+amount); unmatched rows are flagged and left as-is, not guessed
 
-**Plans**: 3/5 plans executed
+**Plans**: 4/5 plans executed
 
 Plans:
 **Wave 1**
@@ -138,7 +138,7 @@ Plans:
 
 **Wave 3** *(blocked on 13-03 — shared writes.py)*
 
-- [ ] 13-04-PLAN.md — apply_add_investment_transfer + apply_add_funded_buy/sell (XFER-02, XFER-03, XFER-04)
+- [x] 13-04-PLAN.md — apply_add_investment_transfer + apply_add_funded_buy/sell (XFER-02, XFER-03, XFER-04)
 
 **Wave 4** *(blocked on 13-04 — shared writes.py)*
 
@@ -233,7 +233,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 10. Investments + Settings + Consistency Sweep | v1.1 | 1/1 | Complete | 2026-07-18 |
 | 11. Category Hierarchy | v1.2 | 7/7 | Complete    | 2026-07-20 |
 | 12. Typed Accounts + Transfer Schema | v1.2 | 3/3 | Complete    | 2026-07-25 |
-| 13. Shared Mutation Layer | v1.2 | 3/5 | In Progress|  |
+| 13. Shared Mutation Layer | v1.2 | 4/5 | In Progress|  |
 | 14. REST + Agent/MCP Tools | v1.2 | 0/? | Not started | - |
 | 15. Net Worth Dashboard | v1.2 | 0/? | Not started | - |
 | 16. UI — Extend Existing | v1.2 | 0/? | Not started | - |

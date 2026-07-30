@@ -43,9 +43,9 @@ Requirements for this milestone. Each maps to roadmap phases.
 ### Connection layer (XFER)
 
 - [x] **XFER-01**: User can transfer between liquid accounts; stored as paired records via `transfer_pair_id`
-- [ ] **XFER-02**: User can transfer liquid → investment platform (transaction linked to a portfolio deposit event via `source_account_id`)
-- [ ] **XFER-03**: Buy/sell requires choosing a liquid source/destination account; one confirmation writes both entries in one DB transaction
-- [ ] **XFER-04**: Cross-currency entry uses dual amounts (sent + received, each with currency); USD assets valued in IDR via existing FX cache
+- [x] **XFER-02**: User can transfer liquid → investment platform (transaction linked to a portfolio deposit event via `source_account_id`)
+- [x] **XFER-03**: Buy/sell requires choosing a liquid source/destination account; one confirmation writes both entries in one DB transaction
+- [x] **XFER-04**: Cross-currency entry uses dual amounts (sent + received, each with currency); USD assets valued in IDR via existing FX cache
 - [x] **XFER-05**: Historical imported transfer rows are retro-paired by migration (matched by date+amount; unmatched flagged, left as-is)
 
 ### Chat (CHAT — continues v1.0 numbering)
@@ -109,9 +109,9 @@ Which phases cover which requirements. Updated during roadmap creation.
 | PLAT-01 | Phase 17 | Pending |
 | PLAT-02 | Phase 16 | Pending |
 | XFER-01 | Phase 13 | Complete |
-| XFER-02 | Phase 13 | Pending |
-| XFER-03 | Phase 13 | Pending |
-| XFER-04 | Phase 13 | Pending |
+| XFER-02 | Phase 13 | Complete |
+| XFER-03 | Phase 13 | Complete |
+| XFER-04 | Phase 13 | Complete |
 | XFER-05 | Phase 13 | Complete |
 | CHAT-09 | Phase 14 | Pending |
 
