@@ -129,7 +129,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 13-01-PLAN.md — RED test scaffold for all 5 writes.py apply_* functions + leg guard + D-08 exclusion (ACCT-02, XFER-01..04)
+- [x] 13-01-PLAN.md — RED test scaffold for all 5 writes.py apply_* functions + leg guard + D-08 exclusion (ACCT-02, XFER-01..04)
 - [ ] 13-02-PLAN.md — Retro-pairing migration 011 + standalone matching-logic test (XFER-05)
 
 **Wave 2** *(blocked on 13-01)*
@@ -233,7 +233,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 10. Investments + Settings + Consistency Sweep | v1.1 | 1/1 | Complete | 2026-07-18 |
 | 11. Category Hierarchy | v1.2 | 7/7 | Complete    | 2026-07-20 |
 | 12. Typed Accounts + Transfer Schema | v1.2 | 3/3 | Complete    | 2026-07-25 |
-| 13. Shared Mutation Layer | v1.2 | 0/? | Not started | - |
+| 13. Shared Mutation Layer | v1.2 | 1/5 | In Progress|  |
 | 14. REST + Agent/MCP Tools | v1.2 | 0/? | Not started | - |
 | 15. Net Worth Dashboard | v1.2 | 0/? | Not started | - |
 | 16. UI — Extend Existing | v1.2 | 0/? | Not started | - |

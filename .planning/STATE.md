@@ -2,15 +2,18 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
+current_phase: 13
+current_phase_name: shared-mutation-layer-transfer-buy-sell-with-funding-adjustm
 status: executing
 stopped_at: Phase 13 context gathered
-last_updated: "2026-07-30T00:07:22.644Z"
-last_activity: 2026-07-30 -- Phase 13 planning complete
+last_updated: "2026-07-30T00:31:32.008Z"
+last_activity: 2026-07-30
+last_activity_desc: Phase 13 execution started
 progress:
   total_phases: 7
   completed_phases: 2
   total_plans: 15
-  completed_plans: 10
+  completed_plans: 11
   percent: 29
 ---
 
@@ -21,14 +24,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-18)
 
 **Core value:** You can understand and manage your entire financial life — spending and investments — by talking to a trustworthy AI that never fabricates a number and never changes your data without your say-so.
-**Current focus:** Phase 13 — shared mutation layer — transfer, buy/sell with funding, adjustment writes
+**Current focus:** Phase 13 — shared-mutation-layer-transfer-buy-sell-with-funding-adjustm
 
 ## Current Position
 
-Phase: 13
-Plan: Not started
+Phase: 13 (shared-mutation-layer-transfer-buy-sell-with-funding-adjustm) — EXECUTING
+Plan: 2 of 5
 Status: Ready to execute
-Last activity: 2026-07-30 -- Phase 13 planning complete
+Last activity: 2026-07-30 -- Phase 13 execution started
 
 Progress: [░░░░░░░░░░] 0%
 
@@ -59,6 +62,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 12 P01 | 20min | 2 tasks | 2 files |
 | Phase 12 P02 | 35min | 2 tasks | 6 files |
 | Phase 12 P03 | 20min | 1 tasks | 1 files |
+| Phase 13 P01 | 45min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -84,6 +88,9 @@ Recent decisions affecting current work:
 - [Phase ?]: Phase 12 Plan 02: cashflow_transactions view created after pairing columns so SELECT t.* is the full superset; NOT EXISTS keyed on type='investment' keeps NULL-account_id rows
 - [Phase 12]: Phase 12 Plan 03: switched 10 FROM-clause sites (spending_total, income_total, net_total, spending_by_category, spending_in_category, transaction_count, largest_transactions, average_daily_spending total, monthly_trend, find_transactions) from transactions to cashflow_transactions; account_balances, currency probe, date-span query, and delete-guard COUNTs left on the base table intentionally
 - [Phase 12]: Plan 03: resolved a plan-drafting mislabel where the 10th switch site was described as 'spending_by_category's grand-total denominator' but actually belongs to spending_in_category (line number and SQL pattern were correct, function name was not) — switched spending_in_category since it is genuinely a cashflow total
+- [Phase ?]: apply_add_transfer(db, leg_a_after, leg_b_after) takes two Transaction-shaped after dicts, one per leg (Phase 13 Plan 01)
+- [Phase ?]: apply_add_balance_adjustment(db, account_id, target_balance) takes positional account_id + target_balance, not an after-dict (Phase 13 Plan 01)
+- [Phase ?]: Balance-adjustment row tagged category='Adjustment' AND is_transfer=True — is_transfer is the only existing lever that excludes a row from cashflow totals (D-08, Phase 13 Plan 01)
 
 ### Pending Todos
 
@@ -129,7 +136,7 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-07-25T23:16:05.162Z
+Last session: 2026-07-30T00:30:45.803Z
 Stopped at: Phase 13 context gathered
 Resume file: .planning/phases/13-shared-mutation-layer-transfer-buy-sell-with-funding-adjustm/13-CONTEXT.md
 
