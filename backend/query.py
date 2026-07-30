@@ -109,6 +109,9 @@ def _get_agent_workflow():
             propose_add_account, propose_edit_account, propose_delete_account,
             propose_rename_category, propose_merge_category,
             propose_add_holding, propose_edit_holding, propose_delete_holding,
+            propose_add_transfer, propose_add_investment_transfer,
+            propose_add_funded_buy, propose_add_funded_sell,
+            propose_add_balance_adjustment,
         )
 
         llm = _get_llm()
@@ -188,6 +191,41 @@ def _get_agent_workflow():
             FunctionTool.from_defaults(fn=propose_add_holding),
             FunctionTool.from_defaults(fn=propose_edit_holding),
             FunctionTool.from_defaults(fn=propose_delete_holding),
+            FunctionTool.from_defaults(fn=propose_add_transfer),
+            FunctionTool.from_defaults(
+                fn=propose_add_investment_transfer,
+                description=(
+                    "Propose moving cash from a liquid account into an investment "
+                    "platform with no immediate buy (a plain funding deposit, "
+                    "recorded as a CASH sentinel position). platform_id is an int "
+                    "— use find_platforms first to resolve a platform name to its "
+                    "id. amount is an unsigned magnitude. Returns a proposal for "
+                    "user confirmation — never moves money directly."
+                ),
+            ),
+            FunctionTool.from_defaults(
+                fn=propose_add_funded_buy,
+                description=(
+                    "Propose a funded buy: debits source_account_name and records "
+                    "a 'buy' portfolio event. cash_amount, quantity, and price must "
+                    "be unsigned positive magnitudes — the primitive owns the debit "
+                    "sign. platform_id is an int — use find_platforms first to "
+                    "resolve a platform name to its id. Returns a proposal for user "
+                    "confirmation — never moves money directly."
+                ),
+            ),
+            FunctionTool.from_defaults(
+                fn=propose_add_funded_sell,
+                description=(
+                    "Propose a funded sell: credits source_account_name and records "
+                    "a 'sell' portfolio event. cash_amount, quantity, and price must "
+                    "be unsigned positive magnitudes — the primitive owns the credit "
+                    "sign. platform_id is an int — use find_platforms first to "
+                    "resolve a platform name to its id. Returns a proposal for user "
+                    "confirmation — never moves money directly."
+                ),
+            ),
+            FunctionTool.from_defaults(fn=propose_add_balance_adjustment),
         ]
 
         system_prompt = _SYSTEM_PROMPT.format(

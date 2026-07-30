@@ -57,11 +57,16 @@ from backend.portfolio import portfolio_summary as compose_portfolio_summary
 from backend.portfolio import value_history_series
 from backend.writes import (
     apply_add_account,
+    apply_add_balance_adjustment,
     apply_add_category,
+    apply_add_funded_buy,
+    apply_add_funded_sell,
     apply_add_holding,
+    apply_add_investment_transfer,
     apply_add_platform,
     apply_add_portfolio_event,
     apply_add_transaction,
+    apply_add_transfer,
     apply_delete_account,
     apply_delete_category,
     apply_delete_holding,
@@ -1063,6 +1068,31 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
                 db.delete(h)
             db.add(AuditLog(entity="holding", entity_id=h_id, operation="delete",
                             before=before, after=None))
+
+        elif operation in (
+            "add_transfer", "add_investment_transfer", "add_funded_buy",
+            "add_funded_sell", "add_balance_adjustment",
+        ):
+            # Malformed/mismatched payload keys must surface as a clean 422,
+            # never an unhandled KeyError -> 500 (Pitfall 3, autonomous
+            # decision 4) — the confirm endpoint already maps ValueError to 422.
+            try:
+                if operation == "add_transfer":
+                    apply_add_transfer(db, after["leg_a"], after["leg_b"])
+
+                elif operation == "add_investment_transfer":
+                    apply_add_investment_transfer(db, after["cash_leg"], after["event"])
+
+                elif operation == "add_funded_buy":
+                    apply_add_funded_buy(db, after)
+
+                elif operation == "add_funded_sell":
+                    apply_add_funded_sell(db, after)
+
+                elif operation == "add_balance_adjustment":
+                    apply_add_balance_adjustment(db, row["account_id"], row["target_balance"])
+            except (KeyError, TypeError) as e:
+                raise ValueError(f"malformed payload for {operation!r}: {e}")
 
         else:
             raise ValueError(f"Unknown proposal operation: {operation!r}")
