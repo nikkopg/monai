@@ -31,7 +31,7 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 Phase: 14 (REST Endpoints + Agent/MCP Tool Registration) — EXECUTING
 Plan: 3 of 3
 Status: Phase complete — ready for verification
-Last activity: 2026-07-30 -- Phase 14 execution started
+Last activity: 2026-07-31 -- Completed quick task 260731-998: fix T-14-07 platform-existence 500 leak
 
 Progress: [██████████] 100%
 
@@ -132,6 +132,7 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 | Date | Slug | Description |
 |------|------|-------------|
 | 2026-07-20 | recharts-pie-no-slices | Pie charts rendered zero `<path>`s — recharts 3.9 collapses sectors to a zero-width angle at animation t=0 and the rAF clock can leave them stuck there. Fixed with `isAnimationActive={false}` on both `<Pie>`s. |
+| 2026-07-31 | fix-t-14-07-validate-platform-exists-in- | T-14-07 remediation: `apply_add_portfolio_event` had no platform-existence check, so a bad `platform_id` hit the FK → `IntegrityError` → 500 leak on funded-buy/sell/investment-transfer. Added one `db.get(Platform, ...)` guard raising `ValueError` (→422 via existing mapping) + test. Commit `fc0bf73`. |
 
 ## Deferred Items
 
