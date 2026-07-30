@@ -5,15 +5,15 @@ milestone_name: Connected Ledger — Liquids ↔ Investments
 current_phase: 13
 current_phase_name: shared-mutation-layer-transfer-buy-sell-with-funding-adjustm
 status: executing
-stopped_at: Completed 13-02-PLAN.md
-last_updated: "2026-07-30T06:27:07.503Z"
+stopped_at: Completed 13-03-PLAN.md
+last_updated: "2026-07-30T06:35:43.926Z"
 last_activity: 2026-07-30
 last_activity_desc: Phase 13 execution started
 progress:
   total_phases: 7
   completed_phases: 2
   total_plans: 15
-  completed_plans: 12
+  completed_plans: 13
   percent: 29
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 ## Current Position
 
 Phase: 13 (shared-mutation-layer-transfer-buy-sell-with-funding-adjustm) — EXECUTING
-Plan: 3 of 5
+Plan: 4 of 5
 Status: Ready to execute
 Last activity: 2026-07-30 -- Phase 13 execution started
 
@@ -64,6 +64,7 @@ Progress: [░░░░░░░░░░] 0%
 | Phase 12 P03 | 20min | 1 tasks | 1 files |
 | Phase 13 P01 | 45min | 2 tasks | 2 files |
 | Phase 13 P02 | 25min | 2 tasks | 2 files |
+| Phase 13 P03 | 20min | 2 tasks | 1 files |
 
 ## Accumulated Context
 
@@ -95,6 +96,7 @@ Recent decisions affecting current work:
 - [Phase 13-02]: Retro-pair mutual count-guard: a candidate pair is only committed when BOTH sides individually have exactly one candidate match — prevents a half-pair when one side's sole candidate is itself ambiguous
 - [Phase 13-02]: Migration 011's flagged marker is report-only (no new column) — a flagged row is is_transfer=true AND transfer_pair_id IS NULL, printed during upgrade()
 - [Phase 13-02]: Migration 011 downgrade() is a documented no-op — no schema object owned by this revision; backfilled data left in place per 009/010 downgrade posture
+- [Phase 13]: apply_add_transfer forces is_transfer=True on both legs defensively (not just trusting caller dicts), per PATTERNS.md's explicit-True rule
 
 ### Pending Todos
 
@@ -140,8 +142,8 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-07-30T06:27:07.493Z
-Stopped at: Completed 13-02-PLAN.md
+Last session: 2026-07-30T06:35:43.916Z
+Stopped at: Completed 13-03-PLAN.md
 Resume file: None
 
 Next: `/gsd-plan-phase 11`
