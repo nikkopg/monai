@@ -116,6 +116,26 @@ def apply_delete_transaction(db: Session, tx_id: int, before: dict | None, allow
                     before=before, after=None))
 
 
+def apply_add_transfer(db: Session, leg_a_after: dict, leg_b_after: dict) -> tuple[Transaction, Transaction]:
+    """Insert a paired liquid->liquid transfer (XFER-01/D-03/D-09).
+
+    Composes `apply_add_transaction` twice — one call per leg — so each leg
+    gets account resolution by name, the Decimal money idiom, and its own
+    AuditLog row (D-02) for free from the primitive; this function writes no
+    extra audit row. Each leg keeps its own amount + currency independently
+    (D-09 dual-currency, no new columns). After both legs flush (the
+    primitive already flushes to populate `.id`), both legs' transfer_pair_id
+    is set to leg A's own id (shared-group-id convention, D-03 — matches
+    migration 011's `min(id)` scheme). Does NOT commit — caller owns the
+    single transaction boundary (D-01).
+    """
+    leg_a = apply_add_transaction(db, {**leg_a_after, "is_transfer": True})
+    leg_b = apply_add_transaction(db, {**leg_b_after, "is_transfer": True})
+    leg_a.transfer_pair_id = leg_a.id
+    leg_b.transfer_pair_id = leg_a.id
+    return leg_a, leg_b
+
+
 def apply_add_account(db: Session, after: dict) -> Account:
     """Insert a new account."""
     acc = Account(
