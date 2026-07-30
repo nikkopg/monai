@@ -1120,6 +1120,215 @@ def propose_delete_holding(holding_id: int) -> dict:
     }
 
 
+def propose_add_transfer(
+    from_account: str,
+    to_account: str,
+    amount: float,
+    currency: str = "IDR",
+    date: str | None = None,
+    notes: str | None = None,
+) -> dict:
+    """Propose a transfer between two liquid accounts. amount is an unsigned
+    magnitude — the source leg is debited (-abs) and the destination leg is
+    credited (+abs); do not pass a signed amount. Returns a proposal for user
+    confirmation. Does NOT move any money — user must approve. (XFER-01)
+    """
+    leg_a = {
+        "account": from_account,
+        "amount": str(Decimal(str(-abs(amount)))),
+        "currency": currency,
+        "date": date,
+        "notes": notes,
+    }
+    leg_b = {
+        "account": to_account,
+        "amount": str(Decimal(str(abs(amount)))),
+        "currency": currency,
+        "date": date,
+        "notes": notes,
+    }
+    payload = {
+        "operation": "add_transfer",
+        "rows": [{"before": None, "after": {"leg_a": leg_a, "leg_b": leg_b}}],
+    }
+    proposal_id, proposal_token = _make_proposal("add_transfer", payload)
+    return {
+        "tool": "propose_add_transfer",
+        "proposal_id": proposal_id,
+        "proposal_token": proposal_token,
+        "summary": f"Transfer {amount} {currency} from {from_account} to {to_account}",
+        "before": None,
+        "after": {"leg_a": leg_a, "leg_b": leg_b},
+    }
+
+
+def propose_add_investment_transfer(
+    from_account: str,
+    platform_id: int,
+    amount: float,
+    currency: str = "IDR",
+    date: str | None = None,
+    notes: str | None = None,
+) -> dict:
+    """Propose moving cash from a liquid account into an investment platform
+    with no immediate buy (a plain funding deposit). Recorded as a per-platform
+    sentinel position: ticker='CASH', event_type='deposit', asset_type='cash',
+    price=1, quantity=amount — consistent with the existing asset_type=='cash'
+    1:1 valuation convention. platform_id is an int; use find_platforms first
+    to resolve a platform name to its id. Returns a proposal for user
+    confirmation. Does NOT move any money — user must approve. (XFER-02)
+    """
+    cash_leg = {
+        "account": from_account,
+        "amount": str(Decimal(str(-abs(amount)))),
+        "currency": currency,
+        "date": date,
+        "notes": notes,
+    }
+    event = {
+        "ticker": "CASH",
+        "event_type": "deposit",
+        "quantity": str(Decimal(str(abs(amount)))),
+        "price": "1",
+        "platform_id": platform_id,
+        "currency": currency,
+        "date": date,
+        "asset_type": "cash",
+    }
+    payload = {
+        "operation": "add_investment_transfer",
+        "rows": [{"before": None, "after": {"cash_leg": cash_leg, "event": event}}],
+    }
+    proposal_id, proposal_token = _make_proposal("add_investment_transfer", payload)
+    return {
+        "tool": "propose_add_investment_transfer",
+        "proposal_id": proposal_id,
+        "proposal_token": proposal_token,
+        "summary": f"Fund platform #{platform_id} with {amount} {currency} from {from_account}",
+        "before": None,
+        "after": {"cash_leg": cash_leg, "event": event},
+    }
+
+
+def propose_add_funded_buy(
+    source_account_name: str,
+    platform_id: int,
+    ticker: str,
+    quantity: float,
+    price: float,
+    cash_amount: float,
+    cash_currency: str = "IDR",
+    event_currency: str = "IDR",
+    date: str | None = None,
+    notes: str | None = None,
+    asset_type: str | None = None,
+) -> dict:
+    """Propose a funded buy: debit source_account_name for cash_amount (an
+    unsigned positive magnitude — the primitive owns the debit sign) and
+    record a 'buy' PortfolioEvent for quantity units of ticker at price on
+    platform_id. platform_id is an int; use find_platforms first to resolve a
+    platform name to its id. Returns a proposal for user confirmation. Does
+    NOT move any money — user must approve. (XFER-03)
+    """
+    after = {
+        "source_account_name": source_account_name,
+        "cash_currency": cash_currency,
+        "cash_amount": abs(float(cash_amount)),
+        "ticker": ticker,
+        "quantity": abs(float(quantity)),
+        "price": abs(float(price)),
+        "platform_id": platform_id,
+        "event_currency": event_currency,
+        "date": date,
+        "notes": notes,
+        "asset_type": asset_type,
+    }
+    payload = {"operation": "add_funded_buy", "rows": [{"before": None, "after": after}]}
+    proposal_id, proposal_token = _make_proposal("add_funded_buy", payload)
+    return {
+        "tool": "propose_add_funded_buy",
+        "proposal_id": proposal_id,
+        "proposal_token": proposal_token,
+        "summary": f"Buy {quantity} {ticker} @ {price} {event_currency} funded by {cash_amount} {cash_currency} from {source_account_name}",
+        "before": None,
+        "after": after,
+    }
+
+
+def propose_add_funded_sell(
+    source_account_name: str,
+    platform_id: int,
+    ticker: str,
+    quantity: float,
+    price: float,
+    cash_amount: float,
+    cash_currency: str = "IDR",
+    event_currency: str = "IDR",
+    date: str | None = None,
+    notes: str | None = None,
+    asset_type: str | None = None,
+) -> dict:
+    """Propose a funded sell: credit source_account_name for cash_amount (an
+    unsigned positive magnitude — the primitive owns the credit sign) and
+    record a 'sell' PortfolioEvent for quantity units of ticker at price on
+    platform_id. platform_id is an int; use find_platforms first to resolve a
+    platform name to its id. Returns a proposal for user confirmation. Does
+    NOT move any money — user must approve. (XFER-03)
+    """
+    after = {
+        "source_account_name": source_account_name,
+        "cash_currency": cash_currency,
+        "cash_amount": abs(float(cash_amount)),
+        "ticker": ticker,
+        "quantity": abs(float(quantity)),
+        "price": abs(float(price)),
+        "platform_id": platform_id,
+        "event_currency": event_currency,
+        "date": date,
+        "notes": notes,
+        "asset_type": asset_type,
+    }
+    payload = {"operation": "add_funded_sell", "rows": [{"before": None, "after": after}]}
+    proposal_id, proposal_token = _make_proposal("add_funded_sell", payload)
+    return {
+        "tool": "propose_add_funded_sell",
+        "proposal_id": proposal_id,
+        "proposal_token": proposal_token,
+        "summary": f"Sell {quantity} {ticker} @ {price} {event_currency}, credit {cash_amount} {cash_currency} to {source_account_name}",
+        "before": None,
+        "after": after,
+    }
+
+
+def propose_add_balance_adjustment(account_id: int, target_balance: float) -> dict:
+    """Propose reconciling an account's derived balance to target_balance. The
+    stored delta becomes a visible 'Adjustment' record (ACCT-02). Returns a
+    proposal for user confirmation. Does NOT change any data — user must
+    approve.
+    """
+    from backend.models import Account
+
+    with get_session_sync() as db:
+        acc = db.get(Account, account_id)
+        if acc is None:
+            return {"tool": "propose_add_balance_adjustment", "error": f"Account {account_id} not found"}
+        acc_name = acc.name
+
+    payload = {
+        "operation": "add_balance_adjustment",
+        "rows": [{"account_id": account_id, "target_balance": str(target_balance)}],
+    }
+    proposal_id, proposal_token = _make_proposal("add_balance_adjustment", payload)
+    return {
+        "tool": "propose_add_balance_adjustment",
+        "proposal_id": proposal_id,
+        "proposal_token": proposal_token,
+        "summary": f"Adjust account #{account_id} ({acc_name}) balance to {target_balance}",
+        "before": None,
+        "after": {"account_id": account_id, "target_balance": str(target_balance)},
+    }
+
+
 # Extend the TOOLS registry with write tools (proposal-producers)
 TOOLS.update({
     "propose_add_transaction": propose_add_transaction,
@@ -1133,6 +1342,11 @@ TOOLS.update({
     "propose_add_holding": propose_add_holding,
     "propose_edit_holding": propose_edit_holding,
     "propose_delete_holding": propose_delete_holding,
+    "propose_add_transfer": propose_add_transfer,
+    "propose_add_investment_transfer": propose_add_investment_transfer,
+    "propose_add_funded_buy": propose_add_funded_buy,
+    "propose_add_funded_sell": propose_add_funded_sell,
+    "propose_add_balance_adjustment": propose_add_balance_adjustment,
 })
 
 
