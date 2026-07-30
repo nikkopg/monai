@@ -1244,3 +1244,283 @@ def test_apply_add_holding_cash_and_gold_pass_through(db_session):
     finally:
         _cleanup_ticker(db_session, t_cash)
         _cleanup_ticker(db_session, t_gold)
+
+
+# ---------------------------------------------------------------------------
+# Phase 13 Plan 01: RED-first scaffold for the shared mutation layer
+# (XFER-01..05, ACCT-02). Every apply_* function targeted below DOES NOT
+# EXIST YET — each test imports its target function-locally and is EXPECTED
+# to fail RED (ImportError/AttributeError/TypeError/DID-NOT-RAISE) until
+# plans 13-03/04/05 implement it to GREEN. Do not implement writes.py here.
+# ---------------------------------------------------------------------------
+
+
+def _cleanup_account(db, name: str) -> None:
+    """Remove an account and every dependent transaction/audit-log row
+    (mirrors `_cleanup_ticker`'s shape for the account side, T-13-08)."""
+    from backend.models import Account, Transaction, AuditLog
+
+    acc = db.query(Account).filter(Account.name == name).first()
+    if acc is None:
+        return
+    tx_ids = [t.id for t in db.query(Transaction).filter(Transaction.account_id == acc.id).all()]
+    if tx_ids:
+        db.query(AuditLog).filter(
+            AuditLog.entity == "transaction", AuditLog.entity_id.in_(tx_ids)
+        ).delete(synchronize_session=False)
+        db.query(Transaction).filter(Transaction.id.in_(tx_ids)).delete(synchronize_session=False)
+    db.query(AuditLog).filter(AuditLog.entity == "account", AuditLog.entity_id == acc.id).delete()
+    db.delete(acc)
+    db.commit()
+
+
+def test_apply_add_transfer_pairs_both_legs(db_session):
+    """apply_add_transfer(db, leg_a_after, leg_b_after) inserts two paired
+    Transaction rows (XFER-01): both is_transfer=true, sharing one
+    transfer_pair_id equal to leg A's own id (shared-group-id convention,
+    D-03/D-09), each with its own AuditLog row (D-02), each leg free to carry
+    its own currency independently (D-09). RED until Plan 13-03."""
+    from backend.models import Transaction
+
+    name_a, name_b = "zz13test-TransferA", "zz13test-TransferB"
+    acc_a = _make_account(db_session, name_a)
+    acc_b = _make_account(db_session, name_b)
+    try:
+        from backend.writes import apply_add_transfer  # RED: not implemented until Plan 13-03
+
+        before_audit = int(db_session.execute(
+            text("SELECT COUNT(*) FROM audit_log WHERE entity = 'transaction'")
+        ).scalar() or 0)
+
+        leg_a_after = {
+            "account": name_a, "amount": -100000, "currency": "IDR",
+            "is_transfer": True, "date": "2024-01-15", "notes": "Transfer out",
+        }
+        leg_b_after = {
+            "account": name_b, "amount": 6.5, "currency": "USD",
+            "is_transfer": True, "date": "2024-01-15", "notes": "Transfer in",
+        }
+
+        leg_a, leg_b = apply_add_transfer(db_session, leg_a_after, leg_b_after)
+        db_session.commit()
+
+        db_session.expire_all()
+        rows = db_session.query(Transaction).filter(Transaction.account_id.in_([acc_a, acc_b])).all()
+        assert len(rows) == 2, f"expected exactly 2 paired legs, got {len(rows)}"
+        assert all(r.is_transfer for r in rows), "both legs must be tagged is_transfer=true"
+
+        pair_ids = {r.transfer_pair_id for r in rows}
+        assert pair_ids == {leg_a.id}, (
+            f"both legs must share transfer_pair_id == leg A's id ({leg_a.id}), got {pair_ids}"
+        )
+
+        by_account = {r.account_id: r for r in rows}
+        assert by_account[acc_a].currency == "IDR"
+        assert by_account[acc_b].currency == "USD", "legs may carry different currencies independently (D-09)"
+
+        after_audit = int(db_session.execute(
+            text("SELECT COUNT(*) FROM audit_log WHERE entity = 'transaction'")
+        ).scalar() or 0)
+        assert after_audit == before_audit + 2, "one AuditLog row per leg (D-02)"
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name_a)
+        _cleanup_account(db_session, name_b)
+
+
+def test_apply_add_investment_transfer(db_session):
+    """apply_add_investment_transfer(db, cash_leg_after, event_after) debits a
+    liquid source account (is_transfer=true) and links a portfolio deposit
+    event to it via source_account_id (XFER-02/D-05) — never creates a
+    synthetic `accounts` row for the investment side. RED until Plan 13-04."""
+    from backend.models import Transaction, PortfolioEvent, Platform
+
+    name = "zz13test-InvestSource"
+    ticker = "ZZ13DEPOSIT"
+    acc_id = _make_account(db_session, name)
+    plat_id = _make_platform(db_session, "zz13test-InvestPlatform")
+    _cleanup_ticker(db_session, ticker)
+    try:
+        from backend.writes import apply_add_investment_transfer  # RED: not implemented until Plan 13-04
+
+        accounts_before = int(db_session.execute(text("SELECT COUNT(*) FROM accounts")).scalar() or 0)
+
+        cash_leg_after = {
+            "account": name, "amount": -500000, "currency": "IDR",
+            "is_transfer": True, "date": "2024-01-20",
+        }
+        event_after = {
+            "ticker": ticker, "event_type": "deposit", "quantity": 500000,
+            "price": 1, "date": "2024-01-20", "platform_id": plat_id, "currency": "IDR",
+        }
+
+        tx, ev = apply_add_investment_transfer(db_session, cash_leg_after, event_after)
+        db_session.commit()
+
+        db_session.expire_all()
+        tx_row = db_session.query(Transaction).filter(Transaction.account_id == acc_id).one()
+        assert tx_row.is_transfer is True
+
+        ev_row = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
+        assert ev_row.source_account_id == acc_id, "event must link back to the funding account (D-05)"
+
+        accounts_after = int(db_session.execute(text("SELECT COUNT(*) FROM accounts")).scalar() or 0)
+        assert accounts_after == accounts_before, "no synthetic accounts row for the investment side (D-05)"
+    finally:
+        db_session.rollback()
+        _cleanup_ticker(db_session, ticker)
+        _cleanup_account(db_session, name)
+        plat = db_session.get(Platform, plat_id)
+        if plat is not None:
+            db_session.delete(plat)
+            db_session.commit()
+
+
+def test_apply_add_funded_buy_one_commit_boundary(db_session):
+    """apply_add_funded_buy(db, after) debits a liquid source account
+    (is_transfer=true), records a 'buy' PortfolioEvent linked back via
+    source_account_id, and recomputes the (ticker, platform_id) holding — all
+    below ONE caller commit, no internal db.commit() (XFER-03/D-06). RED
+    until Plan 13-04."""
+    from decimal import Decimal
+    from backend.models import Transaction, PortfolioEvent, Holding, Platform
+
+    name = "zz13test-FundedBuySource"
+    ticker = "ZZ13FUNDEDBUY"
+    acc_id = _make_account(db_session, name)
+    plat_id = _make_platform(db_session, "zz13test-FundedBuyPlatform")
+    _cleanup_ticker(db_session, ticker)
+    try:
+        from backend.writes import apply_add_funded_buy  # RED: not implemented until Plan 13-04
+
+        after = {
+            "source_account_name": name, "cash_currency": "IDR", "cash_amount": 1000000,
+            "ticker": ticker, "quantity": 10, "price": 100000, "platform_id": plat_id,
+            "event_currency": "IDR", "date": "2024-01-25",
+        }
+
+        result = apply_add_funded_buy(db_session, after)
+        # Atomicity by construction: both entities are already flushed
+        # (populated .id) after the ONE function call, below the ONE caller
+        # commit below — mirrors every existing apply_* primitive's
+        # never-commit contract (D-01/D-06), not a second commit inside the
+        # function itself.
+        assert result["transaction"].id is not None
+        assert result["portfolio_event"].id is not None
+        db_session.commit()
+
+        db_session.expire_all()
+        tx = db_session.query(Transaction).filter(Transaction.account_id == acc_id).one()
+        assert tx.is_transfer is True
+        assert tx.amount == Decimal("-1000000")
+
+        ev = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
+        assert ev.event_type == "buy"
+        assert ev.source_account_id == acc_id
+
+        h = db_session.query(Holding).filter(
+            Holding.ticker == ticker, Holding.platform_id == plat_id
+        ).one()
+        assert h.quantity == Decimal("10")
+    finally:
+        db_session.rollback()
+        _cleanup_ticker(db_session, ticker)
+        _cleanup_account(db_session, name)
+        plat = db_session.get(Platform, plat_id)
+        if plat is not None:
+            db_session.delete(plat)
+            db_session.commit()
+
+
+def test_funded_buy_dual_currency_legs(db_session):
+    """apply_add_funded_buy's cash leg and portfolio event carry independent
+    currencies (XFER-04/D-09) — no forced single-currency conversion at write
+    time; no schema column beyond the existing amount/currency pair is
+    touched. RED until Plan 13-04."""
+    from backend.models import Transaction, PortfolioEvent, Platform
+
+    name = "zz13test-DualCcySource"
+    ticker = "ZZ13DUALCCY"
+    acc_id = _make_account(db_session, name)
+    plat_id = _make_platform(db_session, "zz13test-DualCcyPlatform")
+    _cleanup_ticker(db_session, ticker)
+    try:
+        from backend.writes import apply_add_funded_buy  # RED: not implemented until Plan 13-04
+
+        after = {
+            "source_account_name": name, "cash_currency": "IDR", "cash_amount": 1500000,
+            "ticker": ticker, "quantity": 100, "price": 1, "platform_id": plat_id,
+            "event_currency": "USD", "date": "2024-01-26",
+        }
+
+        apply_add_funded_buy(db_session, after)
+        db_session.commit()
+
+        db_session.expire_all()
+        tx = db_session.query(Transaction).filter(Transaction.account_id == acc_id).one()
+        assert tx.currency == "IDR"
+
+        ev = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
+        assert ev.currency == "USD", "cash-leg currency and event currency are stored independently (D-09)"
+    finally:
+        db_session.rollback()
+        _cleanup_ticker(db_session, ticker)
+        _cleanup_account(db_session, name)
+        plat = db_session.get(Platform, plat_id)
+        if plat is not None:
+            db_session.delete(plat)
+            db_session.commit()
+
+
+def test_apply_add_balance_adjustment_delta(db_session):
+    """apply_add_balance_adjustment(db, account_id, target_balance) inserts
+    exactly one 'Adjustment'-tagged Transaction whose amount equals
+    target − SUM(ALL transactions on the account, transfer rows included) —
+    Finding 2: a filtered SUM (excluding transfers) would compute the wrong
+    delta, which is exactly why this account is seeded with BOTH a
+    non-transfer and a transfer row (ACCT-02/D-07). RED until Plan 13-05."""
+    import datetime as _dt
+    from decimal import Decimal
+    from backend.models import Transaction
+
+    name = "zz13test-AdjustAccount"
+    acc_id = _make_account(db_session, name)
+    try:
+        db_session.add(Transaction(
+            date=_dt.datetime(2024, 2, 1, 12, 0, 0), amount=200000, currency="IDR",
+            category="Salary", account_id=acc_id, is_transfer=False,
+        ))
+        db_session.add(Transaction(
+            date=_dt.datetime(2024, 2, 2, 12, 0, 0), amount=50000, currency="IDR",
+            category=None, account_id=acc_id, is_transfer=True,
+        ))
+        db_session.commit()
+
+        current = Decimal(str(db_session.execute(
+            text("SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE account_id = :id"),
+            {"id": acc_id},
+        ).scalar()))
+        target = current + Decimal("77777")
+        expected_delta = target - current
+
+        from backend.writes import apply_add_balance_adjustment  # RED: not implemented until Plan 13-05
+        apply_add_balance_adjustment(db_session, acc_id, target)
+        db_session.commit()
+
+        db_session.expire_all()
+        all_rows = db_session.query(Transaction).filter(Transaction.account_id == acc_id).all()
+        assert len(all_rows) == 3, f"expected exactly one new adjustment row, got {len(all_rows) - 2} new row(s)"
+
+        adj_rows = [r for r in all_rows if r.category == "Adjustment"]
+        assert len(adj_rows) == 1, "expected exactly one 'Adjustment'-tagged row"
+        assert adj_rows[0].amount == expected_delta
+
+        new_sum = Decimal(str(db_session.execute(
+            text("SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE account_id = :id"),
+            {"id": acc_id},
+        ).scalar()))
+        assert new_sum == target, "post-write derived balance (unfiltered SUM) must equal the target"
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name)
+
