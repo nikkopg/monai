@@ -219,7 +219,10 @@ def test_net_worth_registered_for_agent():
 
     src = inspect.getsource(_get_agent_workflow)
     assert "net_worth" in src, "_get_agent_workflow must import net_worth from backend.tools"
-    assert "FunctionTool.from_defaults(fn=net_worth)" in src, (
+    # Registered via the zero-arg net_worth_tool wrapper with an explicit
+    # name="net_worth" so the LLM tool schema stays argument-free (WR-01) while
+    # still surfacing under the canonical "net_worth" tool name.
+    assert 'FunctionTool.from_defaults(fn=net_worth_tool, name="net_worth")' in src, (
         "net_worth must be registered as a FunctionTool in the agent's read_tools "
         "list (chat-tool-dual-registration memory) — the MCP/TOOLS registry does "
         "not automatically surface it to the agent"

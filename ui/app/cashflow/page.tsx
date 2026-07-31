@@ -621,18 +621,6 @@ export default function CashflowPage() {
                         >
                           {money(a.current_balance)}
                         </div>
-                        <div
-                          style={{
-                            fontSize: 12,
-                            fontVariantNumeric: "tabular-nums",
-                            color:
-                              a.period_net < 0
-                                ? tokens.color.terracotta
-                                : tokens.color.green,
-                          }}
-                        >
-                          {signed(a.period_net)}
-                        </div>
                       </div>
                     </div>
                   ))
