@@ -88,6 +88,18 @@ class CashflowSummary(BaseModel):
     trend: list  # rows from monthly_trend (month/income/expense/net)
 
 
+class NetWorth(BaseModel):
+    """Single composed payload for GET /net-worth (D-01, D-05, NW-01/NW-02)."""
+
+    total: float
+    liquid_total: float
+    investment_total: float
+    liquid_accounts: list  # rows from account_balances filtered to type='liquid'
+    investment_groups: list  # rows from portfolio_summary.groups
+    accounts_covered: int
+    accounts_total: int
+
+
 class TransactionUpdate(BaseModel):
     """Partial-update body for editing a transaction — all fields Optional.
 
