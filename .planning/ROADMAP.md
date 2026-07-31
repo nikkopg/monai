@@ -182,7 +182,9 @@ Plans:
   2. User sees the liquid vs investment split with a per-side breakdown (not just the combined total)
   3. The net-worth query's account-type filter is asserted to cover 100% of accounts — no silently dropped or double-included row
 
-**Plans**: TBD
+**Plans**: 2 plans
+- [ ] 15-01-PLAN.md — Backend `net_worth` composed read (+ `GET /net-worth`), coverage assertion, dual read-tool registration, tests
+- [ ] 15-02-PLAN.md — `/cashflow` dashboard: server-sourced net-worth hero (fix double-count) + liquid/investment split + per-side breakdowns
 **UI hint**: yes
 
 ### Phase 16: UI — Extend Existing Components
