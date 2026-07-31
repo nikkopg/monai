@@ -4,8 +4,8 @@ milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
 status: executing
 stopped_at: Phase 15 UI-SPEC approved
-last_updated: "2026-07-31T05:06:56.567Z"
-last_activity: 2026-07-31 -- Phase 15 planning complete
+last_updated: "2026-07-31T05:09:28.100Z"
+last_activity: 2026-07-31 -- Phase 15 execution started
 progress:
   total_phases: 7
   completed_phases: 4
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-18)
 
 **Core value:** You can understand and manage your entire financial life — spending and investments — by talking to a trustworthy AI that never fabricates a number and never changes your data without your say-so.
-**Current focus:** Phase 15 — net worth aggregation + dashboard
+**Current focus:** Phase 15 — Net Worth Aggregation + Dashboard
 
 ## Current Position
 
-Phase: 15
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-07-31 -- Phase 15 planning complete
+Phase: 15 (Net Worth Aggregation + Dashboard) — EXECUTING
+Plan: 1 of 2
+Status: Executing Phase 15
+Last activity: 2026-07-31 -- Phase 15 execution started
 
 Progress: [██████████] 100%
 
