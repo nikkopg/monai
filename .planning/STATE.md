@@ -2,13 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
-current_phase: 14
-current_phase_name: REST Endpoints + Agent/MCP Tool Registration
-status: ready_to_plan
-stopped_at: Phase 14 complete (3/3) — ready to discuss Phase 15
-last_updated: 2026-07-31T03:40:57.042Z
-last_activity: 2026-07-30
-last_activity_desc: Phase 14 execution started
+status: planning
+stopped_at: Phase 15 context gathered
+last_updated: "2026-07-31T04:31:03.071Z"
+last_activity: 2026-07-31
 progress:
   total_phases: 7
   completed_phases: 4
@@ -160,8 +157,8 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-07-30T23:02:08.569Z
-Stopped at: Completed 13-03-PLAN.md
-Resume file: None
+Last session: 2026-07-31T04:31:03.051Z
+Stopped at: Phase 15 context gathered
+Resume file: .planning/phases/15-net-worth-aggregation-dashboard/15-CONTEXT.md
 
 Next: `/gsd-plan-phase 11`
