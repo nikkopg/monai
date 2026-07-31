@@ -429,6 +429,40 @@ export default function CashflowPage() {
             </div>
           </div>
 
+          {/* Split row — liquid vs investment (NW-02, D-08) */}
+          {netWorthData && !netWorthError && (
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "repeat(auto-fit, minmax(min(100%, 200px), 1fr))",
+                gap: 18,
+                marginBottom: 18,
+              }}
+            >
+              <div style={statCard}>
+                <div style={statLabel}>Liquid</div>
+                <div style={{ ...statValue, color: tokens.color.ink }}>
+                  {money(netWorthData.liquid_total)}
+                </div>
+                <div style={{ fontSize: 13, color: tokens.color.muted }}>
+                  {netWorthData.liquid_accounts.length} account
+                  {netWorthData.liquid_accounts.length === 1 ? "" : "s"}
+                </div>
+              </div>
+              <div style={statCard}>
+                <div style={statLabel}>Investment</div>
+                <div style={{ ...statValue, color: tokens.color.ink }}>
+                  {money(netWorthData.investment_total)}
+                </div>
+                <div style={{ fontSize: 13, color: tokens.color.muted }}>
+                  {netWorthData.investment_groups.length} platform
+                  {netWorthData.investment_groups.length === 1 ? "" : "s"}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Stat cards */}
           <div
             style={{
@@ -459,8 +493,11 @@ export default function CashflowPage() {
             </div>
           </div>
 
-          {hasActivity && (
-            /* Category + accounts */
+          {(hasActivity ||
+            (netWorthData &&
+              (netWorthData.liquid_accounts.length > 0 ||
+                netWorthData.investment_groups.length > 0))) && (
+            /* Category + liquid accounts + investment platforms */
             <div
               style={{
                 display: "grid",
@@ -524,69 +561,146 @@ export default function CashflowPage() {
 
               <div style={{ ...card, marginBottom: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
-                  Accounts
+                  Liquid accounts
                 </div>
-                {summary.accounts.map((a) => (
-                  <div
-                    key={a.id}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 12,
-                      padding: "11px 0",
-                      borderTop: `1px solid ${tokens.color.borderInner}`,
-                    }}
-                  >
-                    <span
+                {(netWorthData?.liquid_accounts.length ?? 0) === 0 ? (
+                  <div style={{ paddingTop: 10 }}>
+                    <div
+                      style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}
+                    >
+                      No liquid accounts yet.
+                    </div>
+                    <div style={{ color: tokens.color.muted, fontSize: 14 }}>
+                      Add one below to start tracking cash balances.
+                    </div>
+                  </div>
+                ) : (
+                  netWorthData!.liquid_accounts.map((a) => (
+                    <div
+                      key={a.id}
                       style={{
-                        width: 34,
-                        height: 34,
-                        borderRadius: 10,
-                        background: tokens.color.sidebar,
-                        display: "inline-flex",
+                        display: "flex",
                         alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: 13,
-                        fontWeight: 600,
-                        color: tokens.color.muted3,
+                        gap: 12,
+                        padding: "11px 0",
+                        borderTop: `1px solid ${tokens.color.borderInner}`,
                       }}
                     >
-                      {initials(a.name)}
-                    </span>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: 14, fontWeight: 500 }}>
-                        {a.name}
+                      <span
+                        style={{
+                          width: 34,
+                          height: 34,
+                          borderRadius: 10,
+                          background: tokens.color.sidebar,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: 13,
+                          fontWeight: 600,
+                          color: tokens.color.muted3,
+                        }}
+                      >
+                        {initials(a.name)}
+                      </span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 14, fontWeight: 500 }}>
+                          {a.name}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right" }}>
+                        <div
+                          style={{
+                            fontSize: 14,
+                            fontWeight: 600,
+                            fontVariantNumeric: "tabular-nums",
+                            color:
+                              a.current_balance < 0
+                                ? tokens.color.terracotta
+                                : tokens.color.ink,
+                          }}
+                        >
+                          {money(a.current_balance)}
+                        </div>
+                        <div
+                          style={{
+                            fontSize: 12,
+                            fontVariantNumeric: "tabular-nums",
+                            color:
+                              a.period_net < 0
+                                ? tokens.color.terracotta
+                                : tokens.color.green,
+                          }}
+                        >
+                          {signed(a.period_net)}
+                        </div>
                       </div>
                     </div>
-                    <div style={{ textAlign: "right" }}>
+                  ))
+                )}
+              </div>
+
+              <div style={{ ...card, marginBottom: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
+                  Investment platforms
+                </div>
+                {(netWorthData?.investment_groups.length ?? 0) === 0 ? (
+                  <div style={{ paddingTop: 10 }}>
+                    <div
+                      style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}
+                    >
+                      No investment platforms yet.
+                    </div>
+                    <div style={{ color: tokens.color.muted, fontSize: 14 }}>
+                      Add a platform and a holding on the Investments page to
+                      see it here.
+                    </div>
+                  </div>
+                ) : (
+                  netWorthData!.investment_groups.map((g) => (
+                    <div
+                      key={g.platform_id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 12,
+                        padding: "11px 0",
+                        borderTop: `1px solid ${tokens.color.borderInner}`,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 34,
+                          height: 34,
+                          borderRadius: 10,
+                          background: tokens.color.sidebar,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: 13,
+                          fontWeight: 600,
+                          color: tokens.color.muted3,
+                        }}
+                      >
+                        {initials(g.platform_name)}
+                      </span>
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontSize: 14, fontWeight: 500 }}>
+                          {g.platform_name}
+                        </div>
+                      </div>
                       <div
                         style={{
                           fontSize: 14,
                           fontWeight: 600,
                           fontVariantNumeric: "tabular-nums",
-                          color:
-                            a.current_balance < 0
-                              ? tokens.color.terracotta
-                              : tokens.color.ink,
+                          color: tokens.color.ink,
                         }}
                       >
-                        {money(a.current_balance)}
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 12,
-                          fontVariantNumeric: "tabular-nums",
-                          color:
-                            a.period_net < 0
-                              ? tokens.color.terracotta
-                              : tokens.color.green,
-                        }}
-                      >
-                        {signed(a.period_net)}
+                        {money(g.subtotal)}
                       </div>
                     </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             </div>
           )}
