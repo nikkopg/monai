@@ -1,23 +1,22 @@
 ---
-status: partial
+status: complete
 phase: 14-rest-endpoints-agent-mcp-tool-registration
 source: [14-01-SUMMARY.md, 14-02-SUMMARY.md, 14-03-SUMMARY.md]
 started: 2026-07-31T00:00:00Z
-updated: 2026-07-31T00:00:00Z
-mode: autonomous (AFK — human-needed UATs skipped per user instruction)
+updated: 2026-07-31T07:05:00Z
+mode: automated (cold-start rebuilt + live suite run; human-needed UAT skipped per user instruction)
 ---
 
 ## Current Test
 
-[testing complete — automated pass, human/deploy-dependent tests marked blocked]
+[testing complete]
 
 ## Tests
 
 ### 1. Cold Start Smoke Test
 expected: Kill the stack, rebuild, boot from scratch; server boots without errors and a primary query returns live data.
-result: blocked
-blocked_by: release-build
-reason: "Live-stack cold start requires `docker compose up -d --build` (running backend container is pre-Phase-14 code; deploy-requires-rebuild). App import/boot IS verified at code level — the 272-test suite instantiates the FastAPI app and all routes without error."
+result: pass
+evidence: "Automated 2026-07-31: `docker compose up -d --build backend` rebuilt from scratch (prior image built 06:13 predated the 06:44 T-14-07 fix). Fresh container booted clean — alembic migrations ran, MCP StreamableHTTP session manager + scheduler started, 'Application startup complete'. Primary live query: GET /health → 200; GET /accounts returned live account rows."
 
 ### 2. Direct REST write endpoints exist and route through Phase-13 apply_*
 expected: POST /transactions/transfer, /transactions/investment-transfer, /portfolio-events/funded-buy, /portfolio-events/funded-sell, and /accounts/{id}/adjust-balance accept valid payloads (with API key) and persist via the Phase-13 apply_* primitives (no ad-hoc SQL).
@@ -46,19 +45,18 @@ evidence: "test_mcp.py::test_new_write_tools_registered_and_excluded green; READ
 
 ### 7. Live chat end-to-end in natural language (LLM selects the tool)
 expected: In the running app, asking the assistant in plain language (e.g. "move 500k from BCA to Jago") produces a proposal, and confirming it lands the correct paired rows.
-result: blocked
-blocked_by: other
-reason: "Human-needed UAT (per user instruction, skipped while AFK): requires a live LLM provider, a rebuilt backend (deploy-requires-rebuild), and human observation of NL tool-selection quality. The underlying propose→confirm→apply mechanics are covered by Test 4."
+result: skipped
+reason: "The one that needs me (per user instruction): requires a live LLM provider and human observation of natural-language tool-selection quality — not machine-verifiable. The underlying propose→confirm→apply mechanics are fully covered by Test 4 (5 integration tests green)."
 
 ## Summary
 
 total: 7
-passed: 5
+passed: 6
 issues: 0
-blocked: 2
+blocked: 0
 pending: 0
-skipped: 0
+skipped: 1
 
 ## Gaps
 
-[none — 0 issues. 2 tests blocked on deploy/human, not code defects.]
+[none — 0 issues. 6/7 pass (live suite 273 passed + cold-start rebuild verified); 1 skipped (human-observation of live LLM NL tool-selection, not a code defect).]
