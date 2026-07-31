@@ -54,6 +54,27 @@ type CashflowSummary = {
   trend: TrendPoint[];
 };
 
+// GET /net-worth (backend/schemas.py:NetWorth, phase 15 D-01/D-08). Server-
+// computed — liquid = account_balances() filtered to type='liquid', investment
+// = portfolio_summary groups. Never re-derived client-side (fixes the old
+// client-side double-count over ALL account rows).
+type InvestmentGroup = {
+  platform_id: number;
+  platform_name: string;
+  kind: string;
+  subtotal: number;
+  holdings: unknown[];
+};
+type NetWorth = {
+  total: number;
+  liquid_total: number;
+  investment_total: number;
+  liquid_accounts: AccountBalance[];
+  investment_groups: InvestmentGroup[];
+  accounts_covered: number;
+  accounts_total: number;
+};
+
 type Period = "this_week" | "this_month" | "last_month" | "this_year";
 
 const PERIOD_OPTIONS: { value: Period; label: string; phrase: string }[] = [
@@ -74,6 +95,9 @@ export default function CashflowPage() {
   const [period, setPeriod] = useState<Period>("this_month");
   const [summary, setSummary] = useState<CashflowSummary | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+
+  const [netWorthData, setNetWorthData] = useState<NetWorth | null>(null);
+  const [netWorthError, setNetWorthError] = useState<string | null>(null);
 
   const [txs, setTxs] = useState<Tx[]>([]);
 
@@ -105,14 +129,41 @@ export default function CashflowPage() {
     if (r.ok) setTxs(await r.json());
   }
 
-  // Refetch BOTH the transactions list and the summary after every write, so
-  // the recent-transactions list AND the dashboard update with no page reload.
+  // GET /net-worth — not period-scoped (a point-in-time snapshot), so it's
+  // fetched once on mount and refreshed by refreshAll after writes, unlike
+  // loadSummary which reruns per selected period.
+  async function loadNetWorth() {
+    try {
+      const r = await fetch("/api/net-worth");
+      if (r.ok) {
+        setNetWorthData(await r.json());
+        setNetWorthError(null);
+      } else if (r.status === 422) {
+        setNetWorthError(
+          "Couldn't verify net worth — some accounts aren't classified as liquid or investment. Check Settings › Accounts."
+        );
+      } else {
+        setNetWorthError(
+          "Couldn't load the dashboard — check the backend is running and reload the page."
+        );
+      }
+    } catch {
+      setNetWorthError(
+        "Couldn't load the dashboard — check the backend is running and reload the page."
+      );
+    }
+  }
+
+  // Refetch the transactions list, the summary, AND net worth after every
+  // write, so the recent-transactions list AND the dashboard update with no
+  // page reload.
   async function refreshAll() {
-    await Promise.all([loadTxs(), loadSummary(period)]);
+    await Promise.all([loadTxs(), loadSummary(period), loadNetWorth()]);
   }
 
   useEffect(() => {
     loadTxs();
+    loadNetWorth();
   }, []);
 
   useEffect(() => {
@@ -176,16 +227,6 @@ export default function CashflowPage() {
     (summary.totals.income !== 0 ||
       summary.totals.expense !== 0 ||
       categoryData.length > 0);
-  const netWorth = (summary?.accounts ?? []).reduce(
-    (s, a) => s + a.current_balance,
-    0
-  );
-  const netWorthDelta = (summary?.accounts ?? []).reduce(
-    (s, a) => s + a.period_net,
-    0
-  );
-  const periodPhrase =
-    PERIOD_OPTIONS.find((o) => o.value === period)?.phrase ?? "this period";
 
   // ---------------------------------------------------------------------------
   // Render
@@ -301,50 +342,23 @@ export default function CashflowPage() {
                 >
                   Net worth
                 </div>
-                <div
-                  style={{
-                    fontFamily: tokens.font.serif,
-                    fontSize: 52,
-                    lineHeight: 1,
-                    letterSpacing: "-1px",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {money(netWorth)}
-                </div>
-              </div>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  marginTop: 22,
-                }}
-              >
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 5,
-                    background: tokens.color.chipGreenBg,
-                    color:
-                      netWorthDelta < 0
-                        ? "#e6a99c"
-                        : tokens.color.chipGreenText,
-                    fontSize: 13,
-                    fontWeight: 600,
-                    padding: "4px 10px",
-                    borderRadius: 999,
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {netWorthDelta < 0 ? "▼" : "▲"} {signed(netWorthDelta)}
-                </span>
-                <span
-                  style={{ fontSize: 13, color: tokens.color.inkTextMuted }}
-                >
-                  {periodPhrase}
-                </span>
+                {netWorthError ? (
+                  <div style={{ fontSize: 14, color: "#e6a99c" }}>
+                    {netWorthError}
+                  </div>
+                ) : (
+                  <div
+                    style={{
+                      fontFamily: tokens.font.serif,
+                      fontSize: 52,
+                      lineHeight: 1,
+                      letterSpacing: "-1px",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    {money(netWorthData?.total ?? 0)}
+                  </div>
+                )}
               </div>
             </div>
 
