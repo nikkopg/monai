@@ -46,7 +46,7 @@ transfer/buy-sell mechanics, with BudgetBakers-grade record and category managem
 - [x] **Phase 12: Typed Accounts + Transfer/Funding Schema Foundations** - `accounts.type` audited + constrained to liquid/investment; additive columns for transfer pairing and funded portfolio events (completed 2026-07-25)
 - [x] **Phase 13: Shared Mutation Layer — Transfer, Buy/Sell-with-Funding, Adjustment Writes** - `writes.py` gains atomic, pair-aware `apply_*` functions for every new money-movement type (completed 2026-07-30)
 - [x] **Phase 14: REST Endpoints + Agent/MCP Tool Registration** - New endpoints wired to Phase 13's writes; write tools registered on the agent and kept off the MCP read-only surface (completed 2026-07-30)
-- [ ] **Phase 15: Net Worth Aggregation + Dashboard** - Main dashboard shows net worth as liquid + investment sums that never overlap
+- [x] **Phase 15: Net Worth Aggregation + Dashboard** - Main dashboard shows net worth as liquid + investment sums that never overlap (completed 2026-07-31)
 - [ ] **Phase 16: UI — Extend Existing Components** - Account manager, platform detail, and the record modal grow to cover typed accounts, PnL/buy-sell history, and Expense/Income/Transfer entry
 - [ ] **Phase 17: UI — New Surfaces (Records Tab, Categories Manager)** - Date-grouped Records ledger with filters/bulk actions; category tree manager in Settings
 
@@ -184,7 +184,7 @@ Plans:
 
 **Plans**: 2 plans
 - [x] 15-01-PLAN.md — Backend `net_worth` composed read (+ `GET /net-worth`), coverage assertion, dual read-tool registration, tests
-- [ ] 15-02-PLAN.md — `/cashflow` dashboard: server-sourced net-worth hero (fix double-count) + liquid/investment split + per-side breakdowns
+- [x] 15-02-PLAN.md — `/cashflow` dashboard: server-sourced net-worth hero (fix double-count) + liquid/investment split + per-side breakdowns
 **UI hint**: yes
 
 ### Phase 16: UI — Extend Existing Components
@@ -250,7 +250,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 12. Typed Accounts + Transfer Schema | v1.2 | 3/3 | Complete    | 2026-07-25 |
 | 13. Shared Mutation Layer | v1.2 | 5/5 | Complete   | 2026-07-30 |
 | 14. REST + Agent/MCP Tools | v1.2 | 3/3 | Complete    | 2026-07-31 |
-| 15. Net Worth Dashboard | v1.2 | 1/2 | In Progress|  |
+| 15. Net Worth Dashboard | v1.2 | 2/2 | Complete   | 2026-07-31 |
 | 16. UI — Extend Existing | v1.2 | 0/? | Not started | - |
 | 17. UI — New Surfaces | v1.2 | 0/? | Not started | - |
 
