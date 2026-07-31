@@ -41,10 +41,10 @@ created: 2026-07-31
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 15-01-xx | 01 | 1 | NW-01 | — | net_worth = SUM(type='liquid' balances) + portfolio_summary.total_value; each account/holding counted exactly once | unit | `python -m pytest backend/tests/test_net_worth.py -q` | ❌ W0 | ⬜ pending |
-| 15-01-xx | 01 | 1 | NW-01 | — | coverage assertion: liquid_count + investment_count == COUNT(*) accounts; unclassified/out-of-set type → raises ValueError (→422) | unit | `python -m pytest backend/tests/test_net_worth.py -q` | ❌ W0 | ⬜ pending |
-| 15-01-xx | 01 | 1 | NW-02 | — | payload exposes combined total + liquid subtotal + investment subtotal + per-side breakdown; subtotals reconcile to combined | unit | `python -m pytest backend/tests/test_net_worth.py -q` | ❌ W0 | ⬜ pending |
-| 15-0x-xx | 0x | 2 | NW-02 | — | /cashflow hero shows one net-worth number == liquid + investment (no double-count of investment-type accounts) | manual/e2e | see Manual-Only | n/a | ⬜ pending |
+| 15-01-01 | 01 | 1 | NW-01, NW-02 | — | Wave 0 RED: create test_net_worth.py (6 cases) — sum-once, split-reconcile, coverage-raise, read-only, agent-registration, endpoint | unit | `python -m pytest backend/tests/test_net_worth.py -q` | ❌ W0→ | ⬜ pending |
+| 15-01-02 | 01 | 1 | NW-01 | T-15-01 | net_worth = SUM(type='liquid' balances) + portfolio_summary.total_value, each counted once; coverage assertion liquid_count+investment_count==COUNT(*) → ValueError on unclassified; net_worth in READ_TOOL_NAMES only | unit | `python -m pytest backend/tests/test_net_worth.py -q` | ✅ | ⬜ pending |
+| 15-01-03 | 01 | 1 | NW-02 | T-15-02 | GET /net-worth returns combined total + liquid/investment subtotals + per-side breakdown; ValueError→422 (not raw 500); dual registration (query.py read_tools + MCP) | unit | `python -m pytest backend/tests/test_net_worth.py -q` | ✅ | ⬜ pending |
+| 15-02-xx | 02 | 2 | NW-01, NW-02 | — | /cashflow hero shows one net-worth number == liquid + investment (fixes the live client-side double-count); split row + per-side breakdown render | tsc + manual | `cd ui && npx tsc --noEmit` | n/a | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
