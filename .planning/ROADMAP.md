@@ -183,7 +183,7 @@ Plans:
   3. The net-worth query's account-type filter is asserted to cover 100% of accounts — no silently dropped or double-included row
 
 **Plans**: 2 plans
-- [ ] 15-01-PLAN.md — Backend `net_worth` composed read (+ `GET /net-worth`), coverage assertion, dual read-tool registration, tests
+- [x] 15-01-PLAN.md — Backend `net_worth` composed read (+ `GET /net-worth`), coverage assertion, dual read-tool registration, tests
 - [ ] 15-02-PLAN.md — `/cashflow` dashboard: server-sourced net-worth hero (fix double-count) + liquid/investment split + per-side breakdowns
 **UI hint**: yes
 
@@ -250,7 +250,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 12. Typed Accounts + Transfer Schema | v1.2 | 3/3 | Complete    | 2026-07-25 |
 | 13. Shared Mutation Layer | v1.2 | 5/5 | Complete   | 2026-07-30 |
 | 14. REST + Agent/MCP Tools | v1.2 | 3/3 | Complete    | 2026-07-31 |
-| 15. Net Worth Dashboard | v1.2 | 0/? | Not started | - |
+| 15. Net Worth Dashboard | v1.2 | 1/2 | In Progress|  |
 | 16. UI — Extend Existing | v1.2 | 0/? | Not started | - |
 | 17. UI — New Surfaces | v1.2 | 0/? | Not started | - |
 
