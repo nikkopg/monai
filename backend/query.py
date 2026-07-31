@@ -101,7 +101,7 @@ def _get_agent_workflow():
             spending_before_after_purchase,
             transaction_count, largest_transactions,
             average_daily_spending, list_categories, find_transactions,
-            monthly_trend, account_balances,
+            monthly_trend, account_balances, net_worth,
             # Investment lookup tools (resolve platform/account names -> ids)
             find_platforms, find_accounts,
             # Write tools (proposal-producers — never mutate directly)
@@ -160,6 +160,7 @@ def _get_agent_workflow():
             FunctionTool.from_defaults(fn=find_accounts),
             FunctionTool.from_defaults(fn=monthly_trend),
             FunctionTool.from_defaults(fn=account_balances),
+            FunctionTool.from_defaults(fn=net_worth),
         ]
 
         # Write tools — proposal-producers (CHAT-07, D-04 single source of truth)

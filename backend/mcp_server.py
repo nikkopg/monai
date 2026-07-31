@@ -1,7 +1,7 @@
 """
 MCP server — read-only, API-key-gated external tool surface (MCP-01..MCP-04).
 
-Registers backend.tools.TOOLS (the 15 read callables — single source of truth,
+Registers backend.tools.TOOLS (the 16 read callables — single source of truth,
 MCP-02) as MCP tools with hand-authored external-LLM-facing descriptions
 (D-05). The write/propose_* tools are never registered here (D-03/MCP-03) —
 an external client cannot even see them in tools/list, let alone call them.
@@ -71,15 +71,20 @@ MCP_DESCRIPTIONS: dict[str, str] = {
     ),
     "find_platforms": "Search/filter investment platforms by name substring; returns ids, names, and kinds.",
     "find_accounts": "Search/filter accounts by name substring; returns ids, names, types, and currencies.",
+    "net_worth": (
+        "Single trustworthy net worth = liquid accounts + investment platforms, each "
+        "counted exactly once. Returns total, liquid_total, investment_total, "
+        "liquid_accounts, investment_groups, accounts_covered, accounts_total."
+    ),
 }
 
 
 def build_mcp() -> FastMCP:
-    """Build the FastMCP instance with the 15 read-only callables registered.
+    """Build the FastMCP instance with the 16 read-only callables registered.
 
     Registers ONLY the names in backend.tools.READ_TOOL_NAMES — never the
     propose_* write tools (D-03). By the time this module loads,
-    backend.tools.TOOLS itself has already been mutated to 26 entries (15
+    backend.tools.TOOLS itself has already been mutated to 27 entries (16
     read + 11 write, via TOOLS.update() at the bottom of tools.py), so
     iterating TOOLS directly would leak write tools onto the MCP surface;
     READ_TOOL_NAMES is the pre-mutation snapshot that keeps this read-only

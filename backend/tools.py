@@ -492,22 +492,78 @@ def account_balances(period_start=None, period_end=None) -> dict:
     period_predicate = (" AND " + " AND ".join(period_parts)) if period_parts else ""
     # Per-account list (not a cashflow total) — intentionally reads the base
     # `transactions` table, not `cashflow_transactions`, so investment
-    # accounts still show their own balance here. The liquid/investment
-    # net-worth split is Phase 15 (CONTEXT discretion item D).
+    # accounts still show their own balance here. `type` is additive (Phase
+    # 15) — net_worth() filters by it; existing consumers (CashflowSummary,
+    # the frontend AccountBalance type) are unaffected since it's a new key,
+    # not a removed/renamed one (Pitfall 2).
     sql = (
-        "SELECT a.id, a.name, "
+        "SELECT a.id, a.name, a.type, "
         "COALESCE(SUM(t.amount), 0) AS current_balance, "
         f"COALESCE(SUM(t.amount) FILTER (WHERE true{period_predicate}), 0) AS period_net "
         "FROM accounts a "
         "LEFT JOIN transactions t ON t.account_id = a.id AND t.is_transfer = false "
-        "GROUP BY a.id, a.name ORDER BY a.name"
+        "GROUP BY a.id, a.name, a.type ORDER BY a.name"
     )
     with engine.connect() as c:
         rows = [
-            {"id": r[0], "name": r[1], "current_balance": float(r[2]), "period_net": float(r[3])}
+            {
+                "id": r[0], "name": r[1], "type": r[2],
+                "current_balance": float(r[3]), "period_net": float(r[4]),
+            }
             for r in c.execute(text(sql), p).fetchall()
         ]
     return {"tool": "account_balances", "rows": rows}
+
+
+def net_worth(db=None) -> dict:
+    """Single trustworthy net worth = liquid accounts + investment platforms,
+    each real account/holding counted exactly once (NW-01, D-01/D-03/D-04).
+
+    Liquid side: account_balances() rows filtered to type == 'liquid' only
+    (never by name/id). Investment side: portfolio_summary(db).total_value —
+    the single source of truth; never re-summed from holdings/portfolio_events
+    (it already includes the CASH sentinel via its asset_type=='cash' branch).
+
+    db: an existing Session, or None to open (and close) a fresh one — the
+    agent/MCP call path invokes this with zero args (D-02), unlike main.py's
+    endpoint which passes its request-scoped session.
+
+    Coverage assertion (D-05): raises ValueError if liquid_count +
+    investment_count != total account count — refuses to silently drop or
+    double-count if the accounts.type CHECK invariant is ever violated.
+    """
+    from backend.db import SessionLocal
+    from backend.portfolio import portfolio_summary
+
+    owns_session = db is None
+    db = db or SessionLocal()
+    try:
+        rows = account_balances()["rows"]
+        liquid_rows = [r for r in rows if r["type"] == "liquid"]
+        investment_rows = [r for r in rows if r["type"] == "investment"]
+        if len(liquid_rows) + len(investment_rows) != len(rows):
+            raise ValueError(
+                f"net_worth coverage gap: {len(liquid_rows) + len(investment_rows)}/{len(rows)} "
+                "accounts classified — refusing to silently drop or double-count"
+            )
+        liquid_total = sum(r["current_balance"] for r in liquid_rows)
+
+        pf = portfolio_summary(db)
+        investment_total = float(pf["total_value"])
+
+        return {
+            "tool": "net_worth",
+            "total": liquid_total + investment_total,
+            "liquid_total": liquid_total,
+            "investment_total": investment_total,
+            "liquid_accounts": liquid_rows,
+            "investment_groups": pf["groups"],
+            "accounts_covered": len(liquid_rows) + len(investment_rows),
+            "accounts_total": len(rows),
+        }
+    finally:
+        if owns_session:
+            db.close()
 
 
 def list_categories() -> dict:
@@ -618,10 +674,11 @@ TOOLS = {
     "find_accounts": find_accounts,
     "monthly_trend": monthly_trend,
     "account_balances": account_balances,
+    "net_worth": net_worth,
 }
 
 # Snapshot of the read-only tool names, captured BEFORE the write tools are
-# merged into TOOLS below. TOOLS itself becomes 26 entries (15 read + 11
+# merged into TOOLS below. TOOLS itself becomes 27 entries (16 read + 11
 # propose_* write) once this module finishes loading, so any read-only
 # surface (e.g. the MCP server, D-03/MCP-03) must key off this frozenset,
 # never off TOOLS directly.

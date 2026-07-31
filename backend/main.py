@@ -102,6 +102,7 @@ from backend.schemas import (
     HoldingOut,
     HoldingUpdate,
     InvestmentTransferCreate,
+    NetWorth,
     PlatformCreate,
     PlatformOut,
     PlatformUpdate,
@@ -125,6 +126,7 @@ from backend.tools import (
     income_total,
     monthly_trend,
     net_total,
+    net_worth,
     resolve_period,
     spending_by_category,
     spending_total,
@@ -726,6 +728,22 @@ def cashflow_summary(
     accounts = account_balances(s, e)["rows"]
     trend = monthly_trend(6)["rows"]
     return CashflowSummary(totals=totals, by_category=by_category, accounts=accounts, trend=trend)
+
+
+@app.get("/net-worth", response_model=NetWorth)
+def net_worth_endpoint(db: Session = Depends(get_session)):
+    """Composed net-worth payload (D-01/D-02/D-05, NW-01/NW-02) — open read.
+
+    liquid side = account_balances() filtered to type='liquid'; investment
+    side = portfolio_summary(db).total_value. The coverage-assertion
+    ValueError (schema invariant violated — accounts left unclassified) maps
+    to 422, never a raw 500 (T-14-07 precedent).
+    """
+    try:
+        result = net_worth(db)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return NetWorth(**result)
 
 
 @app.post("/transactions", response_model=TransactionOut, status_code=201, dependencies=[Depends(require_api_key)])
