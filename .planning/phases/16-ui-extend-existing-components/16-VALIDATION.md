@@ -40,7 +40,14 @@ created: 2026-08-01
 
 | Task ID | Plan | Wave | Requirement | Threat Ref | Secure Behavior | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
-| 16-01-01 | 01 | 0 | REC-04 | — | N/A | e2e | `cd ui && npx playwright test e2e/record-modal.spec.ts` | ❌ W0 | ⬜ pending |
+| 16-01-01 | 01 | 0 | REC-04 | — | N/A (scaffold) | e2e | `cd ui && npx playwright test e2e/record-modal.spec.ts --list` | ❌ W0 creates | ⬜ pending |
+| 16-01-02 | 01 | 0 | REC-04 | T-16-02, T-16-03 | Transfer body whitelist + edit-leg-lock asserted | e2e | `cd ui && npx playwright test e2e/record-modal.spec.ts --list` | ❌ W0 creates | ⬜ pending |
+| 16-01-03 | 01 | 0 | PLAT-02, ACCT-01 | — | N/A (scaffold) | e2e | `cd ui && npx playwright test e2e/platform-crud.spec.ts e2e/cashflow-crud.spec.ts --list` | ❌ W0 creates | ⬜ pending |
+| 16-02-01 | 02 | 1 | REC-04 | T-16-04 | Client sign-derivation; backend remains source of truth | e2e | `cd ui && npx playwright test e2e/record-modal.spec.ts -g "segment\|Expense\|Income\|currency\|reverse"` | ✅ (after 16-01) | ⬜ pending |
+| 16-02-02 | 02 | 1 | REC-04 | T-16-03 | Transfer POST body built from explicit field whitelist | e2e | `cd ui && npx playwright test e2e/record-modal.spec.ts -g "ransfer\|different"` | ✅ (after 16-01) | ⬜ pending |
+| 16-02-03 | 02 | 1 | REC-04 | T-16-02 | Edit-leg lock → PUT /transactions, never pair endpoint | e2e | `cd ui && npx playwright test e2e/record-modal.spec.ts` | ✅ (after 16-01) | ⬜ pending |
+| 16-03-01 | 03 | 1 | ACCT-01 | T-16-06 | Account create sends type:liquid; edit stays name-only | e2e | `cd ui && npx playwright test e2e/cashflow-crud.spec.ts -g "account"` | ✅ (after 16-01) | ⬜ pending |
+| 16-03-02 | 03 | 1 | PLAT-02 | T-16-07 | Platform kind free-text, React-escaped on render | e2e | `cd ui && npx playwright test e2e/platform-crud.spec.ts` | ✅ (after 16-01) | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
