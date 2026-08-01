@@ -1,8 +1,10 @@
 ---
 phase: 15-net-worth-aggregation-dashboard
 verified: 2026-07-31T09:55:00Z
-status: human_needed
-score: 7/8 must-haves verified
+human_verified: 2026-07-31T10:35:00Z
+status: passed
+score: 8/8 must-haves verified
+human_verification_result: "PASSED — rebuilt stack; live GET /net-worth 200 and rendered /cashflow DOM confirm hero == liquid + investment (310,564,818 = 236,186,300 + 74,378,518), split + breakdown render, no investment account under Liquid accounts, no delta chip, coverage 3/3. See 15-HUMAN-UAT.md."
 behavior_unverified: 0
 overrides_applied: 0
 human_verification:

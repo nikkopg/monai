@@ -1,14 +1,14 @@
 ---
-status: partial
+status: passed
 phase: 15-net-worth-aggregation-dashboard
 source: [15-VERIFICATION.md]
 started: 2026-07-31T09:51:52Z
-updated: 2026-07-31T09:51:52Z
+updated: 2026-07-31T10:35:00Z
 ---
 
 ## Current Test
 
-[awaiting human testing]
+[all tests passed]
 
 ## Tests
 
@@ -23,15 +23,25 @@ gotcha), open `http://localhost:3001/` and confirm:
 - Under "Liquid accounts" there is NO investment-typed account (no double-count).
 - The hero has NO ▲/▼ delta chip (net-worth trend is deferred).
 - Per-account balances still render even for accounts with zero activity this period.
-result: [pending]
+result: passed — verified 2026-07-31 on the rebuilt stack. Live `GET /net-worth` 200
+  and rendered `/cashflow` DOM both confirm: hero 310,564,818 == liquid 236,186,300 +
+  investment 74,378,518 (exact); split row shows both subtotals (3 accounts / 5
+  platforms); "Liquid accounts" = BCA/Cash/Stockbit, all type='liquid', no investment
+  account (double-count fixed); no ▲/▼ delta chip; balances render with 0 period
+  activity; coverage assertion 3/3. Note: expected numbers above predate the
+  account-994 ("Investments") retirement done same day — live counts are now 3
+  accounts / 5 platforms, and the "no investment account under Liquid accounts" check
+  is trivially clean since that account no longer exists.
 
 ## Summary
 
 total: 1
-passed: 0
+passed: 1
 issues: 0
-pending: 1
+pending: 0
 skipped: 0
 blocked: 0
 
 ## Gaps
+
+None — all human-verification items passed.
