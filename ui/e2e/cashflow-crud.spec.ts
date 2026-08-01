@@ -281,6 +281,38 @@ test.describe("transaction create/edit/delete", () => {
   });
 });
 
+test.describe("account create (ACCT-01)", () => {
+  test("Add account posts type:liquid to POST /api/accounts", async ({
+    page,
+  }) => {
+    await mockDashboard(page);
+    let postedBody: Record<string, unknown> | null = null;
+    await page.route("**/api/accounts", async (route) => {
+      if (route.request().method() === "POST") {
+        postedBody = route.request().postDataJSON();
+        await route.fulfill({
+          status: 201,
+          contentType: "application/json",
+          body: JSON.stringify({ id: 3, name: "Wallet" }),
+        });
+        return;
+      }
+      await route.fallback();
+    });
+
+    await page.goto("/cashflow");
+    await expect(page.getByText("Accounts", { exact: true }).first()).toBeVisible();
+    await page.getByRole("button", { name: "Add account", exact: true }).click();
+    await page.getByPlaceholder("Account name").fill("Wallet");
+    await page
+      .locator("form")
+      .getByRole("button", { name: "Add account", exact: true })
+      .click();
+
+    await expect.poll(() => postedBody?.type).toBe("liquid");
+  });
+});
+
 test.describe("account reassign-then-delete", () => {
   test("delete on an account with transactions surfaces the reassign select (422 path)", async ({
     page,
