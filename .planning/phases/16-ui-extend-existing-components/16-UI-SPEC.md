@@ -59,6 +59,8 @@ Reuses the modal's existing type scale — no new sizes introduced.
 
 No new typography is introduced this phase — every size above already exists in the three target files.
 
+**Weight-count exception:** the table above lists three weight values (600 / 500 / 400), one over the 2-weight max. The `500` is not a new Phase 16 decision — it is the inactive-segment label weight already accepted and shipped in the settings-page UIR-07 segmented control, which D-01 requires Phase 16 to reuse verbatim for visual parity. Changing it to `400` (or dropping it to match the 2-weight budget) would desync the new record-type segmented control from the existing provider selector it's required to look identical to. Phase 16's actual weight budget is 2 (600 active / 400 body); `500` is a pre-existing, out-of-phase-scope carryover, the same class of exception the Spacing Scale section above already grants to the segmented control's non-4px-multiple padding/radii values.
+
 ---
 
 ## Color
