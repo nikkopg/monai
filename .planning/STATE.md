@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
 status: executing
-stopped_at: Phase 15 UI-SPEC approved
-last_updated: "2026-07-31T05:09:28.100Z"
+stopped_at: Phase 16 context gathered
+last_updated: "2026-08-01T01:24:28.069Z"
 last_activity: 2026-07-31 -- Phase 15 execution started
 progress:
   total_phases: 7
-  completed_phases: 4
+  completed_phases: 5
   total_plans: 20
-  completed_plans: 18
-  percent: 57
+  completed_plans: 20
+  percent: 71
 ---
 
 # Project State
@@ -157,8 +157,8 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-07-31T04:46:04.944Z
-Stopped at: Phase 15 UI-SPEC approved
-Resume file: .planning/phases/15-net-worth-aggregation-dashboard/15-UI-SPEC.md
+Last session: 2026-08-01T01:24:28.043Z
+Stopped at: Phase 16 context gathered
+Resume file: .planning/phases/16-ui-extend-existing-components/16-CONTEXT.md
 
 Next: `/gsd-plan-phase 11`
