@@ -198,7 +198,10 @@ Plans:
   2. Platform manager reaches CRUD parity with the account manager (add/edit/remove platforms)
   3. User can add a record via a modal with an Expense / Income / Transfer segmented form (amount + currency, account, category picker, date-time, note, "add another")
 
-**Plans**: TBD
+**Plans**: 3 plans
+- [ ] 16-01-PLAN.md — Wave 0 e2e test scaffolds (record-modal, platform-crud, account type:liquid) — RED baseline for REC-04/PLAT-02/ACCT-01
+- [ ] 16-02-PLAN.md — Extend TransactionModal: Expense/Income/Transfer segmented form, sign derivation, currency, save-&-add-another, edit-leg lock (REC-04)
+- [ ] 16-03-PLAN.md — AccountManager type:liquid on create + PlatformManager kind-editable edit row (ACCT-01, PLAT-02)
 **UI hint**: yes
 
 ### Phase 17: UI — New Surfaces (Records Tab, Categories Manager)
