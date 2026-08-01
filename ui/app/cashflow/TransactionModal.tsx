@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-import { card, input, btn, label } from "../styles";
+import { tokens, card, input, btn, label } from "../styles";
 
 // Categories became first-class hierarchy rows in Phase 11: GET /categories
 // returns a tree, and a name the backend does not recognise resolves to
@@ -72,6 +72,31 @@ function toLocalDatetimeInputValue(d: Date): string {
   )}:${pad(d.getMinutes())}`;
 }
 
+// Expense / Income / Transfer segmented control (REC-04, D-01). Expense
+// default on create. An existing transfer leg (edit mode) initializes to
+// "transfer" too but with the control locked — see `locked` below.
+type Segment = "expense" | "income" | "transfer";
+const SEGMENTS: readonly Segment[] = ["expense", "income", "transfer"];
+
+// Unsigned magnitude -> signed amount, sign derived from the segment (D-02),
+// retiring the old "negative = expense" manual-sign foot-gun. Income and a
+// fresh Transfer create both stay positive; Expense negates. `originalSign`
+// is only consulted when editing an existing transfer leg (segment forced to
+// "transfer" while isEdit) — that path must preserve the row's stored sign
+// untouched (UI-SPEC Interaction States #7) rather than re-derive it, since
+// a transfer leg can legitimately be stored negative or positive depending
+// on which side of the pair it is.
+function signedAmount(
+  magnitude: string,
+  segment: Segment,
+  originalSign: 1 | -1 = 1
+): number {
+  const n = Math.abs(parseFloat(magnitude));
+  if (segment === "expense") return -n;
+  if (segment === "income") return n;
+  return n * originalSign;
+}
+
 export default function TransactionModal({
   editingTx,
   accounts,
@@ -79,13 +104,28 @@ export default function TransactionModal({
   onSaved,
 }: Props) {
   const isEdit = editingTx != null;
+  // Editing an existing transfer leg locks the segmented control to
+  // "transfer" and keeps the row on the legacy single-leg PUT path — see the
+  // segmented control and handleSubmit below (D-03 / RESEARCH Pitfall 1 /
+  // UI-SPEC Interaction States #7).
+  const locked = isEdit && editingTx!.is_transfer;
+
+  const [segment, setSegment] = useState<Segment>(() => {
+    if (editingTx?.is_transfer) return "transfer";
+    if (editingTx) return editingTx.amount < 0 ? "expense" : "income";
+    return "expense"; // D-01 default, create mode
+  });
 
   const [date, setDate] = useState(
     toLocalDatetimeInputValue(editingTx ? new Date(editingTx.date) : new Date())
   );
+  // Unsigned magnitude — the sign is derived from `segment` at submit time
+  // (D-02), so edit mode reverse-maps the stored signed amount to its
+  // absolute value here.
   const [amount, setAmount] = useState(
-    editingTx ? String(editingTx.amount) : ""
+    editingTx ? String(Math.abs(editingTx.amount)) : ""
   );
+  const [currency, setCurrency] = useState("IDR"); // D-05, no FX/enum
   // Category is a select sourced from the GET /categories tree.
   // `categorySelection` holds the chosen <select> value: "" -> (no category),
   // otherwise the exact stored category name.
@@ -141,6 +181,12 @@ export default function TransactionModal({
     return opts;
   })();
 
+  // Category cell is hidden on a fresh Transfer create (D-04, server-assigns
+  // the category) but stays visible when locked to an existing transfer leg
+  // — the row may carry pre-phase category data that hiding would silently
+  // drop (UI-SPEC Interaction States #7).
+  const categoryVisible = segment !== "transfer" || locked;
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
@@ -153,12 +199,17 @@ export default function TransactionModal({
       // resolves null to Uncategorized); else the exact stored name,
       // byte-identical, so selection can never introduce a case variant.
       const categoryValue = categorySelection || null;
+      // Edit-transfer-lock: preserve the row's original stored sign rather
+      // than re-deriving it from `segment` (which is forced to "transfer"
+      // for display only in that state) — sign stays untouched per UI-SPEC 7.
+      const originalSign = editingTx && editingTx.amount < 0 ? -1 : 1;
       const body: Record<string, unknown> = {
         date: new Date(date).toISOString(),
-        amount: parseFloat(amount),
+        amount: signedAmount(amount, segment, originalSign),
         category: categoryValue,
         merchant: merchant || null,
         notes: notes || null,
+        currency,
         is_transfer: isTransfer,
       };
       if (!isEdit) {
@@ -224,6 +275,62 @@ export default function TransactionModal({
           {isEdit ? "Edit transaction" : "Add transaction"}
         </h2>
         <form onSubmit={handleSubmit}>
+          {/* Segmented control (REC-04) — copied verbatim from
+              settings/page.tsx L227-264 (UIR-07), swapping the option array
+              and click handler. Locked (disabled) when editing an existing
+              transfer leg so the user cannot switch away from Transfer. */}
+          <div
+            style={{
+              display: "inline-flex",
+              background: tokens.color.sidebar,
+              border: `1px solid ${tokens.color.border2}`,
+              borderRadius: 12,
+              padding: 4,
+              marginBottom: 18,
+            }}
+          >
+            {SEGMENTS.map((s) => {
+              const active = segment === s;
+              return (
+                <button
+                  key={s}
+                  type="button"
+                  onClick={locked ? undefined : () => setSegment(s)}
+                  style={{
+                    border: "none",
+                    borderRadius: 9,
+                    padding: "8px 18px",
+                    fontSize: 14,
+                    fontWeight: active ? 600 : 500,
+                    cursor: locked ? "default" : "pointer",
+                    color: active ? tokens.color.ink : tokens.color.muted,
+                    background: active ? "#fff" : "transparent",
+                    boxShadow: active
+                      ? "0 1px 2px rgba(40,34,24,.12)"
+                      : "none",
+                    opacity: locked ? 0.5 : 1,
+                    transition: "all .2s ease",
+                  }}
+                >
+                  {s[0].toUpperCase() + s.slice(1)}
+                </button>
+              );
+            })}
+          </div>
+          {locked && (
+            <div
+              style={{
+                fontSize: 13,
+                color: tokens.color.muted,
+                marginTop: -10,
+                marginBottom: 14,
+              }}
+            >
+              This is one leg of a transfer — full pair editing isn&apos;t
+              available yet.
+            </div>
+          )}
+
           <div
             style={{
               display: "grid",
@@ -233,8 +340,11 @@ export default function TransactionModal({
             }}
           >
             <div>
-              <label style={label}>Date</label>
+              <label style={label} htmlFor="tx-date">
+                Date
+              </label>
               <input
+                id="tx-date"
                 style={input}
                 type="datetime-local"
                 value={date}
@@ -242,32 +352,52 @@ export default function TransactionModal({
               />
             </div>
             <div>
-              <label style={label}>Amount (negative = expense)</label>
+              <label style={label} htmlFor="tx-amount">
+                Amount
+              </label>
               <input
+                id="tx-amount"
                 style={input}
                 type="number"
                 step="any"
                 required
                 value={amount}
-                placeholder="-25000"
+                placeholder="25000"
                 onChange={(e) => setAmount(e.target.value)}
               />
             </div>
             <div>
-              <label style={label}>Category</label>
-              <select
+              <label style={label} htmlFor="tx-currency">
+                Currency
+              </label>
+              <input
+                id="tx-currency"
                 style={input}
-                value={categorySelection}
-                onChange={(e) => setCategorySelection(e.target.value)}
-              >
-                <option value="">(no category)</option>
-                {categoryOptions.map((o) => (
-                  <option key={o.name} value={o.name}>
-                    {`${"\u00a0\u00a0".repeat(o.depth)}${o.name}`}
-                  </option>
-                ))}
-              </select>
+                type="text"
+                value={currency}
+                onChange={(e) => setCurrency(e.target.value)}
+              />
             </div>
+            {categoryVisible && (
+              <div>
+                <label style={label} htmlFor="tx-category">
+                  Category
+                </label>
+                <select
+                  id="tx-category"
+                  style={input}
+                  value={categorySelection}
+                  onChange={(e) => setCategorySelection(e.target.value)}
+                >
+                  <option value="">(no category)</option>
+                  {categoryOptions.map((o) => (
+                    <option key={o.name} value={o.name}>
+                      {`${"\u00a0\u00a0".repeat(o.depth)}${o.name}`}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <label style={label}>Merchant / note</label>
               <input
