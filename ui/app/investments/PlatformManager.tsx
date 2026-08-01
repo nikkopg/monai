@@ -32,6 +32,7 @@ type DeleteFlowState =
 export default function PlatformManager({ platforms, onChanged }: Props) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
+  const [editKind, setEditKind] = useState("");
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
   const [newKind, setNewKind] = useState("");
@@ -71,7 +72,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
       const r = await fetch(`/api/platforms/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: editName }),
+        body: JSON.stringify({ name: editName, kind: editKind || null }),
       });
       if (r.ok) {
         setEditingId(null);
@@ -164,11 +165,19 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
             <tr key={p.id} style={{ borderTop: "1px solid #e7e1d5" }}>
               <td style={{ padding: "8px 4px" }}>
                 {editingId === p.id ? (
-                  <input
-                    style={input}
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                  />
+                  <>
+                    <input
+                      style={input}
+                      value={editName}
+                      onChange={(e) => setEditName(e.target.value)}
+                    />
+                    <input
+                      style={{ ...input, width: 160, marginLeft: 8 }}
+                      value={editKind}
+                      placeholder="e.g. brokerage, crypto app"
+                      onChange={(e) => setEditKind(e.target.value)}
+                    />
+                  </>
                 ) : (
                   <>
                     {p.name}
@@ -211,6 +220,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
                       onClick={() => {
                         setEditingId(p.id);
                         setEditName(p.name);
+                        setEditKind(p.kind ?? "");
                       }}
                       style={{ color: "#8b8474", cursor: "pointer", marginRight: 12, fontSize: 12 }}
                     >
