@@ -16,7 +16,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Accounts (ACCT)
 
-- [ ] **ACCT-01**: User can add, edit, and remove liquid accounts in a dedicated account manager
+- [x] **ACCT-01**: User can add, edit, and remove liquid accounts in a dedicated account manager
 - [x] **ACCT-02**: User can set an account's balance; the delta is stored as a visible "Adjustment" record (balances stay derived, never a stored field)
 - [x] **ACCT-03**: Accounts are typed liquid/investment (DB-enforced after live audit + backfill); investment-typed accounts are excluded from cashflow totals — the double-count fix
 
@@ -25,7 +25,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 - [ ] **REC-01**: User can browse all records in a date-grouped ledger with a daily net per group
 - [ ] **REC-02**: User can filter records by search, account, category, record type, amount range, and transfer visibility
 - [ ] **REC-03**: User can select multiple records and bulk delete or bulk recategorize
-- [ ] **REC-04**: User can add a record via a modal with Expense / Income / Transfer segmented form (amount + currency, account, category picker, date-time, note; "add another")
+- [x] **REC-04**: User can add a record via a modal with Expense / Income / Transfer segmented form (amount + currency, account, category picker, date-time, note; "add another")
 - [ ] **REC-05**: Transfer pairs display as one logical unit; editing or deleting affects both legs atomically (single-leg edits blocked)
 
 ### Categories (CAT)
@@ -38,7 +38,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 ### Platforms (PLAT)
 
 - [ ] **PLAT-01**: User can open a platform detail view with a PnL tab and a buy/sell history tab
-- [ ] **PLAT-02**: Platform manager reaches CRUD parity with the account manager (extends existing `PlatformManager.tsx`)
+- [x] **PLAT-02**: Platform manager reaches CRUD parity with the account manager (extends existing `PlatformManager.tsx`)
 
 ### Connection layer (XFER)
 
@@ -94,20 +94,20 @@ Which phases cover which requirements. Updated during roadmap creation.
 |-------------|-------|--------|
 | NW-01 | Phase 15 | Pending |
 | NW-02 | Phase 15 | Pending |
-| ACCT-01 | Phase 16 | Pending |
+| ACCT-01 | Phase 16 | Complete |
 | ACCT-02 | Phase 13 | Complete |
 | ACCT-03 | Phase 12 | Complete |
 | REC-01 | Phase 17 | Pending |
 | REC-02 | Phase 17 | Pending |
 | REC-03 | Phase 17 | Pending |
-| REC-04 | Phase 16 | Pending |
+| REC-04 | Phase 16 | Complete |
 | REC-05 | Phase 17 | Pending |
 | CAT-01 | Phase 11 | Complete |
 | CAT-02 | Phase 11 | Complete |
 | CAT-03 | Phase 11 | Complete |
 | CAT-04 | Phase 11 | Complete |
 | PLAT-01 | Phase 17 | Pending |
-| PLAT-02 | Phase 16 | Pending |
+| PLAT-02 | Phase 16 | Complete |
 | XFER-01 | Phase 13 | Complete |
 | XFER-02 | Phase 13 | Complete |
 | XFER-03 | Phase 13 | Complete |

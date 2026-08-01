@@ -183,8 +183,10 @@ Plans:
   3. The net-worth query's account-type filter is asserted to cover 100% of accounts — no silently dropped or double-included row
 
 **Plans**: 2 plans
+
 - [x] 15-01-PLAN.md — Backend `net_worth` composed read (+ `GET /net-worth`), coverage assertion, dual read-tool registration, tests
 - [x] 15-02-PLAN.md — `/cashflow` dashboard: server-sourced net-worth hero (fix double-count) + liquid/investment split + per-side breakdowns
+
 **UI hint**: yes
 
 ### Phase 16: UI — Extend Existing Components
@@ -198,10 +200,12 @@ Plans:
   2. Platform manager reaches CRUD parity with the account manager (add/edit/remove platforms)
   3. User can add a record via a modal with an Expense / Income / Transfer segmented form (amount + currency, account, category picker, date-time, note, "add another")
 
-**Plans**: 3 plans
-- [ ] 16-01-PLAN.md — Wave 0 e2e test scaffolds (record-modal, platform-crud, account type:liquid) — RED baseline for REC-04/PLAT-02/ACCT-01
+**Plans**: 1/3 plans executed
+
+- [x] 16-01-PLAN.md — Wave 0 e2e test scaffolds (record-modal, platform-crud, account type:liquid) — RED baseline for REC-04/PLAT-02/ACCT-01
 - [ ] 16-02-PLAN.md — Extend TransactionModal: Expense/Income/Transfer segmented form, sign derivation, currency, save-&-add-another, edit-leg lock (REC-04)
 - [ ] 16-03-PLAN.md — AccountManager type:liquid on create + PlatformManager kind-editable edit row (ACCT-01, PLAT-02)
+
 **UI hint**: yes
 
 ### Phase 17: UI — New Surfaces (Records Tab, Categories Manager)
@@ -254,7 +258,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 13. Shared Mutation Layer | v1.2 | 5/5 | Complete   | 2026-07-30 |
 | 14. REST + Agent/MCP Tools | v1.2 | 3/3 | Complete    | 2026-07-31 |
 | 15. Net Worth Dashboard | v1.2 | 2/2 | Complete   | 2026-07-31 |
-| 16. UI — Extend Existing | v1.2 | 0/? | Not started | - |
+| 16. UI — Extend Existing | v1.2 | 1/3 | In Progress|  |
 | 17. UI — New Surfaces | v1.2 | 0/? | Not started | - |
 
 ---
