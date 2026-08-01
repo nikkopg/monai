@@ -143,8 +143,16 @@ export default function TransactionModal({
       ? String(accounts[0].id)
       : ""
   );
+  // From/To selects, Transfer create only (D-03) — default to the first two
+  // distinct accounts so the same-account guard doesn't trip before the user
+  // touches anything.
+  const [fromAccountId, setFromAccountId] = useState<string>(
+    accounts[0] ? String(accounts[0].id) : ""
+  );
+  const [toAccountId, setToAccountId] = useState<string>(
+    accounts[1] ? String(accounts[1].id) : accounts[0] ? String(accounts[0].id) : ""
+  );
   const [notes, setNotes] = useState(editingTx?.notes ?? "");
-  const [isTransfer, setIsTransfer] = useState(editingTx?.is_transfer ?? false);
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -186,12 +194,61 @@ export default function TransactionModal({
   // — the row may carry pre-phase category data that hiding would silently
   // drop (UI-SPEC Interaction States #7).
   const categoryVisible = segment !== "transfer" || locked;
+  // From/To selects only for a brand-new transfer; edit mode (including a
+  // locked transfer leg) always keeps the legacy single Account select
+  // (D-03 / UI-SPEC Interaction States #7).
+  const showFromTo = segment === "transfer" && !isEdit;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setSaving(true);
     setError(null);
+
+    if (showFromTo && fromAccountId === toAccountId) {
+      setError("From and To accounts must be different.");
+      return;
+    }
+
+    setSaving(true);
     try {
+      if (showFromTo) {
+        // Transfer create (D-03) — explicit field whitelist only, never a
+        // spread of general form state, so category/is_transfer can never
+        // leak onto the create-only atomic-pair endpoint (RESEARCH Pitfall 2).
+        const fromAcc = accounts.find((a) => String(a.id) === fromAccountId);
+        const toAcc = accounts.find((a) => String(a.id) === toAccountId);
+        const body = {
+          from_account: fromAcc?.name ?? "",
+          to_account: toAcc?.name ?? "",
+          amount: Math.abs(parseFloat(amount)),
+          currency,
+          date: new Date(date).toISOString(),
+          notes: notes || null,
+        };
+        const r = await fetch("/api/transactions/transfer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (r.ok) {
+          onSaved();
+          onClose();
+        } else {
+          let detail = `HTTP ${r.status}`;
+          try {
+            const errBody = await r.json();
+            detail = errBody?.detail ?? detail;
+          } catch {
+            // keep the status-based detail
+          }
+          setError(`Couldn't save transfer: ${detail}. Nothing was changed.`);
+        }
+        return;
+      }
+
+      // Expense / Income (create or edit) and the locked-transfer-leg edit
+      // — unchanged POST/PUT /api/transactions path. There is no
+      // PUT /transactions/transfer/{id}; an edit NEVER routes to the
+      // create-only pair endpoint (D-03 / RESEARCH Pitfall 1).
       const selectedAccount = accounts.find(
         (a) => String(a.id) === accountId
       );
@@ -210,7 +267,9 @@ export default function TransactionModal({
         merchant: merchant || null,
         notes: notes || null,
         currency,
-        is_transfer: isTransfer,
+        // Explicit boolean — the old checkbox UI is removed (D-03). Only the
+        // locked-transfer-leg edit sends true; everywhere else it's false.
+        is_transfer: locked,
       };
       if (!isEdit) {
         // Create requires an `account` name (backend resolves/creates it).
@@ -245,7 +304,7 @@ export default function TransactionModal({
       }
     } catch (e) {
       setError(
-        `Couldn't save transaction: ${
+        `Couldn't save ${showFromTo ? "transfer" : "transaction"}: ${
           e instanceof Error ? e.message : "Network error"
         }. Nothing was changed.`
       );
@@ -398,47 +457,86 @@ export default function TransactionModal({
                 </select>
               </div>
             )}
+            {showFromTo ? (
+              <>
+                <div>
+                  <label style={label} htmlFor="tx-from-account">
+                    From account
+                  </label>
+                  <select
+                    id="tx-from-account"
+                    style={input}
+                    value={fromAccountId}
+                    onChange={(e) => setFromAccountId(e.target.value)}
+                  >
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label style={label} htmlFor="tx-to-account">
+                    To account
+                  </label>
+                  <select
+                    id="tx-to-account"
+                    style={input}
+                    value={toAccountId}
+                    onChange={(e) => setToAccountId(e.target.value)}
+                  >
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <label style={label} htmlFor="tx-merchant">
+                    Merchant / note
+                  </label>
+                  <input
+                    id="tx-merchant"
+                    style={input}
+                    value={merchant}
+                    placeholder="warung sate"
+                    onChange={(e) => setMerchant(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label style={label} htmlFor="tx-account">
+                    Account
+                  </label>
+                  <select
+                    id="tx-account"
+                    style={input}
+                    value={accountId}
+                    onChange={(e) => setAccountId(e.target.value)}
+                  >
+                    {accounts.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </>
+            )}
             <div>
-              <label style={label}>Merchant / note</label>
+              <label style={label} htmlFor="tx-notes">
+                Notes
+              </label>
               <input
-                style={input}
-                value={merchant}
-                placeholder="warung sate"
-                onChange={(e) => setMerchant(e.target.value)}
-              />
-            </div>
-            <div>
-              <label style={label}>Account</label>
-              <select
-                style={input}
-                value={accountId}
-                onChange={(e) => setAccountId(e.target.value)}
-              >
-                {accounts.map((a) => (
-                  <option key={a.id} value={a.id}>
-                    {a.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label style={label}>Notes</label>
-              <input
+                id="tx-notes"
                 style={input}
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
               />
-            </div>
-            <div style={{ display: "flex", alignItems: "flex-end", gap: 8 }}>
-              <label style={{ ...label, marginBottom: 10 }}>
-                <input
-                  type="checkbox"
-                  checked={isTransfer}
-                  onChange={(e) => setIsTransfer(e.target.checked)}
-                  style={{ marginRight: 6 }}
-                />
-                Transfer
-              </label>
             </div>
           </div>
 
@@ -469,6 +567,8 @@ export default function TransactionModal({
                 ? "Saving…"
                 : isEdit
                 ? "Save changes"
+                : segment === "transfer"
+                ? "Add transfer"
                 : "Add transaction"}
             </button>
             {error && (

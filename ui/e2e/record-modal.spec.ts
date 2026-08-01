@@ -260,7 +260,11 @@ test.describe("record-modal — Transfer segment (REC-04)", () => {
     });
 
     await openCreateModal(page);
-    const form = page.locator("form").filter({ hasText: "Add transaction" });
+    // Not filtered by hasText: "Add transaction" — the primary CTA legitimately
+    // switches to "Add transfer" once this segment is selected (distinct copy
+    // per UI-SPEC), which would stop matching a hasText-scoped locator on every
+    // subsequent action. Only one <form> renders while the modal is open.
+    const form = page.locator("form");
     await form.getByRole("button", { name: "Transfer", exact: true }).click();
 
     await expect(form.getByLabel("Category", { exact: true })).toHaveCount(0);
@@ -299,7 +303,9 @@ test.describe("record-modal — Transfer segment (REC-04)", () => {
     });
 
     await openCreateModal(page);
-    const form = page.locator("form").filter({ hasText: "Add transaction" });
+    // Same reasoning as the previous test: no hasText filter, since the CTA
+    // switches to "Add transfer" for this segment.
+    const form = page.locator("form");
     await form.getByRole("button", { name: "Transfer", exact: true }).click();
     await form.getByLabel("From account", { exact: true }).selectOption({ label: "Cash" });
     await form.getByLabel("To account", { exact: true }).selectOption({ label: "Cash" });
