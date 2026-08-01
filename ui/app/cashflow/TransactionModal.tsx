@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { tokens, card, input, btn, label } from "../styles";
 
@@ -156,6 +156,12 @@ export default function TransactionModal({
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // "Save & add another" (D-06, create-mode only) — set synchronously in
+  // each submit button's onClick and read inside the same-tick handleSubmit.
+  // A ref (not state) avoids the click->setState->submit stale-closure gap:
+  // handleSubmit runs before a state update from the same click would have
+  // re-rendered and refreshed the closure.
+  const addAnotherRef = useRef(false);
 
   // Fetch existing category names on mount (the modal is conditionally
   // rendered, so this runs each time it opens). On failure, degrade to an
@@ -231,7 +237,12 @@ export default function TransactionModal({
         });
         if (r.ok) {
           onSaved();
-          onClose();
+          if (addAnotherRef.current) {
+            setAmount("");
+            setNotes("");
+          } else {
+            onClose();
+          }
         } else {
           let detail = `HTTP ${r.status}`;
           try {
@@ -291,7 +302,15 @@ export default function TransactionModal({
 
       if (r.ok) {
         onSaved();
-        onClose();
+        if (!isEdit && addAnotherRef.current) {
+          // Sticky fields (D-06): segment, accountId, date, currency stay put.
+          setAmount("");
+          setCategorySelection("");
+          setMerchant("");
+          setNotes("");
+        } else {
+          onClose();
+        }
       } else {
         let detail = `HTTP ${r.status}`;
         try {
@@ -562,7 +581,14 @@ export default function TransactionModal({
             >
               Cancel
             </button>
-            <button style={btn} type="submit" disabled={saving}>
+            <button
+              style={btn}
+              type="submit"
+              disabled={saving}
+              onClick={() => {
+                addAnotherRef.current = false;
+              }}
+            >
               {saving
                 ? "Saving…"
                 : isEdit
@@ -571,6 +597,18 @@ export default function TransactionModal({
                 ? "Add transfer"
                 : "Add transaction"}
             </button>
+            {!isEdit && (
+              <button
+                style={btn}
+                type="submit"
+                disabled={saving}
+                onClick={() => {
+                  addAnotherRef.current = true;
+                }}
+              >
+                Save & add another
+              </button>
+            )}
             {error && (
               <span style={{ color: "#f87171", fontSize: 12 }}>{error}</span>
             )}
