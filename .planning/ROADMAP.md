@@ -200,10 +200,10 @@ Plans:
   2. Platform manager reaches CRUD parity with the account manager (add/edit/remove platforms)
   3. User can add a record via a modal with an Expense / Income / Transfer segmented form (amount + currency, account, category picker, date-time, note, "add another")
 
-**Plans**: 1/3 plans executed
+**Plans**: 2/3 plans executed
 
 - [x] 16-01-PLAN.md — Wave 0 e2e test scaffolds (record-modal, platform-crud, account type:liquid) — RED baseline for REC-04/PLAT-02/ACCT-01
-- [ ] 16-02-PLAN.md — Extend TransactionModal: Expense/Income/Transfer segmented form, sign derivation, currency, save-&-add-another, edit-leg lock (REC-04)
+- [x] 16-02-PLAN.md — Extend TransactionModal: Expense/Income/Transfer segmented form, sign derivation, currency, save-&-add-another, edit-leg lock (REC-04)
 - [ ] 16-03-PLAN.md — AccountManager type:liquid on create + PlatformManager kind-editable edit row (ACCT-01, PLAT-02)
 
 **UI hint**: yes
@@ -258,7 +258,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 13. Shared Mutation Layer | v1.2 | 5/5 | Complete   | 2026-07-30 |
 | 14. REST + Agent/MCP Tools | v1.2 | 3/3 | Complete    | 2026-07-31 |
 | 15. Net Worth Dashboard | v1.2 | 2/2 | Complete   | 2026-07-31 |
-| 16. UI — Extend Existing | v1.2 | 1/3 | In Progress|  |
+| 16. UI — Extend Existing | v1.2 | 2/3 | In Progress|  |
 | 17. UI — New Surfaces | v1.2 | 0/? | Not started | - |
 
 ---

@@ -5,15 +5,15 @@ milestone_name: Connected Ledger — Liquids ↔ Investments
 current_phase: 16
 current_phase_name: ui-extend-existing-components
 status: executing
-stopped_at: Phase 16 UI-SPEC approved
-last_updated: "2026-08-01T11:00:57.386Z"
+stopped_at: Completed 16-02-PLAN.md
+last_updated: "2026-08-01T11:45:45.696Z"
 last_activity: 2026-08-01
 last_activity_desc: Phase 16 execution started
 progress:
   total_phases: 7
   completed_phases: 5
   total_plans: 23
-  completed_plans: 21
+  completed_plans: 22
   percent: 71
 ---
 
@@ -29,7 +29,7 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 ## Current Position
 
 Phase: 16 (ui-extend-existing-components) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
 Last activity: 2026-08-01 -- Phase 16 execution started
 
@@ -72,6 +72,7 @@ Progress: [██████████] 100%
 | Phase 14 P02 | 35min | 2 tasks | 3 files |
 | Phase 14 P03 | 25min | 2 tasks | 2 files |
 | Phase 16 P01 | 45min | 3 tasks | 3 files |
+| Phase 16 P02 | 110min | 3 tasks | 3 files |
 
 ## Accumulated Context
 
@@ -115,6 +116,9 @@ Recent decisions affecting current work:
 - [Phase 14]: propose_add_investment_transfer's deposit event uses the documented CASH sentinel (ticker=CASH, event_type=deposit, asset_type=cash, price=1) matching the existing asset_type==cash 1:1 valuation convention
 - [Phase 14]: Grouped all 5 new confirm-dispatch branches under one elif operation in (...) block with a single try/except (KeyError, TypeError) guard rather than repeating it 5 times
 - [Phase 14]: Corrected plan constraint: funded-buy/sell REST bodies must coerce quantity/price/cash_amount to float not Decimal before calling apply_add_funded_buy/apply_add_funded_sell, since the primitive inner after-dict flows into AuditLog.after JSONB and raw Decimal breaks serialization regardless of REST vs proposal path
+- [Phase ?]: Edit-transfer-leg submit preserves the row's original stored sign via an originalSign param on signedAmount(), rather than re-deriving it from the locked 'transfer' display segment (UI-SPEC 7)
+- [Phase ?]: locked (isEdit && editingTx.is_transfer) is the single source of truth reused for segment-disable, category-visibility exception, and is_transfer:true on submit
+- [Phase ?]: Fixed 2 locator-scoping bugs in record-modal.spec.ts and 3 stale placeholder locators in cashflow-crud.spec.ts (Rule 3, collateral of D-02/D-03 plan-mandated UI changes) — no assertion/copy/endpoint/body-shape changed
 
 ### Pending Todos
 
@@ -126,6 +130,7 @@ None yet.
 - [Phase 12 planning]: Confirm exact Alembic nullable→backfill→constrain idiom before touching live `accounts.type` data (established pattern from migration 008, but needs a plan-time check)
 - [Phase 13 planning]: FX precision handling on buy/sell-with-funding is subtle (BTC price_cache USD/IDR conflation class of bug); flagged for research pass
 - test_settings.py::test_put_settings_requires_key fails 503 vs 401 — pre-existing, confirmed unrelated to Phase 12 Plan 02 via git-stash bisection, logged in deferred-items.md
+- 4 pre-existing, out-of-scope e2e failures logged to .planning/phases/16-ui-extend-existing-components/deferred-items.md (D-07 AccountManager, D-08 PlatformManager RED baselines for a not-yet-executed plan; stale /api/categories mock shape + removed +New category affordance in cashflow-crud.spec.ts; 2 stale CategoryManager-on-/cashflow tests for a section moved to Settings in Phase 11)
 
 ### Quick Tasks Completed
 
@@ -161,8 +166,8 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-08-01T11:00:57.372Z
-Stopped at: Phase 16 UI-SPEC approved
-Resume file: .planning/phases/16-ui-extend-existing-components/16-UI-SPEC.md
+Last session: 2026-08-01T11:45:45.683Z
+Stopped at: Completed 16-02-PLAN.md
+Resume file: None
 
 Next: `/gsd-plan-phase 11`
