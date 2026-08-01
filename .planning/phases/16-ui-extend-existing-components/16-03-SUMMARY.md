@@ -108,3 +108,12 @@ None - no external service configuration required.
 ---
 *Phase: 16-ui-extend-existing-components*
 *Completed: 2026-08-01*
+
+## Self-Check: PASSED
+
+- FOUND: ui/app/cashflow/AccountManager.tsx
+- FOUND: ui/app/investments/PlatformManager.tsx
+- FOUND: .planning/phases/16-ui-extend-existing-components/16-03-SUMMARY.md
+- FOUND: commit 0944cad
+- FOUND: commit c80b30d
+- FOUND: commit 582b7e2

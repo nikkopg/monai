@@ -47,7 +47,7 @@ transfer/buy-sell mechanics, with BudgetBakers-grade record and category managem
 - [x] **Phase 13: Shared Mutation Layer — Transfer, Buy/Sell-with-Funding, Adjustment Writes** - `writes.py` gains atomic, pair-aware `apply_*` functions for every new money-movement type (completed 2026-07-30)
 - [x] **Phase 14: REST Endpoints + Agent/MCP Tool Registration** - New endpoints wired to Phase 13's writes; write tools registered on the agent and kept off the MCP read-only surface (completed 2026-07-30)
 - [x] **Phase 15: Net Worth Aggregation + Dashboard** - Main dashboard shows net worth as liquid + investment sums that never overlap (completed 2026-07-31)
-- [ ] **Phase 16: UI — Extend Existing Components** - Account manager, platform detail, and the record modal grow to cover typed accounts, PnL/buy-sell history, and Expense/Income/Transfer entry
+- [x] **Phase 16: UI — Extend Existing Components** - Account manager, platform detail, and the record modal grow to cover typed accounts, PnL/buy-sell history, and Expense/Income/Transfer entry (completed 2026-08-01)
 - [ ] **Phase 17: UI — New Surfaces (Records Tab, Categories Manager)** - Date-grouped Records ledger with filters/bulk actions; category tree manager in Settings
 
 ## Phase Details
@@ -200,11 +200,11 @@ Plans:
   2. Platform manager reaches CRUD parity with the account manager (add/edit/remove platforms)
   3. User can add a record via a modal with an Expense / Income / Transfer segmented form (amount + currency, account, category picker, date-time, note, "add another")
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 
 - [x] 16-01-PLAN.md — Wave 0 e2e test scaffolds (record-modal, platform-crud, account type:liquid) — RED baseline for REC-04/PLAT-02/ACCT-01
 - [x] 16-02-PLAN.md — Extend TransactionModal: Expense/Income/Transfer segmented form, sign derivation, currency, save-&-add-another, edit-leg lock (REC-04)
-- [ ] 16-03-PLAN.md — AccountManager type:liquid on create + PlatformManager kind-editable edit row (ACCT-01, PLAT-02)
+- [x] 16-03-PLAN.md — AccountManager type:liquid on create + PlatformManager kind-editable edit row (ACCT-01, PLAT-02)
 
 **UI hint**: yes
 
@@ -258,7 +258,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 13. Shared Mutation Layer | v1.2 | 5/5 | Complete   | 2026-07-30 |
 | 14. REST + Agent/MCP Tools | v1.2 | 3/3 | Complete    | 2026-07-31 |
 | 15. Net Worth Dashboard | v1.2 | 2/2 | Complete   | 2026-07-31 |
-| 16. UI — Extend Existing | v1.2 | 2/3 | In Progress|  |
+| 16. UI — Extend Existing | v1.2 | 3/3 | Complete   | 2026-08-01 |
 | 17. UI — New Surfaces | v1.2 | 0/? | Not started | - |
 
 ---

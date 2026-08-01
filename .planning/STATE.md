@@ -4,17 +4,17 @@ milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
 current_phase: 16
 current_phase_name: ui-extend-existing-components
-status: executing
+status: verifying
 stopped_at: Completed 16-02-PLAN.md
-last_updated: "2026-08-01T11:45:45.696Z"
+last_updated: "2026-08-01T12:14:20.522Z"
 last_activity: 2026-08-01
 last_activity_desc: Phase 16 execution started
 progress:
   total_phases: 7
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 23
-  completed_plans: 22
-  percent: 71
+  completed_plans: 23
+  percent: 86
 ---
 
 # Project State
@@ -30,7 +30,7 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 
 Phase: 16 (ui-extend-existing-components) — EXECUTING
 Plan: 3 of 3
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-08-01 -- Phase 16 execution started
 
 Progress: [██████████] 100%
@@ -73,6 +73,7 @@ Progress: [██████████] 100%
 | Phase 14 P03 | 25min | 2 tasks | 2 files |
 | Phase 16 P01 | 45min | 3 tasks | 3 files |
 | Phase 16 P02 | 110min | 3 tasks | 3 files |
+| Phase 16 P03 | 55min | 2 tasks | 2 files |
 
 ## Accumulated Context
 
@@ -119,6 +120,8 @@ Recent decisions affecting current work:
 - [Phase ?]: Edit-transfer-leg submit preserves the row's original stored sign via an originalSign param on signedAmount(), rather than re-deriving it from the locked 'transfer' display segment (UI-SPEC 7)
 - [Phase ?]: locked (isEdit && editingTx.is_transfer) is the single source of truth reused for segment-disable, category-visibility exception, and is_transfer:true on submit
 - [Phase ?]: Fixed 2 locator-scoping bugs in record-modal.spec.ts and 3 stale placeholder locators in cashflow-crud.spec.ts (Rule 3, collateral of D-02/D-03 plan-mandated UI changes) — no assertion/copy/endpoint/body-shape changed
+- [Phase ?]: AccountManager.saveEdit stays name-only (unchanged) — account type is not user-editable this phase, per D-07/Pitfall 4
+- [Phase ?]: PlatformManager editKind state seeded from p.kind ?? "" in the same Edit-click handler that seeds editName, mirroring the Add-form's kind input exactly
 
 ### Pending Todos
 
@@ -131,6 +134,7 @@ None yet.
 - [Phase 13 planning]: FX precision handling on buy/sell-with-funding is subtle (BTC price_cache USD/IDR conflation class of bug); flagged for research pass
 - test_settings.py::test_put_settings_requires_key fails 503 vs 401 — pre-existing, confirmed unrelated to Phase 12 Plan 02 via git-stash bisection, logged in deferred-items.md
 - 4 pre-existing, out-of-scope e2e failures logged to .planning/phases/16-ui-extend-existing-components/deferred-items.md (D-07 AccountManager, D-08 PlatformManager RED baselines for a not-yet-executed plan; stale /api/categories mock shape + removed +New category affordance in cashflow-crud.spec.ts; 2 stale CategoryManager-on-/cashflow tests for a section moved to Settings in Phase 11)
+- platform-crud.spec.ts 'Edit updates both name and kind' test cannot pass as literally written: hasText locator stops matching once row swaps text to <input value> on edit-click — pre-existing spec bug from Plan 16-01, independent of implementation (confirmed correct via direct e2e drive). Follow-up: fix binanceRow locator in platform-crud.spec.ts.
 
 ### Quick Tasks Completed
 
@@ -166,7 +170,7 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-08-01T11:45:45.683Z
+Last session: 2026-08-01T12:12:14.787Z
 Stopped at: Completed 16-02-PLAN.md
 Resume file: None
 
