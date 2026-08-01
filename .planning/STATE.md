@@ -2,13 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
-current_phase: 16
-current_phase_name: ui-extend-existing-components
 status: verifying
-stopped_at: Completed 16-02-PLAN.md
-last_updated: "2026-08-01T12:14:20.522Z"
-last_activity: 2026-08-01
-last_activity_desc: Phase 16 execution started
+stopped_at: Phase 17 context gathered
+last_updated: "2026-08-01T14:50:19.081Z"
+last_activity: 2026-08-01 -- Phase 16 execution started
 progress:
   total_phases: 7
   completed_phases: 6
@@ -170,8 +167,8 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-08-01T12:12:14.787Z
-Stopped at: Completed 16-02-PLAN.md
-Resume file: None
+Last session: 2026-08-01T14:50:19.059Z
+Stopped at: Phase 17 context gathered
+Resume file: .planning/phases/17-ui-new-surfaces-records-tab-categories-manager/17-CONTEXT.md
 
 Next: `/gsd-plan-phase 11`
