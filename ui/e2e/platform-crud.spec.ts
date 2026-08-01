@@ -104,11 +104,18 @@ test.describe("platform CRUD parity (PLAT-02)", () => {
     });
 
     await page.goto("/investments");
-    const binanceRow = page.locator("tr", { hasText: "Binance" });
+    // Pin the row by stable position, not by name text: clicking Edit swaps the
+    // name text node for an <input value="Binance">, and Playwright's hasText
+    // ignores input values, so a hasText:"Binance" locator would resolve to 0
+    // rows after the first click. Binance is id:1 (first row of the Platforms
+    // section) in mockInvestments.
+    const binanceRow = page
+      .locator("section")
+      .filter({ hasText: "Platforms" })
+      .locator("tbody tr")
+      .first();
     await binanceRow.getByText("Edit", { exact: true }).click();
     await binanceRow.locator("input").first().fill("Binance Global");
-    // D-08 gap: the edit row does not yet have a kind input — this locator
-    // is expected to fail to find a match until Plan 03 lands it.
     await binanceRow.getByPlaceholder("e.g. brokerage, crypto app").fill("exchange");
     await binanceRow
       .getByRole("button", { name: "Save platform", exact: true })

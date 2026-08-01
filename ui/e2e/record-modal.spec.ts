@@ -283,13 +283,16 @@ test.describe("record-modal — Transfer segment (REC-04)", () => {
     await expect.poll(() => transferPosted).toBe(true);
     expect(transactionsPosted).toBe(false);
     expect(postedBody).not.toBeNull();
-    const keys = Object.keys(postedBody as Record<string, unknown>).sort();
+    // postedBody is control-flow-narrowed to null (assigned only inside the
+    // route closure), so go through `unknown` per TS2352 before reading keys.
+    const body = postedBody as unknown as Record<string, unknown>;
+    const keys = Object.keys(body).sort();
     expect(keys).toEqual(
       ["amount", "currency", "date", "from_account", "notes", "to_account"].sort()
     );
-    expect((postedBody as Record<string, unknown>).from_account).toBe("Cash");
-    expect((postedBody as Record<string, unknown>).to_account).toBe("Bank");
-    expect((postedBody as Record<string, unknown>).amount).toBe(50000);
+    expect(body.from_account).toBe("Cash");
+    expect(body.to_account).toBe("Bank");
+    expect(body.amount).toBe(50000);
   });
 
   test("same-account guard blocks submit with an inline error and issues no request", async ({
