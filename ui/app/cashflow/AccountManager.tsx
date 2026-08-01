@@ -45,7 +45,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
       const r = await fetch("/api/accounts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newName }),
+        body: JSON.stringify({ name: newName, type: "liquid" }),
       });
       if (r.ok) {
         setNewName("");
