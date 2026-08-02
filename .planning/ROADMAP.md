@@ -231,7 +231,7 @@ Plans:
 
 **Wave 2** *(blocked on 17-01)*
 
-- [ ] 17-03-PLAN.md — Backend: GET /transactions filters + transfer_pair_id + bulk endpoints + pair-aware delete retrofit + platform-detail reads (REC-01, REC-02, REC-03, REC-05, PLAT-01)
+- [x] 17-03-PLAN.md — Backend: GET /transactions filters + transfer_pair_id + bulk endpoints + pair-aware delete retrofit + platform-detail reads (REC-01, REC-02, REC-03, REC-05, PLAT-01)
 
 **Wave 3** *(blocked on 17-02 + 17-03 — parallel)*
 
@@ -275,7 +275,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 14. REST + Agent/MCP Tools | v1.2 | 3/3 | Complete    | 2026-07-31 |
 | 15. Net Worth Dashboard | v1.2 | 2/2 | Complete   | 2026-07-31 |
 | 16. UI — Extend Existing | v1.2 | 3/3 | Complete   | 2026-08-01 |
-| 17. UI — New Surfaces | v1.2 | 2/5 | In Progress|  |
+| 17. UI — New Surfaces | v1.2 | 3/5 | In Progress|  |
 
 ---
 *Roadmap created: 2026-06-21 · v1.0 archived 2026-07-17 · v1.1 archived 2026-07-18 · v1.2 roadmap added 2026-07-18*
