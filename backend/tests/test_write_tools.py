@@ -1680,3 +1680,67 @@ def test_delete_transaction_or_pair_removes_both_legs(db_session):
         db_session.rollback()
         _cleanup_account(db_session, a_name)
         _cleanup_account(db_session, b_name)
+
+
+def test_pair_aware_delete(client, api_key, db_session):
+    """Deleting ONE leg of a transfer pair — via the single DELETE
+    /transactions/{id} REST endpoint AND via POST /transactions/bulk-delete
+    — removes BOTH rows, no orphan left behind (D-04, critical item #1,
+    endpoint-level retrofit of the apply_delete_transaction_or_pair
+    primitive tested above)."""
+    from backend.models import Transaction
+    from backend.writes import apply_add_transfer
+
+    name_a, name_b = "zz17test-PairAwareDeleteA", "zz17test-PairAwareDeleteB"
+    _make_account(db_session, name_a)
+    _make_account(db_session, name_b)
+    try:
+        # --- single DELETE /transactions/{id} cascades to the sibling ---
+        leg_a, leg_b = apply_add_transfer(
+            db_session,
+            {"account": name_a, "amount": "-15000", "currency": "IDR"},
+            {"account": name_b, "amount": "15000", "currency": "IDR"},
+        )
+        db_session.commit()
+        db_session.refresh(leg_a)
+        db_session.refresh(leg_b)
+        leg_a_id, leg_b_id = leg_a.id, leg_b.id
+
+        resp = client.delete(f"/transactions/{leg_a_id}", headers={"MONAI_API_KEY": api_key})
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+
+        db_session.expire_all()
+        assert db_session.get(Transaction, leg_a_id) is None
+        assert db_session.get(Transaction, leg_b_id) is None, (
+            "single-leg DELETE must also remove the sibling leg (D-04)"
+        )
+
+        # --- bulk-delete on ONE leg also cascades to the sibling ---
+        leg_c, leg_d = apply_add_transfer(
+            db_session,
+            {"account": name_a, "amount": "-16000", "currency": "IDR"},
+            {"account": name_b, "amount": "16000", "currency": "IDR"},
+        )
+        db_session.commit()
+        db_session.refresh(leg_c)
+        db_session.refresh(leg_d)
+        leg_c_id, leg_d_id = leg_c.id, leg_d.id
+
+        resp = client.post(
+            "/transactions/bulk-delete",
+            json={"ids": [leg_c_id]},
+            headers={"MONAI_API_KEY": api_key},
+        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        data = resp.json()
+        assert set(data["deleted"]) == {leg_c_id, leg_d_id}, (
+            "bulk-delete on one leg must cascade to the sibling"
+        )
+
+        db_session.expire_all()
+        assert db_session.get(Transaction, leg_c_id) is None
+        assert db_session.get(Transaction, leg_d_id) is None
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name_a)
+        _cleanup_account(db_session, name_b)
