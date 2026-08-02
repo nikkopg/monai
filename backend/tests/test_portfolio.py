@@ -769,3 +769,72 @@ def test_portfolio_summary_asset_type_grouping(db_session, monkeypatch):
         _cleanup_prices(db_session, t_crypto)
         _cleanup_ticker(db_session, t_crypto)
         _cleanup_ticker(db_session, t_cash)
+
+
+# ---------------------------------------------------------------------------
+# Phase 17 Plan 01 (Wave 0, RED-first) — platform-detail reads (D-05,
+# PLAT-01). Neither route exists today (only POST /portfolio-events) — both
+# 404 until 17-03 adds them.
+# ---------------------------------------------------------------------------
+
+def test_platform_detail(client, db_session):
+    """GET /platforms/{id}/detail returns the group whose platform_id == id,
+    with subtotal + holdings carrying realized_pnl and unrealized_pnl
+    (PLAT-01/D-05); a non-existent platform id returns 404."""
+    from decimal import Decimal
+    from backend.portfolio import recompute_holding_from_events
+    from backend.writes import apply_set_price
+
+    plat = _make_platform(db_session, "zz17test-PlatformDetailPlatform")
+    t = _random_ticker()
+    try:
+        _add_event(db_session, t, "buy", 5, 100000, 1, plat)
+        recompute_holding_from_events(db_session, t, plat)
+        db_session.commit()
+        apply_set_price(db_session, t, 120000, source="manual")
+        db_session.commit()
+
+        resp = client.get(f"/platforms/{plat}/detail")
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        data = resp.json()
+        assert data["platform_id"] == plat
+        holding_row = next((h for h in data["holdings"] if h["ticker"] == t), None)
+        assert holding_row is not None, "expected our probe holding in the platform group"
+        assert "realized_pnl" in holding_row
+        assert "unrealized_pnl" in holding_row
+        assert Decimal(str(holding_row["unrealized_pnl"])) == Decimal("100000")  # (120000-100000)*5
+
+        missing = client.get("/platforms/999999999/detail")
+        assert missing.status_code == 404, f"Expected 404 for a nonexistent platform, got {missing.status_code}"
+    finally:
+        _cleanup_prices(db_session, t)
+        _cleanup_ticker(db_session, t)
+
+
+def test_portfolio_events_by_platform(client, db_session):
+    """GET /portfolio-events?platform_id={id} returns ONLY that platform's
+    events, ordered date-desc, each row carrying date/ticker/event_type/
+    quantity/price (PLAT-01/D-05)."""
+    plat_a = _make_platform(db_session, "zz17test-EventsPlatformA")
+    plat_b = _make_platform(db_session, "zz17test-EventsPlatformB")
+    t = _random_ticker()
+    try:
+        _add_event(db_session, t, "buy", 3, 100000, 1, plat_a)
+        _add_event(db_session, t, "sell", 1, 110000, 5, plat_a)
+        _add_event(db_session, t, "buy", 2, 90000, 3, plat_b)  # different platform — must NOT leak in
+
+        resp = client.get(f"/portfolio-events?platform_id={plat_a}")
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        data = resp.json()
+        our_rows = [row for row in data if row["ticker"] == t]
+        assert len(our_rows) == 2, (
+            f"expected exactly plat_a's 2 events for ticker {t}, got {len(our_rows)} "
+            "— a leaked plat_b row would inflate this count"
+        )
+        dates = [row["date"] for row in our_rows]
+        assert dates == sorted(dates, reverse=True), "expected date-desc ordering"
+        assert {row["event_type"] for row in our_rows} == {"buy", "sell"}
+        for row in data:
+            assert {"date", "ticker", "event_type", "quantity", "price"} <= row.keys()
+    finally:
+        _cleanup_ticker(db_session, t)
