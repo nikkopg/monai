@@ -511,7 +511,10 @@ Note: if the server-side filter (e.g. `account_id`) matches only ONE leg of a pa
 
 **If this table is empty:** N/A — see above.
 
-## Open Questions
+## Open Questions (RESOLVED)
+
+> **RESOLVED Q1:** `type=transfer` = `transfer_pair_id IS NOT NULL` — locked in 17-UI-SPEC + 17-03 T1 (grep `transfer_pair_id.isnot`) and pinned by 17-01 T1(d) (Adjustment/is_transfer row excluded from `type=transfer`).
+> **RESOLVED Q2:** frontend default `limit=100` + offset "load more", backend hard cap 500 — locked in 17-04 T1 + 17-03 T1.
 
 1. **Should `type=transfer` filter mean `is_transfer=true` or `transfer_pair_id IS NOT NULL`?**
    - What we know: `is_transfer=true` is a broader flag also covering Adjustment and Investment-funding rows (Pitfall 5); `transfer_pair_id IS NOT NULL` is the narrower, precise "this is one leg of a liquid↔liquid transfer pair" signal.
