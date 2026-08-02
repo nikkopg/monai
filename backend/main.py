@@ -37,13 +37,13 @@ import hmac
 import logging
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastmcp.utilities.lifespan import combine_lifespans
-from sqlalchemy import desc, text
+from sqlalchemy import desc, func, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -52,7 +52,7 @@ from backend.auth import require_api_key
 from backend.mcp_server import build_mcp
 from backend.db import get_session
 from backend.importer import _get_or_create_account, import_csv_text
-from backend.models import Account, AuditLog, Category, Holding, Platform, Proposal, Transaction
+from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, Proposal, Transaction
 from backend.portfolio import portfolio_summary as compose_portfolio_summary
 from backend.portfolio import value_history_series
 from backend.writes import (
@@ -89,6 +89,9 @@ from backend.schemas import (
     AccountUpdate,
     AffectedCountResponse,
     BalanceAdjustmentCreate,
+    BulkActionResponse,
+    BulkDeleteRequest,
+    BulkRecategorizeRequest,
     CashflowSummary,
     CategoryCreate,
     CategoryMergeRequest,
@@ -131,6 +134,8 @@ from backend.tools import (
     resolve_period,
     spending_by_category,
     spending_total,
+    _descendant_ids,
+    _find_category_node,
 )
 from backend.settings import (
     KEY_ANTHROPIC_API_KEY,
@@ -418,6 +423,32 @@ def delete_platform(
     return {"status": "deleted", "reassigned": reassigned}
 
 
+@app.get("/platforms/{platform_id}/detail")
+def platform_detail(platform_id: int, db: Session = Depends(get_session)):
+    """Scoped PnL detail for one platform (PLAT-01/D-05) — open read.
+
+    Reuses portfolio.portfolio_summary(db)'s existing per-platform group dict
+    (subtotal + holdings with realized_pnl/unrealized_pnl/current_value) — no
+    new response_model, matching PortfolioSummary.groups[i]'s own Decimal-
+    passthrough convention. Lazy price refresh mirrors investments_summary's
+    idiom. Not registered in backend/tools.py TOOLS (D-05 — kept off the
+    agent/MCP surface).
+    """
+    platform = db.get(Platform, platform_id)
+    if platform is None:
+        raise HTTPException(status_code=404, detail=f"Platform {platform_id} not found")
+    from backend.prices import refresh_all_prices
+
+    refresh_all_prices(db, force=False)  # only stale tickers (D-09), same idiom as investments_summary
+    db.commit()
+    summary = compose_portfolio_summary(db)
+    group = next((g for g in summary["groups"] if g["platform_id"] == platform_id), None)
+    return group or {
+        "platform_id": platform_id, "platform_name": platform.name,
+        "kind": platform.kind, "subtotal": 0, "holdings": [],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Investments (INV-01/06/07) — event ledger + direct holding override + summary.
 # Every write route requires the API key (T-05-03-AC); GET /investments/summary
@@ -443,6 +474,20 @@ def create_portfolio_event(payload: PortfolioEventCreate, db: Session = Depends(
     from backend.query import reset_engine
     reset_engine()
     return ev
+
+
+@app.get("/portfolio-events", response_model=list[PortfolioEventOut])
+def list_portfolio_events(platform_id: int, db: Session = Depends(get_session)):
+    """One platform's buy/sell/dividend event ledger, date-desc (PLAT-01/D-05)
+    — open read. Reuses PortfolioEventOut directly, no new DTO. Not
+    registered in backend/tools.py TOOLS (D-05 — kept off the agent/MCP surface).
+    """
+    return (
+        db.query(PortfolioEvent)
+        .filter(PortfolioEvent.platform_id == platform_id)
+        .order_by(desc(PortfolioEvent.date))
+        .all()
+    )
 
 
 @app.post("/portfolio-events/funded-buy", status_code=201, dependencies=[Depends(require_api_key)])
@@ -639,11 +684,93 @@ def override_price(payload: PriceOverrideRequest, db: Session = Depends(get_sess
     return {"status": "ok", "ticker": payload.ticker}
 
 
+# Categories tagged on is_transfer=True rows that are NOT real liquid<->liquid
+# transfer-pair legs — writes.py's apply_add_balance_adjustment (category=
+# 'Adjustment') and apply_add_funded_buy/_sell (category='Investment'). These
+# rows have transfer_pair_id=None, same as an untagged is_transfer row, so the
+# category is the only signal that distinguishes "known bookkeeping tag,
+# surface it under expense/income by sign" from "unclassified is_transfer
+# row, keep it out of both expense/income buckets until it's better understood"
+# (17-UI-SPEC Component 2 locked semantics + RESEARCH Pitfall 5).
+_NON_PAIR_TRANSFER_CATEGORIES = ("Adjustment", "Investment")
+
+
 @app.get("/transactions", response_model=list[TransactionOut])
-def list_transactions(limit: int = 50, db: Session = Depends(get_session)):
+def list_transactions(
+    q: str | None = None,
+    account_id: int | None = None,
+    category: str | None = None,
+    type: str | None = None,
+    amount_min: float | None = None,
+    amount_max: float | None = None,
+    include_transfers: bool = True,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_session),
+):
+    """Filtered, paged transaction ledger (D-01/D-02, REC-01/02/05) — open read.
+
+    Every param is one parameterized `.filter()` — never string-built SQL
+    (T-17-04). `category` resolves a parent/group name to its node + all
+    descendants via tools.py's hierarchy helpers (Pitfall 3), falling back to
+    an exact-string match when no node resolves. `type=transfer` keys off
+    `transfer_pair_id IS NOT NULL`, NOT `is_transfer` (17-UI-SPEC Component 2,
+    critical item #4) — a real transfer-pair leg. `type=expense`/`income` gate
+    on sign + `transfer_pair_id IS NULL`, additionally excluding an
+    unclassified is_transfer row that isn't one of the known Adjustment/
+    Investment bookkeeping categories (see _NON_PAIR_TRANSFER_CATEGORIES).
+    Still queries the base `transactions` table, NOT `cashflow_transactions`
+    (a full ledger must include investment-account rows). Hard-capped at 500
+    rows regardless of the requested `limit` (Pitfall 4) — the Records page
+    pages via `offset`. Open read (no require_api_key), matching the
+    unmodified endpoint's existing convention.
+    """
+    query = db.query(Transaction)
+    if q:
+        query = query.filter(
+            or_(Transaction.merchant.ilike(f"%{q}%"), Transaction.notes.ilike(f"%{q}%"))
+        )
+    if account_id is not None:
+        query = query.filter(Transaction.account_id == account_id)
+    if category is not None:
+        node = _find_category_node(category)
+        if node is not None:
+            query = query.filter(Transaction.category_id.in_(_descendant_ids(node)))
+        else:
+            query = query.filter(Transaction.category == category)  # fallback exact match
+    if type == "expense":
+        query = query.filter(
+            Transaction.amount < 0,
+            Transaction.transfer_pair_id.is_(None),
+            or_(Transaction.is_transfer.is_(False), Transaction.category.in_(_NON_PAIR_TRANSFER_CATEGORIES)),
+        )
+    elif type == "income":
+        query = query.filter(
+            Transaction.amount > 0,
+            Transaction.transfer_pair_id.is_(None),
+            or_(Transaction.is_transfer.is_(False), Transaction.category.in_(_NON_PAIR_TRANSFER_CATEGORIES)),
+        )
+    elif type == "transfer":
+        query = query.filter(Transaction.transfer_pair_id.isnot(None))  # LOCKED: pair-id, not is_transfer (Pitfall 5)
+    elif not include_transfers:
+        query = query.filter(Transaction.is_transfer == False)
+    if amount_min is not None:
+        query = query.filter(func.abs(Transaction.amount) >= amount_min)
+    if amount_max is not None:
+        query = query.filter(func.abs(Transaction.amount) <= amount_max)
+    if date_from:
+        query = query.filter(Transaction.date >= datetime.fromisoformat(date_from))
+    if date_to:
+        # date_to is an inclusive calendar day from the caller's POV — widen
+        # to an exclusive upper bound so a same-day timestamp isn't dropped
+        # (mirrors resolve_period's [start, end) convention).
+        end = datetime.fromisoformat(date_to) + timedelta(days=1)
+        query = query.filter(Transaction.date < end)
     return (
-        db.query(Transaction)
-        .order_by(desc(Transaction.date))
+        query.order_by(desc(Transaction.date))
+        .offset(offset)
         .limit(min(limit, 500))
         .all()
     )
@@ -822,6 +949,101 @@ def delete_transaction(tx_id: int, db: Session = Depends(get_session)):
     from backend.query import reset_engine
     reset_engine()
     return {"status": "deleted", "deleted_ids": deleted_ids}
+
+
+_BULK_ACTION_MAX_IDS = 500  # blast-radius cap (T-17-06), mirrors GET /transactions' row cap
+
+
+def _tx_before_dict(tx: Transaction) -> dict:
+    """AuditLog `before` snapshot — same shape update_transaction/delete_transaction
+    build inline, with the LOAD-BEARING str(tx.amount) (auditlog-decimal-json-gotcha)."""
+    return {
+        "id": tx.id,
+        "date": tx.date.isoformat() if tx.date else None,
+        "amount": str(tx.amount),
+        "currency": tx.currency,
+        "category": tx.category,
+        "merchant": tx.merchant,
+        "notes": tx.notes,
+        "account_id": tx.account_id,
+        "is_transfer": tx.is_transfer,
+    }
+
+
+@app.post(
+    "/transactions/bulk-delete",
+    response_model=BulkActionResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def bulk_delete_transactions(payload: BulkDeleteRequest, db: Session = Depends(get_session)):
+    """Atomically delete every listed transaction id (D-03/REC-03).
+
+    Reuses apply_delete_transaction_or_pair (the same pair-aware primitive the
+    single DELETE endpoint above already uses) — when a listed id is one leg
+    of a transfer, its sibling is looked up and deleted too even though it
+    was NOT in `ids` (D-04, critical item #1), no orphan leg. A bad/nonexistent
+    id is reported in skipped[] with a reason, never a 500 (T-17-05). One
+    db.commit() for the whole batch; one AuditLog delete row per entity
+    (written inside the primitive). ids over the 500 cap are rejected before
+    any mutation (T-17-06).
+    """
+    if len(payload.ids) > _BULK_ACTION_MAX_IDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Cannot bulk-delete more than {_BULK_ACTION_MAX_IDS} transactions at once",
+        )
+    deleted: list[int] = []
+    skipped: list[dict] = []
+    for tx_id in payload.ids:
+        if tx_id in deleted:
+            continue  # already removed as the sibling leg of an earlier id in this batch
+        tx = db.get(Transaction, tx_id)
+        if tx is None:
+            skipped.append({"id": tx_id, "reason": "not found"})
+            continue
+        deleted.extend(apply_delete_transaction_or_pair(db, tx_id, _tx_before_dict(tx)))
+    db.commit()
+    from backend.query import reset_engine
+    reset_engine()
+    return BulkActionResponse(deleted=deleted, skipped=skipped)
+
+
+@app.post(
+    "/transactions/bulk-recategorize",
+    response_model=BulkActionResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def bulk_recategorize_transactions(payload: BulkRecategorizeRequest, db: Session = Depends(get_session)):
+    """Atomically recategorize every listed non-transfer transaction id (D-03/REC-03).
+
+    A transfer leg (tx.is_transfer) is SKIPPED — reported in skipped[] with a
+    reason, category left unchanged, never raised on (D-03, critical item #6):
+    transfers are system-categorized. One db.commit() for the whole batch;
+    one AuditLog edit row per recategorized entity (written inside
+    apply_edit_transaction). ids over the 500 cap are rejected before any
+    mutation (T-17-06).
+    """
+    if len(payload.ids) > _BULK_ACTION_MAX_IDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Cannot bulk-recategorize more than {_BULK_ACTION_MAX_IDS} transactions at once",
+        )
+    recategorized: list[int] = []
+    skipped: list[dict] = []
+    for tx_id in payload.ids:
+        tx = db.get(Transaction, tx_id)
+        if tx is None:
+            skipped.append({"id": tx_id, "reason": "not found"})
+            continue
+        if tx.is_transfer:
+            skipped.append({"id": tx_id, "reason": "transfer leg — system-categorized"})
+            continue
+        apply_edit_transaction(db, tx_id, {"category": payload.category}, _tx_before_dict(tx), allow_paired=False)
+        recategorized.append(tx_id)
+    db.commit()
+    from backend.query import reset_engine
+    reset_engine()
+    return BulkActionResponse(recategorized=recategorized, skipped=skipped)
 
 
 @app.post("/transactions/transfer", status_code=201, dependencies=[Depends(require_api_key)])

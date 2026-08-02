@@ -45,6 +45,7 @@ class TransactionOut(BaseModel):
     notes: str | None
     account_id: int | None
     is_transfer: bool
+    transfer_pair_id: int | None = None  # D-02/REC-05 — collapse-pair key for the ledger
 
 
 class AccountOut(BaseModel):
@@ -114,6 +115,28 @@ class TransactionUpdate(BaseModel):
     account: str | None = None
     notes: str | None = None
     is_transfer: bool | None = None
+
+
+class BulkDeleteRequest(BaseModel):
+    """Body for POST /transactions/bulk-delete (D-03/REC-03)."""
+
+    ids: list[int]
+
+
+class BulkRecategorizeRequest(BaseModel):
+    """Body for POST /transactions/bulk-recategorize (D-03/REC-03)."""
+
+    ids: list[int]
+    category: str
+
+
+class BulkActionResponse(BaseModel):
+    """Shared response shape for both bulk endpoints (D-03) — partial
+    failure is surfaced in skipped[{id, reason}], never a raw 500."""
+
+    deleted: list[int] = []
+    recategorized: list[int] = []
+    skipped: list[dict] = []
 
 
 class AccountCreate(BaseModel):

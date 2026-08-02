@@ -22,11 +22,11 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Records (REC)
 
-- [ ] **REC-01**: User can browse all records in a date-grouped ledger with a daily net per group
-- [ ] **REC-02**: User can filter records by search, account, category, record type, amount range, and transfer visibility
-- [ ] **REC-03**: User can select multiple records and bulk delete or bulk recategorize
+- [x] **REC-01**: User can browse all records in a date-grouped ledger with a daily net per group
+- [x] **REC-02**: User can filter records by search, account, category, record type, amount range, and transfer visibility
+- [x] **REC-03**: User can select multiple records and bulk delete or bulk recategorize
 - [x] **REC-04**: User can add a record via a modal with Expense / Income / Transfer segmented form (amount + currency, account, category picker, date-time, note; "add another")
-- [ ] **REC-05**: Transfer pairs display as one logical unit; editing or deleting affects both legs atomically (single-leg edits blocked)
+- [x] **REC-05**: Transfer pairs display as one logical unit; editing or deleting affects both legs atomically (single-leg edits blocked)
 
 ### Categories (CAT)
 
@@ -37,7 +37,7 @@ Requirements for this milestone. Each maps to roadmap phases.
 
 ### Platforms (PLAT)
 
-- [ ] **PLAT-01**: User can open a platform detail view with a PnL tab and a buy/sell history tab
+- [x] **PLAT-01**: User can open a platform detail view with a PnL tab and a buy/sell history tab
 - [x] **PLAT-02**: Platform manager reaches CRUD parity with the account manager (extends existing `PlatformManager.tsx`)
 
 ### Connection layer (XFER)
@@ -97,16 +97,16 @@ Which phases cover which requirements. Updated during roadmap creation.
 | ACCT-01 | Phase 16 | Complete |
 | ACCT-02 | Phase 13 | Complete |
 | ACCT-03 | Phase 12 | Complete |
-| REC-01 | Phase 17 | Pending |
-| REC-02 | Phase 17 | Pending |
-| REC-03 | Phase 17 | Pending |
+| REC-01 | Phase 17 | Complete |
+| REC-02 | Phase 17 | Complete |
+| REC-03 | Phase 17 | Complete |
 | REC-04 | Phase 16 | Complete |
-| REC-05 | Phase 17 | Pending |
+| REC-05 | Phase 17 | Complete |
 | CAT-01 | Phase 11 | Complete |
 | CAT-02 | Phase 11 | Complete |
 | CAT-03 | Phase 11 | Complete |
 | CAT-04 | Phase 11 | Complete |
-| PLAT-01 | Phase 17 | Pending |
+| PLAT-01 | Phase 17 | Complete |
 | PLAT-02 | Phase 16 | Complete |
 | XFER-01 | Phase 13 | Complete |
 | XFER-02 | Phase 13 | Complete |
