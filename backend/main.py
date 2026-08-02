@@ -911,6 +911,101 @@ def delete_transaction(tx_id: int, db: Session = Depends(get_session)):
     return {"status": "deleted", "deleted_ids": deleted_ids}
 
 
+_BULK_ACTION_MAX_IDS = 500  # blast-radius cap (T-17-06), mirrors GET /transactions' row cap
+
+
+def _tx_before_dict(tx: Transaction) -> dict:
+    """AuditLog `before` snapshot — same shape update_transaction/delete_transaction
+    build inline, with the LOAD-BEARING str(tx.amount) (auditlog-decimal-json-gotcha)."""
+    return {
+        "id": tx.id,
+        "date": tx.date.isoformat() if tx.date else None,
+        "amount": str(tx.amount),
+        "currency": tx.currency,
+        "category": tx.category,
+        "merchant": tx.merchant,
+        "notes": tx.notes,
+        "account_id": tx.account_id,
+        "is_transfer": tx.is_transfer,
+    }
+
+
+@app.post(
+    "/transactions/bulk-delete",
+    response_model=BulkActionResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def bulk_delete_transactions(payload: BulkDeleteRequest, db: Session = Depends(get_session)):
+    """Atomically delete every listed transaction id (D-03/REC-03).
+
+    Reuses apply_delete_transaction_or_pair (the same pair-aware primitive the
+    single DELETE endpoint above already uses) — when a listed id is one leg
+    of a transfer, its sibling is looked up and deleted too even though it
+    was NOT in `ids` (D-04, critical item #1), no orphan leg. A bad/nonexistent
+    id is reported in skipped[] with a reason, never a 500 (T-17-05). One
+    db.commit() for the whole batch; one AuditLog delete row per entity
+    (written inside the primitive). ids over the 500 cap are rejected before
+    any mutation (T-17-06).
+    """
+    if len(payload.ids) > _BULK_ACTION_MAX_IDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Cannot bulk-delete more than {_BULK_ACTION_MAX_IDS} transactions at once",
+        )
+    deleted: list[int] = []
+    skipped: list[dict] = []
+    for tx_id in payload.ids:
+        if tx_id in deleted:
+            continue  # already removed as the sibling leg of an earlier id in this batch
+        tx = db.get(Transaction, tx_id)
+        if tx is None:
+            skipped.append({"id": tx_id, "reason": "not found"})
+            continue
+        deleted.extend(apply_delete_transaction_or_pair(db, tx_id, _tx_before_dict(tx)))
+    db.commit()
+    from backend.query import reset_engine
+    reset_engine()
+    return BulkActionResponse(deleted=deleted, skipped=skipped)
+
+
+@app.post(
+    "/transactions/bulk-recategorize",
+    response_model=BulkActionResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def bulk_recategorize_transactions(payload: BulkRecategorizeRequest, db: Session = Depends(get_session)):
+    """Atomically recategorize every listed non-transfer transaction id (D-03/REC-03).
+
+    A transfer leg (tx.is_transfer) is SKIPPED — reported in skipped[] with a
+    reason, category left unchanged, never raised on (D-03, critical item #6):
+    transfers are system-categorized. One db.commit() for the whole batch;
+    one AuditLog edit row per recategorized entity (written inside
+    apply_edit_transaction). ids over the 500 cap are rejected before any
+    mutation (T-17-06).
+    """
+    if len(payload.ids) > _BULK_ACTION_MAX_IDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Cannot bulk-recategorize more than {_BULK_ACTION_MAX_IDS} transactions at once",
+        )
+    recategorized: list[int] = []
+    skipped: list[dict] = []
+    for tx_id in payload.ids:
+        tx = db.get(Transaction, tx_id)
+        if tx is None:
+            skipped.append({"id": tx_id, "reason": "not found"})
+            continue
+        if tx.is_transfer:
+            skipped.append({"id": tx_id, "reason": "transfer leg — system-categorized"})
+            continue
+        apply_edit_transaction(db, tx_id, {"category": payload.category}, _tx_before_dict(tx), allow_paired=False)
+        recategorized.append(tx_id)
+    db.commit()
+    from backend.query import reset_engine
+    reset_engine()
+    return BulkActionResponse(recategorized=recategorized, skipped=skipped)
+
+
 @app.post("/transactions/transfer", status_code=201, dependencies=[Depends(require_api_key)])
 def create_transfer(payload: TransferCreate, db: Session = Depends(get_session)):
     """Direct (non-agent) liquid<->liquid transfer (CHAT-09/XFER-01).

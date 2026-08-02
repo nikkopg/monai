@@ -692,8 +692,13 @@ def test_bulk_delete(client, api_key, db_session):
         _cleanup_account(db_session, name_b)
 
 
-def test_bulk_delete_missing_api_key_401(client, db_session):
-    """POST /transactions/bulk-delete without MONAI_API_KEY -> 401 (V2)."""
+def test_bulk_delete_missing_api_key_401(client, api_key, db_session):
+    """POST /transactions/bulk-delete without MONAI_API_KEY -> 401 (V2).
+
+    Uses the api_key fixture so _CONFIGURED_KEY is non-empty (fail-closed
+    guard) but omits the header, mirroring test_transfer_missing_api_key_401 —
+    without the fixture, require_api_key 503s (misconfigured) before it ever
+    reaches the missing-header 401 check."""
     resp = client.post("/transactions/bulk-delete", json={"ids": [1]})
     assert resp.status_code == 401, f"Expected 401, got {resp.status_code}: {resp.text}"
 
@@ -748,7 +753,9 @@ def test_bulk_recategorize(client, api_key, db_session):
         _cleanup_account(db_session, name_b)
 
 
-def test_bulk_recategorize_missing_api_key_401(client, db_session):
-    """POST /transactions/bulk-recategorize without MONAI_API_KEY -> 401 (V2)."""
+def test_bulk_recategorize_missing_api_key_401(client, api_key, db_session):
+    """POST /transactions/bulk-recategorize without MONAI_API_KEY -> 401 (V2).
+
+    Uses the api_key fixture — see test_bulk_delete_missing_api_key_401."""
     resp = client.post("/transactions/bulk-recategorize", json={"ids": [1], "category": "Food"})
     assert resp.status_code == 401, f"Expected 401, got {resp.status_code}: {resp.text}"
