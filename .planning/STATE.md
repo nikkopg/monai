@@ -4,8 +4,8 @@ milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
 status: executing
 stopped_at: Phase 17 UI-SPEC approved
-last_updated: "2026-08-02T04:56:29.805Z"
-last_activity: 2026-08-02 -- Phase 17 planning complete
+last_updated: "2026-08-02T06:06:48.406Z"
+last_activity: 2026-08-02 -- Phase 17 execution started
 progress:
   total_phases: 7
   completed_phases: 6
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-18)
 
 **Core value:** You can understand and manage your entire financial life — spending and investments — by talking to a trustworthy AI that never fabricates a number and never changes your data without your say-so.
-**Current focus:** Phase 16 — ui-extend-existing-components
+**Current focus:** Phase 17 — ui-new-surfaces-records-tab-categories-manager
 
 ## Current Position
 
-Phase: 16 (ui-extend-existing-components) — EXECUTING
-Plan: 3 of 3
-Status: Ready to execute
-Last activity: 2026-08-02 -- Completed quick task 260802-gx1: Phase 16 UAT #3 transfer fixes
+Phase: 17 (ui-new-surfaces-records-tab-categories-manager) — EXECUTING
+Plan: 1 of 5
+Status: Executing Phase 17
+Last activity: 2026-08-02 -- Phase 17 execution started
 
 Progress: [██████████] 100%
 

@@ -226,8 +226,8 @@ Plans:
 Plans:
 **Wave 1** *(RED test scaffolds — parallel)*
 
-- [ ] 17-01-PLAN.md — Backend RED test scaffolds: filters/paging, bulk, pair-aware delete, platform reads (REC-01, REC-02, REC-03, REC-05, PLAT-01)
-- [ ] 17-02-PLAN.md — Frontend e2e RED scaffolds: records ledger + platform detail (REC-01, REC-02, REC-03, REC-05, PLAT-01)
+- [x] 17-01-PLAN.md — Backend RED test scaffolds: filters/paging, bulk, pair-aware delete, platform reads (REC-01, REC-02, REC-03, REC-05, PLAT-01)
+- [x] 17-02-PLAN.md — Frontend e2e RED scaffolds: records ledger + platform detail (REC-01, REC-02, REC-03, REC-05, PLAT-01)
 
 **Wave 2** *(blocked on 17-01)*
 
@@ -275,7 +275,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 14. REST + Agent/MCP Tools | v1.2 | 3/3 | Complete    | 2026-07-31 |
 | 15. Net Worth Dashboard | v1.2 | 2/2 | Complete   | 2026-07-31 |
 | 16. UI — Extend Existing | v1.2 | 3/3 | Complete   | 2026-08-01 |
-| 17. UI — New Surfaces | v1.2 | 0/5 | Planned | - |
+| 17. UI — New Surfaces | v1.2 | 2/5 | In Progress|  |
 
 ---
 *Roadmap created: 2026-06-21 · v1.0 archived 2026-07-17 · v1.1 archived 2026-07-18 · v1.2 roadmap added 2026-07-18*
