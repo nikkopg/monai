@@ -37,13 +37,13 @@ import hmac
 import logging
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastmcp.utilities.lifespan import combine_lifespans
-from sqlalchemy import desc, text
+from sqlalchemy import desc, func, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -52,7 +52,7 @@ from backend.auth import require_api_key
 from backend.mcp_server import build_mcp
 from backend.db import get_session
 from backend.importer import _get_or_create_account, import_csv_text
-from backend.models import Account, AuditLog, Category, Holding, Platform, Proposal, Transaction
+from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, Proposal, Transaction
 from backend.portfolio import portfolio_summary as compose_portfolio_summary
 from backend.portfolio import value_history_series
 from backend.writes import (
@@ -89,6 +89,9 @@ from backend.schemas import (
     AccountUpdate,
     AffectedCountResponse,
     BalanceAdjustmentCreate,
+    BulkActionResponse,
+    BulkDeleteRequest,
+    BulkRecategorizeRequest,
     CashflowSummary,
     CategoryCreate,
     CategoryMergeRequest,
@@ -131,6 +134,8 @@ from backend.tools import (
     resolve_period,
     spending_by_category,
     spending_total,
+    _descendant_ids,
+    _find_category_node,
 )
 from backend.settings import (
     KEY_ANTHROPIC_API_KEY,
@@ -639,11 +644,93 @@ def override_price(payload: PriceOverrideRequest, db: Session = Depends(get_sess
     return {"status": "ok", "ticker": payload.ticker}
 
 
+# Categories tagged on is_transfer=True rows that are NOT real liquid<->liquid
+# transfer-pair legs — writes.py's apply_add_balance_adjustment (category=
+# 'Adjustment') and apply_add_funded_buy/_sell (category='Investment'). These
+# rows have transfer_pair_id=None, same as an untagged is_transfer row, so the
+# category is the only signal that distinguishes "known bookkeeping tag,
+# surface it under expense/income by sign" from "unclassified is_transfer
+# row, keep it out of both expense/income buckets until it's better understood"
+# (17-UI-SPEC Component 2 locked semantics + RESEARCH Pitfall 5).
+_NON_PAIR_TRANSFER_CATEGORIES = ("Adjustment", "Investment")
+
+
 @app.get("/transactions", response_model=list[TransactionOut])
-def list_transactions(limit: int = 50, db: Session = Depends(get_session)):
+def list_transactions(
+    q: str | None = None,
+    account_id: int | None = None,
+    category: str | None = None,
+    type: str | None = None,
+    amount_min: float | None = None,
+    amount_max: float | None = None,
+    include_transfers: bool = True,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_session),
+):
+    """Filtered, paged transaction ledger (D-01/D-02, REC-01/02/05) — open read.
+
+    Every param is one parameterized `.filter()` — never string-built SQL
+    (T-17-04). `category` resolves a parent/group name to its node + all
+    descendants via tools.py's hierarchy helpers (Pitfall 3), falling back to
+    an exact-string match when no node resolves. `type=transfer` keys off
+    `transfer_pair_id IS NOT NULL`, NOT `is_transfer` (17-UI-SPEC Component 2,
+    critical item #4) — a real transfer-pair leg. `type=expense`/`income` gate
+    on sign + `transfer_pair_id IS NULL`, additionally excluding an
+    unclassified is_transfer row that isn't one of the known Adjustment/
+    Investment bookkeeping categories (see _NON_PAIR_TRANSFER_CATEGORIES).
+    Still queries the base `transactions` table, NOT `cashflow_transactions`
+    (a full ledger must include investment-account rows). Hard-capped at 500
+    rows regardless of the requested `limit` (Pitfall 4) — the Records page
+    pages via `offset`. Open read (no require_api_key), matching the
+    unmodified endpoint's existing convention.
+    """
+    query = db.query(Transaction)
+    if q:
+        query = query.filter(
+            or_(Transaction.merchant.ilike(f"%{q}%"), Transaction.notes.ilike(f"%{q}%"))
+        )
+    if account_id is not None:
+        query = query.filter(Transaction.account_id == account_id)
+    if category is not None:
+        node = _find_category_node(category)
+        if node is not None:
+            query = query.filter(Transaction.category_id.in_(_descendant_ids(node)))
+        else:
+            query = query.filter(Transaction.category == category)  # fallback exact match
+    if type == "expense":
+        query = query.filter(
+            Transaction.amount < 0,
+            Transaction.transfer_pair_id.is_(None),
+            or_(Transaction.is_transfer.is_(False), Transaction.category.in_(_NON_PAIR_TRANSFER_CATEGORIES)),
+        )
+    elif type == "income":
+        query = query.filter(
+            Transaction.amount > 0,
+            Transaction.transfer_pair_id.is_(None),
+            or_(Transaction.is_transfer.is_(False), Transaction.category.in_(_NON_PAIR_TRANSFER_CATEGORIES)),
+        )
+    elif type == "transfer":
+        query = query.filter(Transaction.transfer_pair_id.isnot(None))  # LOCKED: pair-id, not is_transfer (Pitfall 5)
+    elif not include_transfers:
+        query = query.filter(Transaction.is_transfer == False)
+    if amount_min is not None:
+        query = query.filter(func.abs(Transaction.amount) >= amount_min)
+    if amount_max is not None:
+        query = query.filter(func.abs(Transaction.amount) <= amount_max)
+    if date_from:
+        query = query.filter(Transaction.date >= datetime.fromisoformat(date_from))
+    if date_to:
+        # date_to is an inclusive calendar day from the caller's POV — widen
+        # to an exclusive upper bound so a same-day timestamp isn't dropped
+        # (mirrors resolve_period's [start, end) convention).
+        end = datetime.fromisoformat(date_to) + timedelta(days=1)
+        query = query.filter(Transaction.date < end)
     return (
-        db.query(Transaction)
-        .order_by(desc(Transaction.date))
+        query.order_by(desc(Transaction.date))
+        .offset(offset)
         .limit(min(limit, 500))
         .all()
     )
