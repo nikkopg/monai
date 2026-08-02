@@ -221,7 +221,23 @@ Plans:
   4. Transfer pairs display as one logical unit; editing or deleting affects both legs atomically (single-leg edits blocked in the UI, matching the Phase 13 backend guarantee)
   5. User can open a platform detail view with a PnL tab and a buy/sell history tab
 
-**Plans**: TBD
+**Plans**: 5 plans
+
+Plans:
+**Wave 1** *(RED test scaffolds — parallel)*
+
+- [ ] 17-01-PLAN.md — Backend RED test scaffolds: filters/paging, bulk, pair-aware delete, platform reads (REC-01, REC-02, REC-03, REC-05, PLAT-01)
+- [ ] 17-02-PLAN.md — Frontend e2e RED scaffolds: records ledger + platform detail (REC-01, REC-02, REC-03, REC-05, PLAT-01)
+
+**Wave 2** *(blocked on 17-01)*
+
+- [ ] 17-03-PLAN.md — Backend: GET /transactions filters + transfer_pair_id + bulk endpoints + pair-aware delete retrofit + platform-detail reads (REC-01, REC-02, REC-03, REC-05, PLAT-01)
+
+**Wave 3** *(blocked on 17-02 + 17-03 — parallel)*
+
+- [ ] 17-04-PLAN.md — Records surface: date-grouped ledger, filter bar, transfer-pair collapse, multi-select bulk actions (REC-01, REC-02, REC-03, REC-05)
+- [ ] 17-05-PLAN.md — Platform detail surface: PnL + Buy/Sell segmented tabs, Investments link-out (PLAT-01)
+
 **UI hint**: yes
 
 ## Backlog
@@ -259,7 +275,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 14. REST + Agent/MCP Tools | v1.2 | 3/3 | Complete    | 2026-07-31 |
 | 15. Net Worth Dashboard | v1.2 | 2/2 | Complete   | 2026-07-31 |
 | 16. UI — Extend Existing | v1.2 | 3/3 | Complete   | 2026-08-01 |
-| 17. UI — New Surfaces | v1.2 | 0/? | Not started | - |
+| 17. UI — New Surfaces | v1.2 | 0/5 | Planned | - |
 
 ---
 *Roadmap created: 2026-06-21 · v1.0 archived 2026-07-17 · v1.1 archived 2026-07-18 · v1.2 roadmap added 2026-07-18*

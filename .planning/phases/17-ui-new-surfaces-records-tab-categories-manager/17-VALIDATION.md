@@ -1,8 +1,8 @@
 ---
 phase: 17
 slug: ui-new-surfaces-records-tab-categories-manager
-status: draft
-nyquist_compliant: false
+status: planned
+nyquist_compliant: true
 wave_0_complete: false
 created: 2026-08-01
 ---
@@ -37,11 +37,23 @@ created: 2026-08-01
 
 ## Per-Task Verification Map
 
-*Planner populates this table. Analogs: backend `backend/tests/test_write_tools.py` / `test_portfolio.py`; frontend `ui/e2e/cashflow-crud.spec.ts`, `record-modal.spec.ts`, `platform-crud.spec.ts`.*
+*Analogs: backend `backend/tests/test_write_endpoints.py` / `test_write_tools.py` / `test_portfolio.py`; frontend `ui/e2e/cashflow-crud.spec.ts`, `record-modal.spec.ts`, `platform-crud.spec.ts`. Wave 1 = RED scaffolds (Plans 01/02), Wave 2 = backend impl (Plan 03), Wave 3 = frontend surfaces (Plans 04/05). e2e commands assume `cd ui` with `PLAYWRIGHT_CHROMIUM_PATH=/usr/bin/google-chrome`.*
 
 | Task ID | Plan | Wave | Requirement | Test Type | Automated Command | File Exists | Status |
 |---------|------|------|-------------|-----------|-------------------|-------------|--------|
-| 17-01-01 | 01 | 1 | REC-01/02 | pytest | `cd backend && python -m pytest tests/ -k transactions_filter` | ❌ W0 | ⬜ pending |
+| 17-01-01 | 01 | 1 | REC-01/02/05 | pytest | `cd backend && python -m pytest tests/test_write_endpoints.py -k 'transactions_filter or transaction_paging or category_filter_hierarchy or transfer_pair_id_exposed'` | ❌ creates (RED) | ⬜ pending |
+| 17-01-02 | 01 | 1 | REC-03/05 | pytest | `cd backend && python -m pytest tests/test_write_endpoints.py -k 'bulk_delete or bulk_recategorize'; python -m pytest tests/test_write_tools.py -k pair_aware_delete` | ❌ creates (RED) | ⬜ pending |
+| 17-01-03 | 01 | 1 | PLAT-01 | pytest | `cd backend && python -m pytest tests/test_portfolio.py -k 'platform_detail or portfolio_events_by_platform'` | ❌ creates (RED) | ⬜ pending |
+| 17-02-01 | 02 | 1 | REC-01/02/03/05 | e2e | `npx playwright test e2e/records.spec.ts` | ❌ creates (RED) | ⬜ pending |
+| 17-02-02 | 02 | 1 | PLAT-01 | e2e | `npx playwright test e2e/platform-detail.spec.ts` | ❌ creates (RED) | ⬜ pending |
+| 17-03-01 | 03 | 2 | REC-01/02/05 | pytest | `cd backend && python -m pytest tests/test_write_endpoints.py -k 'transactions_filter or transaction_paging or category_filter_hierarchy or transfer_pair_id_exposed'` | ✅ from 17-01 | ⬜ pending |
+| 17-03-02 | 03 | 2 | REC-03/05 | pytest | `cd backend && python -m pytest tests/test_write_endpoints.py -k 'bulk_delete or bulk_recategorize'; python -m pytest tests/test_write_tools.py -k pair_aware_delete` | ✅ from 17-01 | ⬜ pending |
+| 17-03-03 | 03 | 2 | PLAT-01 | pytest | `cd backend && python -m pytest tests/test_portfolio.py -k 'platform_detail or portfolio_events_by_platform'` | ✅ from 17-01 | ⬜ pending |
+| 17-04-01 | 04 | 3 | REC-01/02 | e2e | `npx playwright test e2e/records.spec.ts -g "filter"` | ✅ from 17-02 | ⬜ pending |
+| 17-04-02 | 04 | 3 | REC-01/05 | e2e | `npx playwright test e2e/records.spec.ts -g "transfer pair"; npx playwright test e2e/records.spec.ts -g "date-grouped"` | ✅ from 17-02 | ⬜ pending |
+| 17-04-03 | 04 | 3 | REC-03/05 | e2e | `npx playwright test e2e/records.spec.ts -g "bulk"` | ✅ from 17-02 | ⬜ pending |
+| 17-05-01 | 05 | 3 | PLAT-01 | e2e | `npx playwright test e2e/platform-detail.spec.ts -g "shell\|stat\|not found"` | ✅ from 17-02 | ⬜ pending |
+| 17-05-02 | 05 | 3 | PLAT-01 | e2e | `npx playwright test e2e/platform-detail.spec.ts` | ✅ from 17-02 | ⬜ pending |
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
