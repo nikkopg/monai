@@ -16,6 +16,7 @@ import { tokens } from "../styles";
 
 const NAV_LINKS = [
   { href: "/cashflow", label: "Cashflow", icon: "cashflow" },
+  { href: "/records", label: "Records", icon: "records" },
   { href: "/chat", label: "Chat", icon: "chat" },
   { href: "/investments", label: "Investments", icon: "investments" },
   { href: "/settings", label: "Settings", icon: "settings" },
@@ -41,6 +42,12 @@ function Icon({ name }: { name: IconName }) {
         <svg {...common}>
           <path d="M3 3v18h18" />
           <path d="M7 14l3-3 3 3 5-6" />
+        </svg>
+      );
+    case "records":
+      return (
+        <svg {...common}>
+          <path d="M4 6h16M4 12h10M4 18h13" />
         </svg>
       );
     case "chat":

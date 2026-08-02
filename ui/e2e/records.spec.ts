@@ -181,9 +181,13 @@ test.describe("Records filter bar (REC-02)", () => {
     await page.goto("/records");
 
     await expect(page.getByPlaceholder("Search merchant or notes…")).toBeVisible();
-    await expect(page.getByText("All accounts", { exact: true })).toBeVisible();
-    await expect(page.getByText("All categories", { exact: true })).toBeVisible();
-    await expect(page.getByText("All types", { exact: true })).toBeVisible();
+    // Native <option> elements are never "visible" per Playwright/browser
+    // semantics while their parent <select> is closed (regardless of being
+    // selected) — assert against the <select> itself via hasText instead of
+    // the unrenderable <option> (Rule 3 test-authoring fix, 17-04).
+    await expect(page.locator("select").filter({ hasText: "All accounts" })).toBeVisible();
+    await expect(page.locator("select").filter({ hasText: "All categories" })).toBeVisible();
+    await expect(page.locator("select").filter({ hasText: "All types" })).toBeVisible();
     await expect(page.getByPlaceholder("Min amount")).toBeVisible();
     await expect(page.getByPlaceholder("Max amount")).toBeVisible();
     // Default checked — matches D-01's include_transfers default true.
@@ -227,7 +231,11 @@ test.describe("Multi-select + bulk actions (REC-03)", () => {
     });
 
     await page.goto("/records");
-    const row = page.locator("div", { hasText: "Warung Sate" }).first();
+    // .last() (not .first()) — the app shell (layout.tsx) wraps every page in
+    // its own outer <div>s, which also match `hasText` as ancestors of any
+    // row's text; the row itself is the innermost/deepest matching div, i.e.
+    // last in document order (Rule 3 test-authoring fix, 17-04).
+    const row = page.locator("div", { hasText: "Warung Sate" }).last();
     await row.locator('input[type="checkbox"]').check();
 
     await expect(page.getByText("1 selected", { exact: true })).toBeVisible();
@@ -264,7 +272,11 @@ test.describe("Multi-select + bulk actions (REC-03)", () => {
     });
 
     await page.goto("/records");
-    const row = page.locator("div", { hasText: "Warung Sate" }).first();
+    // .last() (not .first()) — the app shell (layout.tsx) wraps every page in
+    // its own outer <div>s, which also match `hasText` as ancestors of any
+    // row's text; the row itself is the innermost/deepest matching div, i.e.
+    // last in document order (Rule 3 test-authoring fix, 17-04).
+    const row = page.locator("div", { hasText: "Warung Sate" }).last();
     await row.locator('input[type="checkbox"]').check();
 
     const bulkBar = page.locator("div").filter({ hasText: "1 selected" }).last();
