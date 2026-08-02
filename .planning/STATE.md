@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
-status: executing
+status: completed
 stopped_at: Phase 17 UI-SPEC approved
-last_updated: "2026-08-02T06:06:48.406Z"
-last_activity: 2026-08-02 -- Phase 17 execution started
+last_updated: "2026-08-02T22:36:31.521Z"
+last_activity: 2026-08-02 -- Phase 17 marked complete
 progress:
   total_phases: 7
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 28
-  completed_plans: 23
-  percent: 82
+  completed_plans: 28
+  percent: 100
 ---
 
 # Project State
@@ -25,10 +25,10 @@ See: .planning/PROJECT.md (updated 2026-07-18)
 
 ## Current Position
 
-Phase: 17 (ui-new-surfaces-records-tab-categories-manager) — EXECUTING
+Phase: 17 — COMPLETE
 Plan: 1 of 5
-Status: Executing Phase 17
-Last activity: 2026-08-02 -- Phase 17 execution started
+Status: Phase 17 complete
+Last activity: 2026-08-02 -- Phase 17 marked complete
 
 Progress: [██████████] 100%
 
