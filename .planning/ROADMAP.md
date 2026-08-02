@@ -48,7 +48,7 @@ transfer/buy-sell mechanics, with BudgetBakers-grade record and category managem
 - [x] **Phase 14: REST Endpoints + Agent/MCP Tool Registration** - New endpoints wired to Phase 13's writes; write tools registered on the agent and kept off the MCP read-only surface (completed 2026-07-30)
 - [x] **Phase 15: Net Worth Aggregation + Dashboard** - Main dashboard shows net worth as liquid + investment sums that never overlap (completed 2026-07-31)
 - [x] **Phase 16: UI — Extend Existing Components** - Account manager, platform detail, and the record modal grow to cover typed accounts, PnL/buy-sell history, and Expense/Income/Transfer entry (completed 2026-08-01)
-- [ ] **Phase 17: UI — New Surfaces (Records Tab, Categories Manager)** - Date-grouped Records ledger with filters/bulk actions; category tree manager in Settings
+- [x] **Phase 17: UI — New Surfaces (Records Tab, Categories Manager)** - Date-grouped Records ledger with filters/bulk actions; category tree manager in Settings (completed 2026-08-02)
 
 ## Phase Details
 
@@ -235,8 +235,8 @@ Plans:
 
 **Wave 3** *(blocked on 17-02 + 17-03 — parallel)*
 
-- [ ] 17-04-PLAN.md — Records surface: date-grouped ledger, filter bar, transfer-pair collapse, multi-select bulk actions (REC-01, REC-02, REC-03, REC-05)
-- [ ] 17-05-PLAN.md — Platform detail surface: PnL + Buy/Sell segmented tabs, Investments link-out (PLAT-01)
+- [x] 17-04-PLAN.md — Records surface: date-grouped ledger, filter bar, transfer-pair collapse, multi-select bulk actions (REC-01, REC-02, REC-03, REC-05)
+- [x] 17-05-PLAN.md — Platform detail surface: PnL + Buy/Sell segmented tabs, Investments link-out (PLAT-01)
 
 **UI hint**: yes
 
@@ -275,7 +275,7 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 14. REST + Agent/MCP Tools | v1.2 | 3/3 | Complete    | 2026-07-31 |
 | 15. Net Worth Dashboard | v1.2 | 2/2 | Complete   | 2026-07-31 |
 | 16. UI — Extend Existing | v1.2 | 3/3 | Complete   | 2026-08-01 |
-| 17. UI — New Surfaces | v1.2 | 3/5 | In Progress|  |
+| 17. UI — New Surfaces | v1.2 | 5/5 | Complete   | 2026-08-02 |
 
 ---
 *Roadmap created: 2026-06-21 · v1.0 archived 2026-07-17 · v1.1 archived 2026-07-18 · v1.2 roadmap added 2026-07-18*
