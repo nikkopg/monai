@@ -477,9 +477,12 @@ def account_balances(period_start=None, period_end=None) -> dict:
     period_start/period_end: an already-resolved [start_inclusive, end_exclusive)
     tuple, e.g. from resolve_period() called once by the caller (Plan 03 endpoint).
     This function does NOT call resolve_period itself. current_balance sums ALL
-    of an account's non-transfer transactions regardless of period; period_net
-    sums only the in-period ones. Accounts with zero transactions appear with
-    0/0 (LEFT JOIN). Transfers excluded from both sums.
+    of an account's transactions regardless of period — transfers INCLUDED, a
+    transfer moves real money between accounts and the derived balance must
+    reflect it (Finding 2 / Phase 16 UAT#3; matches the unfiltered SUM that
+    apply_add_balance_adjustment reconciles against). period_net sums only the
+    in-period NON-transfer rows (cashflow/net-income semantics). Accounts with
+    zero transactions appear with 0/0 (LEFT JOIN).
     """
     p: dict = {}
     period_parts = []
@@ -498,10 +501,10 @@ def account_balances(period_start=None, period_end=None) -> dict:
     # not a removed/renamed one (Pitfall 2).
     sql = (
         "SELECT a.id, a.name, a.type, "
-        "COALESCE(SUM(t.amount), 0) AS current_balance, "
-        f"COALESCE(SUM(t.amount) FILTER (WHERE true{period_predicate}), 0) AS period_net "
+        "COALESCE(SUM(t.amount), 0) AS current_balance, "  # transfers INCLUDED
+        f"COALESCE(SUM(t.amount) FILTER (WHERE t.is_transfer = false{period_predicate}), 0) AS period_net "
         "FROM accounts a "
-        "LEFT JOIN transactions t ON t.account_id = a.id AND t.is_transfer = false "
+        "LEFT JOIN transactions t ON t.account_id = a.id "
         "GROUP BY a.id, a.name, a.type ORDER BY a.name"
     )
     with engine.connect() as c:

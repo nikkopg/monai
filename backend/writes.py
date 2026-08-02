@@ -147,6 +147,45 @@ def apply_delete_transaction(db: Session, tx_id: int, before: dict | None, allow
                     before=before, after=None))
 
 
+def _transaction_snapshot(tx: Transaction) -> dict:
+    """Audit `before` snapshot for a transaction row (same shape the REST
+    delete endpoint builds inline) — used for sibling legs deleted as a pair."""
+    return {
+        "id": tx.id,
+        "date": tx.date.isoformat() if tx.date else None,
+        "amount": str(tx.amount),
+        "currency": tx.currency,
+        "category": tx.category,
+        "merchant": tx.merchant,
+        "notes": tx.notes,
+        "account_id": tx.account_id,
+        "is_transfer": tx.is_transfer,
+    }
+
+
+def apply_delete_transaction_or_pair(db: Session, tx_id: int, before: dict | None) -> list[int]:
+    """Delete a transaction; if it is one leg of a transfer, delete BOTH legs.
+
+    The pair-aware wrapper the D-04 guard in apply_delete_transaction points to
+    (Phase 16 UAT#3): deleting a single leg would leave a half-transfer with
+    money unconserved, so a transfer is always deleted whole. The single-leg
+    guard/primitive stays intact — this composes it with allow_paired=True and
+    audits every leg. Returns the deleted ids. Does NOT commit (caller owns the
+    transaction boundary, D-01).
+    """
+    tx = db.get(Transaction, tx_id)
+    if tx is not None and tx.transfer_pair_id is not None:
+        legs = db.query(Transaction).filter(
+            Transaction.transfer_pair_id == tx.transfer_pair_id
+        ).all()
+        for leg in legs:
+            leg_before = before if leg.id == tx_id else _transaction_snapshot(leg)
+            apply_delete_transaction(db, leg.id, leg_before, allow_paired=True)
+        return [leg.id for leg in legs]
+    apply_delete_transaction(db, tx_id, before)
+    return [tx_id]
+
+
 def apply_add_transfer(db: Session, leg_a_after: dict, leg_b_after: dict) -> tuple[Transaction, Transaction]:
     """Insert a paired liquid->liquid transfer (XFER-01/D-03/D-09).
 

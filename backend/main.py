@@ -72,6 +72,7 @@ from backend.writes import (
     apply_delete_holding,
     apply_delete_platform,
     apply_delete_transaction,
+    apply_delete_transaction_or_pair,
     apply_edit_account,
     apply_edit_category,
     apply_edit_holding,
@@ -816,11 +817,11 @@ def delete_transaction(tx_id: int, db: Session = Depends(get_session)):
         "account_id": tx.account_id,
         "is_transfer": tx.is_transfer,
     }
-    apply_delete_transaction(db, tx_id, before)
+    deleted_ids = apply_delete_transaction_or_pair(db, tx_id, before)
     db.commit()
     from backend.query import reset_engine
     reset_engine()
-    return {"status": "deleted"}
+    return {"status": "deleted", "deleted_ids": deleted_ids}
 
 
 @app.post("/transactions/transfer", status_code=201, dependencies=[Depends(require_api_key)])
@@ -1192,7 +1193,7 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
             apply_edit_transaction(db, row.get("id"), after, before)
 
         elif operation == "delete_transaction":
-            apply_delete_transaction(db, row.get("id"), before)
+            apply_delete_transaction_or_pair(db, row.get("id"), before)
 
         elif operation == "add_account":
             apply_add_account(db, after)

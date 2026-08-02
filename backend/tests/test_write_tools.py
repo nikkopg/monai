@@ -1649,3 +1649,34 @@ def test_paired_leg_delete_blocked(db_session):
     finally:
         db_session.rollback()
         _cleanup_account(db_session, name)
+
+
+def test_delete_transaction_or_pair_removes_both_legs(db_session):
+    """apply_delete_transaction_or_pair on ONE leg of a transfer deletes BOTH
+    legs — no half-transfer left behind (Phase 16 UAT#3)."""
+    from backend.models import Transaction
+    from backend.writes import apply_add_transfer, apply_delete_transaction_or_pair
+
+    a_name, b_name = "zz13test-PairDelA", "zz13test-PairDelB"
+    _make_account(db_session, a_name)
+    _make_account(db_session, b_name)
+    try:
+        leg_a, leg_b = apply_add_transfer(
+            db_session,
+            {"account": a_name, "amount": "-30000", "currency": "IDR"},
+            {"account": b_name, "amount": "30000", "currency": "IDR"},
+        )
+        db_session.commit()
+        a_id, b_id = leg_a.id, leg_b.id
+
+        deleted = apply_delete_transaction_or_pair(db_session, a_id, None)
+        db_session.commit()
+
+        db_session.expire_all()
+        assert set(deleted) == {a_id, b_id}
+        assert db_session.get(Transaction, a_id) is None
+        assert db_session.get(Transaction, b_id) is None
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, a_name)
+        _cleanup_account(db_session, b_name)
