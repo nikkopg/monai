@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 
 import { tokens, card, btn, btnDark } from "../styles";
 import PlatformManager, { type Platform } from "./PlatformManager";
@@ -532,15 +533,36 @@ export default function InvestmentsPage() {
                     }}
                   >
                     <div>
-                      <span
-                        style={{
-                          fontSize: 14,
-                          fontWeight: 600,
-                          color: isUnassigned ? muted : tokens.color.ink,
-                        }}
-                      >
-                        {isUnassigned ? "Unassigned" : g.platform_name}
-                      </span>
+                      {isUnassigned ? (
+                        <span
+                          style={{
+                            fontSize: 14,
+                            fontWeight: 600,
+                            color: muted,
+                          }}
+                        >
+                          Unassigned
+                        </span>
+                      ) : (
+                        <Link
+                          href={`/investments/${g.platform_id}`}
+                          style={{
+                            fontSize: 14,
+                            fontWeight: 600,
+                            color: tokens.color.ink,
+                            cursor: "pointer",
+                            textDecoration: "none",
+                          }}
+                          onMouseEnter={(e) =>
+                            (e.currentTarget.style.textDecoration = "underline")
+                          }
+                          onMouseLeave={(e) =>
+                            (e.currentTarget.style.textDecoration = "none")
+                          }
+                        >
+                          {g.platform_name}
+                        </Link>
+                      )}
                       {g.kind && (
                         <span
                           style={{ fontSize: 12, color: muted, marginLeft: 8 }}
