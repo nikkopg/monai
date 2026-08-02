@@ -109,7 +109,12 @@ test.describe("Platform detail shell (PLAT-01, D-08)", () => {
     // tab) — scope to .first() to avoid a strict-mode multi-match.
     await expect(page.getByText("Realized", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("Unrealized", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText(fmtPlain(6000000))).toBeVisible();
+    // The single-holding fixture makes the stat card's Subtotal figure
+    // numerically identical to the PnL table's Value cell (both 6,000,000),
+    // which renders simultaneously (PnL is the default tab) — same
+    // strict-mode-multi-match reasoning as the Realized/Unrealized labels
+    // above, so scope to .first() too.
+    await expect(page.getByText(fmtPlain(6000000)).first()).toBeVisible();
   });
 });
 
@@ -127,8 +132,12 @@ test.describe("PnL tab (D-05, Component 11)", () => {
     await expect(page.getByText("Realized", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("Unrealized", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("BTC", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText(fmtSigned(200000))).toBeVisible();
-    await expect(page.getByText(fmtSigned(1000000))).toBeVisible();
+    // Same reasoning as the Subtotal collision above: with one holding, the
+    // stat card's Realized/Unrealized totals equal that holding's own
+    // realized_pnl/unrealized_pnl, rendered a second time in the PnL table
+    // row — scope to .first() to avoid a strict-mode multi-match.
+    await expect(page.getByText(fmtSigned(200000)).first()).toBeVisible();
+    await expect(page.getByText(fmtSigned(1000000)).first()).toBeVisible();
   });
 });
 
