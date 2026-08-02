@@ -423,6 +423,32 @@ def delete_platform(
     return {"status": "deleted", "reassigned": reassigned}
 
 
+@app.get("/platforms/{platform_id}/detail")
+def platform_detail(platform_id: int, db: Session = Depends(get_session)):
+    """Scoped PnL detail for one platform (PLAT-01/D-05) — open read.
+
+    Reuses portfolio.portfolio_summary(db)'s existing per-platform group dict
+    (subtotal + holdings with realized_pnl/unrealized_pnl/current_value) — no
+    new response_model, matching PortfolioSummary.groups[i]'s own Decimal-
+    passthrough convention. Lazy price refresh mirrors investments_summary's
+    idiom. Not registered in backend/tools.py TOOLS (D-05 — kept off the
+    agent/MCP surface).
+    """
+    platform = db.get(Platform, platform_id)
+    if platform is None:
+        raise HTTPException(status_code=404, detail=f"Platform {platform_id} not found")
+    from backend.prices import refresh_all_prices
+
+    refresh_all_prices(db, force=False)  # only stale tickers (D-09), same idiom as investments_summary
+    db.commit()
+    summary = compose_portfolio_summary(db)
+    group = next((g for g in summary["groups"] if g["platform_id"] == platform_id), None)
+    return group or {
+        "platform_id": platform_id, "platform_name": platform.name,
+        "kind": platform.kind, "subtotal": 0, "holdings": [],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Investments (INV-01/06/07) — event ledger + direct holding override + summary.
 # Every write route requires the API key (T-05-03-AC); GET /investments/summary
@@ -448,6 +474,20 @@ def create_portfolio_event(payload: PortfolioEventCreate, db: Session = Depends(
     from backend.query import reset_engine
     reset_engine()
     return ev
+
+
+@app.get("/portfolio-events", response_model=list[PortfolioEventOut])
+def list_portfolio_events(platform_id: int, db: Session = Depends(get_session)):
+    """One platform's buy/sell/dividend event ledger, date-desc (PLAT-01/D-05)
+    — open read. Reuses PortfolioEventOut directly, no new DTO. Not
+    registered in backend/tools.py TOOLS (D-05 — kept off the agent/MCP surface).
+    """
+    return (
+        db.query(PortfolioEvent)
+        .filter(PortfolioEvent.platform_id == platform_id)
+        .order_by(desc(PortfolioEvent.date))
+        .all()
+    )
 
 
 @app.post("/portfolio-events/funded-buy", status_code=201, dependencies=[Depends(require_api_key)])
