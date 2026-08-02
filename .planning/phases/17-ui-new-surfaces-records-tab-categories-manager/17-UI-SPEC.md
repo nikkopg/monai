@@ -46,6 +46,7 @@ Reuses `tokens.space` and the cashflow/investments pages' existing local row/gri
 | `tokens.space.lg` | 18px | card `marginBottom`, segmented control `marginBottom` (Platform detail tabs, verbatim from 16-UI-SPEC Component 1) |
 | `tokens.space.xl` | 24px | card horizontal padding (`card` token, unchanged) |
 | checkbox gutter (new, documented exception) | 28px | fixed-width leading column reserved for the row multi-select checkbox in the Records ledger — not a `tokens.space` value, but a multiple of 4 chosen to align the checkbox optically with the 38px tint-icon circle beside it (38 − 28 ≈ visually balanced left rail); no existing token covers "checkbox gutter," and inventing one for a single new use is out of scope — this is the smallest new constant, not a new scale |
+| filter-bar / bulk-action-bar padding | `8px 12px` | background band inside the ledger `card` (Component 2, 6) — both values are 4-point multiples, no exception needed |
 
 Exceptions: none beyond the 28px checkbox gutter above (itself a 4px multiple, so it does not break the "multiples of 4" spacing rule — it is new only in the sense that no prior surface needed a selection-checkbox column).
 
@@ -53,26 +54,26 @@ Exceptions: none beyond the 28px checkbox gutter above (itself a 4px multiple, s
 
 ## Typography
 
-Reuses the app's existing type scale in full — every size below already exists in `cashflow/page.tsx`, `investments/page.tsx`, or `TransactionModal.tsx`. No new sizes are introduced.
+Declared scale for this phase: **{40, 28, 14, 12}** — 4 sizes, at the max. Every size below already exists in `cashflow/page.tsx`, `investments/page.tsx`, or `TransactionModal.tsx`. No new sizes are introduced. (Note: `statLabel`'s literal source value is 13px in `cashflow/page.tsx` — that inherited value renders fine when the `statLabel` style object is reused as-is; this spec simply does not declare 13 as a separate size in the phase's own type-scale table, collapsing every role that would otherwise sit at 13 down to 12.)
 
 | Role | Size | Weight | Line Height | Where |
 |------|------|--------|-------------|-------|
 | Page heading | 40px | 400 | default | `<h1>` "Records" / platform name — `tokens.font.serif`, copied verbatim from Cashflow/Investments page headers |
 | Page eyebrow | 12px | 400, `.12em` letter-spacing, uppercase | default | "Ledger" (Records) / "Platform" (Platform detail) — copied verbatim from Cashflow's "Overview" eyebrow |
 | Stat card value | 28px | 600 | default, tabular-nums | Platform detail's Subtotal/Realized/Unrealized stat cards — copied verbatim from `cashflow/page.tsx`'s `statValue` |
-| Stat card label | 13px | default (400) | default | copied verbatim from `cashflow/page.tsx`'s `statLabel` |
-| Day-group header (date) | 13px | 600 | default | new date-group row, left side — sized to match `statLabel`'s weight-600 sibling usage already in the codebase (e.g. "6-month trend" card title) |
-| Day-group header (net) | 13px | 600 | default, tabular-nums | right side of the same row, signed + colored (see Color) |
+| Stat card label | 12px | default (400) | default | reuses `cashflow/page.tsx`'s `statLabel` style object; declared here at 12px (not the object's literal 13px) so this phase's own type scale stays at 4 sizes |
+| Day-group header (date) | 12px | 600 | default | new date-group row, left side |
+| Day-group header (net) | 12px | 600 | default, tabular-nums | right side of the same row, signed + colored (see Color) |
 | Table header (PnL / Buy-Sell tabs) | 12px | 400 | default | copied verbatim from `investments/page.tsx`'s per-holding column header row (`color: tokens.color.muted2`) |
 | Ledger row primary text | 14px | 500 | default | copied verbatim from the cashflow recent-list row |
 | Ledger row meta text | 12px | 400 | default | copied verbatim (`tokens.color.muted2`) |
 | Ledger row amount | 14px | 600 | default, tabular-nums | copied verbatim |
 | Filter field label | 12px | 400 (default) | default | `label` token, unchanged |
-| Bulk-action-bar count | 13px | 600 | default | new text, sized to match the day-group header for visual consistency within the same page |
+| Bulk-action-bar count | 12px | 600 | default | new text, sized to match the day-group header for visual consistency within the same page |
 | Segmented control (tabs) | 14px | 600 active / 500 inactive | default | copied verbatim from Phase 16's Component 1 (settings UIR-07 origin) — reused for the Platform-detail PnL/Buy-Sell tabs |
 | Inline action link (Edit/Delete/Recategorize) | 12px | 400 (default) | default | unchanged |
 
-**Weight-count note (carried forward from 16-UI-SPEC):** the table lists 600/500/400 — the `500` inactive-segment weight is the same pre-existing, out-of-phase-scope carryover already accepted in Phase 16's UI-SPEC (UIR-07 origin), not a new Phase 17 decision. Phase 17's actual weight budget is 2 (600 / 400); `500` is reused, not introduced.
+**Weight-count note (carried forward from 16-UI-SPEC):** the table lists 600/500/400. Phase 17's own weight budget is 2 (600 new-usage / 400 default). The `500` (segmented-control inactive tab) is **not** a new Phase 17 weight decision — it is the accepted carried-over exception first documented in 16-UI-SPEC.md (UIR-07 origin: settings-page provider selector), reused verbatim for the Platform-detail tabs. Read this table as "2 new weights (600, 400) + 1 carried exception (500)," so a later checker pass does not need to re-derive the exception's provenance.
 
 ---
 
@@ -167,7 +168,7 @@ Below the header: the filter bar (Component 2), then the date-grouped ledger (Co
 
 ### 2. Filter bar (REC-02)
 
-Single flex row, `flexWrap: "wrap"`, `gap: tokens.space.sm` (8px), placed as the first child inside the ledger `card`, `marginBottom: tokens.space.md` (14px), background `tokens.color.sidebar` band with `borderRadius: tokens.radius.md`, `padding: 10px 12px` (documented exception: 10px is not a 4px multiple but matches the existing non-4px exceptions already accepted for chrome elements in this codebase — e.g. Phase 16's segmented-control padding: 4 / radius: 9,12 — the alternative, 8px or 12px, was rejected because it visually crowds/loosens the 7-field row; flag for checker as a Spacing exception, same class as Phase 16's).
+Single flex row, `flexWrap: "wrap"`, `gap: tokens.space.sm` (8px), placed as the first child inside the ledger `card`, `marginBottom: tokens.space.md` (14px), background `tokens.color.sidebar` band with `borderRadius: tokens.radius.md`, `padding: "8px 12px"` (both 4-point multiples — no spacing exception needed).
 
 Field order, left to right: Search (`input`, `flex: 2`, min-width 180) → Account `<select>` (`input`, `flex: 1`) → Category `<select>` (`input`, `flex: 1`, same `flattenCategories()` indent convention as `TransactionModal`) → Type `<select>` (`input`, `flex: 1`) → Min amount (`input type=number`, width 110) → Max amount (`input type=number`, width 110) → Show-transfers checkbox+label (flex-shrink 0, self-aligned center).
 
@@ -204,9 +205,9 @@ Rendered when two rows share a non-null `transfer_pair_id` (Component 3's collap
 
 Checkboxes are **persistent** (always visible, not hover-reveal) in the 28px leading gutter of every row — simplest, no hover-state logic needed, and financial-ledger UIs (the BudgetBakers reference) keep selection affordances persistent too.
 
-When `selectedIds.size > 0`, a bulk-action bar replaces the filter bar's position visually (renders directly below it, `background: tokens.color.sidebar`, `borderRadius: tokens.radius.md`, `padding: "10px 12px"`, `marginBottom: tokens.space.md`, `display:flex, alignItems:center, gap: tokens.space.sm`):
+When `selectedIds.size > 0`, a bulk-action bar replaces the filter bar's position visually (renders directly below it, `background: tokens.color.sidebar`, `borderRadius: tokens.radius.md`, `padding: "8px 12px"`, `marginBottom: tokens.space.md`, `display:flex, alignItems:center, gap: tokens.space.sm`):
 
-- Left: "{N} selected" (13px/600, ink).
+- Left: "{N} selected" (12px/600, ink).
 - Right-aligned button group: category `<select>` (inline, `input` token, compact width 160) immediately followed by "Recategorize" (`btn`, green — the one accent target this phase) → then "Delete" (`dangerBtn`, terracotta) → then "Cancel selection" (plain text link, `tokens.color.muted`, clears `selectedIds`).
 - "Recategorize" applies immediately on click (no `ConfirmDialog` — matches the existing "category rename is non-destructive, no dialog" precedent from `CategoryManager.tsx`); on success, clears selection and shows the partial-skip note (Copywriting) if any transfer legs were skipped.
 - "Delete" opens `ConfirmDialog` with the bulk-delete copy; confirming calls `POST /transactions/bulk-delete` with the full `selectedIds` array (including both legs of any selected transfer pairs, Component 5) and clears selection on success.
@@ -280,6 +281,8 @@ Not applicable — no shadcn, no component registry, no third-party blocks. This
 ---
 
 ## Checker Sign-Off
+
+**Weight exception note:** the segmented control's inactive-tab weight (`500`, Component 10) is the accepted carried-over exception from Phase 16's UI-SPEC (UIR-07 origin) — not a new weight introduced by this phase. Phase 17's own weight budget is 600 (new usage) + 400 (default); 500 is reused, not declared. See Typography section for full note.
 
 - [ ] Dimension 1 Copywriting: PASS
 - [ ] Dimension 2 Visuals: PASS
