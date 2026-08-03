@@ -3,15 +3,15 @@ gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
 status: completed
-stopped_at: Phase 17 UI-SPEC approved
-last_updated: "2026-08-02T22:36:31.521Z"
+stopped_at: Phase 18 context gathered
+last_updated: "2026-08-03T07:38:11.994Z"
 last_activity: 2026-08-02 -- Phase 17 marked complete
 progress:
-  total_phases: 7
+  total_phases: 8
   completed_phases: 7
   total_plans: 28
   completed_plans: 28
-  percent: 100
+  percent: 88
 ---
 
 # Project State
@@ -78,6 +78,7 @@ Progress: [██████████] 100%
 
 - v1.2 roadmap created (2026-07-18): 7 phases (11-17), schema-first + dependency-ordered per research/SUMMARY.md. Categories (11) before typed accounts (12) — both audited against live data, categories first as the higher data-quality risk. Shared mutation layer (13) before REST/agent/MCP registration (14) — enforces atomicity by construction and treats dual/triple tool registration as one auditable checklist (prior incidents: `chat-tool-dual-registration`, `TOOLS registry mutates to 26`). Net worth dashboard (15) sequenced after typed-accounts reconciliation (12) and funding writes (13) so it's never built on unstable data. UI split into "extend existing" (16) vs "new surfaces" (17) — the former needs the stable API contract, the latter is purely additive.
 - v1.1 roadmap created (2026-07-18): 3 phases (8, 9, 10), foundation-first — tokens/shell (8) block both page phases (9, 10). Cashflow+Chat grouped in Phase 9 (primary workflows); Investments+Settings+secondary-surface consistency+regression sweep grouped in Phase 10.
+- Phase 18 added: UI entry points for balance adjustment, liquid→investment transfer, and funded buy/sell (ACCT-02, XFER-02, XFER-03)
 
 ### Decisions
 
@@ -168,8 +169,8 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-08-02T00:14:42.252Z
-Stopped at: Phase 17 UI-SPEC approved
-Resume file: .planning/phases/17-ui-new-surfaces-records-tab-categories-manager/17-UI-SPEC.md
+Last session: 2026-08-03T07:38:11.972Z
+Stopped at: Phase 18 context gathered
+Resume file: .planning/phases/18-ui-entry-points-for-balance-adjustment-liquid-investment-tra/18-CONTEXT.md
 
 Next: `/gsd-plan-phase 11`
