@@ -43,7 +43,9 @@ created: 2026-08-03
 |---------|------|------|-------------|------------|-----------------|-----------|-------------------|-------------|--------|
 | 18-01-xx | 01 | 1 | ACCT-02 | — | Adjust-balance modal POSTs `{target_balance}` to `/accounts/{id}/adjust-balance`; delta preview matches target − current_balance | e2e | `cd ui && npx playwright test e2e/balance-adjust.spec.ts` | ❌ W0 | ⬜ pending |
 | 18-02-xx | 02 | 1 | XFER-02 | — | "Deposit cash" modal POSTs `{from_account, platform_id, amount}` to `/transactions/investment-transfer`; account field is a `<select>` (never free text) | e2e | `cd ui && npx playwright test e2e/investment-transfer.spec.ts` | ❌ W0 | ⬜ pending |
-| 18-03-xx | 03 | 1 | XFER-03 | — | Funded HoldingModal POSTs `{source_account_name, platform_id, ticker, quantity, price, cash_amount}` to `/portfolio-events/funded-buy|sell`; cash_amount defaults to qty×price and is editable; unfunded path still POSTs `/portfolio-events` | e2e | `cd ui && npx playwright test e2e/funded-trade.spec.ts` | ❌ W0 | ⬜ pending |
+| 18-03-xx | 03 | 2 | XFER-03 | — | Funded HoldingModal POSTs `{source_account_name, platform_id, ticker, quantity, price, cash_amount}` to `/portfolio-events/funded-buy|sell`; cash_amount defaults to qty×price and is editable; unfunded path still POSTs `/portfolio-events` | e2e | `cd ui && npx playwright test e2e/funded-trade.spec.ts` | ❌ W0 | ⬜ pending |
+
+> **Wave note:** 18-03 runs in **Wave 2** (`depends_on: 18-02`) — both edit `investments/[platformId]/page.tsx`. `funded-trade.spec.ts` reaches full-GREEN only after 18-03 Task 3 mounts the "+ Log event" trigger; it is expected partial-RED until then. `nyquist_compliant`/`wave_0_complete` flip true once the three specs are authored during execution.
 
 *Status: ⬜ pending · ✅ green · ❌ red · ⚠️ flaky*
 
