@@ -1,17 +1,17 @@
 ---
-status: diagnosed
+status: resolved
 trigger: "UAT Phase 4 Test 3: i got this when clicking this week, other card work — Couldn't load the dashboard — check the backend is running and reload the page."
 created: 2026-07-05T10:11:28Z
-updated: 2026-07-05T10:18:00Z
+updated: 2026-08-03T05:42:00Z
 ---
 
 ## Current Focus
 <!-- OVERWRITE on each update - reflects NOW -->
 
-hypothesis: CONFIRMED — frontend "This week" pill sends period=this_week, which backend resolve_period()/PERIODS does not recognize; the resulting ValueError is unhandled in the /cashflow/summary endpoint and becomes HTTP 500, which triggers the dashboard error state
+hypothesis: CONFIRMED — frontend "This week" pill sends period=this_week, which backend resolve_period()/PERIODS did not recognize; the resulting ValueError was unhandled in the /cashflow/summary endpoint and became HTTP 500, which triggered the dashboard error state
 test: complete (static trace + unit repro + live endpoint repro all agree)
-expecting: n/a — diagnosis complete
-next_action: return ROOT CAUSE FOUND to orchestrator (goal: find_root_cause_only — no fix applied)
+expecting: n/a — resolved
+next_action: none — both recommended fixes are present in current source (verified 2026-08-03)
 
 ## Symptoms
 <!-- Written during gathering, then IMMUTABLE -->
@@ -91,6 +91,6 @@ root_cause: |
   (page.tsx:83-97) treats any non-ok response as total dashboard failure and
   renders "Couldn't load the dashboard — check the backend is running and
   reload the page."
-fix: NOT APPLIED (goal: find_root_cause_only). Suggested direction — add "this_week" to PERIODS and a this_week branch in resolve_period (week start convention: ISO Monday, [monday, next_monday) half-open, consistent with existing bounds); additionally wrap the resolve/aggregation in /cashflow/summary with the standard ValueError→HTTPException(422) mapping so invalid periods can never surface as raw 500s again.
-verification: n/a (no fix applied)
-files_changed: []
+fix: RESOLVED IN SOURCE (verified 2026-08-03, not by this session — landed during later phase work). Both recommended remedies are present: (1) backend/tools.py PERIODS now includes "this_week"/"last_week" (lines 30-34) and resolve_period() has both branches using ISO-Monday half-open bounds (lines 59-67); (2) the /cashflow/summary endpoint now wraps resolve_period() in try/except ValueError → HTTPException(422) (backend/main.py:843-848), matching every sibling endpoint, so an unknown period can never surface as a raw 500 again.
+verification: unit repro on current source — resolve_period("this_week") → (2026-08-03, 2026-08-10); resolve_period("last_week") → (2026-07-27, 2026-08-03). No further change required.
+files_changed: [backend/tools.py, backend/main.py]  # changed by later phase work, not this debug session

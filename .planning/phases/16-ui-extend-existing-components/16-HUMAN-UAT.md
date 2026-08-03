@@ -1,14 +1,14 @@
 ---
-status: partial
+status: complete
 phase: 16-ui-extend-existing-components
 source: [16-VERIFICATION.md]
 started: 2026-08-01T19:40:00Z
-updated: 2026-08-01T20:05:00Z
+updated: 2026-08-03T05:50:00Z
 ---
 
 ## Current Test
 
-[awaiting human testing]
+[testing complete]
 
 ## Tests
 
@@ -22,14 +22,14 @@ result: passed — Claude verified 2026-08-01 via computed CSS on the live build
 
 ### 3. Live Transfer click-through (real Postgres)
 expected: In the live app, add a real Transfer record between two liquid accounts. Both legs appear correctly, balances move atomically, no orphan leg — the Phase-13 atomic-pair guarantee holds end-to-end through the new modal.
-result: pending — left for the user (writes real financial records to live Postgres). Backend atomicity is a shipped Phase-13 guarantee; the modal's transfer wiring is proven by route-mocked e2e (record-modal.spec.ts transfer + edit-leg-lock tests, 8/8 green). Only the real-data click-through remains.
+result: passed — user confirmed 2026-08-03 via live click-through against real Postgres. A real Transfer between two liquid accounts posts both legs, balances move atomically, no orphan leg. The Phase-13 atomic-pair guarantee holds end-to-end through the new modal.
 
 ## Summary
 
 total: 3
-passed: 2
+passed: 3
 issues: 0
-pending: 1
+pending: 0
 skipped: 0
 blocked: 0
 
