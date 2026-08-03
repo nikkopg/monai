@@ -49,6 +49,7 @@ transfer/buy-sell mechanics, with BudgetBakers-grade record and category managem
 - [x] **Phase 15: Net Worth Aggregation + Dashboard** - Main dashboard shows net worth as liquid + investment sums that never overlap (completed 2026-07-31)
 - [x] **Phase 16: UI — Extend Existing Components** - Account manager, platform detail, and the record modal grow to cover typed accounts, PnL/buy-sell history, and Expense/Income/Transfer entry (completed 2026-08-01)
 - [x] **Phase 17: UI — New Surfaces (Records Tab, Categories Manager)** - Date-grouped Records ledger with filters/bulk actions; category tree manager in Settings (completed 2026-08-02)
+- [ ] **Phase 18: UI entry points for balance adjustment, liquid→investment transfer, and funded buy/sell (ACCT-02, XFER-02, XFER-03)** - User-facing controls that trigger the Phase 13–16 mutation flows: balance adjustment, liquid→investment transfer, and funded buy/sell
 
 ## Phase Details
 
@@ -276,6 +277,23 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 | 15. Net Worth Dashboard | v1.2 | 2/2 | Complete   | 2026-07-31 |
 | 16. UI — Extend Existing | v1.2 | 3/3 | Complete   | 2026-08-01 |
 | 17. UI — New Surfaces | v1.2 | 5/5 | Complete   | 2026-08-02 |
+
+### Phase 18: UI entry points for balance adjustment, liquid→investment transfer, and funded buy/sell (ACCT-02, XFER-02, XFER-03)
+
+**Goal:** Add UI entry points on the existing Cashflow and Investments surfaces for three money-moving operations whose backend already shipped in Phase 13 — set account balance (ACCT-02), liquid→investment transfer (XFER-02), and funded buy/sell (XFER-03). UI-only; no new backend endpoints.
+**Requirements**: ACCT-02, XFER-02, XFER-03
+**Depends on:** Phase 17
+**Plans:** 3 plans
+
+Plans:
+**Wave 1** *(parallel — disjoint files)*
+
+- [ ] 18-01-PLAN.md — AccountManager "Adjust balance" row action + delta-preview modal → POST /accounts/{id}/adjust-balance (ACCT-02)
+- [ ] 18-02-PLAN.md — Platform-detail "Deposit cash" action + liquid-account-select modal → POST /transactions/investment-transfer (XFER-02)
+
+**Wave 2** *(blocked on 18-02 — shares [platformId]/page.tsx)*
+
+- [ ] 18-03-PLAN.md — HoldingModal funding selector → funded-buy/sell routing (cash_amount default qty×price, editable; unfunded escape hatch) + Buy&Sell tab trigger (XFER-03)
 
 ---
 *Roadmap created: 2026-06-21 · v1.0 archived 2026-07-17 · v1.1 archived 2026-07-18 · v1.2 roadmap added 2026-07-18*
