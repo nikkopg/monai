@@ -283,13 +283,13 @@ Phases execute in numeric order: 11 → 12 → 13 → 14 → 15 → 16 → 17
 **Goal:** Add UI entry points on the existing Cashflow and Investments surfaces for three money-moving operations whose backend already shipped in Phase 13 — set account balance (ACCT-02), liquid→investment transfer (XFER-02), and funded buy/sell (XFER-03). UI-only; no new backend endpoints.
 **Requirements**: ACCT-02, XFER-02, XFER-03
 **Depends on:** Phase 17
-**Plans:** 3 plans
+**Plans:** 2/3 plans executed
 
 Plans:
 **Wave 1** *(parallel — disjoint files)*
 
-- [ ] 18-01-PLAN.md — AccountManager "Adjust balance" row action + delta-preview modal → POST /accounts/{id}/adjust-balance (ACCT-02)
-- [ ] 18-02-PLAN.md — Platform-detail "Deposit cash" action + liquid-account-select modal → POST /transactions/investment-transfer (XFER-02)
+- [x] 18-01-PLAN.md — AccountManager "Adjust balance" row action + delta-preview modal → POST /accounts/{id}/adjust-balance (ACCT-02)
+- [x] 18-02-PLAN.md — Platform-detail "Deposit cash" action + liquid-account-select modal → POST /transactions/investment-transfer (XFER-02)
 
 **Wave 2** *(blocked on 18-02 — shares [platformId]/page.tsx)*
 
