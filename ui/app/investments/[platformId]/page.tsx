@@ -4,8 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
-import { tokens, card, btn } from "../../styles";
+import { tokens, card, btn, btnDark } from "../../styles";
 import DepositCashModal from "../DepositCashModal";
+import HoldingModal from "../HoldingModal";
+import type { PlatformOption } from "../page";
 
 // ---------------------------------------------------------------------------
 // Platform detail — drill into one platform's PnL and buy/sell history
@@ -112,11 +114,13 @@ export default function PlatformDetailPage() {
 
   const [detail, setDetail] = useState<PlatformDetail | null>(null);
   const [events, setEvents] = useState<PortfolioEvent[]>([]);
+  const [platformOptions, setPlatformOptions] = useState<PlatformOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("pnl");
   const [showDeposit, setShowDeposit] = useState(false);
+  const [showLogEvent, setShowLogEvent] = useState(false);
   const cancelledRef = useRef(false);
 
   async function load() {
@@ -146,6 +150,21 @@ export default function PlatformDetailPage() {
         );
     } finally {
       if (!cancelledRef.current) setLoading(false);
+    }
+
+    // Platform list for HoldingModal's Platform <select> (Task 3) — kept out
+    // of the required Promise.all above so an unrelated failure here never
+    // blocks/breaks the platform detail view itself.
+    try {
+      const pRes = await fetch(`/api/platforms`);
+      if (pRes.ok) {
+        const p: { id: number; name: string }[] = await pRes.json();
+        if (!cancelledRef.current) {
+          setPlatformOptions(p.map((pl) => ({ id: pl.id, name: pl.name })));
+        }
+      }
+    } catch {
+      // HoldingModal just shows an empty Platform select; not a blocking error.
     }
   }
 
@@ -318,6 +337,18 @@ export default function PlatformDetailPage() {
               );
             })}
           </div>
+
+          {tab === "buysell" && (
+            <div style={{ marginBottom: 14 }}>
+              <button
+                type="button"
+                style={btnDark}
+                onClick={() => setShowLogEvent(true)}
+              >
+                + Log event
+              </button>
+            </div>
+          )}
 
           <div style={card}>
             {tab === "pnl" ? (
@@ -528,6 +559,14 @@ export default function PlatformDetailPage() {
               platformId={Number(platformId)}
               platformName={detail.platform_name}
               onClose={() => setShowDeposit(false)}
+              onSaved={load}
+            />
+          )}
+          {showLogEvent && (
+            <HoldingModal
+              platforms={platformOptions}
+              defaultPlatformId={Number(platformId)}
+              onClose={() => setShowLogEvent(false)}
               onSaved={load}
             />
           )}

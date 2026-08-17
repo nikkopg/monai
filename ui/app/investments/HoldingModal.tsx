@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-import { card, input, btn, label } from "../styles";
+import { card, input, btn, label, tokens } from "../styles";
 import type { PlatformOption } from "./page";
 
 // ---------------------------------------------------------------------------
@@ -11,15 +11,32 @@ import type { PlatformOption } from "./page";
 // through the Next.js proxy (which injects the API key server-side); the
 // position recompute happens server-side (05-RESEARCH Pattern 2). On success
 // calls onSaved() (parent refetches the summary) then onClose().
+//
+// XFER-03 extension: an optional "Funding account" <select> (modal-owned
+// GET /api/accounts fetch, client-filtered to type === "liquid" — never free
+// text, RESEARCH Pitfall 2) routes Buy/Sell submits to
+// /api/portfolio-events/funded-buy|sell instead, carrying a cash_amount that
+// defaults to quantity x price until manually edited (D-06). Dividend has no
+// funded schema — a funding selection is ignored for it (unfunded path).
 // ---------------------------------------------------------------------------
 
 type Props = {
   platforms: PlatformOption[];
   onClose: () => void;
   onSaved: () => void;
+  defaultPlatformId?: number;
+};
+
+type Account = {
+  id: number;
+  name: string;
+  type: string | null;
+  currency: string | null;
 };
 
 const ASSET_TYPES = ["crypto", "idx_stock", "mutual_fund", "other"] as const;
+
+const fmtPlain = (n: number) => new Intl.NumberFormat("en-US").format(Math.round(n));
 
 // datetime-local value from a Date using LOCAL wall-clock components (verbatim
 // from TransactionModal — avoids the toISOString() UTC shift).
@@ -30,13 +47,22 @@ function toLocalDatetimeInputValue(d: Date): string {
   )}:${pad(d.getMinutes())}`;
 }
 
-export default function HoldingModal({ platforms, onClose, onSaved }: Props) {
+export default function HoldingModal({
+  platforms,
+  onClose,
+  onSaved,
+  defaultPlatformId,
+}: Props) {
   const [ticker, setTicker] = useState("");
   const [assetType, setAssetType] = useState<string>("crypto");
-  // Platform is required (no more "(unassigned)") — default to the first
-  // platform when any exist.
+  // Platform is required (no more "(unassigned)") — pre-select
+  // defaultPlatformId when given (still editable), else the first platform.
   const [platformId, setPlatformId] = useState<string>(
-    platforms.length > 0 ? String(platforms[0].id) : ""
+    defaultPlatformId
+      ? String(defaultPlatformId)
+      : platforms.length > 0
+      ? String(platforms[0].id)
+      : ""
   );
   const [eventType, setEventType] = useState<"buy" | "sell" | "dividend">("buy");
   const [quantity, setQuantity] = useState("");
@@ -47,6 +73,44 @@ export default function HoldingModal({ platforms, onClose, onSaved }: Props) {
   const [error, setError] = useState<string | null>(null);
 
   const isDividend = eventType === "dividend";
+
+  // Funding selector (XFER-03) — modal-owned GET /api/accounts fetch,
+  // client-filtered to liquid. A funding account is only meaningful for
+  // Buy/Sell; Dividend has no funded schema, so it's ignored there.
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [fundingAccount, setFundingAccount] = useState("");
+  const [cashAmount, setCashAmount] = useState("");
+  const [cashAmountTouched, setCashAmountTouched] = useState(false);
+  const liquidAccounts = accounts.filter((a) => a.type === "liquid");
+  const isFunded = fundingAccount !== "" && !isDividend;
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/accounts");
+        if (!r.ok) throw new Error("fetch failed");
+        const data: Account[] = await r.json();
+        if (!cancelled) setAccounts(data);
+      } catch {
+        // leave accounts empty; the funding select just shows "none"
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Re-sync cash_amount to quantity x price only while the user hasn't
+  // manually edited it (D-06) — never silently overwrite a manual edit.
+  useEffect(() => {
+    if (!cashAmountTouched && quantity && price) {
+      const q = parseFloat(quantity);
+      const p = parseFloat(price);
+      if (!Number.isNaN(q) && !Number.isNaN(p)) setCashAmount(String(q * p));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quantity, price]);
 
   // When switching to Dividend, default quantity to 1 (still editable) so the
   // form keeps the same field set (quantity=1, price=amount convention).
@@ -60,6 +124,44 @@ export default function HoldingModal({ platforms, onClose, onSaved }: Props) {
     setSaving(true);
     setError(null);
     try {
+      if (isFunded) {
+        const endpoint =
+          eventType === "sell"
+            ? "/api/portfolio-events/funded-sell"
+            : "/api/portfolio-events/funded-buy";
+        const body: Record<string, unknown> = {
+          source_account_name: fundingAccount,
+          platform_id: parseInt(platformId, 10),
+          ticker: ticker.trim(),
+          quantity: parseFloat(quantity),
+          price: parseFloat(price),
+          cash_amount: parseFloat(cashAmount),
+          cash_currency: "IDR",
+          event_currency: "IDR",
+          date: new Date(date).toISOString().slice(0, 10),
+          asset_type: assetType,
+        };
+        const r = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (r.ok) {
+          onSaved();
+          onClose();
+        } else {
+          let detail = `HTTP ${r.status}`;
+          try {
+            const errBody = await r.json();
+            detail = errBody?.detail ?? detail;
+          } catch {
+            // keep status-based detail
+          }
+          setError(`Couldn't log funded ${eventType}: ${detail}. Nothing was changed.`);
+        }
+        return;
+      }
+
       // Event date is a plain date (backend column is DATE) — send YYYY-MM-DD.
       const body: Record<string, unknown> = {
         ticker: ticker.trim(),
@@ -90,7 +192,7 @@ export default function HoldingModal({ platforms, onClose, onSaved }: Props) {
       }
     } catch (e) {
       setError(
-        `Couldn't log event: ${
+        `Couldn't ${isFunded ? `log funded ${eventType}` : "log event"}: ${
           e instanceof Error ? e.message : "Network error"
         }. Nothing was changed.`
       );
@@ -219,7 +321,53 @@ export default function HoldingModal({ platforms, onClose, onSaved }: Props) {
                 onChange={(e) => setDate(e.target.value)}
               />
             </div>
+            <div>
+              <label style={label}>Funding account</label>
+              <select
+                style={input}
+                value={fundingAccount}
+                onChange={(e) => setFundingAccount(e.target.value)}
+              >
+                <option value="">— none (unfunded) —</option>
+                {liquidAccounts.map((a) => (
+                  <option key={a.id} value={a.name}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {isFunded && (
+              <div>
+                <label style={label}>Cash amount (IDR)</label>
+                <input
+                  style={input}
+                  type="number"
+                  step="any"
+                  required
+                  value={cashAmount}
+                  onChange={(e) => {
+                    setCashAmount(e.target.value);
+                    setCashAmountTouched(true);
+                  }}
+                />
+              </div>
+            )}
           </div>
+
+          {isFunded && quantity && ticker && (
+            <p
+              style={{
+                fontSize: 13,
+                margin: "0 0 10px",
+                color:
+                  eventType === "sell" ? tokens.color.terracotta : tokens.color.green,
+              }}
+            >
+              {eventType === "sell"
+                ? `Credits ${fundingAccount} Rp ${fmtPlain(parseFloat(cashAmount || "0"))}, −${quantity} ${ticker}`
+                : `Debits ${fundingAccount} Rp ${fmtPlain(parseFloat(cashAmount || "0"))}, +${quantity} ${ticker}`}
+            </p>
+          )}
 
           <div
             style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 16 }}
@@ -238,8 +386,20 @@ export default function HoldingModal({ platforms, onClose, onSaved }: Props) {
             >
               Cancel
             </button>
-            <button style={btn} type="submit" disabled={saving || platforms.length === 0}>
-              {saving ? "Saving…" : "Log event"}
+            <button
+              style={btn}
+              type="submit"
+              disabled={
+                saving ||
+                platforms.length === 0 ||
+                (isFunded && !(parseFloat(cashAmount) > 0))
+              }
+            >
+              {saving
+                ? "Saving…"
+                : isFunded
+                ? `Log funded ${eventType.charAt(0).toUpperCase()}${eventType.slice(1)}`
+                : "Log event"}
             </button>
             {error && (
               <span style={{ color: "#b5503f", fontSize: 12 }}>{error}</span>
