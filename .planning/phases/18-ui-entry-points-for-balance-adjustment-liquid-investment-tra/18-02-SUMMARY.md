@@ -127,3 +127,13 @@ None - no external service configuration required.
 ---
 *Phase: 18-ui-entry-points-for-balance-adjustment-liquid-investment-tra*
 *Completed: 2026-08-17*
+
+## Self-Check: PASSED
+
+- FOUND: ui/app/investments/DepositCashModal.tsx
+- FOUND: ui/app/investments/[platformId]/page.tsx
+- FOUND: ui/e2e/investment-transfer.spec.ts
+- FOUND: 18-02-SUMMARY.md
+- FOUND commit: ac956ad (test)
+- FOUND commit: 39d7d64 (feat)
+- FOUND commit: 31bd39d (docs)
