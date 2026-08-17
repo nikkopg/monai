@@ -2,11 +2,13 @@
 
 import { useState } from "react";
 
-import { card, input, btn, label } from "../styles";
+import { card, input, btn, label, tokens } from "../styles";
 import ConfirmDialog from "./ConfirmDialog";
+import AdjustBalanceModal from "./AdjustBalanceModal";
 
 // ---------------------------------------------------------------------------
-// AccountManager — list accounts with inline edit + delete (D-05/D-06).
+// AccountManager — list accounts with inline edit + delete (D-05/D-06), plus
+// a per-row "Adjust balance" action (ACCT-02, D-01/D-02/D-07).
 // Delete flow:
 //   1. ConfirmDialog "Delete this account? This can't be undone."
 //   2. DELETE /api/accounts/{id}
@@ -15,10 +17,10 @@ import ConfirmDialog from "./ConfirmDialog";
 //   4. On confirming the destination, re-issue DELETE with ?reassign_to=.
 // ---------------------------------------------------------------------------
 
-// Only id/name are needed here — accepts either the plain /api/accounts
-// shape or the richer per-account balance rows from GET /cashflow/summary
-// (current_balance/period_net are simply ignored by this component).
-export type Account = { id: number; name: string };
+// current_balance is required — the parent (cashflow/page.tsx) always passes
+// the richer per-account balance rows from GET /cashflow/summary, which the
+// AdjustBalanceModal delta preview needs (period_net is simply ignored here).
+export type Account = { id: number; name: string; current_balance: number };
 
 type Props = {
   accounts: Account[];
@@ -37,6 +39,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
   const [newName, setNewName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [deleteFlow, setDeleteFlow] = useState<DeleteFlowState>({ stage: "idle" });
+  const [adjustingAccount, setAdjustingAccount] = useState<Account | null>(null);
 
   async function saveAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -205,6 +208,13 @@ export default function AccountManager({ accounts, onChanged }: Props) {
                     </span>
                     <span
                       role="button"
+                      onClick={() => setAdjustingAccount(a)}
+                      style={{ color: tokens.color.muted3, cursor: "pointer", marginRight: 12, fontSize: 12 }}
+                    >
+                      Adjust balance
+                    </span>
+                    <span
+                      role="button"
                       onClick={() => setDeleteFlow({ stage: "confirm", account: a })}
                       style={{ color: "#b5503f", cursor: "pointer", fontSize: 12 }}
                     >
@@ -288,6 +298,14 @@ export default function AccountManager({ accounts, onChanged }: Props) {
               ))}
           </select>
         </ConfirmDialog>
+      )}
+
+      {adjustingAccount && (
+        <AdjustBalanceModal
+          account={adjustingAccount}
+          onClose={() => setAdjustingAccount(null)}
+          onChanged={onChanged}
+        />
       )}
     </section>
   );
