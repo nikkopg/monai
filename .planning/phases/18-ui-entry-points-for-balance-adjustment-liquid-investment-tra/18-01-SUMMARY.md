@@ -101,3 +101,12 @@ None - no external service configuration required.
 ---
 *Phase: 18-ui-entry-points-for-balance-adjustment-liquid-investment-tra*
 *Completed: 2026-08-17*
+
+## Self-Check: PASSED
+
+- FOUND: ui/app/cashflow/AdjustBalanceModal.tsx
+- FOUND: ui/e2e/balance-adjust.spec.ts
+- FOUND: .planning/phases/18-ui-entry-points-for-balance-adjustment-liquid-investment-tra/18-01-SUMMARY.md
+- FOUND commit: 91c730d
+- FOUND commit: e381a52
+- FOUND commit: e4d0a66
