@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
-import { tokens, card } from "../../styles";
+import { tokens, card, btn } from "../../styles";
+import DepositCashModal from "../DepositCashModal";
 
 // ---------------------------------------------------------------------------
 // Platform detail — drill into one platform's PnL and buy/sell history
@@ -115,41 +116,46 @@ export default function PlatformDetailPage() {
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("pnl");
+  const [showDeposit, setShowDeposit] = useState(false);
+  const cancelledRef = useRef(false);
+
+  async function load() {
+    setLoading(true);
+    setNotFound(false);
+    setError(null);
+    try {
+      const [dRes, eRes] = await Promise.all([
+        fetch(`/api/platforms/${platformId}/detail`),
+        fetch(`/api/portfolio-events?platform_id=${platformId}`),
+      ]);
+      if (dRes.status === 404) {
+        if (!cancelledRef.current) setNotFound(true);
+        return;
+      }
+      if (!dRes.ok || !eRes.ok) throw new Error("fetch failed");
+      const d = await dRes.json();
+      const e = await eRes.json();
+      if (!cancelledRef.current) {
+        setDetail(d);
+        setEvents(e);
+      }
+    } catch {
+      if (!cancelledRef.current)
+        setError(
+          "Couldn't load this platform — check the backend is running and reload the page."
+        );
+    } finally {
+      if (!cancelledRef.current) setLoading(false);
+    }
+  }
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      setNotFound(false);
-      setError(null);
-      try {
-        const [dRes, eRes] = await Promise.all([
-          fetch(`/api/platforms/${platformId}/detail`),
-          fetch(`/api/portfolio-events?platform_id=${platformId}`),
-        ]);
-        if (dRes.status === 404) {
-          if (!cancelled) setNotFound(true);
-          return;
-        }
-        if (!dRes.ok || !eRes.ok) throw new Error("fetch failed");
-        const d = await dRes.json();
-        const e = await eRes.json();
-        if (!cancelled) {
-          setDetail(d);
-          setEvents(e);
-        }
-      } catch {
-        if (!cancelled)
-          setError(
-            "Couldn't load this platform — check the backend is running and reload the page."
-          );
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
+    cancelledRef.current = false;
+    load();
     return () => {
-      cancelled = true;
+      cancelledRef.current = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [platformId]);
 
   // Platform-wide totals — sum of each holding's own realized/unrealized.
@@ -194,41 +200,58 @@ export default function PlatformDetailPage() {
         </div>
       ) : (
         <>
-          <div style={{ marginBottom: 28 }}>
-            <div
-              style={{
-                fontSize: 12,
-                letterSpacing: ".12em",
-                textTransform: "uppercase",
-                color: tokens.color.muted2,
-                marginBottom: 6,
-              }}
-            >
-              Platform
+          <div
+            style={{
+              display: "flex",
+              alignItems: "flex-start",
+              justifyContent: "space-between",
+              gap: 16,
+              marginBottom: 28,
+            }}
+          >
+            <div>
+              <div
+                style={{
+                  fontSize: 12,
+                  letterSpacing: ".12em",
+                  textTransform: "uppercase",
+                  color: tokens.color.muted2,
+                  marginBottom: 6,
+                }}
+              >
+                Platform
+              </div>
+              <h1
+                style={{
+                  fontFamily: tokens.font.serif,
+                  fontWeight: 400,
+                  fontSize: 40,
+                  margin: 0,
+                  letterSpacing: "-.5px",
+                }}
+              >
+                {detail.platform_name}
+                {detail.kind && (
+                  <span
+                    style={{
+                      fontSize: 12,
+                      color: muted,
+                      marginLeft: 8,
+                      fontFamily: tokens.font.sans,
+                    }}
+                  >
+                    {detail.kind}
+                  </span>
+                )}
+              </h1>
             </div>
-            <h1
-              style={{
-                fontFamily: tokens.font.serif,
-                fontWeight: 400,
-                fontSize: 40,
-                margin: 0,
-                letterSpacing: "-.5px",
-              }}
+            <button
+              type="button"
+              style={btn}
+              onClick={() => setShowDeposit(true)}
             >
-              {detail.platform_name}
-              {detail.kind && (
-                <span
-                  style={{
-                    fontSize: 12,
-                    color: muted,
-                    marginLeft: 8,
-                    fontFamily: tokens.font.sans,
-                  }}
-                >
-                  {detail.kind}
-                </span>
-              )}
-            </h1>
+              Deposit cash
+            </button>
           </div>
 
           <div
@@ -499,6 +522,15 @@ export default function PlatformDetailPage() {
               </>
             )}
           </div>
+
+          {showDeposit && (
+            <DepositCashModal
+              platformId={Number(platformId)}
+              platformName={detail.platform_name}
+              onClose={() => setShowDeposit(false)}
+              onSaved={load}
+            />
+          )}
         </>
       )}
     </div>
