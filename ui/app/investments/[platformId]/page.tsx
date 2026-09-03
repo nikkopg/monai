@@ -121,10 +121,18 @@ export default function PlatformDetailPage() {
   const [tab, setTab] = useState<Tab>("pnl");
   const [showDeposit, setShowDeposit] = useState(false);
   const [showLogEvent, setShowLogEvent] = useState(false);
-  const cancelledRef = useRef(false);
+  // Per-invocation sequence token (CR-01): one flag per request, never one
+  // shared boolean. A stale load() (older platformId, or an in-flight load
+  // superseded by an onSaved refetch) fails isStale() and never touches state.
+  const loadSeq = useRef(0);
 
-  async function load() {
-    setLoading(true);
+  // silent: skip the full-page "Loading platform…" swap (WR-07) — used by the
+  // post-write onSaved refetch so a successful save doesn't blank the page and
+  // unmount the modal mid-flight.
+  async function load(opts?: { silent?: boolean }) {
+    const seq = ++loadSeq.current;
+    const isStale = () => seq !== loadSeq.current;
+    if (!opts?.silent) setLoading(true);
     setNotFound(false);
     setError(null);
     try {
@@ -133,23 +141,23 @@ export default function PlatformDetailPage() {
         fetch(`/api/portfolio-events?platform_id=${platformId}`),
       ]);
       if (dRes.status === 404) {
-        if (!cancelledRef.current) setNotFound(true);
+        if (!isStale()) setNotFound(true);
         return;
       }
       if (!dRes.ok || !eRes.ok) throw new Error("fetch failed");
       const d = await dRes.json();
       const e = await eRes.json();
-      if (!cancelledRef.current) {
+      if (!isStale()) {
         setDetail(d);
         setEvents(e);
       }
     } catch {
-      if (!cancelledRef.current)
+      if (!isStale())
         setError(
           "Couldn't load this platform — check the backend is running and reload the page."
         );
     } finally {
-      if (!cancelledRef.current) setLoading(false);
+      if (!isStale() && !opts?.silent) setLoading(false);
     }
 
     // Platform list for HoldingModal's Platform <select> (Task 3) — kept out
@@ -159,7 +167,7 @@ export default function PlatformDetailPage() {
       const pRes = await fetch(`/api/platforms`);
       if (pRes.ok) {
         const p: { id: number; name: string }[] = await pRes.json();
-        if (!cancelledRef.current) {
+        if (!isStale()) {
           setPlatformOptions(p.map((pl) => ({ id: pl.id, name: pl.name })));
         }
       }
@@ -169,10 +177,10 @@ export default function PlatformDetailPage() {
   }
 
   useEffect(() => {
-    cancelledRef.current = false;
     load();
     return () => {
-      cancelledRef.current = true;
+      // invalidate any in-flight load() from the previous platformId
+      loadSeq.current++;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [platformId]);
@@ -559,15 +567,22 @@ export default function PlatformDetailPage() {
               platformId={Number(platformId)}
               platformName={detail.platform_name}
               onClose={() => setShowDeposit(false)}
-              onSaved={load}
+              onSaved={() => load({ silent: true })}
             />
           )}
           {showLogEvent && (
             <HoldingModal
-              platforms={platformOptions}
+              platforms={
+                platformOptions.length > 0
+                  ? platformOptions
+                  : // WR-06: the /api/platforms fetch is best-effort — if it
+                    // failed, fall back to the platform we already know so
+                    // event logging isn't disabled on its own detail page.
+                    [{ id: Number(platformId), name: detail.platform_name }]
+              }
               defaultPlatformId={Number(platformId)}
               onClose={() => setShowLogEvent(false)}
-              onSaved={load}
+              onSaved={() => load({ silent: true })}
             />
           )}
         </>
