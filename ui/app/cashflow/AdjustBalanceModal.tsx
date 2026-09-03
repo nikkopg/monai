@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { card, input, btn, label, tokens } from "../styles";
+import { extractDetail, fmtPlain } from "../lib/api";
 import type { Account } from "./AccountManager";
 
 // ---------------------------------------------------------------------------
@@ -21,23 +22,6 @@ type Props = {
   onChanged: () => void;
 };
 
-const fmtPlain = (n: number) =>
-  new Intl.NumberFormat("en-US").format(Math.round(n));
-
-async function extractDetail(r: Response): Promise<string> {
-  let detail = `HTTP ${r.status}`;
-  try {
-    const errBody = await r.json();
-    detail =
-      typeof errBody?.detail === "string"
-        ? errBody.detail
-        : errBody?.detail?.message ?? detail;
-  } catch {
-    // keep the status-based detail
-  }
-  return detail;
-}
-
 export default function AdjustBalanceModal({ account, onClose, onChanged }: Props) {
   // Pre-filled with the current balance so the initial state is delta===0
   // (submit disabled, "No change" copy) until the user actually edits it.
@@ -45,18 +29,28 @@ export default function AdjustBalanceModal({ account, onClose, onChanged }: Prop
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const delta = parseFloat(target || "0") - account.current_balance;
+  // WR-03: parse ONCE and gate on validity. A cleared field must not preview a
+  // full balance wipe with submit enabled (an empty target is NaN → invalid,
+  // not "0"), and the same parsed value feeds both preview and payload.
+  const parsed = target.trim() === "" ? NaN : parseFloat(target);
+  const delta = Number.isNaN(parsed) ? 0 : parsed - account.current_balance;
+  const canSubmit = !saving && !Number.isNaN(parsed) && delta !== 0;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (delta === 0) return;
+    if (!canSubmit) return;
     setSaving(true);
     setError(null);
     try {
+      // WR-09: adjust posts to account.id directly. If that account was deleted
+      // between mount and submit, apply_add_balance_adjustment computes a delta
+      // against an empty SUM and writes to an account named "Unknown". Closing
+      // this needs a backend `db.get(Account, id) is None → ValueError` guard
+      // (the T-14-07 pattern) — out of Phase 18's UI-only scope.
       const r = await fetch(`/api/accounts/${account.id}/adjust-balance`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ target_balance: parseFloat(target) }),
+        body: JSON.stringify({ target_balance: parsed }),
       });
       if (r.ok) {
         onChanged();
@@ -87,7 +81,7 @@ export default function AdjustBalanceModal({ account, onClose, onChanged }: Prop
         justifyContent: "center",
         zIndex: 100,
       }}
-      onClick={onClose}
+      onClick={saving ? undefined : onClose}
     >
       <div
         style={{ ...card, maxWidth: 480, width: "100%", padding: 32, margin: 0 }}
@@ -133,19 +127,19 @@ export default function AdjustBalanceModal({ account, onClose, onChanged }: Prop
           >
             <button
               type="button"
-              onClick={onClose}
+              onClick={saving ? undefined : onClose}
               style={{
                 background: "transparent",
                 color: "#8b8474",
                 border: "none",
                 padding: "8px 16px",
                 fontSize: 14,
-                cursor: "pointer",
+                cursor: saving ? "default" : "pointer",
               }}
             >
               Cancel
             </button>
-            <button style={btn} type="submit" disabled={saving || delta === 0}>
+            <button style={btn} type="submit" disabled={!canSubmit}>
               {saving ? "Saving…" : "Save adjustment"}
             </button>
             {error && (
