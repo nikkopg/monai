@@ -1,5 +1,5 @@
 ---
-status: partial
+status: passed
 phase: 18-ui-entry-points-for-balance-adjustment-liquid-investment-tra
 source: [18-VERIFICATION.md]
 started: 2026-08-17T16:35:00+07:00
@@ -8,7 +8,8 @@ updated: 2026-08-17T16:35:00+07:00
 
 ## Current Test
 
-3. Funded buy/sell live write (XFER-03) — FAILED: critical data-loss bug (see below)
+All 3 tests PASSED. Test 3 initially FAILED (critical data-loss bug), fixed via debug
+session recompute-clobbers-holdings, then RE-TESTED live and confirmed summing.
 
 ## Prerequisite
 
@@ -74,7 +75,14 @@ result: FAIL (2026-09-03, live on :3000) — CRITICAL DATA LOSS. A funded buy on
   now cleanly 1-event backed). Verified live: alembic head c2a9f1e6b8d3, 0 non-zero holdings
   lacking events, all 15 holdings event-backed with unchanged quantities, 20/20
   test_portfolio.py pass. Funded buy/sell on existing positions is now SAFE (sums, not
-  replaces). Recommend re-running this UAT test live to confirm end-to-end.
+  replaces).
+
+  RE-TEST PASS (2026-09-03, live on :3001): user re-ran the funded buy on Danamas Pasti
+  (event 3305: 140.7174 @ 5329.83). Holding summed correctly 1832.1295 + 140.7174 =
+  1972.8469 (avg 5088.23) — no clobber. XFER-03 confirmed end-to-end. NOTE: monai frontend
+  serves on :3001 (":3000" is a different app); the stale-:3001 concern from WR-08 no longer
+  applies after the 18:40 rebuild. NOTE: event 3305 is a real test buy now in the ledger —
+  remove if it was purely a test.
 
 ## Summary
 
