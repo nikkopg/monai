@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { card, input, btn, label, tokens } from "../styles";
+import { extractDetail, fmtPlain } from "../lib/api";
 
 // ---------------------------------------------------------------------------
 // DepositCashModal — liquid->investment cash deposit (XFER-02, D-03/D-04/D-07).
@@ -31,22 +32,6 @@ type Props = {
   onClose: () => void;
   onSaved: () => void;
 };
-
-const fmtPlain = (n: number) => new Intl.NumberFormat("en-US").format(Math.round(n));
-
-async function extractDetail(r: Response): Promise<string> {
-  let detail = `HTTP ${r.status}`;
-  try {
-    const errBody = await r.json();
-    detail =
-      typeof errBody?.detail === "string"
-        ? errBody.detail
-        : errBody?.detail?.message ?? detail;
-  } catch {
-    // keep the status-based detail
-  }
-  return detail;
-}
 
 export default function DepositCashModal({
   platformId,
@@ -101,6 +86,11 @@ export default function DepositCashModal({
     setError(null);
     try {
       const body = {
+        // WR-09: name-keyed — resolved server-side by _get_or_create_account,
+        // so a rename/delete between the accounts fetch and submit could fork a
+        // phantom account and post the debit there. The <select> is sourced
+        // from a fresh fetch (narrows the window); fully closing it needs an
+        // id-based backend resolver, out of Phase 18's UI-only scope.
         from_account: fromAccount,
         platform_id: platformId,
         amount: parseFloat(amount),
@@ -142,7 +132,7 @@ export default function DepositCashModal({
         justifyContent: "center",
         zIndex: 100,
       }}
-      onClick={onClose}
+      onClick={saving ? undefined : onClose}
     >
       <div
         style={{ ...card, maxWidth: 480, width: "100%", padding: 32, margin: 0 }}
@@ -201,12 +191,19 @@ export default function DepositCashModal({
               <label style={label} htmlFor="deposit-cash-currency">
                 Currency
               </label>
-              <input
+              {/* CR-03: a free-text currency posts verbatim into the CASH
+                  sentinel Holding.currency; a typo (Rp, IDRR) makes fx.get_rate
+                  return None and the deposit silently drops out of net worth.
+                  The app is single-currency IDR — a constrained <select>
+                  removes the failure mode entirely. */}
+              <select
                 id="deposit-cash-currency"
                 style={input}
                 value={currency}
                 onChange={(e) => setCurrency(e.target.value)}
-              />
+              >
+                <option value="IDR">IDR</option>
+              </select>
             </div>
             <div>
               <label style={label} htmlFor="deposit-cash-date">
@@ -244,14 +241,14 @@ export default function DepositCashModal({
           >
             <button
               type="button"
-              onClick={onClose}
+              onClick={saving ? undefined : onClose}
               style={{
                 background: "transparent",
                 color: "#8b8474",
                 border: "none",
                 padding: "8px 16px",
                 fontSize: 14,
-                cursor: "pointer",
+                cursor: saving ? "default" : "pointer",
               }}
             >
               Cancel
