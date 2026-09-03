@@ -838,3 +838,77 @@ def test_portfolio_events_by_platform(client, db_session):
             assert {"date", "ticker", "event_type", "quantity", "price"} <= row.keys()
     finally:
         _cleanup_ticker(db_session, t)
+
+
+# ---------------------------------------------------------------------------
+# Regression: recompute-clobbers-holdings (Phase 18 UAT #3)
+# ---------------------------------------------------------------------------
+
+def test_funded_buy_on_backed_position_sums_not_replaces(db_session):
+    """A funded buy on an event-backed position must SUM into the prior
+    quantity, never REPLACE it. This is the exact behaviour the clobber bug
+    violated (Danamas Pasti 1691.9681 -> 140.1614)."""
+    from decimal import Decimal
+    from backend.models import Holding
+    from backend.writes import apply_add_portfolio_event
+
+    plat = _make_platform(db_session, "TestPortfolioPlatform")
+    t = _random_ticker()
+    try:
+        # Opening lot recorded as an event (the post-backfill world).
+        apply_add_portfolio_event(db_session, {
+            "date": "2026-07-11", "ticker": t, "event_type": "buy",
+            "quantity": 1000, "price": 5000, "platform_id": plat, "currency": "IDR",
+        })
+        # A later funded buy.
+        apply_add_portfolio_event(db_session, {
+            "date": "2026-09-01", "ticker": t, "event_type": "buy",
+            "quantity": 140, "price": 5350, "platform_id": plat, "currency": "IDR",
+        })
+        db_session.commit()
+
+        h = db_session.query(Holding).filter(
+            Holding.ticker == t, Holding.platform_id == plat
+        ).one()
+        # SUMS: 1000 + 140 == 1140 (a clobber would have left 140).
+        assert h.quantity == Decimal("1140"), (
+            f"funded buy must sum: expected 1140, got {h.quantity} "
+            "(140 would mean the prior lot was clobbered)"
+        )
+    finally:
+        _cleanup_ticker(db_session, t)
+
+
+def test_guard_blocks_buy_on_eventless_nonzero_holding(db_session):
+    """Defense-in-depth: a buy on a NON-ZERO holding that has NO backing events
+    must be refused (loud ValueError), never silently overwrite the opening
+    balance. This is the class the clobber bug belonged to."""
+    import pytest
+    from decimal import Decimal
+    from backend.models import Holding
+    from backend.writes import apply_add_portfolio_event
+
+    plat = _make_platform(db_session, "TestPortfolioPlatform")
+    t = _random_ticker()
+    try:
+        # Legacy-style holding: direct row, NO portfolio_events.
+        db_session.add(Holding(
+            ticker=t, quantity=Decimal("500"), avg_cost=Decimal("5000"),
+            currency="IDR", platform_id=plat, asset_type="mutual_fund",
+        ))
+        db_session.commit()
+
+        with pytest.raises(ValueError, match="no backing portfolio_events"):
+            apply_add_portfolio_event(db_session, {
+                "date": "2026-09-01", "ticker": t, "event_type": "buy",
+                "quantity": 140, "price": 5350, "platform_id": plat, "currency": "IDR",
+            })
+        db_session.rollback()
+
+        # Unchanged — the opening balance was NOT clobbered.
+        h = db_session.query(Holding).filter(
+            Holding.ticker == t, Holding.platform_id == plat
+        ).one()
+        assert h.quantity == Decimal("500")
+    finally:
+        _cleanup_ticker(db_session, t)

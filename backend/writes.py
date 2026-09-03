@@ -476,6 +476,27 @@ def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
     existing_holding = db.query(Holding).filter(
         Holding.ticker == after["ticker"], Holding.platform_id == after["platform_id"]
     ).one_or_none()
+
+    # GUARD (recompute-clobbers-holdings): recompute_holding_from_events rebuilds
+    # this position purely from its (ticker, platform_id) event slice. A non-zero
+    # LEGACY holding with ZERO backing events would therefore be silently
+    # overwritten by just this new event, destroying the opening balance (live
+    # loss in Phase 18 UAT #3). Refuse loudly instead — run migration 012
+    # (opening-balance backfill) so the position has a backing event first, after
+    # which a funded buy correctly SUMS. Once any event exists this never fires.
+    if existing_holding is not None and existing_holding.quantity != 0:
+        prior_events = db.query(PortfolioEvent).filter(
+            PortfolioEvent.ticker == after["ticker"],
+            PortfolioEvent.platform_id == after["platform_id"],
+        ).count()
+        if prior_events == 0:
+            raise ValueError(
+                f"holding {after['ticker']} on platform {after['platform_id']} has "
+                f"{existing_holding.quantity} units but no backing portfolio_events — "
+                "recording an event now would overwrite that opening balance. Run the "
+                "opening-balance backfill (migration 012) first."
+            )
+
     event_currency = after.get("currency")
     if event_currency is None:
         event_currency = existing_holding.currency if existing_holding is not None else "IDR"
