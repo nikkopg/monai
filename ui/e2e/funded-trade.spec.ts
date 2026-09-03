@@ -140,6 +140,10 @@ function priceInput(page: Page) {
   return page.locator('label:text-is("Price per unit (IDR)") + input');
 }
 
+// Lock the timezone so the CR-02 date regression is deterministic regardless
+// of the runner machine's TZ (WIB / UTC+7 is where the day-early bug bites).
+test.use({ timezoneId: "Asia/Jakarta" });
+
 test.describe("funded buy/sell (XFER-03)", () => {
   test("Test A: funded Buy routes to /api/portfolio-events/funded-buy with the full funded body", async ({
     page,
@@ -149,8 +153,14 @@ test.describe("funded buy/sell (XFER-03)", () => {
     await mockAccounts(page);
     await mockPortfolioEvents(page);
 
-    let captured: Record<string, unknown> | null = null;
-    await mockFundedBuy(page, (body) => (captured = body));
+    const posted: Record<string, unknown>[] = [];
+    await mockFundedBuy(page, (body) => posted.push(body));
+
+    // CR-02 regression: freeze the clock at 02:00 Asia/Jakarta. Pre-fix, the
+    // submit did new Date("...T02:00").toISOString().slice(0,10) which shifts
+    // to the PREVIOUS UTC day (2026-08-16); the fix slices the local value so
+    // date must be exactly 2026-08-17.
+    await page.clock.install({ time: new Date("2026-08-17T02:00:00+07:00") });
 
     await openFundedModal(page);
 
@@ -163,14 +173,20 @@ test.describe("funded buy/sell (XFER-03)", () => {
 
     await page.getByRole("button", { name: "Log funded Buy", exact: true }).click();
 
-    await expect.poll(() => captured !== null).toBeTruthy();
-    expect(captured).toMatchObject({
+    await expect.poll(() => posted.length).toBe(1);
+    expect(posted[0]).toMatchObject({
       source_account_name: "BCA",
       platform_id: 5,
       ticker: "ETH",
       quantity: 2,
       price: 30000,
       cash_amount: 60000,
+      // fields CR-02 / WR-10 depend on — previously unasserted, which is why
+      // the day-early date shipped green:
+      date: "2026-08-17",
+      cash_currency: "IDR",
+      event_currency: "IDR",
+      asset_type: "crypto",
     });
   });
 
@@ -272,5 +288,77 @@ test.describe("funded buy/sell (XFER-03)", () => {
     });
     expect(fundedBuyCalled).toBe(false);
     expect(fundedSellCalled).toBe(false);
+  });
+
+  test("Test E: keeps the modal open and shows the standard error copy on a funded-buy 422", async ({
+    page,
+  }) => {
+    await mockPlatformDetail(page);
+    await mockPlatformsList(page);
+    await mockAccounts(page);
+    await mockPortfolioEvents(page);
+
+    await page.route("**/api/portfolio-events/funded-buy", async (route) => {
+      await route.fulfill({
+        status: 422,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "some backend message" }),
+      });
+    });
+
+    await openFundedModal(page);
+
+    await fundingSelect(page).selectOption({ label: "BCA" });
+    await page.getByPlaceholder("BBCA").fill("ETH");
+    await quantityInput(page).fill("2");
+    await priceInput(page).fill("30000");
+    await page.getByRole("button", { name: "Log funded Buy", exact: true }).click();
+
+    await expect(
+      page.getByText(
+        "Couldn't log funded buy: some backend message. Nothing was changed."
+      )
+    ).toBeVisible();
+    // modal stays mounted (funding select still visible)
+    await expect(fundingSelect(page)).toBeVisible();
+  });
+
+  test("Test F: selecting Dividend drops a chosen funding account and posts the unfunded path (WR-01)", async ({
+    page,
+  }) => {
+    await mockPlatformDetail(page);
+    await mockPlatformsList(page);
+    await mockAccounts(page);
+
+    let unfundedCaptured: Record<string, unknown> | null = null;
+    await mockPortfolioEvents(page, (body) => (unfundedCaptured = body));
+
+    let fundedBuyCalled = false;
+    await page.route("**/api/portfolio-events/funded-buy", async (route) => {
+      fundedBuyCalled = true;
+      await route.fulfill({ status: 201, contentType: "application/json", body: "{}" });
+    });
+
+    await openFundedModal(page);
+
+    // Pick a funding account first, THEN switch to Dividend — the selection
+    // must be dropped (not silently ignored into an unfunded write).
+    await fundingSelect(page).selectOption({ label: "BCA" });
+    await eventTypeSelect(page).selectOption({ label: "Dividend" });
+    await expect(fundingSelect(page)).toHaveValue("");
+    await expect(fundingSelect(page)).toBeDisabled();
+
+    await page.getByPlaceholder("BBCA").fill("ETH");
+    await priceInput(page).fill("500");
+
+    await page.getByRole("button", { name: "Log event", exact: true }).click();
+
+    await expect.poll(() => unfundedCaptured !== null).toBeTruthy();
+    expect(unfundedCaptured).toMatchObject({
+      ticker: "ETH",
+      event_type: "dividend",
+      platform_id: 5,
+    });
+    expect(fundedBuyCalled).toBe(false);
   });
 });
