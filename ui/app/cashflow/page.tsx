@@ -28,6 +28,7 @@ type Tx = {
 type AccountBalance = {
   id: number;
   name: string;
+  type: string;
   current_balance: number;
   period_net: number;
 };

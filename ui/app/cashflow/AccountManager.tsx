@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { card, input, btn, label, tokens } from "../styles";
+import { extractDetail } from "../lib/api";
 import ConfirmDialog from "./ConfirmDialog";
 import AdjustBalanceModal from "./AdjustBalanceModal";
 
@@ -20,7 +21,17 @@ import AdjustBalanceModal from "./AdjustBalanceModal";
 // current_balance is required — the parent (cashflow/page.tsx) always passes
 // the richer per-account balance rows from GET /cashflow/summary, which the
 // AdjustBalanceModal delta preview needs (period_net is simply ignored here).
-export type Account = { id: number; name: string; current_balance: number };
+// `type` (WR-04) distinguishes liquid vs investment accounts. GET
+// /cashflow/summary returns account_balances() unfiltered, so investment-type
+// rows arrive here too — an Adjustment written against them never reaches
+// net_worth() (its liquid side filters type == 'liquid'), so the "Adjust
+// balance" trigger is gated to liquid accounts only.
+export type Account = {
+  id: number;
+  name: string;
+  current_balance: number;
+  type: string;
+};
 
 type Props = {
   accounts: Account[];
@@ -206,13 +217,27 @@ export default function AccountManager({ accounts, onChanged }: Props) {
                     >
                       Edit
                     </span>
-                    <span
-                      role="button"
-                      onClick={() => setAdjustingAccount(a)}
-                      style={{ color: tokens.color.muted3, cursor: "pointer", marginRight: 12, fontSize: 12 }}
-                    >
-                      Adjust balance
-                    </span>
+                    {/* WR-04: only liquid accounts propagate to net_worth().
+                        WR-11: a real <button> is keyboard-operable (the span
+                        claimed role=button but had no tabIndex/onKeyDown) — the
+                        entry point to a balance-rewriting flow must be. */}
+                    {a.type === "liquid" && (
+                      <button
+                        type="button"
+                        onClick={() => setAdjustingAccount(a)}
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          padding: 0,
+                          color: tokens.color.muted3,
+                          cursor: "pointer",
+                          marginRight: 12,
+                          fontSize: 12,
+                        }}
+                      >
+                        Adjust balance
+                      </button>
+                    )}
                     <span
                       role="button"
                       onClick={() => setDeleteFlow({ stage: "confirm", account: a })}
@@ -309,18 +334,4 @@ export default function AccountManager({ accounts, onChanged }: Props) {
       )}
     </section>
   );
-}
-
-async function extractDetail(r: Response): Promise<string> {
-  let detail = `HTTP ${r.status}`;
-  try {
-    const errBody = await r.json();
-    detail =
-      typeof errBody?.detail === "string"
-        ? errBody.detail
-        : errBody?.detail?.message ?? detail;
-  } catch {
-    // keep the status-based detail
-  }
-  return detail;
 }
