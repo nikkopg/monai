@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { card, input, btn, label, tokens } from "../styles";
+import { extractDetail, fmtPlain } from "../lib/api";
 import type { PlatformOption } from "./page";
 
 // ---------------------------------------------------------------------------
@@ -36,8 +37,6 @@ type Account = {
 
 const ASSET_TYPES = ["crypto", "idx_stock", "mutual_fund", "other"] as const;
 
-const fmtPlain = (n: number) => new Intl.NumberFormat("en-US").format(Math.round(n));
-
 // datetime-local value from a Date using LOCAL wall-clock components (verbatim
 // from TransactionModal — avoids the toISOString() UTC shift).
 function toLocalDatetimeInputValue(d: Date): string {
@@ -46,6 +45,13 @@ function toLocalDatetimeInputValue(d: Date): string {
     d.getHours()
   )}:${pad(d.getMinutes())}`;
 }
+
+// CR-02: the event column is a plain DATE — take the LOCAL calendar date of the
+// datetime-local value directly. NEVER new Date(v).toISOString() here: that
+// reinterprets the wall-clock string as UTC and books early-morning WIB trades
+// (00:00–06:59) a day early. The datetime-local value is already local
+// "YYYY-MM-DDTHH:mm", so its first 10 chars are the local calendar date.
+const toLocalDateOnly = (v: string) => v.slice(0, 10);
 
 export default function HoldingModal({
   platforms,
@@ -116,7 +122,13 @@ export default function HoldingModal({
   // form keeps the same field set (quantity=1, price=amount convention).
   function onEventTypeChange(next: "buy" | "sell" | "dividend") {
     setEventType(next);
-    if (next === "dividend" && !quantity) setQuantity("1");
+    if (next === "dividend") {
+      if (!quantity) setQuantity("1");
+      // WR-01: Dividend has no funded schema. Drop any selected funding
+      // account explicitly so the user's choice can't be silently discarded
+      // into an unfunded write.
+      setFundingAccount("");
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -130,15 +142,28 @@ export default function HoldingModal({
             ? "/api/portfolio-events/funded-sell"
             : "/api/portfolio-events/funded-buy";
         const body: Record<string, unknown> = {
+          // WR-09: name-keyed — the backend resolves this via
+          // _get_or_create_account, so a rename/delete between this modal's
+          // account fetch and submit would fork a phantom account. The select
+          // is sourced from a fresh fetch which narrows the window; fully
+          // closing it needs an id-based backend resolver (out of Phase 18's
+          // UI-only scope).
           source_account_name: fundingAccount,
           platform_id: parseInt(platformId, 10),
           ticker: ticker.trim(),
           quantity: parseFloat(quantity),
           price: parseFloat(price),
           cash_amount: parseFloat(cashAmount),
-          cash_currency: "IDR",
+          // WR-10: the cash leg debits the selected liquid account, so label it
+          // with that account's own currency (D-09 supports per-leg currency).
+          cash_currency:
+            liquidAccounts.find((a) => a.name === fundingAccount)?.currency ??
+            "IDR",
+          // event_currency is the instrument's currency; no UI field for it, so
+          // the single-currency IDR assumption holds (ponytail: add a field if
+          // non-IDR instruments are ever entered).
           event_currency: "IDR",
-          date: new Date(date).toISOString().slice(0, 10),
+          date: toLocalDateOnly(date),
           asset_type: assetType,
         };
         const r = await fetch(endpoint, {
@@ -150,13 +175,7 @@ export default function HoldingModal({
           onSaved();
           onClose();
         } else {
-          let detail = `HTTP ${r.status}`;
-          try {
-            const errBody = await r.json();
-            detail = errBody?.detail ?? detail;
-          } catch {
-            // keep status-based detail
-          }
+          const detail = await extractDetail(r);
           setError(`Couldn't log funded ${eventType}: ${detail}. Nothing was changed.`);
         }
         return;
@@ -168,7 +187,7 @@ export default function HoldingModal({
         event_type: eventType,
         quantity: parseFloat(quantity),
         price: parseFloat(price),
-        date: new Date(date).toISOString().slice(0, 10),
+        date: toLocalDateOnly(date),
         asset_type: assetType,
         platform_id: parseInt(platformId, 10),
       };
@@ -181,13 +200,7 @@ export default function HoldingModal({
         onSaved();
         onClose();
       } else {
-        let detail = `HTTP ${r.status}`;
-        try {
-          const errBody = await r.json();
-          detail = errBody?.detail ?? detail;
-        } catch {
-          // keep status-based detail
-        }
+        const detail = await extractDetail(r);
         setError(`Couldn't log event: ${detail}. Nothing was changed.`);
       }
     } catch (e) {
@@ -212,7 +225,7 @@ export default function HoldingModal({
         justifyContent: "center",
         zIndex: 100,
       }}
-      onClick={onClose}
+      onClick={saving ? undefined : onClose}
     >
       <div
         style={{ ...card, maxWidth: 480, width: "100%", padding: 32, margin: 0 }}
@@ -294,6 +307,7 @@ export default function HoldingModal({
                 style={input}
                 type="number"
                 step="any"
+                min="0"
                 required
                 value={quantity}
                 onChange={(e) => setQuantity(e.target.value)}
@@ -307,6 +321,7 @@ export default function HoldingModal({
                 style={input}
                 type="number"
                 step="any"
+                min="0"
                 required
                 value={price}
                 onChange={(e) => setPrice(e.target.value)}
@@ -326,6 +341,7 @@ export default function HoldingModal({
               <select
                 style={input}
                 value={fundingAccount}
+                disabled={isDividend}
                 onChange={(e) => setFundingAccount(e.target.value)}
               >
                 <option value="">— none (unfunded) —</option>
@@ -335,6 +351,11 @@ export default function HoldingModal({
                   </option>
                 ))}
               </select>
+              {isDividend && (
+                <p style={{ ...label, fontSize: 11, marginTop: 4, color: tokens.color.muted3 }}>
+                  Dividends aren&apos;t funded from an account.
+                </p>
+              )}
             </div>
             {isFunded && (
               <div>
@@ -374,14 +395,14 @@ export default function HoldingModal({
           >
             <button
               type="button"
-              onClick={onClose}
+              onClick={saving ? undefined : onClose}
               style={{
                 background: "transparent",
                 color: "#8b8474",
                 border: "none",
                 padding: "8px 16px",
                 fontSize: 14,
-                cursor: "pointer",
+                cursor: saving ? "default" : "pointer",
               }}
             >
               Cancel
@@ -392,6 +413,8 @@ export default function HoldingModal({
               disabled={
                 saving ||
                 platforms.length === 0 ||
+                !(parseFloat(quantity) > 0) ||
+                !(parseFloat(price) > 0) ||
                 (isFunded && !(parseFloat(cashAmount) > 0))
               }
             >
