@@ -131,7 +131,6 @@ from backend.tools import (
     monthly_trend,
     net_total,
     net_worth,
-    net_worth_trend,
     resolve_period,
     spending_by_category,
     spending_total,
@@ -857,18 +856,6 @@ def cashflow_summary(
     accounts = account_balances(s, e)["rows"]
     trend = monthly_trend(6)["rows"]
     return CashflowSummary(totals=totals, by_category=by_category, accounts=accounts, trend=trend)
-
-
-@app.get("/cashflow/networth-history")
-def cashflow_networth_history():
-    """Monthly net-worth series (liquid + investment) aligned to the trend
-    chart's 6-month window. Open read (no key), matching the sibling GET reads.
-
-    Rows are {month: "YYYY-MM", net_worth: float | null}; net_worth is null for
-    months with no investment snapshot on/before the month-end (see
-    net_worth_trend) so the chart line only appears where the value is real.
-    """
-    return net_worth_trend(6)["rows"]
 
 
 @app.get("/net-worth", response_model=NetWorth)

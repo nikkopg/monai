@@ -19,16 +19,7 @@ type AccountBalance = {
   period_net: number;
 };
 
-type TrendPoint = {
-  month: string;
-  income: number;
-  expense: number;
-  net_worth?: number | null;
-};
-
-// GET /cashflow/networth-history — monthly net worth (liquid + investment),
-// null for months with no investment snapshot (never a fabricated jump).
-type NetWorthHistoryPoint = { month: string; net_worth: number | null };
+type TrendPoint = { month: string; income: number; expense: number };
 
 // GET /cashflow/summary (backend/schemas.py:CashflowSummary, D-08). by_category
 // is a hierarchy rollup (CAT-04, 11-07): each top-level group carries its own
@@ -96,8 +87,6 @@ export default function CashflowPage() {
   const [netWorthData, setNetWorthData] = useState<NetWorth | null>(null);
   const [netWorthError, setNetWorthError] = useState<string | null>(null);
 
-  const [nwHistory, setNwHistory] = useState<NetWorthHistoryPoint[]>([]);
-
   async function loadSummary(p: Period) {
     try {
       const r = await fetch(`/api/cashflow/summary?period=${p}`);
@@ -141,32 +130,15 @@ export default function CashflowPage() {
     }
   }
 
-  // GET /cashflow/networth-history — monthly net-worth series for the trend
-  // chart's net-worth line. Not period-scoped (fixed 6-month window), so it's
-  // fetched on mount + refreshed by refreshAll, like loadNetWorth.
-  async function loadNetWorthHistory() {
-    try {
-      const r = await fetch("/api/cashflow/networth-history");
-      if (r.ok) setNwHistory(await r.json());
-    } catch {
-      // non-fatal — the trend chart just omits the net-worth line
-    }
-  }
-
   // Refetch the summary and net worth after every write so the dashboard
   // updates with no page reload. (Adding/editing transactions now lives on the
   // Records page; the Cashflow page is read-only dashboards + management cards.)
   async function refreshAll() {
-    await Promise.all([
-      loadSummary(period),
-      loadNetWorth(),
-      loadNetWorthHistory(),
-    ]);
+    await Promise.all([loadSummary(period), loadNetWorth()]);
   }
 
   useEffect(() => {
     loadNetWorth();
-    loadNetWorthHistory();
   }, []);
 
   useEffect(() => {
@@ -193,11 +165,7 @@ export default function CashflowPage() {
 
   // ---- derived -------------------------------------------------------------
   const categoryData = summary?.by_category ?? [];
-  const nwByMonth = new Map(nwHistory.map((r) => [r.month, r.net_worth]));
-  const trendData: TrendPoint[] = (summary?.trend ?? []).map((t) => ({
-    ...t,
-    net_worth: nwByMonth.get(t.month) ?? null,
-  }));
+  const trendData = summary?.trend ?? [];
   const hasActivity =
     !!summary &&
     (summary.totals.income !== 0 ||
@@ -398,23 +366,6 @@ export default function CashflowPage() {
                       }}
                     />
                     Expenses
-                  </span>
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                    }}
-                  >
-                    <span
-                      style={{
-                        width: 14,
-                        height: 2,
-                        background: tokens.color.ink,
-                        display: "inline-block",
-                      }}
-                    />
-                    Net worth
                   </span>
                 </div>
               </div>

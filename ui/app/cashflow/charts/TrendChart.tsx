@@ -2,7 +2,6 @@ import {
   LineChart,
   Line,
   XAxis,
-  YAxis,
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
@@ -10,21 +9,14 @@ import {
 import { tokens } from "../../styles";
 
 // ---------------------------------------------------------------------------
-// >=6-month trend (CASH-02). v1.1 "paper" redesign: income solid green,
-// expense dashed terracotta (mockup). Plus a net-worth line (solid ink) on a
-// SEPARATE hidden Y-axis — net worth is ~100x the monthly income/expense, so a
-// shared scale would flatten the cashflow lines. net_worth is null for months
-// with no investment snapshot (see backend net_worth_trend); connectNulls=false
-// leaves a gap so the line only appears where the value is real. Explicit-height
-// wrapper is load-bearing (Recharts blank-render pitfall, 04-RESEARCH.md).
+// >=6-month income/expense trend (CASH-02). v1.1 "paper" redesign: two lines
+// — income solid green, expense dashed terracotta (mockup). Net is not plotted
+// (read from the stat cards). Explicit-height wrapper is load-bearing: recharts
+// ResponsiveContainer renders blank inside a flex/grid parent with no resolvable
+// height (Pitfall 3, 04-RESEARCH.md).
 // ---------------------------------------------------------------------------
 
-type TrendPoint = {
-  month: string;
-  income: number;
-  expense: number;
-  net_worth?: number | null;
-};
+type TrendPoint = { month: string; income: number; expense: number };
 
 const tickStyle = { fill: tokens.color.muted2, fontSize: 11 };
 
@@ -43,9 +35,6 @@ export default function TrendChart({ data }: { data: TrendPoint[] }) {
             axisLine={false}
             tickLine={false}
           />
-          {/* Two hidden scales: cashflow (income/expense) and net worth. */}
-          <YAxis yAxisId="cash" hide />
-          <YAxis yAxisId="nw" orientation="right" hide domain={["auto", "auto"]} />
           <Tooltip
             formatter={(value) => fmt(value)}
             contentStyle={{
@@ -57,7 +46,6 @@ export default function TrendChart({ data }: { data: TrendPoint[] }) {
             }}
           />
           <Line
-            yAxisId="cash"
             type="monotone"
             dataKey="income"
             name="Income"
@@ -67,7 +55,6 @@ export default function TrendChart({ data }: { data: TrendPoint[] }) {
             activeDot={{ r: 3.5 }}
           />
           <Line
-            yAxisId="cash"
             type="monotone"
             dataKey="expense"
             name="Expenses"
@@ -75,20 +62,6 @@ export default function TrendChart({ data }: { data: TrendPoint[] }) {
             strokeWidth={2}
             strokeDasharray="5 5"
             dot={false}
-            activeDot={{ r: 3.5 }}
-          />
-          <Line
-            yAxisId="nw"
-            type="monotone"
-            dataKey="net_worth"
-            name="Net worth"
-            stroke={tokens.color.ink}
-            strokeWidth={2.4}
-            // Dots shown (not false): reliable net-worth points can be sparse —
-            // often a single current-month point until more months reconcile —
-            // and a lone point on a dotless line would be invisible.
-            dot={{ r: 2.5, fill: tokens.color.ink, strokeWidth: 0 }}
-            connectNulls={false}
             activeDot={{ r: 3.5 }}
           />
         </LineChart>

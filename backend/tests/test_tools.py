@@ -467,20 +467,3 @@ class TestCategoryHierarchyTools:
         result = propose_merge_category(category_tree["grandchild"], category_tree["child"])
         assert result["tool"] == "propose_merge_category"
         assert result["before"]["affected_count"] == 1
-
-
-def test_net_worth_trend_shape_and_current_month():
-    """net_worth_trend: >=6 monthly rows; net_worth is None or float per month,
-    and the current (last) month equals the LIVE net_worth() total so the chart
-    line's endpoint matches the /net-worth hero (non-tautological, live DB)."""
-    from backend.tools import net_worth_trend, net_worth
-
-    rows = net_worth_trend(6)["rows"]
-    assert len(rows) >= 6
-    for r in rows:
-        assert set(r.keys()) == {"month", "net_worth"}
-        assert r["net_worth"] is None or isinstance(r["net_worth"], float)
-
-    current = rows[-1]["net_worth"]
-    assert current is not None
-    assert abs(current - net_worth()["total"]) < 1.0
