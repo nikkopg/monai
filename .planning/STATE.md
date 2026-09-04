@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
-status: executing
-stopped_at: Phase 18 UI-SPEC approved
-last_updated: "2026-08-17T08:09:29.922Z"
-last_activity: 2026-08-17 -- Phase 18 execution started
+status: verified
+stopped_at: Phase 18 complete — code review fixed, UAT passed
+last_updated: "2026-09-04T00:00:00.000Z"
+last_activity: 2026-09-03 -- Phase 18 code-review fixes + live UAT passed (incl. recompute-clobbers-holdings fix)
 progress:
   total_phases: 8
-  completed_phases: 7
+  completed_phases: 8
   total_plans: 31
-  completed_plans: 28
-  percent: 88
+  completed_plans: 31
+  percent: 100
 ---
 
 # Project State
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-18)
 
 **Core value:** You can understand and manage your entire financial life — spending and investments — by talking to a trustworthy AI that never fabricates a number and never changes your data without your say-so.
-**Current focus:** Phase 18 — ui-entry-points-for-balance-adjustment-liquid-investment-tra
+**Current focus:** v1.2 complete — all phases (11–18) done + UAT passed; ready for milestone close.
 
 ## Current Position
 
-Phase: 18 (ui-entry-points-for-balance-adjustment-liquid-investment-tra) — EXECUTING
-Plan: 1 of 3
-Status: Executing Phase 18
-Last activity: 2026-08-17 -- Phase 18 execution started
+Phase: 18 (ui-entry-points-for-balance-adjustment-liquid-investment-tra) — COMPLETE (UAT passed)
+Plan: 3 of 3 complete
+Status: v1.2 verified — all 8 milestone phases done; next is ship / complete-milestone
+Last activity: 2026-09-03 -- Phase 18 code-review fixes + live UAT passed
 
 Progress: [██████████] 100%
 
@@ -169,8 +169,8 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-08-03T07:54:37.203Z
-Stopped at: Phase 18 UI-SPEC approved
-Resume file: .planning/phases/18-ui-entry-points-for-balance-adjustment-liquid-investment-tra/18-UI-SPEC.md
+Last session: 2026-09-03
+Stopped at: Phase 18 complete — code review fixed, live UAT passed (all 3 tests)
+Resume file: .planning/phases/18-ui-entry-points-for-balance-adjustment-liquid-investment-tra/18-HUMAN-UAT.md
 
-Next: `/gsd-plan-phase 11`
+Next: `/gsd-ship` (PR + review for Phase 18) or `/gsd-complete-milestone` (close v1.2)
