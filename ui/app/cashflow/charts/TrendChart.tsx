@@ -84,7 +84,10 @@ export default function TrendChart({ data }: { data: TrendPoint[] }) {
             name="Net worth"
             stroke={tokens.color.ink}
             strokeWidth={2.4}
-            dot={false}
+            // Dots shown (not false): reliable net-worth points can be sparse —
+            // often a single current-month point until more months reconcile —
+            // and a lone point on a dotless line would be invisible.
+            dot={{ r: 2.5, fill: tokens.color.ink, strokeWidth: 0 }}
             connectNulls={false}
             activeDot={{ r: 3.5 }}
           />

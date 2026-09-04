@@ -482,16 +482,20 @@ def net_worth_trend(months: int = 6) -> dict:
         / net_worth.liquid_total semantics (Phase 16 UAT#3 unfiltered SUM).
       - investment = Σ market_value of the latest portfolio_value_history
         snapshot on or before the month-end.
-    A month with NO investment snapshot on/before its end returns
-    net_worth=None: investment value is genuinely unknown there (daily snapshots
-    only began mid-2026), so we never fabricate a liquid-only figure that would
-    draw a false jump the day snapshots start. Recharts skips null points, so
-    the line begins where real data exists and extends as snapshots accrue.
-
-    The current (most recent) month is the exception: its investment value is
-    taken LIVE from net_worth() (portfolio_summary today), not the last daily
-    snapshot — the snapshot lags today's holdings, so the line's endpoint would
-    otherwise disagree with the /net-worth hero. Past months keep the snapshot.
+    Liquid balances are trustworthy only once EVERY liquid account has been
+    reconciled by a balance adjustment — monai sums the transaction ledger,
+    which can drift from reality (a mis-imported opening balance, missing
+    expenses) until an adjustment corrects it. So a month is reported ONLY when
+    reliable, never a known-wrong figure:
+      - anchor = MAX over liquid accounts of each account's FIRST balance-
+        adjustment date (None if any liquid account was never adjusted).
+      - A past month whose end is on/after the anchor AND has an investment
+        snapshot returns liquid + investment; otherwise None. Recharts skips
+        null points, so the line only appears where the value is real and
+        extends forward as accounts get reconciled and snapshots accrue.
+      - The current (most recent) month always uses the LIVE net_worth() total
+        (reconciled balances + today's valuation) so the line's endpoint matches
+        the /net-worth hero exactly.
     """
     months = max(months, 6)
     month_sql = (
@@ -511,6 +515,12 @@ def net_worth_trend(months: int = 6) -> dict:
         "SELECT snapshot_date, SUM(market_value) AS total "
         "FROM portfolio_value_history GROUP BY snapshot_date ORDER BY snapshot_date"
     )
+    anchor_sql = (
+        "SELECT MAX(first_adj) AS anchor, bool_or(first_adj IS NULL) AS unanchored "
+        "FROM (SELECT a.id, MIN(t.date) AS first_adj FROM accounts a "
+        "LEFT JOIN transactions t ON t.account_id = a.id AND t.category = 'Adjustment' "
+        "WHERE a.type = 'liquid' GROUP BY a.id) x"
+    )
     rows: list[dict] = []
     with engine.connect() as c:
         buckets = [
@@ -518,14 +528,27 @@ def net_worth_trend(months: int = 6) -> dict:
             for r in c.execute(text(month_sql), {"months": months}).fetchall()
         ]
         snaps = [(r[0], float(r[1])) for r in c.execute(text(snap_sql)).fetchall()]
+        arow = c.execute(text(anchor_sql)).first()
+        # Earliest date the whole liquid side is reliable; None if some liquid
+        # account has never been reconciled by a balance adjustment.
+        anchor = None if (arow is None or arow[1]) else arow[0]
+        if anchor is not None and hasattr(anchor, "date"):
+            anchor = anchor.date()
         for b in buckets:
+            end_excl = b["end_excl"]
+            # Liquid is trustworthy only once the anchor is on/before the
+            # month's last day (anchor < end_excl). Before that the ledger may
+            # have drifted, so the month is unknown — reported None, not guessed.
+            if anchor is None or anchor >= end_excl:
+                rows.append({"month": b["month"], "net_worth": None})
+                continue
             liquid = float(
-                c.execute(text(liquid_sql), {"end_excl": b["end_excl"]}).scalar() or 0
+                c.execute(text(liquid_sql), {"end_excl": end_excl}).scalar() or 0
             )
             # latest snapshot strictly before the month's end-exclusive boundary
             inv = None
             for sdate, total in snaps:
-                if sdate < b["end_excl"]:
+                if sdate < end_excl:
                     inv = total
                 else:
                     break
@@ -536,16 +559,14 @@ def net_worth_trend(months: int = 6) -> dict:
                 }
             )
 
-    # The current (most recent) month's investment value is taken LIVE from
-    # net_worth() (portfolio_summary today), not the last daily snapshot — the
-    # snapshot can lag today's holdings, so using it would make the line's
-    # endpoint disagree with the /net-worth hero. Past months keep the snapshot
-    # (the only historical record). Guard the coverage-gap ValueError.
+    # The current (most recent) month always uses the LIVE net_worth() total —
+    # reconciled balances + today's valuation — so the line's endpoint matches
+    # the /net-worth hero exactly. Guard the coverage-gap ValueError.
     if rows:
         try:
             rows[-1]["net_worth"] = net_worth()["total"]
         except ValueError:
-            pass  # accounts unclassified — leave the snapshot-based value/None
+            pass  # accounts unclassified — leave the anchor-based value/None
     return {"tool": "net_worth_trend", "rows": rows}
 
 
