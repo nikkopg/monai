@@ -1,8 +1,11 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { tokens } from "../styles";
+
+const SIDEBAR_COLLAPSED_KEY = "monai.sidebarCollapsed";
 
 // ---------------------------------------------------------------------------
 // Nav — left sidebar rendered once from ui/app/layout.tsx (inside the app
@@ -73,15 +76,19 @@ function Icon({ name }: { name: IconName }) {
   }
 }
 
-const sidebar: React.CSSProperties = {
-  width: 236,
-  flexShrink: 0,
-  background: tokens.color.sidebar,
-  borderRight: `1px solid ${tokens.color.border2}`,
-  padding: "26px 18px",
-  display: "flex",
-  flexDirection: "column",
-};
+function sidebarStyle(collapsed: boolean): React.CSSProperties {
+  return {
+    width: collapsed ? 68 : 236,
+    flexShrink: 0,
+    background: tokens.color.sidebar,
+    borderRight: `1px solid ${tokens.color.border2}`,
+    padding: collapsed ? "26px 10px" : "26px 18px",
+    display: "flex",
+    flexDirection: "column",
+    alignItems: collapsed ? "center" : "stretch",
+    transition: "width .2s ease, padding .2s ease",
+  };
+}
 
 const brand: React.CSSProperties = {
   fontFamily: tokens.font.serif,
@@ -100,35 +107,97 @@ const menuLabel: React.CSSProperties = {
 
 export default function Nav() {
   const pathname = usePathname();
+  const [collapsed, setCollapsed] = useState(false);
+
+  // Hydrate persisted collapsed state after mount (init-then-hydrate avoids
+  // an SSR/hydration mismatch since localStorage isn't available server-side).
+  useEffect(() => {
+    try {
+      setCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true");
+    } catch {
+      // ignore (e.g. storage disabled)
+    }
+  }, []);
+
+  function toggleCollapsed() {
+    const next = !collapsed;
+    setCollapsed(next);
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(next));
+    } catch {
+      // ignore (e.g. storage disabled)
+    }
+  }
 
   function isActive(href: string) {
     return pathname === href || pathname.startsWith(href + "/");
   }
 
   return (
-    <aside className="app-sidebar" style={sidebar}>
+    <aside className="app-sidebar" style={sidebarStyle(collapsed)}>
       <div
         className="brand-word"
         style={{
           display: "flex",
-          alignItems: "baseline",
+          alignItems: "center",
+          justifyContent: collapsed ? "center" : "space-between",
           gap: 8,
-          padding: "0 10px 26px",
+          padding: collapsed ? "0 0 26px" : "0 10px 26px",
         }}
       >
-        <span style={brand}>monai</span>
-        <span
+        {!collapsed && (
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+            <span style={brand}>monai</span>
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                background: tokens.color.green,
+                marginBottom: 4,
+              }}
+            />
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={toggleCollapsed}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
           style={{
-            width: 6,
-            height: 6,
-            borderRadius: "50%",
-            background: tokens.color.green,
-            marginBottom: 4,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 24,
+            height: 24,
+            padding: 0,
+            border: "none",
+            background: "transparent",
+            color: tokens.color.muted3,
+            cursor: "pointer",
           }}
-        />
+        >
+          <svg
+            width={16}
+            height={16}
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={1.7}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{
+              transform: collapsed ? "rotate(180deg)" : undefined,
+              transition: "transform .2s ease",
+            }}
+          >
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+        </button>
       </div>
 
-      <div className="menu-label" style={menuLabel}>Menu</div>
+      {!collapsed && (
+        <div className="menu-label" style={menuLabel}>Menu</div>
+      )}
 
       <nav style={{ display: "flex", flexDirection: "column", gap: 4 }}>
         {NAV_LINKS.map(({ href, label, icon }) => {
@@ -136,8 +205,9 @@ export default function Nav() {
           const itemStyle: React.CSSProperties = {
             display: "flex",
             alignItems: "center",
-            gap: 12,
-            padding: "11px 12px",
+            justifyContent: collapsed ? "center" : "flex-start",
+            gap: collapsed ? 0 : 12,
+            padding: collapsed ? "11px" : "11px 12px",
             borderRadius: tokens.radius.md,
             fontSize: 14,
             fontWeight: active ? 600 : 500,
@@ -147,38 +217,51 @@ export default function Nav() {
             transition: "background .2s ease, color .2s ease",
           };
           return (
-            <Link key={href} href={href} className="nav-item" style={itemStyle}>
+            <Link
+              key={href}
+              href={href}
+              className="nav-item"
+              style={itemStyle}
+              aria-label={collapsed ? label : undefined}
+              title={collapsed ? label : undefined}
+            >
               <span
                 style={{ display: "inline-flex", width: 20, height: 20 }}
                 aria-hidden
               >
                 <Icon name={icon} />
               </span>
-              <span className="nav-label">{label}</span>
+              {!collapsed && <span className="nav-label">{label}</span>}
             </Link>
           );
         })}
       </nav>
 
-      <div
-        className="footer-card"
-        style={{
-          marginTop: "auto",
-          padding: 14,
-          background: tokens.color.footerCard,
-          border: `1px solid ${tokens.color.border2}`,
-          borderRadius: tokens.radius.md,
-        }}
-      >
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 3 }}>
-          Local-first
-        </div>
+      {!collapsed && (
         <div
-          style={{ fontSize: 12, color: tokens.color.muted, lineHeight: 1.45 }}
+          className="footer-card"
+          style={{
+            marginTop: "auto",
+            padding: 14,
+            background: tokens.color.footerCard,
+            border: `1px solid ${tokens.color.border2}`,
+            borderRadius: tokens.radius.md,
+          }}
         >
-          Your data stays on this machine.
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 3 }}>
+            Local-first
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              color: tokens.color.muted,
+              lineHeight: 1.45,
+            }}
+          >
+            Your data stays on this machine.
+          </div>
         </div>
-      </div>
+      )}
     </aside>
   );
 }
