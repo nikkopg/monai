@@ -2,28 +2,15 @@
 
 import { useEffect, useState } from "react";
 
-import { tokens, card, btnDark } from "../styles";
+import { tokens, card } from "../styles";
 import CategoryDonut from "./charts/CategoryDonut";
 import TrendChart from "./charts/TrendChart";
-import TransactionModal, { type Tx as ModalTx } from "./TransactionModal";
-import ConfirmDialog from "./ConfirmDialog";
 import AccountManager from "./AccountManager";
 import CsvUpload from "./CsvUpload";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-type Tx = {
-  id: number;
-  date: string;
-  amount: number;
-  category: string | null;
-  merchant: string | null;
-  account_id: number | null;
-  notes: string | null;
-  is_transfer: boolean;
-};
 
 type AccountBalance = {
   id: number;
@@ -86,10 +73,11 @@ const PERIOD_OPTIONS: { value: Period; label: string; phrase: string }[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// Cashflow page — v1.1 "paper" redesign of the Phase 4 dashboard. Same data
-// (GET /cashflow/summary + /transactions) and same full CRUD (TransactionModal,
-// ConfirmDialog, AccountManager, CategoryManager, CsvUpload); every write still
-// refetches list + summary via refreshAll (Pattern 5) so nothing needs a reload.
+// Cashflow page — v1.1 "paper" redesign of the Phase 4 dashboard. Read-only
+// dashboards (GET /cashflow/summary + /net-worth) plus management surfaces
+// (AccountManager, CsvUpload). Adding/editing/deleting transactions now lives on
+// the Records page; every write here still refetches summary + net worth via
+// refreshAll (Pattern 5) so nothing needs a reload.
 // ---------------------------------------------------------------------------
 
 export default function CashflowPage() {
@@ -99,13 +87,6 @@ export default function CashflowPage() {
 
   const [netWorthData, setNetWorthData] = useState<NetWorth | null>(null);
   const [netWorthError, setNetWorthError] = useState<string | null>(null);
-
-  const [txs, setTxs] = useState<Tx[]>([]);
-
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editingTx, setEditingTx] = useState<ModalTx | null>(null);
-  const [deletingTx, setDeletingTx] = useState<Tx | null>(null);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   async function loadSummary(p: Period) {
     try {
@@ -123,11 +104,6 @@ export default function CashflowPage() {
         "Couldn't load the dashboard — check the backend is running and reload the page."
       );
     }
-  }
-
-  async function loadTxs() {
-    const r = await fetch("/api/transactions?limit=10");
-    if (r.ok) setTxs(await r.json());
   }
 
   // GET /net-worth — not period-scoped (a point-in-time snapshot), so it's
@@ -155,52 +131,20 @@ export default function CashflowPage() {
     }
   }
 
-  // Refetch the transactions list, the summary, AND net worth after every
-  // write, so the recent-transactions list AND the dashboard update with no
-  // page reload.
+  // Refetch the summary and net worth after every write so the dashboard
+  // updates with no page reload. (Adding/editing transactions now lives on the
+  // Records page; the Cashflow page is read-only dashboards + management cards.)
   async function refreshAll() {
-    await Promise.all([loadTxs(), loadSummary(period), loadNetWorth()]);
+    await Promise.all([loadSummary(period), loadNetWorth()]);
   }
 
   useEffect(() => {
-    loadTxs();
     loadNetWorth();
   }, []);
 
   useEffect(() => {
     loadSummary(period);
   }, [period]);
-
-  async function confirmDeleteTx() {
-    if (!deletingTx) return;
-    setDeleteError(null);
-    try {
-      const r = await fetch(`/api/transactions/${deletingTx.id}`, {
-        method: "DELETE",
-      });
-      if (r.ok) {
-        setDeletingTx(null);
-        await refreshAll();
-      } else {
-        let detail = `HTTP ${r.status}`;
-        try {
-          const errBody = await r.json();
-          detail = errBody?.detail ?? detail;
-        } catch {
-          // keep the status-based detail
-        }
-        setDeleteError(
-          `Couldn't save transaction: ${detail}. Nothing was changed.`
-        );
-      }
-    } catch (e) {
-      setDeleteError(
-        `Couldn't save transaction: ${
-          e instanceof Error ? e.message : "Network error"
-        }. Nothing was changed.`
-      );
-    }
-  }
 
   // ---- formatting ----------------------------------------------------------
   // Data is IDR (single-currency); no currency symbol is invented — plain
@@ -696,174 +640,10 @@ export default function CashflowPage() {
         </>
       )}
 
-      {/* Recent transactions */}
-      <div style={{ ...card, marginBottom: 18 }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: 6,
-          }}
-        >
-          <div style={{ fontSize: 14, fontWeight: 600 }}>
-            Recent transactions
-          </div>
-          <button
-            type="button"
-            style={btnDark}
-            onClick={() => {
-              setEditingTx(null);
-              setModalOpen(true);
-            }}
-          >
-            + Add transaction
-          </button>
-        </div>
-
-        {txs.length === 0 ? (
-          <div style={{ paddingTop: 10 }}>
-            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
-              No transactions yet.
-            </div>
-            <div style={{ color: tokens.color.muted, fontSize: 14 }}>
-              Add your first transaction above, or upload a Wallet CSV export to
-              get started.
-            </div>
-          </div>
-        ) : (
-          txs.map((t) => {
-            const isIncome = t.amount >= 0 && !t.is_transfer;
-            const tint = t.is_transfer
-              ? tokens.color.tintNeutral
-              : isIncome
-              ? tokens.color.tintGreen
-              : tokens.color.tintWarm;
-            return (
-              <div
-                key={t.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 14,
-                  padding: "12px 0",
-                  borderTop: `1px solid ${tokens.color.borderInner}`,
-                }}
-              >
-                <span
-                  style={{
-                    width: 38,
-                    height: 38,
-                    borderRadius: 11,
-                    background: tint,
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 13,
-                    fontWeight: 600,
-                    color: tokens.color.muted3,
-                    flexShrink: 0,
-                  }}
-                >
-                  {(t.category || t.merchant || "?").slice(0, 1).toUpperCase()}
-                </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div
-                    style={{
-                      fontSize: 14,
-                      fontWeight: 500,
-                      whiteSpace: "nowrap",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                    }}
-                  >
-                    {t.merchant || t.category || "Transaction"}
-                  </div>
-                  <div style={{ fontSize: 12, color: tokens.color.muted2 }}>
-                    {(t.category || "Uncategorized") +
-                      (t.is_transfer ? " · transfer" : "")}{" "}
-                    · {t.date.slice(0, 10)}
-                  </div>
-                </div>
-                <div
-                  style={{
-                    fontSize: 14,
-                    fontWeight: 600,
-                    fontVariantNumeric: "tabular-nums",
-                    color:
-                      t.amount < 0
-                        ? tokens.color.terracotta
-                        : tokens.color.green,
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {signed(t.amount)}
-                </div>
-                <div style={{ display: "flex", gap: 12, flexShrink: 0 }}>
-                  <span
-                    role="button"
-                    onClick={() => {
-                      setEditingTx(t);
-                      setModalOpen(true);
-                    }}
-                    style={{
-                      color: tokens.color.muted2,
-                      cursor: "pointer",
-                      fontSize: 12,
-                    }}
-                  >
-                    Edit
-                  </span>
-                  <span
-                    role="button"
-                    onClick={() => setDeletingTx(t)}
-                    style={{
-                      color: tokens.color.terracotta,
-                      cursor: "pointer",
-                      fontSize: 12,
-                    }}
-                  >
-                    Delete
-                  </span>
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
-
       {/* Secondary management surfaces (re-themed in Phase 10). Category
           management moved to Settings > Categories (D-16, plan 11-06). */}
       <AccountManager accounts={summary?.accounts ?? []} onChanged={refreshAll} />
       <CsvUpload onImported={refreshAll} />
-
-      {modalOpen && (
-        <TransactionModal
-          editingTx={editingTx}
-          accounts={summary?.accounts ?? []}
-          onClose={() => {
-            setModalOpen(false);
-            setEditingTx(null);
-          }}
-          onSaved={refreshAll}
-        />
-      )}
-
-      {deletingTx && (
-        <ConfirmDialog
-          message="Delete this transaction? This can't be undone."
-          confirmLabel="Delete"
-          onCancel={() => setDeletingTx(null)}
-          onConfirm={confirmDeleteTx}
-        />
-      )}
-      {deleteError && (
-        <div
-          style={{ color: tokens.color.terracotta, fontSize: 12, marginTop: 8 }}
-        >
-          {deleteError}
-        </div>
-      )}
     </div>
   );
 }
