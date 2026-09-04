@@ -15,7 +15,8 @@ You can understand and manage your entire financial life — spending and invest
 by talking to a trustworthy AI that never fabricates a number and never changes your
 data without your say-so.
 
-## Current Milestone: v1.2 Connected Ledger — Liquids ↔ Investments
+<details>
+<summary>Archived Milestone: v1.2 Connected Ledger — Liquids ↔ Investments (shipped 2026-09-05)</summary>
 
 **Goal:** Restructure monai around a single trustworthy net worth: liquids and investments as two connected subsystems that never double-count, linked by real transfer/buy-sell mechanics, with BudgetBakers-grade record and category management.
 
@@ -28,7 +29,18 @@ data without your say-so.
 
 **Reference:** BudgetBakers Wallet web app (dashboard, Records tab, Add-record modal, Settings > Categories) — captured live 2026-07-18. Deliberately trimmed from the reference: templates, payer, payment type/status (single-user YAGNI).
 
-Deferred v2 candidates remain: QRY-01 recurring-charge detection, QRY-02 arbitrary two-period comparison, QRY-03 token-by-token streaming, INVX-02 automated reksadana NAV feed.
+**Shipped:** Phases 11-18, 31 plans, 22/22 requirements, 2026-09-05. Full detail: [milestones/v1.2-ROADMAP.md](milestones/v1.2-ROADMAP.md), [milestones/v1.2-REQUIREMENTS.md](milestones/v1.2-REQUIREMENTS.md).
+
+</details>
+
+## Next Milestone Goals
+
+**Primary candidate: net-worth-over-time reconstruction.** Phase 18's close-out found that monai's ledger cannot honestly show historical net worth today — the original Wallet CSV import silently dropped an entire "Investements" account and its BCA→Investements transfer legs, so liquid balances (BCA in particular) read up to ~150M too high for extended periods; investment-side history is also shallow (`portfolio_value_history` only began 2026-07-11). A net-worth line was built, found dishonest, and reverted (commit `bc4c02c`) rather than ship a known-wrong number. The next milestone should:
+- Restore the dropped "Investements" account and its BCA→investment transfer legs from the original Wallet CSV export (`report_2026-06-20`), re-importing or backfilling them so the ledger reflects what actually happened.
+- Use a hybrid valuation model: live market value for current net worth (already correct today), tracked/ledger balance for historical points — never a fabricated interpolation.
+- Re-attempt the net-worth trend line only once the underlying data supports it honestly.
+
+Other deferred v2 candidates remain: QRY-01 recurring-charge detection, QRY-02 arbitrary two-period comparison, QRY-03 token-by-token streaming, INVX-02 automated reksadana NAV feed, REC-F1 record labels, CAT-F1 nature-of-spending, CAT-F2 category hide toggle.
 
 ## Requirements
 
@@ -54,16 +66,13 @@ Deferred v2 candidates remain: QRY-01 recurring-charge detection, QRY-02 arbitra
 - ✓ Multi-platform / multi-currency (USD→IDR) holdings, cash + physical-gold asset types, allocation pie + historical value/P&L charts — v1.0 (INVX-01, Phase 7)
 - ✓ Four-page app (Chat / Cashflow / Investment / Settings) with shared nav; Settings configures LLM provider/model + API keys + base currency + price source in-UI — v1.0 (UI-01..04)
 - ✓ "Paper" UI redesign — token layer in `styles.ts` (single source of truth), Instrument Serif + Hanken Grotesk via `next/font`, sidebar shell, and all four pages restyled to the Claude Design mockup; behavior/data unchanged (real IDR); responsive down to 375px — v1.1 (UIR-01..10)
+- ✓ Single-counted net worth dashboard (liquids + investments, per-side breakdown); account manager with balance-adjustment; Records tab (date-grouped ledger, filters, bulk actions); Expense/Income/Transfer record modal; platform manager + platform detail (PnL/buy-sell history); liquid↔liquid and liquid→investment transfers; funded buy/sell with liquid source account; first-class 3-level category hierarchy + management UI — v1.2 (NW-01/02, ACCT-01/02/03, REC-01..05, PLAT-01/02, XFER-01..05, CAT-01..04, CHAT-09)
 
 ### Active
 
-<!-- Next cycle's scope. REQ-IDs defined in REQUIREMENTS.md (v1.2). -->
+<!-- Next cycle's scope. Defined once the next milestone's REQUIREMENTS.md exists. -->
 
-- Main dashboard: single-counted net worth (liquids + investments)
-- Liquids: account manager, Records tab, record input modal
-- Investments: platform manager, platform detail (PnL / buy-sell history)
-- Connection: liquid→investment transfers, buy/sell with liquid source account, USD→IDR entry-time FX
-- Categories: first-class 3-level hierarchy + management UI + migration
+- Pending: `/gsd-new-milestone` to define the next cycle. Leading candidate is net-worth-over-time reconstruction (see Next Milestone Goals above).
 
 ### Out of Scope
 
@@ -80,13 +89,13 @@ Deferred v2 candidates remain: QRY-01 recurring-charge detection, QRY-02 arbitra
 
 ## Current State
 
+**Shipped v1.2 — Connected Ledger — Liquids ↔ Investments** (2026-09-05) — Phases 11-18, 31 plans, 22/22 requirements. Categories became first-class hierarchical entities; `accounts.type` became a DB-enforced liquid/investment discriminator that structurally prevents the investment double-count; a shared atomic mutation layer (`writes.py`) now covers every money-movement type (transfer, funded buy/sell, balance adjustment) with dual REST + agent/MCP registration; the dashboard shows one trustworthy net-worth number split by side; and the UI grew full entry points for account/platform CRUD, the Records ledger, category management, and — closing the milestone in Phase 18 — balance adjustment, liquid→investment transfer, and funded buy/sell triggers. Phase 18's live UAT also surfaced and fixed a real data-loss bug (`recompute_holding_from_events` clobbering event-less legacy holdings; Alembic migration 012 + write-path guard). Full detail: [milestones/v1.2-ROADMAP.md](milestones/v1.2-ROADMAP.md), [milestones/v1.2-REQUIREMENTS.md](milestones/v1.2-REQUIREMENTS.md).
+
 **Shipped v1.1** (2026-07-18) — Phases 8-10, 3 plans, 10/10 UIR requirements, 3/3 phases verified, 27/27 e2e. The whole app was re-skinned to the Claude Design "paper" aesthetic (warm cream/serif editorial look) with a token layer in `ui/app/styles.ts`, `next/font` self-hosted Instrument Serif + Hanken Grotesk, a left-sidebar shell, and all four pages + secondary surfaces restyled — zero backend changes, all behavior/data preserved (real IDR), responsive to 375px. UI stack unchanged: Next.js App Router, inline `React.CSSProperties` + token-driven `styles.ts` (no CSS framework), recharts.
 
 **Shipped v1.0** (2026-07-17) — Phases 1-7, 30 plans, 35/35 requirements, milestone audit passed. monai is a four-page agentic personal-finance app (chat / cashflow / investments / settings) with confirm-before-write agent edits, a live-priced multi-platform/multi-currency investment subsystem (cash + gold, allocation + historical charts), and a read-only MCP server for external clients. Stack: FastAPI + PostgreSQL (Alembic-managed) + Next.js, LlamaIndex FunctionAgent, FastMCP.
 
-**Known non-blocking debt carried into v1.1:** `/mcp/` trailing-slash auth test suggested; `_execute_proposal_payload` delete_holding branch drift vs `writes.apply_delete_holding`; a few human-verify visual-only items (streaming ProposalCard render, staleness badge pixels, non-deterministic live-LLM tool selection) — backend contracts all verified programmatically.
-
-**Next milestone goals (v1.1 — to be defined via `/gsd:new-milestone`):** candidates are the deferred v2 items — recurring-charge/subscription detection (QRY-01), arbitrary two-period comparison (QRY-02), token-by-token streaming (QRY-03), automated reksadana NAV feed (INVX-02) — plus paying down the debt above.
+**Known non-blocking debt:** `/mcp/` trailing-slash auth test suggested; `_execute_proposal_payload` delete_holding branch drift vs `writes.apply_delete_holding`; WR-09 name-keyed account resolution in the deposit/adjust/funded-buy UI paths (rename-race is a known, `ponytail:`-marked gap — full fix needs backend id-based resolution, deferred as out of Phase 18's UI-only scope); a few human-verify visual-only items (streaming ProposalCard render, staleness badge pixels, non-deterministic live-LLM tool selection) — backend contracts all verified programmatically. See "Next Milestone Goals" above for the primary open item (net-worth-over-time reconstruction).
 
 ## Context
 
@@ -141,4 +150,4 @@ This document evolves at phase transitions and milestone boundaries.
 4. Update Context with current state
 
 ---
-*Last updated: 2026-07-18 at v1.2 milestone start (Connected Ledger — Liquids ↔ Investments)*
+*Last updated: 2026-09-05 at v1.2 milestone close (Connected Ledger — Liquids ↔ Investments, shipped)*
