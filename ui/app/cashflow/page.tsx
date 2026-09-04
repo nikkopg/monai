@@ -5,7 +5,6 @@ import { useEffect, useState } from "react";
 import { tokens, card } from "../styles";
 import CategoryDonut from "./charts/CategoryDonut";
 import TrendChart from "./charts/TrendChart";
-import AccountManager from "./AccountManager";
 import CsvUpload from "./CsvUpload";
 
 // ---------------------------------------------------------------------------
@@ -640,9 +639,8 @@ export default function CashflowPage() {
         </>
       )}
 
-      {/* Secondary management surfaces (re-themed in Phase 10). Category
-          management moved to Settings > Categories (D-16, plan 11-06). */}
-      <AccountManager accounts={summary?.accounts ?? []} onChanged={refreshAll} />
+      {/* Secondary management surfaces (re-themed in Phase 10). Category AND
+          account management now live in Settings (D-16, plan 11-06 + this task). */}
       <CsvUpload onImported={refreshAll} />
     </div>
   );

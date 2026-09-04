@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { tokens, card, input, btn } from "../styles";
 import CategoryManager from "./CategoryManager";
+import AccountManager, { type Account } from "../cashflow/AccountManager";
 
 // ---------------------------------------------------------------------------
 // Settings page — v1.1 "paper" redesign. Same three independently-saveable
@@ -73,6 +74,24 @@ export default function SettingsPage() {
   const [preferencesState, setPreferencesState] = useState<SaveState>({
     status: "idle",
   });
+
+  // Accounts manager (moved here from the Cashflow page). AccountManager needs
+  // each account's current_balance, which only GET /cashflow/summary returns
+  // (the plain /accounts endpoint omits it); period is irrelevant to balances.
+  const [accounts, setAccounts] = useState<Account[]>([]);
+
+  async function loadAccounts() {
+    try {
+      const r = await fetch("/api/cashflow/summary?period=this_month");
+      if (r.ok) setAccounts((await r.json()).accounts ?? []);
+    } catch {
+      // non-fatal — the Accounts card just renders empty if this fails
+    }
+  }
+
+  useEffect(() => {
+    loadAccounts();
+  }, []);
 
   useEffect(() => {
     async function loadSettings() {
@@ -338,6 +357,10 @@ export default function SettingsPage() {
         <div style={cardSub}>Manage the category hierarchy used across cashflow and chat.</div>
         <CategoryManager onChanged={() => {}} />
       </div>
+
+      {/* Card: Accounts — balances, rename/delete, adjust balance (moved from
+          the Cashflow page). AccountManager renders its own card section. */}
+      <AccountManager accounts={accounts} onChanged={loadAccounts} />
 
       {/* Card 4: Preferences */}
       <div style={{ ...card, marginBottom: 0 }}>
