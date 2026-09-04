@@ -1,7 +1,8 @@
 ---
 phase: 18-ui-entry-points-for-balance-adjustment-liquid-investment-tra
 verified: 2026-08-17T16:20:00+07:00
-status: human_needed
+status: passed
+human_verification_result: "PASSED 2026-09-03 (18-HUMAN-UAT.md) — all 3 live tests passed against docker-compose. Test 3 surfaced a critical data-loss bug (recompute clobbers event-less holdings); root-caused + fixed (migration 012 + write-path guard, debug session recompute-clobbers-holdings) and re-tested GREEN."
 score: 15/15 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
