@@ -471,6 +471,68 @@ def monthly_trend(months: int = 6) -> dict:
     return {"tool": "monthly_trend", "rows": rows}
 
 
+def net_worth_trend(months: int = 6) -> dict:
+    """Monthly net worth (liquid + investment) over the same window as
+    monthly_trend — powers the net-worth line on the cashflow trend chart.
+
+    net_worth[month] = liquid balance at that month-end + investment value at
+    that month-end.
+      - liquid = SUM of ALL transactions on type='liquid' accounts up to the
+        month-end (transfers INCLUDED), matching account_balances.current_balance
+        / net_worth.liquid_total semantics (Phase 16 UAT#3 unfiltered SUM).
+      - investment = Σ market_value of the latest portfolio_value_history
+        snapshot on or before the month-end.
+    A month with NO investment snapshot on/before its end returns
+    net_worth=None: investment value is genuinely unknown there (daily snapshots
+    only began mid-2026), so we never fabricate a liquid-only figure that would
+    draw a false jump the day snapshots start. Recharts skips null points, so
+    the line begins where real data exists and extends as snapshots accrue.
+    """
+    months = max(months, 6)
+    month_sql = (
+        "SELECT to_char(m, 'YYYY-MM') AS month, "
+        "(m + interval '1 month')::date AS end_excl "
+        "FROM generate_series("
+        "date_trunc('month', CURRENT_DATE) - ((:months - 1) || ' months')::interval, "
+        "date_trunc('month', CURRENT_DATE), interval '1 month') AS m "
+        "ORDER BY m"
+    )
+    liquid_sql = (
+        "SELECT COALESCE(SUM(t.amount), 0) FROM transactions t "
+        "JOIN accounts a ON a.id = t.account_id "
+        "WHERE a.type = 'liquid' AND t.date < :end_excl"
+    )
+    snap_sql = (
+        "SELECT snapshot_date, SUM(market_value) AS total "
+        "FROM portfolio_value_history GROUP BY snapshot_date ORDER BY snapshot_date"
+    )
+    rows: list[dict] = []
+    with engine.connect() as c:
+        buckets = [
+            {"month": r[0], "end_excl": r[1]}
+            for r in c.execute(text(month_sql), {"months": months}).fetchall()
+        ]
+        snaps = [(r[0], float(r[1])) for r in c.execute(text(snap_sql)).fetchall()]
+        for b in buckets:
+            liquid = float(
+                c.execute(text(liquid_sql), {"end_excl": b["end_excl"]}).scalar() or 0
+            )
+            # latest snapshot strictly before the month's end-exclusive boundary
+            inv = None
+            for sdate, total in snaps:
+                if sdate < b["end_excl"]:
+                    inv = total
+                else:
+                    break
+            rows.append(
+                {
+                    "month": b["month"],
+                    "net_worth": None if inv is None else liquid + inv,
+                }
+            )
+    return {"tool": "net_worth_trend", "rows": rows}
+
+
 def account_balances(period_start=None, period_end=None) -> dict:
     """Per-account current_balance (all-time) + period_net (scoped) — CASH-03/D-04.
 

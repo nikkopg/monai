@@ -467,3 +467,43 @@ class TestCategoryHierarchyTools:
         result = propose_merge_category(category_tree["grandchild"], category_tree["child"])
         assert result["tool"] == "propose_merge_category"
         assert result["before"]["affected_count"] == 1
+
+
+def test_net_worth_trend_shape_and_current_month():
+    """net_worth_trend: >=6 monthly rows; net_worth is None where no investment
+    snapshot precedes the month-end, and the current month equals an
+    independently-recomputed liquid + latest-snapshot total (non-tautological,
+    live DB)."""
+    from sqlalchemy import text
+    from backend.db import engine
+    from backend.tools import net_worth_trend
+
+    rows = net_worth_trend(6)["rows"]
+    assert len(rows) >= 6
+    for r in rows:
+        assert set(r.keys()) == {"month", "net_worth"}
+        assert r["net_worth"] is None or isinstance(r["net_worth"], float)
+
+    with engine.connect() as c:
+        liquid = float(
+            c.execute(
+                text(
+                    "SELECT COALESCE(SUM(t.amount),0) FROM transactions t "
+                    "JOIN accounts a ON a.id=t.account_id WHERE a.type='liquid'"
+                )
+            ).scalar()
+            or 0
+        )
+        inv = c.execute(
+            text(
+                "SELECT SUM(market_value) FROM portfolio_value_history "
+                "WHERE snapshot_date=(SELECT max(snapshot_date) FROM portfolio_value_history)"
+            )
+        ).scalar()
+
+    current = rows[-1]["net_worth"]
+    if inv is None:
+        assert current is None
+    else:
+        assert current is not None
+        assert abs(current - (liquid + float(inv))) < 1.0
