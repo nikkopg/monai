@@ -470,13 +470,10 @@ class TestCategoryHierarchyTools:
 
 
 def test_net_worth_trend_shape_and_current_month():
-    """net_worth_trend: >=6 monthly rows; net_worth is None where no investment
-    snapshot precedes the month-end, and the current month equals an
-    independently-recomputed liquid + latest-snapshot total (non-tautological,
-    live DB)."""
-    from sqlalchemy import text
-    from backend.db import engine
-    from backend.tools import net_worth_trend
+    """net_worth_trend: >=6 monthly rows; net_worth is None or float per month,
+    and the current (last) month equals the LIVE net_worth() total so the chart
+    line's endpoint matches the /net-worth hero (non-tautological, live DB)."""
+    from backend.tools import net_worth_trend, net_worth
 
     rows = net_worth_trend(6)["rows"]
     assert len(rows) >= 6
@@ -484,26 +481,6 @@ def test_net_worth_trend_shape_and_current_month():
         assert set(r.keys()) == {"month", "net_worth"}
         assert r["net_worth"] is None or isinstance(r["net_worth"], float)
 
-    with engine.connect() as c:
-        liquid = float(
-            c.execute(
-                text(
-                    "SELECT COALESCE(SUM(t.amount),0) FROM transactions t "
-                    "JOIN accounts a ON a.id=t.account_id WHERE a.type='liquid'"
-                )
-            ).scalar()
-            or 0
-        )
-        inv = c.execute(
-            text(
-                "SELECT SUM(market_value) FROM portfolio_value_history "
-                "WHERE snapshot_date=(SELECT max(snapshot_date) FROM portfolio_value_history)"
-            )
-        ).scalar()
-
     current = rows[-1]["net_worth"]
-    if inv is None:
-        assert current is None
-    else:
-        assert current is not None
-        assert abs(current - (liquid + float(inv))) < 1.0
+    assert current is not None
+    assert abs(current - net_worth()["total"]) < 1.0

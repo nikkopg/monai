@@ -487,6 +487,11 @@ def net_worth_trend(months: int = 6) -> dict:
     only began mid-2026), so we never fabricate a liquid-only figure that would
     draw a false jump the day snapshots start. Recharts skips null points, so
     the line begins where real data exists and extends as snapshots accrue.
+
+    The current (most recent) month is the exception: its investment value is
+    taken LIVE from net_worth() (portfolio_summary today), not the last daily
+    snapshot — the snapshot lags today's holdings, so the line's endpoint would
+    otherwise disagree with the /net-worth hero. Past months keep the snapshot.
     """
     months = max(months, 6)
     month_sql = (
@@ -530,6 +535,17 @@ def net_worth_trend(months: int = 6) -> dict:
                     "net_worth": None if inv is None else liquid + inv,
                 }
             )
+
+    # The current (most recent) month's investment value is taken LIVE from
+    # net_worth() (portfolio_summary today), not the last daily snapshot — the
+    # snapshot can lag today's holdings, so using it would make the line's
+    # endpoint disagree with the /net-worth hero. Past months keep the snapshot
+    # (the only historical record). Guard the coverage-gap ValueError.
+    if rows:
+        try:
+            rows[-1]["net_worth"] = net_worth()["total"]
+        except ValueError:
+            pass  # accounts unclassified — leave the snapshot-based value/None
     return {"tool": "net_worth_trend", "rows": rows}
 
 
