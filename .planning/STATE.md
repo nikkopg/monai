@@ -2,10 +2,10 @@
 gsd_state_version: 1.0
 milestone: v1.2
 milestone_name: Connected Ledger — Liquids ↔ Investments
-status: verified
-stopped_at: Phase 18 complete — code review fixed, UAT passed
-last_updated: "2026-09-04T00:00:00.000Z"
-last_activity: 2026-09-03 -- Phase 18 code-review fixes + live UAT passed (incl. recompute-clobbers-holdings fix)
+status: milestone_complete
+stopped_at: v1.2 milestone complete
+last_updated: "2026-09-05T00:00:00.000Z"
+last_activity: 2026-09-05 -- v1.2 archived (milestones/v1.2-ROADMAP.md, milestones/v1.2-REQUIREMENTS.md); ROADMAP.md/PROJECT.md/REQUIREMENTS.md updated for next milestone
 progress:
   total_phases: 8
   completed_phases: 8
@@ -21,14 +21,14 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-18)
 
 **Core value:** You can understand and manage your entire financial life — spending and investments — by talking to a trustworthy AI that never fabricates a number and never changes your data without your say-so.
-**Current focus:** v1.2 complete — all phases (11–18) done + UAT passed; ready for milestone close.
+**Current focus:** v1.2 archived and closed. Next milestone not yet started — see PROJECT.md "Next Milestone Goals" (leading candidate: net-worth-over-time reconstruction from the Wallet export).
 
 ## Current Position
 
 Phase: 18 (ui-entry-points-for-balance-adjustment-liquid-investment-tra) — COMPLETE (UAT passed)
 Plan: 3 of 3 complete
-Status: v1.2 verified — all 8 milestone phases done; next is ship / complete-milestone
-Last activity: 2026-09-03 -- Phase 18 code-review fixes + live UAT passed
+Status: v1.2 MILESTONE COMPLETE — archived to milestones/v1.2-ROADMAP.md + milestones/v1.2-REQUIREMENTS.md; ROADMAP.md collapsed, REQUIREMENTS.md removed pending next milestone
+Last activity: 2026-09-05 -- v1.2 milestone archived (documentation-only close-out)
 
 Progress: [██████████] 100%
 
@@ -148,6 +148,7 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 | 2026-09-04 | remove-recent-txns-card | Removed the recent-transactions card + embedded "+ Add transaction" button from `ui/app/cashflow/page.tsx` (adding now lives on Records, which has its own + Add record). Pruned dead machinery: txs/loadTxs, TransactionModal/ConfirmDialog opens, editingTx/deletingTx/deleteError, confirmDeleteTx, Tx type. Commit `3c6b2e7`. |
 | 2026-09-04 | move-account-manager-to-settings | Moved AccountManager from Cashflow to Settings (below Categories). Settings fetches accounts-with-balance from GET /cashflow/summary (plain /accounts lacks current_balance) and re-fetches on change. Commits `1cf8184`. |
 | 2026-09-04 | networth-line-trend-chart | Net-worth line on the cashflow trend chart — built (`67df1f3`,`5e8cbd1`,`bd8beb1`) then **REVERTED** (`bc4c02c`). Audit found monai's liquid balances derive from a transaction ledger that drifted ~150M+ over years of under-recorded expenses (2022–2024, BCA), with no stored true historical balances to reconstruct from. Historical net worth cannot be shown honestly and the user rejected manual-anchor/snapshot workarounds, so the line was removed. Correct current net worth stays on the dashboard hero. See memory `networth-history-needs-adjustment-anchor`. |
+| 2026-09-05 | v1.2-milestone-archive | v1.2 (Connected Ledger — Liquids ↔ Investments, Phases 11-18, 31 plans, shipped 2026-09-05) archived: created `milestones/v1.2-ROADMAP.md` + `milestones/v1.2-REQUIREMENTS.md`, collapsed `ROADMAP.md` to a one-line entry + `<details>` summary, deleted `.planning/REQUIREMENTS.md` (fresh one due next milestone), updated `PROJECT.md` Current State + added Next Milestone Goals (net-worth-over-time reconstruction from the Wallet export). Documentation-only, no code changes. |
 
 ## Deferred Items
 
@@ -174,8 +175,8 @@ See milestones/v1.0-* and v1.1-* archives and prior STATE.md history (git) for e
 
 ## Session Continuity
 
-Last session: 2026-09-03
-Stopped at: Phase 18 complete — code review fixed, live UAT passed (all 3 tests)
-Resume file: .planning/phases/18-ui-entry-points-for-balance-adjustment-liquid-investment-tra/18-HUMAN-UAT.md
+Last session: 2026-09-05
+Stopped at: v1.2 milestone archived and closed (documentation-only)
+Resume file: .planning/PROJECT.md ("Next Milestone Goals" section)
 
-Next: `/gsd-ship` (PR + review for Phase 18) or `/gsd-complete-milestone` (close v1.2)
+Next: `/gsd-new-milestone` to scope the next cycle (leading candidate: net-worth-over-time reconstruction from the Wallet export)
