@@ -27,11 +27,13 @@ from sqlalchemy import (
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -46,7 +48,10 @@ class Account(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # DB-enforced liquid/investment discriminator (ACCT-03, migration 010):
+    # CHECK ck_accounts_type + NOT NULL + server_default 'liquid' — mirrors
+    # PortfolioEvent.currency's server_default idiom.
+    type: Mapped[str] = mapped_column(String(64), nullable=False, server_default="liquid")
     currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
 
     transactions: Mapped[list["Transaction"]] = relationship(
@@ -71,6 +76,54 @@ class Platform(Base):
     kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
 
 
+class Category(Base):
+    """Self-referential category hierarchy (up to 3 levels), CAT-01.
+
+    `parent_id` has no `ondelete` clause — Postgres's RESTRICT default means a
+    category with children (or transactions) cannot be dropped out from under
+    them; the app-level block-or-reassign delete guard (Phase 11 CRUD, not
+    built in this plan) pre-empts that FK violation with a clean 422. Depth
+    cap (3 levels) is enforced in the write-path helper, not DDL — Postgres
+    has no cheap way to declaratively cap self-reference depth (RESEARCH
+    Pattern 1).
+
+    `kind` is 'expense' | 'income' | 'transfer' (D-03) — 'transfer' is used
+    only by the single system "Transfer" row; every other category is
+    'expense' or 'income' inherited from its top-level group.
+
+    `color` NULL means "inherit the parent's swatch" (D-14); `icon` is an
+    emoji rendered as plain text (D-13). `is_system` is True only for the
+    "Transfer" and "Uncategorized" rows (D-04) — both are protected from
+    user deletion by the same reason a category can be marked non-deletable.
+
+    Uniqueness: `(name, parent_id)` covers sibling uniqueness under the same
+    parent, but Postgres treats NULL `parent_id` values as pairwise distinct
+    for a composite UNIQUE constraint — so root-level (parent_id IS NULL)
+    name uniqueness needs a separate partial unique index.
+    """
+
+    __tablename__ = "categories"
+    __table_args__ = (
+        UniqueConstraint("name", "parent_id", name="uq_categories_name_parent"),
+        Index(
+            "uq_categories_name_root",
+            "name",
+            unique=True,
+            postgresql_where=text("parent_id IS NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    parent_id: Mapped[int | None] = mapped_column(
+        ForeignKey("categories.id"), nullable=True, index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    color: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    icon: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    is_system: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+
 class Transaction(Base):
     __tablename__ = "transactions"
 
@@ -88,6 +141,22 @@ class Transaction(Base):
         ForeignKey("accounts.id"), nullable=True, index=True
     )
     is_transfer: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    # Nullable this phase (CAT-03 D-04) — every insert path now resolves a
+    # category via resolve_category_id (plan 11-05, D-08 dual-write) before
+    # writing, so no row is ever created NULL in practice; NOT NULL
+    # tightening remains a separate destructive migration for later. The
+    # pre-migration shim (deferred/server_default/eager_defaults=False) that
+    # kept this column out of ORM reads/writes before migration 009 ran is
+    # removed now that the column exists on every environment.
+    category_id: Mapped[int | None] = mapped_column(
+        ForeignKey("categories.id"), nullable=True, index=True,
+    )
+    # Liquid<->liquid transfer pairing (ACCT-03, migration 010). Plain
+    # Integer, NO FK — pairing semantics (self-ref vs group) decided in
+    # Phase 13.
+    transfer_pair_id: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, index=True,
+    )
 
     account: Mapped["Account | None"] = relationship(
         back_populates="transactions"
@@ -201,6 +270,12 @@ class PortfolioEvent(Base):
     # validated against the parent holding's currency at write time (Plan 02).
     currency: Mapped[str | None] = mapped_column(
         String(8), server_default="IDR", nullable=True
+    )
+    # Liquid->investment funding pairing (ACCT-03, migration 010): mirrors
+    # Holding.platform_id's FK idiom but nullable — links a buy/sell event
+    # back to the liquid account that funded it.
+    source_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("accounts.id"), nullable=True, index=True,
     )
 
 

@@ -125,7 +125,10 @@ test.describe("transaction create/edit/delete", () => {
     await expect(categorySelect.locator("option", { hasText: "Food & Drinks" })).toHaveCount(1);
     await expect(categorySelect.locator("option", { hasText: "Transport" })).toHaveCount(1);
 
-    await page.getByPlaceholder("-25000").fill("-10000");
+    // Amount is unsigned since Phase 16 (D-02) — placeholder/value updated
+    // from the retired "-25000"/"-10000" signed convention; Expense is the
+    // default segment so the posted amount is still negative.
+    await page.getByPlaceholder("25000").fill("10000");
     // Selecting an existing name submits it byte-identically — the mechanism
     // that structurally prevents case-variant duplicates.
     await categorySelect.selectOption("Transport");
@@ -208,7 +211,10 @@ test.describe("transaction create/edit/delete", () => {
     await expect(newCategoryInput).toBeVisible();
     await newCategoryInput.fill("Groceries");
 
-    await page.getByPlaceholder("-25000").fill("-10000");
+    // Amount is unsigned since Phase 16 (D-02) — placeholder/value updated
+    // from the retired "-25000"/"-10000" signed convention; Expense is the
+    // default segment so the posted amount is still negative.
+    await page.getByPlaceholder("25000").fill("10000");
     await form
       .getByRole("button", { name: "Add transaction", exact: true })
       .click();
@@ -239,7 +245,10 @@ test.describe("transaction create/edit/delete", () => {
     const form = page.locator("form").filter({ hasText: "Add transaction" });
     // (no category) is the default empty-value option; select it explicitly.
     await form.locator("select").filter({ hasText: "(no category)" }).selectOption("");
-    await page.getByPlaceholder("-25000").fill("-10000");
+    // Amount is unsigned since Phase 16 (D-02) — placeholder/value updated
+    // from the retired "-25000"/"-10000" signed convention; Expense is the
+    // default segment so the posted amount is still negative.
+    await page.getByPlaceholder("25000").fill("10000");
     await form
       .getByRole("button", { name: "Add transaction", exact: true })
       .click();
@@ -278,6 +287,38 @@ test.describe("transaction create/edit/delete", () => {
     await page.locator("button").filter({ hasText: "Delete" }).click();
 
     await expect.poll(() => deleteCalled).toBe(true);
+  });
+});
+
+test.describe("account create (ACCT-01)", () => {
+  test("Add account posts type:liquid to POST /api/accounts", async ({
+    page,
+  }) => {
+    await mockDashboard(page);
+    let postedBody: Record<string, unknown> | null = null;
+    await page.route("**/api/accounts", async (route) => {
+      if (route.request().method() === "POST") {
+        postedBody = route.request().postDataJSON();
+        await route.fulfill({
+          status: 201,
+          contentType: "application/json",
+          body: JSON.stringify({ id: 3, name: "Wallet" }),
+        });
+        return;
+      }
+      await route.fallback();
+    });
+
+    await page.goto("/cashflow");
+    await expect(page.getByText("Accounts", { exact: true }).first()).toBeVisible();
+    await page.getByRole("button", { name: "Add account", exact: true }).click();
+    await page.getByPlaceholder("Account name").fill("Wallet");
+    await page
+      .locator("form")
+      .getByRole("button", { name: "Add account", exact: true })
+      .click();
+
+    await expect.poll(() => postedBody?.type).toBe("liquid");
   });
 });
 

@@ -10,6 +10,7 @@ import csv
 import logging
 from datetime import datetime
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.models import Account, Transaction
@@ -115,7 +116,27 @@ def _get_or_create_account(db: Session, name: str, currency: str) -> Account:
     return acc
 
 
+def _load_category_id_map(db: Session) -> tuple[dict[str, int], int]:
+    """One SELECT over categories -> exact name->id map (D-08 dual-write) plus
+    the Uncategorized system row's id as the fallback for unmapped/unknown
+    imported strings (D-04). Multiple categories can share a name across the
+    hierarchy (different parents) — the map keeps whichever id `dict()`
+    resolves last, which is deterministic (rows are ordered by id) but not
+    meaningful; imported strings match hierarchy node names 1:1 for
+    everything migration 009 created, so real ambiguity here is not expected.
+    """
+    rows = db.execute(text("SELECT name, id FROM categories ORDER BY id")).fetchall()
+    name_to_id = {name: cid for name, cid in rows}
+    uncategorized = db.execute(
+        text("SELECT id FROM categories WHERE name = 'Uncategorized' AND is_system = true LIMIT 1")
+    ).first()
+    if uncategorized is None:
+        raise ValueError("Uncategorized system category not found — check migration 009 seeding")
+    return name_to_id, uncategorized[0]
+
+
 def insert_rows(db: Session, rows: list[dict]) -> int:
+    name_to_id, uncategorized_id = _load_category_id_map(db)
     inserted = 0
     for r in rows:
         acc = _get_or_create_account(db, r["account"], r["currency"])
@@ -125,6 +146,7 @@ def insert_rows(db: Session, rows: list[dict]) -> int:
             currency=r["currency"],
             category=r["category"],
             raw_category=r["raw_category"],
+            category_id=name_to_id.get(r["category"], uncategorized_id),  # D-08 dual-write
             merchant=r["merchant"],
             notes=r["notes"],
             account_id=acc.id,

@@ -769,3 +769,146 @@ def test_portfolio_summary_asset_type_grouping(db_session, monkeypatch):
         _cleanup_prices(db_session, t_crypto)
         _cleanup_ticker(db_session, t_crypto)
         _cleanup_ticker(db_session, t_cash)
+
+
+# ---------------------------------------------------------------------------
+# Phase 17 Plan 01 (Wave 0, RED-first) — platform-detail reads (D-05,
+# PLAT-01). Neither route exists today (only POST /portfolio-events) — both
+# 404 until 17-03 adds them.
+# ---------------------------------------------------------------------------
+
+def test_platform_detail(client, db_session):
+    """GET /platforms/{id}/detail returns the group whose platform_id == id,
+    with subtotal + holdings carrying realized_pnl and unrealized_pnl
+    (PLAT-01/D-05); a non-existent platform id returns 404."""
+    from decimal import Decimal
+    from backend.portfolio import recompute_holding_from_events
+    from backend.writes import apply_set_price
+
+    plat = _make_platform(db_session, "zz17test-PlatformDetailPlatform")
+    t = _random_ticker()
+    try:
+        _add_event(db_session, t, "buy", 5, 100000, 1, plat)
+        recompute_holding_from_events(db_session, t, plat)
+        db_session.commit()
+        apply_set_price(db_session, t, 120000, source="manual")
+        db_session.commit()
+
+        resp = client.get(f"/platforms/{plat}/detail")
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        data = resp.json()
+        assert data["platform_id"] == plat
+        holding_row = next((h for h in data["holdings"] if h["ticker"] == t), None)
+        assert holding_row is not None, "expected our probe holding in the platform group"
+        assert "realized_pnl" in holding_row
+        assert "unrealized_pnl" in holding_row
+        assert Decimal(str(holding_row["unrealized_pnl"])) == Decimal("100000")  # (120000-100000)*5
+
+        missing = client.get("/platforms/999999999/detail")
+        assert missing.status_code == 404, f"Expected 404 for a nonexistent platform, got {missing.status_code}"
+    finally:
+        _cleanup_prices(db_session, t)
+        _cleanup_ticker(db_session, t)
+
+
+def test_portfolio_events_by_platform(client, db_session):
+    """GET /portfolio-events?platform_id={id} returns ONLY that platform's
+    events, ordered date-desc, each row carrying date/ticker/event_type/
+    quantity/price (PLAT-01/D-05)."""
+    plat_a = _make_platform(db_session, "zz17test-EventsPlatformA")
+    plat_b = _make_platform(db_session, "zz17test-EventsPlatformB")
+    t = _random_ticker()
+    try:
+        _add_event(db_session, t, "buy", 3, 100000, 1, plat_a)
+        _add_event(db_session, t, "sell", 1, 110000, 5, plat_a)
+        _add_event(db_session, t, "buy", 2, 90000, 3, plat_b)  # different platform — must NOT leak in
+
+        resp = client.get(f"/portfolio-events?platform_id={plat_a}")
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        data = resp.json()
+        our_rows = [row for row in data if row["ticker"] == t]
+        assert len(our_rows) == 2, (
+            f"expected exactly plat_a's 2 events for ticker {t}, got {len(our_rows)} "
+            "— a leaked plat_b row would inflate this count"
+        )
+        dates = [row["date"] for row in our_rows]
+        assert dates == sorted(dates, reverse=True), "expected date-desc ordering"
+        assert {row["event_type"] for row in our_rows} == {"buy", "sell"}
+        for row in data:
+            assert {"date", "ticker", "event_type", "quantity", "price"} <= row.keys()
+    finally:
+        _cleanup_ticker(db_session, t)
+
+
+# ---------------------------------------------------------------------------
+# Regression: recompute-clobbers-holdings (Phase 18 UAT #3)
+# ---------------------------------------------------------------------------
+
+def test_funded_buy_on_backed_position_sums_not_replaces(db_session):
+    """A funded buy on an event-backed position must SUM into the prior
+    quantity, never REPLACE it. This is the exact behaviour the clobber bug
+    violated (Danamas Pasti 1691.9681 -> 140.1614)."""
+    from decimal import Decimal
+    from backend.models import Holding
+    from backend.writes import apply_add_portfolio_event
+
+    plat = _make_platform(db_session, "TestPortfolioPlatform")
+    t = _random_ticker()
+    try:
+        # Opening lot recorded as an event (the post-backfill world).
+        apply_add_portfolio_event(db_session, {
+            "date": "2026-07-11", "ticker": t, "event_type": "buy",
+            "quantity": 1000, "price": 5000, "platform_id": plat, "currency": "IDR",
+        })
+        # A later funded buy.
+        apply_add_portfolio_event(db_session, {
+            "date": "2026-09-01", "ticker": t, "event_type": "buy",
+            "quantity": 140, "price": 5350, "platform_id": plat, "currency": "IDR",
+        })
+        db_session.commit()
+
+        h = db_session.query(Holding).filter(
+            Holding.ticker == t, Holding.platform_id == plat
+        ).one()
+        # SUMS: 1000 + 140 == 1140 (a clobber would have left 140).
+        assert h.quantity == Decimal("1140"), (
+            f"funded buy must sum: expected 1140, got {h.quantity} "
+            "(140 would mean the prior lot was clobbered)"
+        )
+    finally:
+        _cleanup_ticker(db_session, t)
+
+
+def test_guard_blocks_buy_on_eventless_nonzero_holding(db_session):
+    """Defense-in-depth: a buy on a NON-ZERO holding that has NO backing events
+    must be refused (loud ValueError), never silently overwrite the opening
+    balance. This is the class the clobber bug belonged to."""
+    import pytest
+    from decimal import Decimal
+    from backend.models import Holding
+    from backend.writes import apply_add_portfolio_event
+
+    plat = _make_platform(db_session, "TestPortfolioPlatform")
+    t = _random_ticker()
+    try:
+        # Legacy-style holding: direct row, NO portfolio_events.
+        db_session.add(Holding(
+            ticker=t, quantity=Decimal("500"), avg_cost=Decimal("5000"),
+            currency="IDR", platform_id=plat, asset_type="mutual_fund",
+        ))
+        db_session.commit()
+
+        with pytest.raises(ValueError, match="no backing portfolio_events"):
+            apply_add_portfolio_event(db_session, {
+                "date": "2026-09-01", "ticker": t, "event_type": "buy",
+                "quantity": 140, "price": 5350, "platform_id": plat, "currency": "IDR",
+            })
+        db_session.rollback()
+
+        # Unchanged — the opening balance was NOT clobbered.
+        h = db_session.query(Holding).filter(
+            Holding.ticker == t, Holding.platform_id == plat
+        ).one()
+        assert h.quantity == Decimal("500")
+    finally:
+        _cleanup_ticker(db_session, t)

@@ -7,6 +7,7 @@ Integration tests against the live Postgres. Each test creates its own proposal
 
 import datetime
 import uuid
+from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
@@ -492,3 +493,380 @@ def test_get_proposals_excludes_token(client, api_key, db_session):
     if tx:
         db_session.delete(tx)
     db_session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Phase 14 Plan 01: RED-first propose->confirm integration tests for the 5
+# new operations (CHAT-09/XFER-01..04/ACCT-02). Every propose_* function
+# targeted below DOES NOT EXIST YET — each test imports its target
+# function-locally (the Phase-13 lazy-import RED idiom) and is EXPECTED to
+# fail RED (ImportError) until Plan 14-02 registers the tools. Do not wire
+# tools.py/query.py/main.py here.
+# ---------------------------------------------------------------------------
+
+
+def _make_account(db, name: str) -> int:
+    from backend.models import Account
+    existing = db.query(Account).filter(Account.name == name).first()
+    if existing:
+        db.delete(existing)
+        db.commit()
+    acc = Account(name=name, type="liquid", currency="IDR")
+    db.add(acc)
+    db.commit()
+    db.refresh(acc)
+    return acc.id
+
+
+def _cleanup_account(db, name: str) -> None:
+    """Remove an account and every dependent transaction/audit-log row
+    (mirrors test_write_tools.py's _cleanup_account)."""
+    from backend.models import Account, AuditLog, Transaction
+    acc = db.query(Account).filter(Account.name == name).first()
+    if acc is None:
+        return
+    tx_ids = [t.id for t in db.query(Transaction).filter(Transaction.account_id == acc.id).all()]
+    if tx_ids:
+        db.query(AuditLog).filter(
+            AuditLog.entity == "transaction", AuditLog.entity_id.in_(tx_ids)
+        ).delete(synchronize_session=False)
+        db.query(Transaction).filter(Transaction.id.in_(tx_ids)).delete(synchronize_session=False)
+    db.query(AuditLog).filter(AuditLog.entity == "account", AuditLog.entity_id == acc.id).delete()
+    db.delete(acc)
+    db.commit()
+
+
+def _cleanup_ticker(db, ticker: str) -> None:
+    """Remove any holding/events/price_cache/audit rows for a ticker (mirrors
+    test_write_tools.py's _cleanup_ticker)."""
+    from backend.models import AuditLog, Holding, PortfolioEvent, PriceCache
+    hids = [h.id for h in db.query(Holding).filter(Holding.ticker == ticker).all()]
+    if hids:
+        db.query(AuditLog).filter(
+            AuditLog.entity == "holding", AuditLog.entity_id.in_(hids)
+        ).delete(synchronize_session=False)
+    eids = [e.id for e in db.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).all()]
+    if eids:
+        db.query(AuditLog).filter(
+            AuditLog.entity == "portfolio_event", AuditLog.entity_id.in_(eids)
+        ).delete(synchronize_session=False)
+    db.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).delete(synchronize_session=False)
+    db.query(Holding).filter(Holding.ticker == ticker).delete(synchronize_session=False)
+    db.query(PriceCache).filter(PriceCache.ticker == ticker).delete(synchronize_session=False)
+    db.commit()
+
+
+def _cleanup_platform(db, platform_id: int) -> None:
+    from backend.models import Platform
+    plat = db.get(Platform, platform_id)
+    if plat is not None:
+        db.delete(plat)
+        db.commit()
+
+
+def test_confirm_transfer_writes_both_legs(client, api_key, db_session):
+    """propose_add_transfer -> confirm -> exactly 2 paired Transaction rows,
+    both is_transfer=True, sharing transfer_pair_id == leg A's own id, leg
+    amounts are -abs/+abs of the magnitude (XFER-01). RED until Plan 14-02."""
+    from backend.models import Transaction
+
+    name_a, name_b = "zz14test-TransferA", "zz14test-TransferB"
+    acc_a = _make_account(db_session, name_a)
+    acc_b = _make_account(db_session, name_b)
+    try:
+        from backend.tools import propose_add_transfer  # RED: not implemented until Plan 14-02
+
+        result = propose_add_transfer(
+            from_account=name_a, to_account=name_b, amount=100000, currency="IDR",
+            date="2024-03-01", notes="test transfer",
+        )
+        resp = client.post(
+            f"/proposals/{result['proposal_id']}/confirm",
+            json={"token": result["proposal_token"]},
+            headers={"MONAI_API_KEY": api_key},
+        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+
+        db_session.expire_all()
+        rows = db_session.query(Transaction).filter(Transaction.account_id.in_([acc_a, acc_b])).all()
+        assert len(rows) == 2, f"expected exactly 2 paired legs, got {len(rows)}"
+        assert all(r.is_transfer for r in rows), "both legs must be tagged is_transfer=true"
+
+        pair_ids = {r.transfer_pair_id for r in rows}
+        assert len(pair_ids) == 1 and None not in pair_ids, (
+            f"both legs must share one non-null transfer_pair_id, got {pair_ids}"
+        )
+
+        by_account = {r.account_id: r for r in rows}
+        assert by_account[acc_a].amount == Decimal("-100000"), "source leg must be debited (-abs magnitude)"
+        assert by_account[acc_b].amount == Decimal("100000"), "destination leg must be credited (+abs magnitude)"
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name_a)
+        _cleanup_account(db_session, name_b)
+
+
+def test_confirm_investment_transfer_links_event(client, api_key, db_session):
+    """propose_add_investment_transfer -> confirm -> 1 cash Transaction
+    (is_transfer=True, negative amount) + 1 PortfolioEvent whose
+    source_account_id == the cash leg's account_id, and NO new synthetic
+    accounts row. Deposit sentinel: ticker=='CASH', event_type=='deposit'
+    (RESEARCH Q1 resolution, XFER-02). RED until Plan 14-02."""
+    from backend.models import Account, Transaction, PortfolioEvent
+
+    name = "zz14test-InvestSource"
+    ticker = "CASH"
+    acc_id = _make_account(db_session, name)
+    plat_id = _make_platform_local(db_session, "zz14test-InvestPlatform")
+    try:
+        accounts_before = int(db_session.execute(text("SELECT COUNT(*) FROM accounts")).scalar() or 0)
+
+        from backend.tools import propose_add_investment_transfer  # RED: not implemented until Plan 14-02
+
+        result = propose_add_investment_transfer(
+            from_account=name, platform_id=plat_id, amount=500000, currency="IDR",
+            date="2024-03-02", notes="fund platform",
+        )
+        resp = client.post(
+            f"/proposals/{result['proposal_id']}/confirm",
+            json={"token": result["proposal_token"]},
+            headers={"MONAI_API_KEY": api_key},
+        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+
+        db_session.expire_all()
+        tx = db_session.query(Transaction).filter(Transaction.account_id == acc_id).one()
+        assert tx.is_transfer is True
+        assert tx.amount == Decimal("-500000")
+
+        ev = db_session.query(PortfolioEvent).filter(
+            PortfolioEvent.platform_id == plat_id, PortfolioEvent.ticker == ticker
+        ).one()
+        assert ev.source_account_id == tx.account_id, "event must link back to the funding account (D-05)"
+        assert ev.event_type == "deposit"
+
+        accounts_after = int(db_session.execute(text("SELECT COUNT(*) FROM accounts")).scalar() or 0)
+        assert accounts_after == accounts_before, "no synthetic accounts row for the investment side (D-05)"
+    finally:
+        db_session.rollback()
+        # CASH is a shared production sentinel ticker (RESEARCH Q1) — scope
+        # cleanup to this test's own platform_id, never a global ticker purge.
+        from backend.models import AuditLog, Holding
+        eids = [e.id for e in db_session.query(PortfolioEvent).filter(
+            PortfolioEvent.platform_id == plat_id, PortfolioEvent.ticker == ticker
+        ).all()]
+        if eids:
+            db_session.query(AuditLog).filter(
+                AuditLog.entity == "portfolio_event", AuditLog.entity_id.in_(eids)
+            ).delete(synchronize_session=False)
+            db_session.query(PortfolioEvent).filter(PortfolioEvent.id.in_(eids)).delete(synchronize_session=False)
+        hids = [h.id for h in db_session.query(Holding).filter(
+            Holding.platform_id == plat_id, Holding.ticker == ticker
+        ).all()]
+        if hids:
+            db_session.query(AuditLog).filter(
+                AuditLog.entity == "holding", AuditLog.entity_id.in_(hids)
+            ).delete(synchronize_session=False)
+            db_session.query(Holding).filter(Holding.id.in_(hids)).delete(synchronize_session=False)
+        db_session.commit()
+        _cleanup_platform(db_session, plat_id)
+        _cleanup_account(db_session, name)
+
+
+def test_confirm_funded_buy_writes_both_sides(client, api_key, db_session):
+    """propose_add_funded_buy -> confirm -> cash Transaction amount ==
+    Decimal(str(-cash_amount)) (DEBIT, is_transfer=True), 'buy' PortfolioEvent
+    linked via source_account_id, and the (ticker, platform_id) Holding
+    recomputed (XFER-03). RED until Plan 14-02."""
+    from backend.models import Transaction, PortfolioEvent, Holding
+
+    name = "zz14test-FundedBuySource"
+    ticker = "ZZ14FUNDEDBUY"
+    acc_id = _make_account(db_session, name)
+    plat_id = _make_platform_local(db_session, "zz14test-FundedBuyPlatform")
+    _cleanup_ticker(db_session, ticker)
+    try:
+        from backend.tools import propose_add_funded_buy  # RED: not implemented until Plan 14-02
+
+        result = propose_add_funded_buy(
+            source_account_name=name, platform_id=plat_id, ticker=ticker,
+            quantity=10, price=100000, cash_amount=1000000, cash_currency="IDR",
+            event_currency="IDR", date="2024-03-03",
+        )
+        resp = client.post(
+            f"/proposals/{result['proposal_id']}/confirm",
+            json={"token": result["proposal_token"]},
+            headers={"MONAI_API_KEY": api_key},
+        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+
+        db_session.expire_all()
+        tx = db_session.query(Transaction).filter(Transaction.account_id == acc_id).one()
+        assert tx.amount == Decimal(str(-1000000)), "cash leg must DEBIT the source (buy)"
+        assert tx.is_transfer is True
+
+        ev = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
+        assert ev.event_type == "buy"
+        assert ev.source_account_id == acc_id
+
+        h = db_session.query(Holding).filter(
+            Holding.ticker == ticker, Holding.platform_id == plat_id
+        ).one()
+        assert h.quantity == Decimal("10"), "holding must be recomputed from the ledger (D-06)"
+    finally:
+        db_session.rollback()
+        _cleanup_ticker(db_session, ticker)
+        _cleanup_account(db_session, name)
+        _cleanup_platform(db_session, plat_id)
+
+
+def test_confirm_funded_sell_writes_both_sides(client, api_key, db_session):
+    """propose_add_funded_sell -> confirm -> cash Transaction amount
+    positive (CREDIT), 'sell' PortfolioEvent linked via source_account_id
+    (XFER-03). RED until Plan 14-02."""
+    from backend.models import Transaction, PortfolioEvent
+
+    name = "zz14test-FundedSellDest"
+    ticker = "ZZ14FUNDEDSELL"
+    acc_id = _make_account(db_session, name)
+    plat_id = _make_platform_local(db_session, "zz14test-FundedSellPlatform")
+    _cleanup_ticker(db_session, ticker)
+    try:
+        from backend.tools import propose_add_funded_sell  # RED: not implemented until Plan 14-02
+
+        result = propose_add_funded_sell(
+            source_account_name=name, platform_id=plat_id, ticker=ticker,
+            quantity=10, price=100000, cash_amount=1000000, cash_currency="IDR",
+            event_currency="IDR", date="2024-03-04",
+        )
+        resp = client.post(
+            f"/proposals/{result['proposal_id']}/confirm",
+            json={"token": result["proposal_token"]},
+            headers={"MONAI_API_KEY": api_key},
+        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+
+        db_session.expire_all()
+        tx = db_session.query(Transaction).filter(Transaction.account_id == acc_id).one()
+        # sell CREDITS the destination — positive, the sign that distinguishes it from a funded buy
+        assert tx.amount == Decimal("1000000")
+        assert tx.is_transfer is True
+
+        ev = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
+        assert ev.event_type == "sell"
+        assert ev.source_account_id == acc_id
+    finally:
+        db_session.rollback()
+        _cleanup_ticker(db_session, ticker)
+        _cleanup_account(db_session, name)
+        _cleanup_platform(db_session, plat_id)
+
+
+def test_confirm_balance_adjustment(client, api_key, db_session):
+    """propose_add_balance_adjustment -> confirm -> exactly ONE new
+    Transaction tagged category='Adjustment' and is_transfer=True whose
+    amount == target_balance minus the account's current UNFILTERED
+    SUM(amount) (ACCT-02/D-07). RED until Plan 14-02."""
+    import datetime as _dt
+    from backend.models import Transaction
+
+    name = "zz14test-AdjustAccount"
+    acc_id = _make_account(db_session, name)
+    try:
+        db_session.add(Transaction(
+            date=_dt.datetime(2024, 3, 1, 12, 0, 0), amount=200000, currency="IDR",
+            category="Salary", account_id=acc_id, is_transfer=False,
+        ))
+        db_session.add(Transaction(
+            date=_dt.datetime(2024, 3, 2, 12, 0, 0), amount=50000, currency="IDR",
+            category=None, account_id=acc_id, is_transfer=True,
+        ))
+        db_session.commit()
+
+        current = Decimal(str(db_session.execute(
+            text("SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE account_id = :id"),
+            {"id": acc_id},
+        ).scalar()))
+        target = current + Decimal("77777")
+        expected_delta = target - current
+
+        from backend.tools import propose_add_balance_adjustment  # RED: not implemented until Plan 14-02
+
+        result = propose_add_balance_adjustment(account_id=acc_id, target_balance=float(target))
+        resp = client.post(
+            f"/proposals/{result['proposal_id']}/confirm",
+            json={"token": result["proposal_token"]},
+            headers={"MONAI_API_KEY": api_key},
+        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+
+        db_session.expire_all()
+        all_rows = db_session.query(Transaction).filter(Transaction.account_id == acc_id).all()
+        assert len(all_rows) == 3, f"expected exactly one new adjustment row, got {len(all_rows) - 2} new row(s)"
+
+        adj_rows = [r for r in all_rows if r.category == "Adjustment"]
+        assert len(adj_rows) == 1, "expected exactly one 'Adjustment'-tagged row"
+        assert adj_rows[0].amount == expected_delta
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name)
+
+
+def test_confirm_malformed_funded_buy_returns_422(client, api_key, db_session):
+    """A confirm-time payload for operation='add_funded_buy' missing the
+    required 'ticker' key must surface as a clean 422, never an unhandled
+    KeyError -> 500 (Pitfall 3, autonomous decision 4). Stays green trivially
+    pre-14-02 (unknown operation -> ValueError -> 422 via the existing
+    _execute_proposal_payload else-branch) and remains the regression guard
+    once 14-02 adds the dispatch branch + KeyError guard."""
+    import secrets
+    from backend.models import Proposal
+
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=15)
+    after = {
+        "source_account_name": "zz14test-MalformedBuySrc", "cash_currency": "IDR",
+        "cash_amount": 1000000, "quantity": 10, "price": 100000,
+        "platform_id": 1, "event_currency": "IDR", "date": "2024-03-05",
+        # "ticker" intentionally omitted — pins the payload-shape hazard
+    }
+    payload = {"operation": "add_funded_buy", "rows": [{"before": None, "after": after}]}
+    p = Proposal(token=token, operation="add_funded_buy", payload=payload,
+                status="pending", expires_at=expires_at)
+    db_session.add(p)
+    db_session.commit()
+    db_session.refresh(p)
+
+    try:
+        resp = client.post(
+            f"/proposals/{p.id}/confirm",
+            json={"token": token},
+            headers={"MONAI_API_KEY": api_key},
+        )
+        assert resp.status_code == 422, f"Expected 422 (never 500), got {resp.status_code}: {resp.text}"
+    finally:
+        db_session.rollback()
+        db_session.expire_all()
+        leftover = db_session.get(Proposal, p.id)
+        if leftover is not None:
+            db_session.delete(leftover)
+            db_session.commit()
+        # Defensive: if a future implementation ever creates the account
+        # before the KeyError fires, don't leak it.
+        _cleanup_account(db_session, "zz14test-MalformedBuySrc")
+
+
+def _make_platform_local(db, name: str) -> int:
+    """zz14test-scoped platform seed helper (parallels test_proposals.py's
+    existing `_make_platform`, but WITHOUT the random-suffix behavior so the
+    returned platform_id is stable for cleanup lookups within one test)."""
+    from backend.models import Platform
+    existing = db.query(Platform).filter(Platform.name == name).first()
+    if existing:
+        db.delete(existing)
+        db.commit()
+    plat = Platform(name=name, kind="exchange")
+    db.add(plat)
+    db.commit()
+    db.refresh(plat)
+    return plat.id

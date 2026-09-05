@@ -73,7 +73,7 @@ def _make_account(db, name: str = "Test Account WTT") -> int:
     if existing:
         db.delete(existing)
         db.commit()
-    acc = Account(name=name, type="checking", currency="IDR")
+    acc = Account(name=name, type="liquid", currency="IDR")
     db.add(acc)
     db.commit()
     db.refresh(acc)
@@ -206,7 +206,7 @@ def test_propose_add_account_creates_proposal(db_session):
     from backend.models import Proposal
     from uuid import UUID
 
-    result = propose_add_account(name="New Test Bank", type="savings", currency="IDR")
+    result = propose_add_account(name="New Test Bank", type="liquid", currency="IDR")
     assert "proposal_id" in result
     assert "proposal_token" in result
     assert "error" not in result
@@ -330,19 +330,33 @@ def test_propose_rename_category_creates_proposal(db_session):
 
 
 def test_propose_merge_category_creates_proposal(db_session):
-    """propose_merge_category returns a proposal for a non-orphaning merge."""
+    """propose_merge_category returns a proposal for a non-orphaning merge.
+
+    Hierarchy-backed (11-04): both names must be real categories rows and the
+    source must be childless, so seed two throwaway leaf categories.
+    """
     from backend.tools import propose_merge_category
-    from backend.models import Proposal
+    from backend.models import Category, Proposal
     from uuid import UUID
 
-    result = propose_merge_category("Shopping", "Retail")
-    assert "proposal_id" in result
-    assert "proposal_token" in result
-    assert "error" not in result
+    src = Category(name="ZZ Merge Source WTT", parent_id=None, kind="expense", is_system=False)
+    dst = Category(name="ZZ Merge Target WTT", parent_id=None, kind="expense", is_system=False)
+    db_session.add_all([src, dst])
+    db_session.commit()
 
-    p = db_session.get(Proposal, UUID(result["proposal_id"]))
-    if p:
-        db_session.delete(p)
+    try:
+        result = propose_merge_category("ZZ Merge Source WTT", "ZZ Merge Target WTT")
+        assert "proposal_id" in result
+        assert "proposal_token" in result
+        assert "error" not in result
+
+        p = db_session.get(Proposal, UUID(result["proposal_id"]))
+        if p:
+            db_session.delete(p)
+            db_session.commit()
+    finally:
+        db_session.delete(src)
+        db_session.delete(dst)
         db_session.commit()
 
 
@@ -1230,3 +1244,503 @@ def test_apply_add_holding_cash_and_gold_pass_through(db_session):
     finally:
         _cleanup_ticker(db_session, t_cash)
         _cleanup_ticker(db_session, t_gold)
+
+
+# ---------------------------------------------------------------------------
+# Phase 13 Plan 01: RED-first scaffold for the shared mutation layer
+# (XFER-01..05, ACCT-02). Every apply_* function targeted below DOES NOT
+# EXIST YET — each test imports its target function-locally and is EXPECTED
+# to fail RED (ImportError/AttributeError/TypeError/DID-NOT-RAISE) until
+# plans 13-03/04/05 implement it to GREEN. Do not implement writes.py here.
+# ---------------------------------------------------------------------------
+
+
+def _cleanup_account(db, name: str) -> None:
+    """Remove an account and every dependent transaction/audit-log row
+    (mirrors `_cleanup_ticker`'s shape for the account side, T-13-08)."""
+    from backend.models import Account, Transaction, AuditLog
+
+    acc = db.query(Account).filter(Account.name == name).first()
+    if acc is None:
+        return
+    tx_ids = [t.id for t in db.query(Transaction).filter(Transaction.account_id == acc.id).all()]
+    if tx_ids:
+        db.query(AuditLog).filter(
+            AuditLog.entity == "transaction", AuditLog.entity_id.in_(tx_ids)
+        ).delete(synchronize_session=False)
+        db.query(Transaction).filter(Transaction.id.in_(tx_ids)).delete(synchronize_session=False)
+    db.query(AuditLog).filter(AuditLog.entity == "account", AuditLog.entity_id == acc.id).delete()
+    db.delete(acc)
+    db.commit()
+
+
+def test_apply_add_transfer_pairs_both_legs(db_session):
+    """apply_add_transfer(db, leg_a_after, leg_b_after) inserts two paired
+    Transaction rows (XFER-01): both is_transfer=true, sharing one
+    transfer_pair_id equal to leg A's own id (shared-group-id convention,
+    D-03/D-09), each with its own AuditLog row (D-02), each leg free to carry
+    its own currency independently (D-09). RED until Plan 13-03."""
+    from backend.models import Transaction
+
+    name_a, name_b = "zz13test-TransferA", "zz13test-TransferB"
+    acc_a = _make_account(db_session, name_a)
+    acc_b = _make_account(db_session, name_b)
+    try:
+        from backend.writes import apply_add_transfer  # RED: not implemented until Plan 13-03
+
+        before_audit = int(db_session.execute(
+            text("SELECT COUNT(*) FROM audit_log WHERE entity = 'transaction'")
+        ).scalar() or 0)
+
+        leg_a_after = {
+            "account": name_a, "amount": -100000, "currency": "IDR",
+            "is_transfer": True, "date": "2024-01-15", "notes": "Transfer out",
+        }
+        leg_b_after = {
+            "account": name_b, "amount": 6.5, "currency": "USD",
+            "is_transfer": True, "date": "2024-01-15", "notes": "Transfer in",
+        }
+
+        leg_a, leg_b = apply_add_transfer(db_session, leg_a_after, leg_b_after)
+        db_session.commit()
+
+        db_session.expire_all()
+        rows = db_session.query(Transaction).filter(Transaction.account_id.in_([acc_a, acc_b])).all()
+        assert len(rows) == 2, f"expected exactly 2 paired legs, got {len(rows)}"
+        assert all(r.is_transfer for r in rows), "both legs must be tagged is_transfer=true"
+
+        pair_ids = {r.transfer_pair_id for r in rows}
+        assert pair_ids == {leg_a.id}, (
+            f"both legs must share transfer_pair_id == leg A's id ({leg_a.id}), got {pair_ids}"
+        )
+
+        by_account = {r.account_id: r for r in rows}
+        assert by_account[acc_a].currency == "IDR"
+        assert by_account[acc_b].currency == "USD", "legs may carry different currencies independently (D-09)"
+
+        after_audit = int(db_session.execute(
+            text("SELECT COUNT(*) FROM audit_log WHERE entity = 'transaction'")
+        ).scalar() or 0)
+        assert after_audit == before_audit + 2, "one AuditLog row per leg (D-02)"
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name_a)
+        _cleanup_account(db_session, name_b)
+
+
+def test_apply_add_investment_transfer(db_session):
+    """apply_add_investment_transfer(db, cash_leg_after, event_after) debits a
+    liquid source account (is_transfer=true) and links a portfolio deposit
+    event to it via source_account_id (XFER-02/D-05) — never creates a
+    synthetic `accounts` row for the investment side. RED until Plan 13-04."""
+    from backend.models import Transaction, PortfolioEvent, Platform
+
+    name = "zz13test-InvestSource"
+    ticker = "ZZ13DEPOSIT"
+    acc_id = _make_account(db_session, name)
+    plat_id = _make_platform(db_session, "zz13test-InvestPlatform")
+    _cleanup_ticker(db_session, ticker)
+    try:
+        from backend.writes import apply_add_investment_transfer  # RED: not implemented until Plan 13-04
+
+        accounts_before = int(db_session.execute(text("SELECT COUNT(*) FROM accounts")).scalar() or 0)
+
+        cash_leg_after = {
+            "account": name, "amount": -500000, "currency": "IDR",
+            "is_transfer": True, "date": "2024-01-20",
+        }
+        event_after = {
+            "ticker": ticker, "event_type": "deposit", "quantity": 500000,
+            "price": 1, "date": "2024-01-20", "platform_id": plat_id, "currency": "IDR",
+        }
+
+        tx, ev = apply_add_investment_transfer(db_session, cash_leg_after, event_after)
+        db_session.commit()
+
+        db_session.expire_all()
+        tx_row = db_session.query(Transaction).filter(Transaction.account_id == acc_id).one()
+        assert tx_row.is_transfer is True
+
+        ev_row = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
+        assert ev_row.source_account_id == acc_id, "event must link back to the funding account (D-05)"
+
+        accounts_after = int(db_session.execute(text("SELECT COUNT(*) FROM accounts")).scalar() or 0)
+        assert accounts_after == accounts_before, "no synthetic accounts row for the investment side (D-05)"
+    finally:
+        db_session.rollback()
+        _cleanup_ticker(db_session, ticker)
+        _cleanup_account(db_session, name)
+        plat = db_session.get(Platform, plat_id)
+        if plat is not None:
+            db_session.delete(plat)
+            db_session.commit()
+
+
+def test_apply_add_funded_buy_one_commit_boundary(db_session):
+    """apply_add_funded_buy(db, after) debits a liquid source account
+    (is_transfer=true), records a 'buy' PortfolioEvent linked back via
+    source_account_id, and recomputes the (ticker, platform_id) holding — all
+    below ONE caller commit, no internal db.commit() (XFER-03/D-06). RED
+    until Plan 13-04."""
+    from decimal import Decimal
+    from backend.models import Transaction, PortfolioEvent, Holding, Platform
+
+    name = "zz13test-FundedBuySource"
+    ticker = "ZZ13FUNDEDBUY"
+    acc_id = _make_account(db_session, name)
+    plat_id = _make_platform(db_session, "zz13test-FundedBuyPlatform")
+    _cleanup_ticker(db_session, ticker)
+    try:
+        from backend.writes import apply_add_funded_buy  # RED: not implemented until Plan 13-04
+
+        after = {
+            "source_account_name": name, "cash_currency": "IDR", "cash_amount": 1000000,
+            "ticker": ticker, "quantity": 10, "price": 100000, "platform_id": plat_id,
+            "event_currency": "IDR", "date": "2024-01-25",
+        }
+
+        result = apply_add_funded_buy(db_session, after)
+        # Atomicity by construction: both entities are already flushed
+        # (populated .id) after the ONE function call, below the ONE caller
+        # commit below — mirrors every existing apply_* primitive's
+        # never-commit contract (D-01/D-06), not a second commit inside the
+        # function itself.
+        assert result["transaction"].id is not None
+        assert result["portfolio_event"].id is not None
+        db_session.commit()
+
+        db_session.expire_all()
+        tx = db_session.query(Transaction).filter(Transaction.account_id == acc_id).one()
+        assert tx.is_transfer is True
+        assert tx.amount == Decimal("-1000000")
+
+        ev = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
+        assert ev.event_type == "buy"
+        assert ev.source_account_id == acc_id
+
+        h = db_session.query(Holding).filter(
+            Holding.ticker == ticker, Holding.platform_id == plat_id
+        ).one()
+        assert h.quantity == Decimal("10")
+    finally:
+        db_session.rollback()
+        _cleanup_ticker(db_session, ticker)
+        _cleanup_account(db_session, name)
+        plat = db_session.get(Platform, plat_id)
+        if plat is not None:
+            db_session.delete(plat)
+            db_session.commit()
+
+
+def test_funded_buy_dual_currency_legs(db_session):
+    """apply_add_funded_buy's cash leg and portfolio event carry independent
+    currencies (XFER-04/D-09) — no forced single-currency conversion at write
+    time; no schema column beyond the existing amount/currency pair is
+    touched. RED until Plan 13-04."""
+    from backend.models import Transaction, PortfolioEvent, Platform
+
+    name = "zz13test-DualCcySource"
+    ticker = "ZZ13DUALCCY"
+    acc_id = _make_account(db_session, name)
+    plat_id = _make_platform(db_session, "zz13test-DualCcyPlatform")
+    _cleanup_ticker(db_session, ticker)
+    try:
+        from backend.writes import apply_add_funded_buy  # RED: not implemented until Plan 13-04
+
+        after = {
+            "source_account_name": name, "cash_currency": "IDR", "cash_amount": 1500000,
+            "ticker": ticker, "quantity": 100, "price": 1, "platform_id": plat_id,
+            "event_currency": "USD", "date": "2024-01-26",
+        }
+
+        apply_add_funded_buy(db_session, after)
+        db_session.commit()
+
+        db_session.expire_all()
+        tx = db_session.query(Transaction).filter(Transaction.account_id == acc_id).one()
+        assert tx.currency == "IDR"
+
+        ev = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
+        assert ev.currency == "USD", "cash-leg currency and event currency are stored independently (D-09)"
+    finally:
+        db_session.rollback()
+        _cleanup_ticker(db_session, ticker)
+        _cleanup_account(db_session, name)
+        plat = db_session.get(Platform, plat_id)
+        if plat is not None:
+            db_session.delete(plat)
+            db_session.commit()
+
+
+def test_apply_add_funded_sell_one_commit_boundary(db_session):
+    """apply_add_funded_sell(db, after) CREDITS a liquid destination account
+    (positive amount, is_transfer=true — mirror of the funded-buy debit),
+    records a 'sell' PortfolioEvent linked back via source_account_id, all
+    below ONE caller commit with no internal db.commit() (XFER-03/D-06). This
+    is the sell-side mirror the phase implemented for symmetry (writes.py
+    apply_add_funded_sell) but never RED-pinned."""
+    from decimal import Decimal
+    from backend.models import Transaction, PortfolioEvent, Platform
+
+    name = "zz13test-FundedSellDest"
+    ticker = "ZZ13FUNDEDSELL"
+    acc_id = _make_account(db_session, name)
+    plat_id = _make_platform(db_session, "zz13test-FundedSellPlatform")
+    _cleanup_ticker(db_session, ticker)
+    try:
+        from backend.writes import apply_add_funded_sell
+
+        after = {
+            "source_account_name": name, "cash_currency": "IDR", "cash_amount": 1000000,
+            "ticker": ticker, "quantity": 10, "price": 100000, "platform_id": plat_id,
+            "event_currency": "IDR", "date": "2024-01-27",
+        }
+
+        result = apply_add_funded_sell(db_session, after)
+        assert result["transaction"].id is not None
+        assert result["portfolio_event"].id is not None
+        db_session.commit()
+
+        db_session.expire_all()
+        tx = db_session.query(Transaction).filter(Transaction.account_id == acc_id).one()
+        assert tx.is_transfer is True
+        # sell CREDITS the destination — positive, the sign that distinguishes it from a funded buy
+        assert tx.amount == Decimal("1000000")
+
+        ev = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
+        assert ev.event_type == "sell"
+        assert ev.source_account_id == acc_id
+    finally:
+        db_session.rollback()
+        _cleanup_ticker(db_session, ticker)
+        _cleanup_account(db_session, name)
+        plat = db_session.get(Platform, plat_id)
+        if plat is not None:
+            db_session.delete(plat)
+            db_session.commit()
+
+
+def test_apply_add_balance_adjustment_delta(db_session):
+    """apply_add_balance_adjustment(db, account_id, target_balance) inserts
+    exactly one 'Adjustment'-tagged Transaction whose amount equals
+    target − SUM(ALL transactions on the account, transfer rows included) —
+    Finding 2: a filtered SUM (excluding transfers) would compute the wrong
+    delta, which is exactly why this account is seeded with BOTH a
+    non-transfer and a transfer row (ACCT-02/D-07). RED until Plan 13-05."""
+    import datetime as _dt
+    from decimal import Decimal
+    from backend.models import Transaction
+
+    name = "zz13test-AdjustAccount"
+    acc_id = _make_account(db_session, name)
+    try:
+        db_session.add(Transaction(
+            date=_dt.datetime(2024, 2, 1, 12, 0, 0), amount=200000, currency="IDR",
+            category="Salary", account_id=acc_id, is_transfer=False,
+        ))
+        db_session.add(Transaction(
+            date=_dt.datetime(2024, 2, 2, 12, 0, 0), amount=50000, currency="IDR",
+            category=None, account_id=acc_id, is_transfer=True,
+        ))
+        db_session.commit()
+
+        current = Decimal(str(db_session.execute(
+            text("SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE account_id = :id"),
+            {"id": acc_id},
+        ).scalar()))
+        target = current + Decimal("77777")
+        expected_delta = target - current
+
+        from backend.writes import apply_add_balance_adjustment  # RED: not implemented until Plan 13-05
+        apply_add_balance_adjustment(db_session, acc_id, target)
+        db_session.commit()
+
+        db_session.expire_all()
+        all_rows = db_session.query(Transaction).filter(Transaction.account_id == acc_id).all()
+        assert len(all_rows) == 3, f"expected exactly one new adjustment row, got {len(all_rows) - 2} new row(s)"
+
+        adj_rows = [r for r in all_rows if r.category == "Adjustment"]
+        assert len(adj_rows) == 1, "expected exactly one 'Adjustment'-tagged row"
+        assert adj_rows[0].amount == expected_delta
+
+        new_sum = Decimal(str(db_session.execute(
+            text("SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE account_id = :id"),
+            {"id": acc_id},
+        ).scalar()))
+        assert new_sum == target, "post-write derived balance (unfiltered SUM) must equal the target"
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name)
+
+
+# ---------------------------------------------------------------------------
+# XFER-01/D-04: leg-protection guard on apply_edit_transaction /
+# apply_delete_transaction. RED until Plan 13-03 adds the allow_paired guard.
+# ---------------------------------------------------------------------------
+
+
+def test_paired_leg_edit_blocked(db_session):
+    """Editing one leg of a paired transfer without allow_paired=True raises
+    ValueError mentioning the pair; the same edit with allow_paired=True
+    proceeds without raising (D-04)."""
+    import datetime as _dt
+    from backend.models import Transaction
+
+    name = "zz13test-PairedEditAcc"
+    acc_id = _make_account(db_session, name)
+    tx = Transaction(
+        date=_dt.datetime(2024, 3, 1, 12, 0, 0), amount=-10000, currency="IDR",
+        category=None, account_id=acc_id, is_transfer=True,
+    )
+    db_session.add(tx)
+    db_session.commit()
+    db_session.refresh(tx)
+    tx.transfer_pair_id = tx.id
+    db_session.commit()
+    tx_id = tx.id
+    try:
+        from backend.writes import apply_edit_transaction
+
+        with pytest.raises(ValueError, match="pair"):
+            apply_edit_transaction(db_session, tx_id, {"notes": "edited"}, None)
+        db_session.rollback()
+
+        apply_edit_transaction(db_session, tx_id, {"notes": "edited"}, None, allow_paired=True)
+        db_session.commit()
+
+        db_session.expire_all()
+        assert db_session.get(Transaction, tx_id).notes == "edited"
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name)
+
+
+def test_paired_leg_delete_blocked(db_session):
+    """Deleting one leg of a paired transfer without allow_paired=True raises
+    ValueError mentioning the pair; the same delete with allow_paired=True
+    proceeds without raising (D-04)."""
+    import datetime as _dt
+    from backend.models import Transaction
+
+    name = "zz13test-PairedDeleteAcc"
+    acc_id = _make_account(db_session, name)
+    tx = Transaction(
+        date=_dt.datetime(2024, 3, 2, 12, 0, 0), amount=-20000, currency="IDR",
+        category=None, account_id=acc_id, is_transfer=True,
+    )
+    db_session.add(tx)
+    db_session.commit()
+    db_session.refresh(tx)
+    tx.transfer_pair_id = tx.id
+    db_session.commit()
+    tx_id = tx.id
+    try:
+        from backend.writes import apply_delete_transaction
+
+        with pytest.raises(ValueError, match="pair"):
+            apply_delete_transaction(db_session, tx_id, None)
+        db_session.rollback()
+
+        apply_delete_transaction(db_session, tx_id, None, allow_paired=True)
+        db_session.commit()
+
+        db_session.expire_all()
+        assert db_session.get(Transaction, tx_id) is None
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name)
+
+
+def test_delete_transaction_or_pair_removes_both_legs(db_session):
+    """apply_delete_transaction_or_pair on ONE leg of a transfer deletes BOTH
+    legs — no half-transfer left behind (Phase 16 UAT#3)."""
+    from backend.models import Transaction
+    from backend.writes import apply_add_transfer, apply_delete_transaction_or_pair
+
+    a_name, b_name = "zz13test-PairDelA", "zz13test-PairDelB"
+    _make_account(db_session, a_name)
+    _make_account(db_session, b_name)
+    try:
+        leg_a, leg_b = apply_add_transfer(
+            db_session,
+            {"account": a_name, "amount": "-30000", "currency": "IDR"},
+            {"account": b_name, "amount": "30000", "currency": "IDR"},
+        )
+        db_session.commit()
+        a_id, b_id = leg_a.id, leg_b.id
+
+        deleted = apply_delete_transaction_or_pair(db_session, a_id, None)
+        db_session.commit()
+
+        db_session.expire_all()
+        assert set(deleted) == {a_id, b_id}
+        assert db_session.get(Transaction, a_id) is None
+        assert db_session.get(Transaction, b_id) is None
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, a_name)
+        _cleanup_account(db_session, b_name)
+
+
+def test_pair_aware_delete(client, api_key, db_session):
+    """Deleting ONE leg of a transfer pair — via the single DELETE
+    /transactions/{id} REST endpoint AND via POST /transactions/bulk-delete
+    — removes BOTH rows, no orphan left behind (D-04, critical item #1,
+    endpoint-level retrofit of the apply_delete_transaction_or_pair
+    primitive tested above)."""
+    from backend.models import Transaction
+    from backend.writes import apply_add_transfer
+
+    name_a, name_b = "zz17test-PairAwareDeleteA", "zz17test-PairAwareDeleteB"
+    _make_account(db_session, name_a)
+    _make_account(db_session, name_b)
+    try:
+        # --- single DELETE /transactions/{id} cascades to the sibling ---
+        leg_a, leg_b = apply_add_transfer(
+            db_session,
+            {"account": name_a, "amount": "-15000", "currency": "IDR"},
+            {"account": name_b, "amount": "15000", "currency": "IDR"},
+        )
+        db_session.commit()
+        db_session.refresh(leg_a)
+        db_session.refresh(leg_b)
+        leg_a_id, leg_b_id = leg_a.id, leg_b.id
+
+        resp = client.delete(f"/transactions/{leg_a_id}", headers={"MONAI_API_KEY": api_key})
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+
+        db_session.expire_all()
+        assert db_session.get(Transaction, leg_a_id) is None
+        assert db_session.get(Transaction, leg_b_id) is None, (
+            "single-leg DELETE must also remove the sibling leg (D-04)"
+        )
+
+        # --- bulk-delete on ONE leg also cascades to the sibling ---
+        leg_c, leg_d = apply_add_transfer(
+            db_session,
+            {"account": name_a, "amount": "-16000", "currency": "IDR"},
+            {"account": name_b, "amount": "16000", "currency": "IDR"},
+        )
+        db_session.commit()
+        db_session.refresh(leg_c)
+        db_session.refresh(leg_d)
+        leg_c_id, leg_d_id = leg_c.id, leg_d.id
+
+        resp = client.post(
+            "/transactions/bulk-delete",
+            json={"ids": [leg_c_id]},
+            headers={"MONAI_API_KEY": api_key},
+        )
+        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
+        data = resp.json()
+        assert set(data["deleted"]) == {leg_c_id, leg_d_id}, (
+            "bulk-delete on one leg must cascade to the sibling"
+        )
+
+        db_session.expire_all()
+        assert db_session.get(Transaction, leg_c_id) is None
+        assert db_session.get(Transaction, leg_d_id) is None
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name_a)
+        _cleanup_account(db_session, name_b)

@@ -48,6 +48,13 @@ export default function AllocationPieChart({
             innerRadius={60}
             outerRadius={100}
             paddingAngle={2}
+            // recharts 3.x entrance animation collapses every sector to
+            // startAngle === endAngle at t=0, and Sector returns null for that
+            // — so the pie is literally zero <path>s until a frame lands. The
+            // clock is rAF-based, so a tab that never gets a frame while the
+            // animation is pending leaves the pie permanently invisible (and
+            // it does not self-heal when frames resume). Final geometry on
+            // first render instead.
           >
             {data.map((_, i) => (
               <Cell key={i} fill={chartColors[i % chartColors.length]} />

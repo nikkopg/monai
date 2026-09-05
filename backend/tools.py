@@ -124,7 +124,7 @@ def spending_total(period="all_time", start_date=None, end_date=None) -> dict:
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {}
     sql = (
-        "SELECT COALESCE(SUM(-amount), 0) FROM transactions "
+        "SELECT COALESCE(SUM(-amount), 0) FROM cashflow_transactions "
         "WHERE amount < 0 AND is_transfer = false" + _date_clause(s, e, p)
     )
     with engine.connect() as c:
@@ -141,7 +141,7 @@ def income_total(period="all_time", start_date=None, end_date=None) -> dict:
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {}
     sql = (
-        "SELECT COALESCE(SUM(amount), 0) FROM transactions "
+        "SELECT COALESCE(SUM(amount), 0) FROM cashflow_transactions "
         "WHERE amount > 0 AND is_transfer = false" + _date_clause(s, e, p)
     )
     with engine.connect() as c:
@@ -158,7 +158,7 @@ def net_total(period="all_time", start_date=None, end_date=None) -> dict:
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {}
     sql = (
-        "SELECT COALESCE(SUM(amount), 0) FROM transactions "
+        "SELECT COALESCE(SUM(amount), 0) FROM cashflow_transactions "
         "WHERE is_transfer = false" + _date_clause(s, e, p)
     )
     with engine.connect() as c:
@@ -166,8 +166,89 @@ def net_total(period="all_time", start_date=None, end_date=None) -> dict:
     return {"tool": "net_total", "net": total, "period": _period_label(period, s, e)}
 
 
+def _category_tree() -> list[dict]:
+    """Build the full category tree from one SELECT over `categories`.
+
+    Node shape: {id, name, kind, icon, color, is_system, children}. `color` is
+    the EFFECTIVE swatch — a NULL own color inherits the nearest ancestor's
+    (D-14). Children are alphabetical within a level (rows are name-ordered).
+    """
+    sql = (
+        "SELECT id, name, parent_id, kind, color, icon, is_system "
+        "FROM categories ORDER BY name"
+    )
+    with engine.connect() as c:
+        rows = c.execute(text(sql)).fetchall()
+    nodes = {
+        r[0]: {"id": r[0], "name": r[1], "kind": r[3], "icon": r[5],
+               "color": r[4], "is_system": r[6], "children": []}
+        for r in rows
+    }
+    roots: list[dict] = []
+    for r in rows:
+        (roots if r[2] is None else nodes[r[2]]["children"]).append(nodes[r[0]])
+
+    def _inherit(node: dict, color: str | None) -> None:
+        if node["color"] is None:
+            node["color"] = color
+        for child in node["children"]:
+            _inherit(child, node["color"])
+
+    for root in roots:
+        _inherit(root, None)
+    return roots
+
+
+def _find_category_node(name: str) -> dict | None:
+    """Resolve a user/LLM-supplied name to a tree node.
+
+    Case-insensitive exact match first, then substring (keeps the old
+    "food" -> "Food & Drinks" ergonomics). None when nothing matches.
+    """
+    target = (name or "").strip().lower()
+    flat: list[dict] = []
+
+    def _walk(nodes: list[dict]) -> None:
+        for n in nodes:
+            flat.append(n)
+            _walk(n["children"])
+
+    _walk(_category_tree())
+    for n in flat:
+        if n["name"].lower() == target:
+            return n
+    matches = [n for n in flat if target and target in n["name"].lower()]
+    return matches[0] if matches else None
+
+
+def _descendant_ids(node: dict) -> list[int]:
+    """The node's id plus every descendant's, via in-Python tree walk."""
+    ids = [node["id"]]
+    for child in node["children"]:
+        ids.extend(_descendant_ids(child))
+    return ids
+
+
+# Shared joins for hierarchy rollup: walk up to two parents (depth cap is 3,
+# so two LEFT JOINs always reach the top-level group). Top node is
+# COALESCE(p2, p1, c); Transfer/system trees and is_transfer rows excluded
+# from every spending total (D-12).
+_ROLLUP_FROM = (
+    "FROM cashflow_transactions t "
+    "JOIN categories c ON c.id = t.category_id "
+    "LEFT JOIN categories p1 ON p1.id = c.parent_id "
+    "LEFT JOIN categories p2 ON p2.id = p1.parent_id "
+    "WHERE t.amount < 0 AND t.is_transfer = false "
+    "AND COALESCE(p2.is_system, p1.is_system, c.is_system) = false"
+)
+
+
 def spending_by_category(period="all_time", start_date=None, end_date=None, limit=5) -> dict:
-    """Top spending categories (expenses only) in a period.
+    """Top spending categories (expenses only) in a period, rolled up to
+    TOP-LEVEL category groups via the category hierarchy — a group's total
+    includes all its subcategories' transactions. Each group's per-subcategory
+    breakdown is returned under "children". Transfers and system categories
+    (Transfer/Uncategorized) are excluded from totals.
 
     period: one of all_time, this_month, last_month, this_year, last_year,
       last_30_days, last_90_days, or "custom". For a specific month/year/range
@@ -175,18 +256,33 @@ def spending_by_category(period="all_time", start_date=None, end_date=None, limi
     """
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {"lim": max(1, min(int(limit), 50))}
+    date_pred = _date_clause(s, e, p)  # `date` is unambiguous: only transactions has it
+    top = "COALESCE(p2.name, p1.name, c.name)"
     sql = (
-        "SELECT category, SUM(-amount) AS total FROM transactions "
-        "WHERE amount < 0 AND is_transfer = false" + _date_clause(s, e, p) +
-        " GROUP BY category ORDER BY total DESC LIMIT :lim"
+        f"SELECT {top} AS top_name, SUM(-t.amount) AS total "
+        + _ROLLUP_FROM + date_pred +
+        " GROUP BY 1 ORDER BY total DESC LIMIT :lim"
     )
-    with engine.connect() as c:
-        rows = [(r[0], float(r[1])) for r in c.execute(text(sql), p).fetchall()]
-    return {"tool": "spending_by_category", "rows": rows, "period": _period_label(period, s, e)}
+    child_sql = (
+        f"SELECT {top} AS top_name, c.name, SUM(-t.amount) AS total "
+        + _ROLLUP_FROM + date_pred +
+        " GROUP BY 1, c.name ORDER BY total DESC"
+    )
+    with engine.connect() as conn:
+        rows = [(r[0], float(r[1])) for r in conn.execute(text(sql), p).fetchall()]
+        crows = conn.execute(text(child_sql), p).fetchall()
+    children: dict[str, list] = {name: [] for name, _ in rows}
+    for top_name, sub_name, total in crows:
+        if top_name in children:
+            children[top_name].append((sub_name, float(total)))
+    return {"tool": "spending_by_category", "rows": rows, "children": children,
+            "period": _period_label(period, s, e)}
 
 
 def spending_in_category(category: str, period="all_time", start_date=None, end_date=None) -> dict:
-    """Total spent in a specific category (substring match on category/raw_category).
+    """Total spent in a category INCLUDING all of its descendant
+    subcategories — a parent/group name sums its entire subtree (name match
+    is case-insensitive, exact first then substring). Transfers excluded.
 
     period: one of all_time, this_month, last_month, this_year, last_year,
       last_30_days, last_90_days, or "custom". For a specific month/year/range
@@ -196,11 +292,16 @@ def spending_in_category(category: str, period="all_time", start_date=None, end_
       year on record and returns a wrong, inflated total.
     """
     s, e = resolve_period(period, start_date, end_date)
-    p: dict = {"cat": f"%{category}%"}
+    node = _find_category_node(category)
+    if node is None:
+        return {"tool": "spending_in_category", "category": category,
+                "error": f"No category matching '{category}' found. "
+                         "Use list_categories to see the category tree."}
+    p: dict = {"ids": _descendant_ids(node)}
     sql = (
-        "SELECT COALESCE(SUM(-amount), 0) FROM transactions "
+        "SELECT COALESCE(SUM(-amount), 0) FROM cashflow_transactions "
         "WHERE amount < 0 AND is_transfer = false "
-        "AND (category ILIKE :cat OR raw_category ILIKE :cat)" + _date_clause(s, e, p)
+        "AND category_id = ANY(:ids)" + _date_clause(s, e, p)
     )
     with engine.connect() as c:
         total = float(c.execute(text(sql), p).scalar() or 0)
@@ -249,6 +350,12 @@ def spending_before_after_purchase(ticker: str, category: str) -> dict:
                                  start_date=pivot.isoformat(),
                                  end_date=today.isoformat())
 
+    # spending_in_category returns an error dict for an unknown category name —
+    # propagate it instead of fabricating (or crashing on) a number.
+    if "error" in before or "error" in after:
+        return {"tool": "spending_before_after_purchase",
+                "error": before.get("error") or after.get("error")}
+
     delta = after["total"] - before["total"]
     return {
         "tool": "spending_before_after_purchase",
@@ -273,7 +380,7 @@ def transaction_count(period="all_time", start_date=None, end_date=None, kind="a
     p: dict = {}
     sign = {"expense": " AND amount < 0", "income": " AND amount > 0", "all": ""}.get(kind, "")
     sql = (
-        "SELECT COUNT(*) FROM transactions WHERE is_transfer = false"
+        "SELECT COUNT(*) FROM cashflow_transactions WHERE is_transfer = false"
         + sign + _date_clause(s, e, p)
     )
     with engine.connect() as c:
@@ -293,7 +400,7 @@ def largest_transactions(period="all_time", start_date=None, end_date=None, limi
     sign = "amount < 0" if kind == "expense" else "amount > 0"
     order = "amount ASC" if kind == "expense" else "amount DESC"
     sql = (
-        "SELECT date, ABS(amount) AS mag, category, merchant FROM transactions "
+        "SELECT date, ABS(amount) AS mag, category, merchant FROM cashflow_transactions "
         f"WHERE {sign} AND is_transfer = false" + _date_clause(s, e, p) +
         f" ORDER BY {order} LIMIT :lim"
     )
@@ -316,7 +423,7 @@ def average_daily_spending(period="this_month", start_date=None, end_date=None) 
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {}
     total_sql = (
-        "SELECT COALESCE(SUM(-amount), 0) FROM transactions "
+        "SELECT COALESCE(SUM(-amount), 0) FROM cashflow_transactions "
         "WHERE amount < 0 AND is_transfer = false" + _date_clause(s, e, p)
     )
     with engine.connect() as c:
@@ -324,6 +431,8 @@ def average_daily_spending(period="this_month", start_date=None, end_date=None) 
         if s is not None and e is not None:
             days = (e - s).days
         else:
+            # Date span, not a total — leave on the base table so the
+            # denominator (days on record) isn't shrunk by the exclusion view.
             row = c.execute(text("SELECT MIN(date), MAX(date) FROM transactions")).fetchone()
             days = ((row[1].date() - row[0].date()).days + 1) if row and row[0] else 1
     days = max(days, 1)
@@ -344,7 +453,7 @@ def monthly_trend(months: int = 6) -> dict:
         "SELECT date_trunc('month', date) AS month, "
         "COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0) AS income, "
         "COALESCE(SUM(-amount) FILTER (WHERE amount < 0), 0) AS expense "
-        "FROM transactions "
+        "FROM cashflow_transactions "
         "WHERE is_transfer = false "
         "AND date >= date_trunc('month', CURRENT_DATE) - (:months || ' months')::interval "
         "GROUP BY 1 ORDER BY 1"
@@ -368,9 +477,12 @@ def account_balances(period_start=None, period_end=None) -> dict:
     period_start/period_end: an already-resolved [start_inclusive, end_exclusive)
     tuple, e.g. from resolve_period() called once by the caller (Plan 03 endpoint).
     This function does NOT call resolve_period itself. current_balance sums ALL
-    of an account's non-transfer transactions regardless of period; period_net
-    sums only the in-period ones. Accounts with zero transactions appear with
-    0/0 (LEFT JOIN). Transfers excluded from both sums.
+    of an account's transactions regardless of period — transfers INCLUDED, a
+    transfer moves real money between accounts and the derived balance must
+    reflect it (Finding 2 / Phase 16 UAT#3; matches the unfiltered SUM that
+    apply_add_balance_adjustment reconciles against). period_net sums only the
+    in-period NON-transfer rows (cashflow/net-income semantics). Accounts with
+    zero transactions appear with 0/0 (LEFT JOIN).
     """
     p: dict = {}
     period_parts = []
@@ -381,32 +493,105 @@ def account_balances(period_start=None, period_end=None) -> dict:
         period_parts.append("t.date < :period_end")
         p["period_end"] = period_end.isoformat()
     period_predicate = (" AND " + " AND ".join(period_parts)) if period_parts else ""
+    # Per-account list (not a cashflow total) — intentionally reads the base
+    # `transactions` table, not `cashflow_transactions`, so investment
+    # accounts still show their own balance here. `type` is additive (Phase
+    # 15) — net_worth() filters by it; existing consumers (CashflowSummary,
+    # the frontend AccountBalance type) are unaffected since it's a new key,
+    # not a removed/renamed one (Pitfall 2).
     sql = (
-        "SELECT a.id, a.name, "
-        "COALESCE(SUM(t.amount), 0) AS current_balance, "
-        f"COALESCE(SUM(t.amount) FILTER (WHERE true{period_predicate}), 0) AS period_net "
+        "SELECT a.id, a.name, a.type, "
+        "COALESCE(SUM(t.amount), 0) AS current_balance, "  # transfers INCLUDED
+        f"COALESCE(SUM(t.amount) FILTER (WHERE t.is_transfer = false{period_predicate}), 0) AS period_net "
         "FROM accounts a "
-        "LEFT JOIN transactions t ON t.account_id = a.id AND t.is_transfer = false "
-        "GROUP BY a.id, a.name ORDER BY a.name"
+        "LEFT JOIN transactions t ON t.account_id = a.id "
+        "GROUP BY a.id, a.name, a.type ORDER BY a.name"
     )
     with engine.connect() as c:
         rows = [
-            {"id": r[0], "name": r[1], "current_balance": float(r[2]), "period_net": float(r[3])}
+            {
+                "id": r[0], "name": r[1], "type": r[2],
+                "current_balance": float(r[3]), "period_net": float(r[4]),
+            }
             for r in c.execute(text(sql), p).fetchall()
         ]
     return {"tool": "account_balances", "rows": rows}
 
 
+def net_worth(db=None) -> dict:
+    """Single trustworthy net worth = liquid accounts + investment platforms,
+    each real account/holding counted exactly once (NW-01, D-01/D-03/D-04).
+
+    Liquid side: account_balances() rows filtered to type == 'liquid' only
+    (never by name/id). Investment side: portfolio_summary(db).total_value —
+    the single source of truth; never re-summed from holdings/portfolio_events
+    (it already includes the CASH sentinel via its asset_type=='cash' branch).
+
+    db: an existing Session, or None to open (and close) a fresh one — the
+    agent/MCP call path invokes this with zero args (D-02), unlike main.py's
+    endpoint which passes its request-scoped session.
+
+    Coverage assertion (D-05): raises ValueError if liquid_count +
+    investment_count != total account count — refuses to silently drop or
+    double-count if the accounts.type CHECK invariant is ever violated.
+    """
+    from backend.db import SessionLocal
+    from backend.portfolio import portfolio_summary
+
+    owns_session = db is None
+    db = db or SessionLocal()
+    try:
+        rows = account_balances()["rows"]
+        liquid_rows = [r for r in rows if r["type"] == "liquid"]
+        investment_rows = [r for r in rows if r["type"] == "investment"]
+        if len(liquid_rows) + len(investment_rows) != len(rows):
+            raise ValueError(
+                f"net_worth coverage gap: {len(liquid_rows) + len(investment_rows)}/{len(rows)} "
+                "accounts classified — refusing to silently drop or double-count"
+            )
+        liquid_total = sum(r["current_balance"] for r in liquid_rows)
+
+        pf = portfolio_summary(db)
+        investment_total = float(pf["total_value"])
+
+        return {
+            "tool": "net_worth",
+            "total": liquid_total + investment_total,
+            "liquid_total": liquid_total,
+            "investment_total": investment_total,
+            "liquid_accounts": liquid_rows,
+            "investment_groups": pf["groups"],
+            "accounts_covered": len(liquid_rows) + len(investment_rows),
+            "accounts_total": len(rows),
+        }
+    finally:
+        if owns_session:
+            db.close()
+
+
+def net_worth_tool() -> dict:
+    """Zero-arg agent/MCP-facing wrapper for net_worth (WR-01).
+
+    The LLM tool schema (LlamaIndex FunctionTool + FastMCP) is generated by
+    introspecting the registered callable's signature. Registering the
+    db-taking net_worth directly leaked its internal `db` Session param onto
+    both schemas, inviting the model to hallucinate a value that skips the
+    owns_session branch and crashes portfolio_summary. This wrapper keeps the
+    advertised tool argument-free; net_worth opens (and closes) its own
+    session. The request-scoped session stays on the endpoint path (main.py),
+    which calls net_worth(db) directly.
+    """
+    return net_worth()
+
+
 def list_categories() -> dict:
-    """List distinct expense categories with their total spend (helps map vague terms)."""
-    sql = (
-        "SELECT category, SUM(-amount) AS total FROM transactions "
-        "WHERE amount < 0 AND is_transfer = false "
-        "GROUP BY category ORDER BY total DESC LIMIT 40"
-    )
-    with engine.connect() as c:
-        rows = [(r[0], float(r[1])) for r in c.execute(text(sql)).fetchall()]
-    return {"tool": "list_categories", "rows": rows}
+    """The full category TREE (not a flat list): top-level groups with nested
+    children. Each node has id, name, kind (expense/income/transfer), icon
+    (emoji), effective color (inherits the parent's when unset), is_system,
+    and children. Includes the Transfer and Uncategorized system nodes. Use
+    this to map a vague term to a real category or group name.
+    """
+    return {"tool": "list_categories", "categories": _category_tree()}
 
 
 def find_transactions(
@@ -439,7 +624,7 @@ def find_transactions(
     if sign:
         clauses.append(sign)
     sql = (
-        "SELECT id, date, amount, category, merchant, account_id FROM transactions WHERE "
+        "SELECT id, date, amount, category, merchant, account_id FROM cashflow_transactions WHERE "
         + " AND ".join(clauses) + _date_clause(s, e, p) +
         " ORDER BY date DESC LIMIT :lim"
     )
@@ -507,10 +692,11 @@ TOOLS = {
     "find_accounts": find_accounts,
     "monthly_trend": monthly_trend,
     "account_balances": account_balances,
+    "net_worth": net_worth_tool,
 }
 
 # Snapshot of the read-only tool names, captured BEFORE the write tools are
-# merged into TOOLS below. TOOLS itself becomes 26 entries (15 read + 11
+# merged into TOOLS below. TOOLS itself becomes 27 entries (16 read + 11
 # propose_* write) once this module finishes loading, so any read-only
 # surface (e.g. the MCP server, D-03/MCP-03) must key off this frozenset,
 # never off TOOLS directly.
@@ -803,12 +989,35 @@ def propose_delete_account(account_id: int) -> dict:
 
 
 def propose_rename_category(old_name: str, new_name: str) -> dict:
-    """Propose renaming a category across all transactions. Non-orphaning — always allowed.
-    Returns a proposal for user confirmation. Does NOT change any data — user must approve.
+    """Propose renaming a category. A rename edits the categories row once;
+    every transaction follows via its category_id FK. old_name must be an
+    existing category; new_name must not collide with a sibling under the
+    same parent. Returns a proposal for user confirmation. Does NOT change
+    any data — user must approve.
     """
-    count_sql = "SELECT COUNT(*) FROM transactions WHERE category = :cat"
     with engine.connect() as c:
-        affected_count = int(c.execute(text(count_sql), {"cat": old_name}).scalar() or 0)
+        row = c.execute(
+            text("SELECT id, parent_id FROM categories WHERE name = :n LIMIT 1"),
+            {"n": old_name},
+        ).fetchone()
+        if row is None:
+            return {"tool": "propose_rename_category",
+                    "error": f"Category '{old_name}' not found. "
+                             "Use list_categories to see the category tree."}
+        cat_id, parent_id = row[0], row[1]
+        collision = c.execute(
+            text("SELECT 1 FROM categories WHERE name = :n "
+                 "AND parent_id IS NOT DISTINCT FROM :p AND id != :id"),
+            {"n": new_name, "p": parent_id, "id": cat_id},
+        ).fetchone()
+        if collision is not None:
+            return {"tool": "propose_rename_category",
+                    "error": f"A category named '{new_name}' already exists "
+                             "under the same parent."}
+        affected_count = int(c.execute(
+            text("SELECT COUNT(*) FROM transactions WHERE category_id = :cid"),
+            {"cid": cat_id},
+        ).scalar() or 0)
 
     payload = {
         "operation": "rename_category",
@@ -826,13 +1035,41 @@ def propose_rename_category(old_name: str, new_name: str) -> dict:
 
 
 def propose_merge_category(from_name: str, into_name: str) -> dict:
-    """Propose merging one category into another. Non-orphaning — always allowed.
-    All transactions in from_name will be recategorized to into_name.
-    Returns a proposal for user confirmation. Does NOT change any data — user must approve.
+    """Propose merging one category into another: transactions on from_name
+    are repointed to into_name's category node. Both must be existing
+    categories, and from_name must have no child subcategories (merge or move
+    those first). Returns a proposal for user confirmation. Does NOT change
+    any data — user must approve.
     """
-    count_sql = "SELECT COUNT(*) FROM transactions WHERE category = :cat"
     with engine.connect() as c:
-        affected_count = int(c.execute(text(count_sql), {"cat": from_name}).scalar() or 0)
+        src = c.execute(
+            text("SELECT id FROM categories WHERE name = :n LIMIT 1"),
+            {"n": from_name},
+        ).fetchone()
+        if src is None:
+            return {"tool": "propose_merge_category",
+                    "error": f"Category '{from_name}' not found. "
+                             "Use list_categories to see the category tree."}
+        dst = c.execute(
+            text("SELECT id FROM categories WHERE name = :n LIMIT 1"),
+            {"n": into_name},
+        ).fetchone()
+        if dst is None:
+            return {"tool": "propose_merge_category",
+                    "error": f"Category '{into_name}' not found. "
+                             "Use list_categories to see the category tree."}
+        child_count = int(c.execute(
+            text("SELECT COUNT(*) FROM categories WHERE parent_id = :id"),
+            {"id": src[0]},
+        ).scalar() or 0)
+        if child_count > 0:
+            return {"tool": "propose_merge_category",
+                    "error": f"Category '{from_name}' has {child_count} "
+                             "subcategories — merge or move those first."}
+        affected_count = int(c.execute(
+            text("SELECT COUNT(*) FROM transactions WHERE category_id = :cid"),
+            {"cid": src[0]},
+        ).scalar() or 0)
 
     payload = {
         "operation": "merge_category",
@@ -958,6 +1195,215 @@ def propose_delete_holding(holding_id: int) -> dict:
     }
 
 
+def propose_add_transfer(
+    from_account: str,
+    to_account: str,
+    amount: float,
+    currency: str = "IDR",
+    date: str | None = None,
+    notes: str | None = None,
+) -> dict:
+    """Propose a transfer between two liquid accounts. amount is an unsigned
+    magnitude — the source leg is debited (-abs) and the destination leg is
+    credited (+abs); do not pass a signed amount. Returns a proposal for user
+    confirmation. Does NOT move any money — user must approve. (XFER-01)
+    """
+    leg_a = {
+        "account": from_account,
+        "amount": str(Decimal(str(-abs(amount)))),
+        "currency": currency,
+        "date": date,
+        "notes": notes,
+    }
+    leg_b = {
+        "account": to_account,
+        "amount": str(Decimal(str(abs(amount)))),
+        "currency": currency,
+        "date": date,
+        "notes": notes,
+    }
+    payload = {
+        "operation": "add_transfer",
+        "rows": [{"before": None, "after": {"leg_a": leg_a, "leg_b": leg_b}}],
+    }
+    proposal_id, proposal_token = _make_proposal("add_transfer", payload)
+    return {
+        "tool": "propose_add_transfer",
+        "proposal_id": proposal_id,
+        "proposal_token": proposal_token,
+        "summary": f"Transfer {amount} {currency} from {from_account} to {to_account}",
+        "before": None,
+        "after": {"leg_a": leg_a, "leg_b": leg_b},
+    }
+
+
+def propose_add_investment_transfer(
+    from_account: str,
+    platform_id: int,
+    amount: float,
+    currency: str = "IDR",
+    date: str | None = None,
+    notes: str | None = None,
+) -> dict:
+    """Propose moving cash from a liquid account into an investment platform
+    with no immediate buy (a plain funding deposit). Recorded as a per-platform
+    sentinel position: ticker='CASH', event_type='deposit', asset_type='cash',
+    price=1, quantity=amount — consistent with the existing asset_type=='cash'
+    1:1 valuation convention. platform_id is an int; use find_platforms first
+    to resolve a platform name to its id. Returns a proposal for user
+    confirmation. Does NOT move any money — user must approve. (XFER-02)
+    """
+    cash_leg = {
+        "account": from_account,
+        "amount": str(Decimal(str(-abs(amount)))),
+        "currency": currency,
+        "date": date,
+        "notes": notes,
+    }
+    event = {
+        "ticker": "CASH",
+        "event_type": "deposit",
+        "quantity": str(Decimal(str(abs(amount)))),
+        "price": "1",
+        "platform_id": platform_id,
+        "currency": currency,
+        "date": date,
+        "asset_type": "cash",
+    }
+    payload = {
+        "operation": "add_investment_transfer",
+        "rows": [{"before": None, "after": {"cash_leg": cash_leg, "event": event}}],
+    }
+    proposal_id, proposal_token = _make_proposal("add_investment_transfer", payload)
+    return {
+        "tool": "propose_add_investment_transfer",
+        "proposal_id": proposal_id,
+        "proposal_token": proposal_token,
+        "summary": f"Fund platform #{platform_id} with {amount} {currency} from {from_account}",
+        "before": None,
+        "after": {"cash_leg": cash_leg, "event": event},
+    }
+
+
+def propose_add_funded_buy(
+    source_account_name: str,
+    platform_id: int,
+    ticker: str,
+    quantity: float,
+    price: float,
+    cash_amount: float,
+    cash_currency: str = "IDR",
+    event_currency: str = "IDR",
+    date: str | None = None,
+    notes: str | None = None,
+    asset_type: str | None = None,
+) -> dict:
+    """Propose a funded buy: debit source_account_name for cash_amount (an
+    unsigned positive magnitude — the primitive owns the debit sign) and
+    record a 'buy' PortfolioEvent for quantity units of ticker at price on
+    platform_id. platform_id is an int; use find_platforms first to resolve a
+    platform name to its id. Returns a proposal for user confirmation. Does
+    NOT move any money — user must approve. (XFER-03)
+    """
+    after = {
+        "source_account_name": source_account_name,
+        "cash_currency": cash_currency,
+        "cash_amount": abs(float(cash_amount)),
+        "ticker": ticker,
+        "quantity": abs(float(quantity)),
+        "price": abs(float(price)),
+        "platform_id": platform_id,
+        "event_currency": event_currency,
+        "date": date,
+        "notes": notes,
+        "asset_type": asset_type,
+    }
+    payload = {"operation": "add_funded_buy", "rows": [{"before": None, "after": after}]}
+    proposal_id, proposal_token = _make_proposal("add_funded_buy", payload)
+    return {
+        "tool": "propose_add_funded_buy",
+        "proposal_id": proposal_id,
+        "proposal_token": proposal_token,
+        "summary": f"Buy {quantity} {ticker} @ {price} {event_currency} funded by {cash_amount} {cash_currency} from {source_account_name}",
+        "before": None,
+        "after": after,
+    }
+
+
+def propose_add_funded_sell(
+    source_account_name: str,
+    platform_id: int,
+    ticker: str,
+    quantity: float,
+    price: float,
+    cash_amount: float,
+    cash_currency: str = "IDR",
+    event_currency: str = "IDR",
+    date: str | None = None,
+    notes: str | None = None,
+    asset_type: str | None = None,
+) -> dict:
+    """Propose a funded sell: credit source_account_name for cash_amount (an
+    unsigned positive magnitude — the primitive owns the credit sign) and
+    record a 'sell' PortfolioEvent for quantity units of ticker at price on
+    platform_id. platform_id is an int; use find_platforms first to resolve a
+    platform name to its id. Returns a proposal for user confirmation. Does
+    NOT move any money — user must approve. (XFER-03)
+    """
+    after = {
+        "source_account_name": source_account_name,
+        "cash_currency": cash_currency,
+        "cash_amount": abs(float(cash_amount)),
+        "ticker": ticker,
+        "quantity": abs(float(quantity)),
+        "price": abs(float(price)),
+        "platform_id": platform_id,
+        "event_currency": event_currency,
+        "date": date,
+        "notes": notes,
+        "asset_type": asset_type,
+    }
+    payload = {"operation": "add_funded_sell", "rows": [{"before": None, "after": after}]}
+    proposal_id, proposal_token = _make_proposal("add_funded_sell", payload)
+    return {
+        "tool": "propose_add_funded_sell",
+        "proposal_id": proposal_id,
+        "proposal_token": proposal_token,
+        "summary": f"Sell {quantity} {ticker} @ {price} {event_currency}, credit {cash_amount} {cash_currency} to {source_account_name}",
+        "before": None,
+        "after": after,
+    }
+
+
+def propose_add_balance_adjustment(account_id: int, target_balance: float) -> dict:
+    """Propose reconciling an account's derived balance to target_balance. The
+    stored delta becomes a visible 'Adjustment' record (ACCT-02). Returns a
+    proposal for user confirmation. Does NOT change any data — user must
+    approve.
+    """
+    from backend.models import Account
+
+    with get_session_sync() as db:
+        acc = db.get(Account, account_id)
+        if acc is None:
+            return {"tool": "propose_add_balance_adjustment", "error": f"Account {account_id} not found"}
+        acc_name = acc.name
+
+    payload = {
+        "operation": "add_balance_adjustment",
+        "rows": [{"account_id": account_id, "target_balance": str(target_balance)}],
+    }
+    proposal_id, proposal_token = _make_proposal("add_balance_adjustment", payload)
+    return {
+        "tool": "propose_add_balance_adjustment",
+        "proposal_id": proposal_id,
+        "proposal_token": proposal_token,
+        "summary": f"Adjust account #{account_id} ({acc_name}) balance to {target_balance}",
+        "before": None,
+        "after": {"account_id": account_id, "target_balance": str(target_balance)},
+    }
+
+
 # Extend the TOOLS registry with write tools (proposal-producers)
 TOOLS.update({
     "propose_add_transaction": propose_add_transaction,
@@ -971,6 +1417,11 @@ TOOLS.update({
     "propose_add_holding": propose_add_holding,
     "propose_edit_holding": propose_edit_holding,
     "propose_delete_holding": propose_delete_holding,
+    "propose_add_transfer": propose_add_transfer,
+    "propose_add_investment_transfer": propose_add_investment_transfer,
+    "propose_add_funded_buy": propose_add_funded_buy,
+    "propose_add_funded_sell": propose_add_funded_sell,
+    "propose_add_balance_adjustment": propose_add_balance_adjustment,
 })
 
 
@@ -982,6 +1433,8 @@ def format_answer(result: dict, currency: str | None = None) -> str:
     """Render a tool result dict as a natural-language answer with correct currency."""
     cur = currency or _currency()
     tool = result.get("tool")
+    if result.get("error"):
+        return result["error"]
     period = result.get("period", "")
     suffix = f" ({period})" if period and period != "all time" else (" (all time)" if period == "all time" else "")
 
@@ -1017,7 +1470,12 @@ def format_answer(result: dict, currency: str | None = None) -> str:
         return (f"You spent an average of {_fmt(result['average'], cur)} per day "
                 f"over {result['days']} days{suffix} (total {_fmt(result['total'], cur)}).")
     if tool == "list_categories":
-        lines = [f"- {c}: {_fmt(t, cur)}" for c, t in result["rows"][:20]]
-        return "Your expense categories by total spend:\n" + "\n".join(lines)
+        lines: list[str] = []
+        stack = [(n, 0) for n in reversed(result["categories"])]
+        while stack:
+            node, depth = stack.pop()
+            lines.append("  " * depth + f"- {node['name']}")
+            stack.extend((ch, depth + 1) for ch in reversed(node["children"]))
+        return "Your categories:\n" + "\n".join(lines)
 
     return str(result)

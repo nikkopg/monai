@@ -154,14 +154,24 @@ class TestToolSQL:
         assert all(r["amount"] > 0 for r in income_rows)
 
     def test_find_transactions_category_exact_match(self, db_available):
-        from backend.tools import list_categories, find_transactions
-        cats = list_categories()["rows"]
-        if not cats:
+        # find_transactions still filters on the legacy category string, so
+        # seed the filter value straight from transactions (list_categories
+        # now returns the hierarchy tree, not legacy strings).
+        from sqlalchemy import text
+        from backend.db import engine
+        from backend.tools import find_transactions
+
+        with engine.connect() as c:
+            row = c.execute(text(
+                "SELECT category FROM transactions "
+                "WHERE category IS NOT NULL AND is_transfer = false LIMIT 1"
+            )).fetchone()
+        if not row:
             return
-        category_name = cats[0][0]
+        category_name = row[0]
         rows = find_transactions(category=category_name, limit=20)["rows"]
-        for row in rows:
-            assert row["category"] == category_name
+        for r in rows:
+            assert r["category"] == category_name
 
     def test_find_transactions_merchant_partial_match(self, db_available):
         from backend.tools import find_transactions
@@ -218,7 +228,7 @@ class TestToolSQL:
 
         with engine.connect() as c:
             c.execute(text(
-                "INSERT INTO accounts (name, type, currency) VALUES ('ZZ Test BCA', 'bank', 'IDR') "
+                "INSERT INTO accounts (name, type, currency) VALUES ('ZZ Test BCA', 'liquid', 'IDR') "
                 "ON CONFLICT (name) DO NOTHING"
             ))
             c.commit()
@@ -274,20 +284,27 @@ def test_spending_before_after_purchase(db_available):
                  "VALUES (:d, :t, 'buy', 1, 100, :pid)"),
             {"d": pivot, "t": TICKER, "pid": plat_id},
         )
+        # spending_in_category is hierarchy-backed (11-04): the category must
+        # exist as a categories node and transactions must carry category_id.
+        cat_id = c.execute(
+            text("INSERT INTO categories (name, parent_id, kind, is_system) "
+                 "VALUES (:n, NULL, 'expense', false) RETURNING id"),
+            {"n": CATEGORY},
+        ).scalar()
         c.execute(
-            text("INSERT INTO transactions (date, amount, currency, category, is_transfer) "
-                 "VALUES (:d, -100, 'IDR', :cat, false)"),
-            {"d": before_day, "cat": CATEGORY},
+            text("INSERT INTO transactions (date, amount, currency, category, category_id, is_transfer) "
+                 "VALUES (:d, -100, 'IDR', :cat, :cid, false)"),
+            {"d": before_day, "cat": CATEGORY, "cid": cat_id},
         )
         c.execute(
-            text("INSERT INTO transactions (date, amount, currency, category, is_transfer) "
-                 "VALUES (:d, -300, 'IDR', :cat, false)"),
-            {"d": after_day, "cat": CATEGORY},
+            text("INSERT INTO transactions (date, amount, currency, category, category_id, is_transfer) "
+                 "VALUES (:d, -300, 'IDR', :cat, :cid, false)"),
+            {"d": after_day, "cat": CATEGORY, "cid": cat_id},
         )
         c.execute(
-            text("INSERT INTO transactions (date, amount, currency, category, is_transfer) "
-                 "VALUES (:d, -50, 'IDR', :cat, false)"),
-            {"d": pivot, "cat": CATEGORY},  # boundary: pivot day counts as "after"
+            text("INSERT INTO transactions (date, amount, currency, category, category_id, is_transfer) "
+                 "VALUES (:d, -50, 'IDR', :cat, :cid, false)"),
+            {"d": pivot, "cat": CATEGORY, "cid": cat_id},  # boundary: pivot day counts as "after"
         )
 
     try:
@@ -309,3 +326,144 @@ def test_spending_before_after_purchase(db_available):
         with engine.begin() as c:
             c.execute(text("DELETE FROM portfolio_events WHERE ticker = :t"), {"t": TICKER})
             c.execute(text("DELETE FROM transactions WHERE category = :cat"), {"cat": CATEGORY})
+            c.execute(text("DELETE FROM categories WHERE name = :cat"), {"cat": CATEGORY})
+
+
+# --------------------------------------------------------------------------
+# Category hierarchy tests (CAT-04, D-09/D-10/D-11/D-12) — Phase 11 Plan 04
+# --------------------------------------------------------------------------
+
+@pytest.fixture
+def category_tree(db_available):
+    """Root group (expense, own color) -> child -> grandchild, each with one
+    directly-attached transaction, plus a sibling system category and a
+    Transfer-flagged transaction on the root — enough to exercise 3-level
+    rollup (D-09), descendant-inclusive sums (D-10), and D-12 exclusion
+    (system category + is_transfer) in one fixture.
+
+    Deliberately leaves the legacy `transactions.category` string column NULL
+    on every seeded row — these tests exist to prove the tools have moved onto
+    `category_id`, not the legacy string (D-11); against the pre-hierarchy
+    implementation none of these rows would ever be found by string matching.
+    """
+    from sqlalchemy import text
+    from backend.db import engine
+
+    ROOT, CHILD, GRANDCHILD, SYSTEM = (
+        "ZZ Test Root Group", "ZZ Test Child", "ZZ Test Grandchild", "ZZ Test System",
+    )
+    today = datetime.date.today()
+    ids: dict[str, int] = {}
+    with engine.begin() as c:
+        ids["root"] = c.execute(
+            text("INSERT INTO categories (name, parent_id, kind, color, is_system) "
+                 "VALUES (:n, NULL, 'expense', :col, false) RETURNING id"),
+            {"n": ROOT, "col": "#123456"},
+        ).scalar()
+        ids["child"] = c.execute(
+            text("INSERT INTO categories (name, parent_id, kind, is_system) "
+                 "VALUES (:n, :p, 'expense', false) RETURNING id"),
+            {"n": CHILD, "p": ids["root"]},
+        ).scalar()
+        ids["grandchild"] = c.execute(
+            text("INSERT INTO categories (name, parent_id, kind, is_system) "
+                 "VALUES (:n, :p, 'expense', false) RETURNING id"),
+            {"n": GRANDCHILD, "p": ids["child"]},
+        ).scalar()
+        ids["system"] = c.execute(
+            text("INSERT INTO categories (name, parent_id, kind, is_system) "
+                 "VALUES (:n, NULL, 'expense', true) RETURNING id"),
+            {"n": SYSTEM},
+        ).scalar()
+
+        for key, amount in (("root", -100), ("child", -200), ("grandchild", -300), ("system", -50)):
+            c.execute(text(
+                "INSERT INTO transactions (date, amount, currency, category_id, is_transfer) "
+                "VALUES (:d, :amt, 'IDR', :cid, false)"
+            ), {"d": today, "amt": amount, "cid": ids[key]})
+        # Transfer-flagged transaction attached to the root — must not inflate
+        # the root's spending total regardless of its category (D-12).
+        c.execute(text(
+            "INSERT INTO transactions (date, amount, currency, category_id, is_transfer) "
+            "VALUES (:d, -999, 'IDR', :cid, true)"
+        ), {"d": today, "cid": ids["root"]})
+
+    yield {"root": ROOT, "child": CHILD, "grandchild": GRANDCHILD, "system": SYSTEM, "ids": ids}
+
+    with engine.begin() as c:
+        c.execute(text("DELETE FROM transactions WHERE category_id = ANY(:ids)"), {"ids": list(ids.values())})
+        for key in ("grandchild", "child", "root", "system"):
+            c.execute(text("DELETE FROM categories WHERE id = :id"), {"id": ids[key]})
+
+
+class TestCategoryHierarchyTools:
+    def test_spending_by_category_rolls_up_three_levels(self, category_tree):
+        from backend.tools import spending_by_category
+        result = spending_by_category(limit=50)
+        assert result["tool"] == "spending_by_category"
+        totals = dict(result["rows"])
+        assert totals[category_tree["root"]] == 600.0  # 100 (root) + 200 (child) + 300 (grandchild)
+        assert "children" in result
+        children = dict(result["children"][category_tree["root"]])
+        assert children == {
+            category_tree["root"]: 100.0,
+            category_tree["child"]: 200.0,
+            category_tree["grandchild"]: 300.0,
+        }
+
+    def test_spending_by_category_excludes_system_and_transfer(self, category_tree):
+        from backend.tools import spending_by_category
+        result = spending_by_category(limit=50)
+        names = [name for name, _ in result["rows"]]
+        assert category_tree["system"] not in names
+        # the transfer-flagged root transaction (-999) must not inflate the root total
+        assert dict(result["rows"])[category_tree["root"]] == 600.0
+
+    def test_spending_in_category_parent_includes_descendants(self, category_tree):
+        from backend.tools import spending_in_category
+        root_total = spending_in_category(category_tree["root"])["total"]
+        assert root_total == 600.0
+
+    def test_spending_in_category_child_excludes_parent_own_rows(self, category_tree):
+        from backend.tools import spending_in_category
+        child_total = spending_in_category(category_tree["child"])["total"]
+        assert child_total == 500.0  # child (200) + grandchild (300), not root's own 100
+
+    def test_list_categories_returns_tree_with_effective_color(self, category_tree):
+        from backend.tools import list_categories
+        result = list_categories()
+        assert result["tool"] == "list_categories"
+        assert "categories" in result
+
+        def _find(nodes, name):
+            for n in nodes:
+                if n["name"] == name:
+                    return n
+                found = _find(n["children"], name)
+                if found:
+                    return found
+            return None
+
+        root_node = _find(result["categories"], category_tree["root"])
+        assert root_node is not None
+        assert root_node["color"] == "#123456"
+        child_node = _find(root_node["children"], category_tree["child"])
+        assert child_node is not None
+        assert child_node["color"] == "#123456"  # inherited from root (D-14)
+
+        top_names = [n["name"] for n in result["categories"]]
+        assert "Transfer" in top_names
+        assert "Uncategorized" in top_names
+
+    def test_propose_rename_category_unknown_name_returns_error(self, db_available):
+        from backend.tools import propose_rename_category
+        result = propose_rename_category("ZZ Definitely Not A Real Category", "New Name")
+        assert result["tool"] == "propose_rename_category"
+        assert "error" in result
+        assert "proposal_id" not in result
+
+    def test_propose_merge_category_counts_via_category_id(self, category_tree):
+        from backend.tools import propose_merge_category
+        result = propose_merge_category(category_tree["grandchild"], category_tree["child"])
+        assert result["tool"] == "propose_merge_category"
+        assert result["before"]["affected_count"] == 1

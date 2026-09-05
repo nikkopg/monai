@@ -45,6 +45,7 @@ class TransactionOut(BaseModel):
     notes: str | None
     account_id: int | None
     is_transfer: bool
+    transfer_pair_id: int | None = None  # D-02/REC-05 — collapse-pair key for the ledger
 
 
 class AccountOut(BaseModel):
@@ -56,13 +57,48 @@ class AccountOut(BaseModel):
     currency: str | None
 
 
+class CategoryRollupChild(BaseModel):
+    """A subcategory's contribution to its top-level group's rollup (CAT-04)."""
+
+    id: int
+    name: str
+    color: str | None  # effective (inherited) swatch, never None in practice
+    icon: str | None
+    total: float
+
+
+class CategoryRollup(BaseModel):
+    """A top-level category group's spending rollup for the dashboard donut
+    (CAT-04) — id/color/icon join the hierarchy onto tools.py's
+    spending_by_category rows/children, ordered by total desc."""
+
+    id: int
+    name: str
+    color: str | None
+    icon: str | None
+    total: float
+    children: list[CategoryRollupChild]
+
+
 class CashflowSummary(BaseModel):
     """Single composed payload for GET /cashflow/summary (D-08)."""
 
     totals: dict  # {income, expense, net} as floats
-    by_category: list  # rows from spending_by_category
+    by_category: list[CategoryRollup]  # hierarchy rollup (CAT-04, was tuple rows)
     accounts: list  # rows from account_balances (id/name/current_balance/period_net)
     trend: list  # rows from monthly_trend (month/income/expense/net)
+
+
+class NetWorth(BaseModel):
+    """Single composed payload for GET /net-worth (D-01, D-05, NW-01/NW-02)."""
+
+    total: float
+    liquid_total: float
+    investment_total: float
+    liquid_accounts: list  # rows from account_balances filtered to type='liquid'
+    investment_groups: list  # rows from portfolio_summary.groups
+    accounts_covered: int
+    accounts_total: int
 
 
 class TransactionUpdate(BaseModel):
@@ -79,6 +115,28 @@ class TransactionUpdate(BaseModel):
     account: str | None = None
     notes: str | None = None
     is_transfer: bool | None = None
+
+
+class BulkDeleteRequest(BaseModel):
+    """Body for POST /transactions/bulk-delete (D-03/REC-03)."""
+
+    ids: list[int]
+
+
+class BulkRecategorizeRequest(BaseModel):
+    """Body for POST /transactions/bulk-recategorize (D-03/REC-03)."""
+
+    ids: list[int]
+    category: str
+
+
+class BulkActionResponse(BaseModel):
+    """Shared response shape for both bulk endpoints (D-03) — partial
+    failure is surfaced in skipped[{id, reason}], never a raw 500."""
+
+    deleted: list[int] = []
+    recategorized: list[int] = []
+    skipped: list[dict] = []
 
 
 class AccountCreate(BaseModel):
@@ -155,6 +213,79 @@ class PortfolioEventOut(BaseModel):
     event_type: str
     quantity: MoneyDecimal
     price: MoneyDecimal
+
+
+# ---------------------------------------------------------------------------
+# Phase 14 direct-write bodies (CHAT-09/XFER-01..03/ACCT-02) — REST path
+# parallel to the confirm-before-write agent path (14-02). Every positive
+# magnitude uses Field(..., gt=0); the apply_* primitives own sign
+# normalization, these schemas only reject negative/zero at the boundary.
+# ---------------------------------------------------------------------------
+
+
+class TransferCreate(BaseModel):
+    """Body for POST /transactions/transfer (XFER-01)."""
+
+    from_account: str
+    to_account: str
+    amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude; sign is applied per leg")
+    currency: str = "IDR"
+    date: str | None = None
+    notes: str | None = None
+
+
+class InvestmentTransferCreate(BaseModel):
+    """Body for POST /transactions/investment-transfer (XFER-02)."""
+
+    from_account: str
+    platform_id: int = Field(..., description="Required — no by-name resolution, mirrors account-id precedent")
+    amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude")
+    currency: str = "IDR"
+    date: str | None = None
+    notes: str | None = None
+
+
+class FundedBuyCreate(BaseModel):
+    """Body for POST /portfolio-events/funded-buy (XFER-03)."""
+
+    source_account_name: str
+    platform_id: int = Field(..., description="Required — position identity is (ticker, platform_id)")
+    ticker: str
+    quantity: MoneyDecimal = Field(..., gt=0, description="Units; must be positive")
+    price: MoneyDecimal = Field(..., gt=0, description="Price per unit in the event's native currency")
+    cash_amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude; the primitive always debits")
+    cash_currency: str = "IDR"
+    event_currency: str = "IDR"
+    date: str | None = None
+    notes: str | None = None
+    asset_type: str | None = None
+
+
+class FundedSellCreate(BaseModel):
+    """Body for POST /portfolio-events/funded-sell (XFER-03)."""
+
+    source_account_name: str
+    platform_id: int = Field(..., description="Required — position identity is (ticker, platform_id)")
+    ticker: str
+    quantity: MoneyDecimal = Field(..., gt=0, description="Units; must be positive")
+    price: MoneyDecimal = Field(..., gt=0, description="Price per unit in the event's native currency")
+    cash_amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude; the primitive always credits")
+    cash_currency: str = "IDR"
+    event_currency: str = "IDR"
+    date: str | None = None
+    notes: str | None = None
+    asset_type: str | None = None
+
+
+class BalanceAdjustmentCreate(BaseModel):
+    """Body for POST /accounts/{account_id}/adjust-balance (ACCT-02).
+
+    NO gt=0 on target_balance — a target balance may legitimately be zero or
+    negative (e.g. a liability account). account_id comes from the path, not
+    the body.
+    """
+
+    target_balance: MoneyDecimal
 
 
 class HoldingCreate(BaseModel):
@@ -236,6 +367,56 @@ class PriceOverrideRequest(BaseModel):
 
     ticker: str
     price: MoneyDecimal = Field(..., gt=0, description="New price per unit in IDR; positive")
+
+
+class CategoryCreate(BaseModel):
+    """Body for POST /categories (CAT-01). `kind` and `color` are required
+    only at root (parent_id=None); below root, kind is always forced to the
+    parent's root kind (D-03) and color may be omitted to inherit (D-14) —
+    enforced in apply_add_category, not here, since the requirement is
+    conditional on parent_id."""
+
+    name: str
+    parent_id: int | None = None
+    kind: str | None = None
+    color: str | None = None
+    icon: str | None = None
+
+
+class CategoryUpdate(BaseModel):
+    """Partial-update body for editing a category — all fields Optional.
+
+    Unlike AccountUpdate, the API layer reads this with model_dump(...,
+    exclude_unset=True) rather than exclude_none — an explicit parent_id
+    (including a future null-to-root case) must be distinguishable from
+    "not provided" (see apply_edit_category).
+    """
+
+    name: str | None = None
+    parent_id: int | None = None
+    kind: str | None = None
+    color: str | None = None
+    icon: str | None = None
+
+
+class CategoryNode(BaseModel):
+    """One node in the GET /categories tree response (CAT-01, D-14)."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    parent_id: int | None
+    kind: str
+    color: str | None
+    effective_color: str | None
+    icon: str | None
+    is_system: bool
+    tx_count: int
+    children: list["CategoryNode"] = []
+
+
+CategoryNode.model_rebuild()
 
 
 class CategoryRenameRequest(BaseModel):

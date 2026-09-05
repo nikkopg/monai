@@ -4,24 +4,22 @@ import { useState } from "react";
 import {
   LineChart,
   Line,
-  CartesianGrid,
   XAxis,
-  YAxis,
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
 
+import { tokens } from "../styles";
+
 // ---------------------------------------------------------------------------
-// Portfolio value / P&L history (VZ-02, INVX-01). Clone of
-// ui/app/cashflow/charts/TrendChart.tsx with Bar→Line and a date x-axis.
-// Fetches GET /api/investments/history (open read, no key injection needed —
-// mirrors the existing proxy fetch pattern). Two mutually-exclusive views
-// (value / P&L, one Line at a time) + a 1M/3M/6M/All range selector that
-// re-fetches. Range-preset chrome and toggle polish are kept minimal here per
-// --skip-ui — precise interaction design is deferred to /gsd-ui-phase 7
-// (07-UI-SPEC.md's placement/color/copy contract is followed for what ships).
-// Explicit-height wrapper (width 100% / height 280) is load-bearing (Recharts
-// blank-render pitfall, 04-RESEARCH.md).
+// Portfolio value / P&L history (VZ-02, INVX-01). Styled to match the cashflow
+// TrendChart (ui/app/cashflow/charts/TrendChart.tsx): tokens (not hardcoded
+// hex), no CartesianGrid / YAxis, borderless X-axis, monotone line at
+// strokeWidth 2.4, matching tooltip, 170px height. Keeps its own card chrome +
+// range/view controls (the trend chart's card + legend live in the cashflow
+// page; this chart is self-contained on the investments page).
+// Fetches GET /api/investments/history (open read). Explicit-height wrapper is
+// load-bearing (Recharts blank-render pitfall, 04-RESEARCH.md).
 // ---------------------------------------------------------------------------
 
 export type HistoryPoint = {
@@ -34,8 +32,7 @@ type Range = "1M" | "3M" | "6M" | "All";
 type View = "value" | "pnl";
 
 const RANGES: Range[] = ["1M", "3M", "6M", "All"];
-const tickStyle = { fill: "#8b8474", fontSize: 12 };
-const muted = "#8b8474";
+const tickStyle = { fill: tokens.color.muted2, fontSize: 11 };
 
 const fmtPlain = (n: number) => new Intl.NumberFormat("en-US").format(n);
 const fmtSigned = (n: number) =>
@@ -46,9 +43,9 @@ function pillStyle(active: boolean): React.CSSProperties {
     padding: "4px 12px",
     borderRadius: 6,
     fontSize: 12,
-    border: "1px solid #e7e1d5",
-    background: active ? "#2f6f4f" : "transparent",
-    color: active ? "white" : muted,
+    border: `1px solid ${tokens.color.border}`,
+    background: active ? tokens.color.green : "transparent",
+    color: active ? "white" : tokens.color.muted,
     cursor: "pointer",
   };
 }
@@ -65,13 +62,13 @@ export default function ValueHistoryChart({
   const [view, setView] = useState<View>("value");
 
   const latestPnl = data.length > 0 ? data[data.length - 1].total_pnl : 0;
-  const pnlColor = latestPnl >= 0 ? "#2f6f4f" : "#b5503f";
+  const pnlColor = latestPnl >= 0 ? tokens.color.green : tokens.color.terracotta;
 
   return (
     <section
       style={{
-        background: "#ffffff",
-        border: "1px solid #e7e1d5",
+        background: tokens.color.card,
+        border: `1px solid ${tokens.color.border}`,
         borderRadius: 8,
         padding: 24,
         marginBottom: 24,
@@ -118,17 +115,23 @@ export default function ValueHistoryChart({
       </div>
 
       {data.length < 2 ? (
-        <p style={{ fontSize: 14, color: muted, margin: 0 }}>
+        <p style={{ fontSize: 14, color: tokens.color.muted, margin: 0 }}>
           Not enough history yet — check back after a few days of price
           snapshots.
         </p>
       ) : (
-        <div style={{ width: "100%", height: 280 }}>
+        <div style={{ width: "100%", height: 170 }}>
           <ResponsiveContainer>
-            <LineChart data={data}>
-              <CartesianGrid stroke="#e7e1d5" strokeDasharray="3 3" />
-              <XAxis dataKey="date" tick={tickStyle} />
-              <YAxis tick={tickStyle} />
+            <LineChart
+              data={data}
+              margin={{ top: 8, right: 6, left: 6, bottom: 0 }}
+            >
+              <XAxis
+                dataKey="date"
+                tick={tickStyle}
+                axisLine={false}
+                tickLine={false}
+              />
               <Tooltip
                 formatter={(value) =>
                   typeof value === "number"
@@ -138,26 +141,32 @@ export default function ValueHistoryChart({
                     : value
                 }
                 contentStyle={{
-                  background: "#ffffff",
-                  border: "1px solid #e7e1d5",
-                  borderRadius: 8,
+                  background: tokens.color.card,
+                  border: `1px solid ${tokens.color.border2}`,
+                  borderRadius: 10,
                   fontSize: 12,
-                  color: "#23201b",
+                  color: tokens.color.text,
                 }}
               />
               {view === "value" ? (
                 <Line
+                  type="monotone"
                   dataKey="total_market_value"
-                  stroke="#2f6f4f"
+                  stroke={tokens.color.green}
                   name="Portfolio value"
+                  strokeWidth={2.4}
                   dot={false}
+                  activeDot={{ r: 3.5 }}
                 />
               ) : (
                 <Line
+                  type="monotone"
                   dataKey="total_pnl"
                   stroke={pnlColor}
                   name="Unrealized P&L"
+                  strokeWidth={2.4}
                   dot={false}
+                  activeDot={{ r: 3.5 }}
                 />
               )}
             </LineChart>

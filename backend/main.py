@@ -16,9 +16,12 @@ Endpoints:
     POST /transactions          create one (logs new spending)
     PUT  /transactions/{id}     partial-update a transaction (requires API key)
     DELETE /transactions/{id}   delete a transaction (requires API key)
-    GET  /categories            distinct category names (public)
-    GET  /categories/{name}/affected-count  count of transactions in a category (public)
-    POST /categories/rename     rename a category across all transactions (requires API key)
+    GET  /categories            category tree, tx_count + effective color, ?kind= filter (public)
+    POST /categories            create a category (requires API key)
+    PUT  /categories/{id}       edit a category (requires API key)
+    DELETE /categories/{id}     delete (reassign-then-delete via ?reassign_to=) (requires API key)
+    GET  /categories/{name}/affected-count  tx count for a category + its descendants (public)
+    POST /categories/rename     rename a category (single-row, D-11) (requires API key)
     POST /categories/merge      merge one category into another (requires API key)
     POST /import                multipart CSV upload (Wallet export)
     POST /query                 natural-language question over your data
@@ -34,13 +37,13 @@ import hmac
 import logging
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastmcp.utilities.lifespan import combine_lifespans
-from sqlalchemy import desc, text
+from sqlalchemy import desc, func, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -49,40 +52,61 @@ from backend.auth import require_api_key
 from backend.mcp_server import build_mcp
 from backend.db import get_session
 from backend.importer import _get_or_create_account, import_csv_text
-from backend.models import Account, AuditLog, Holding, Platform, Proposal, Transaction
+from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, Proposal, Transaction
 from backend.portfolio import portfolio_summary as compose_portfolio_summary
 from backend.portfolio import value_history_series
 from backend.writes import (
     apply_add_account,
+    apply_add_balance_adjustment,
+    apply_add_category,
+    apply_add_funded_buy,
+    apply_add_funded_sell,
     apply_add_holding,
+    apply_add_investment_transfer,
     apply_add_platform,
     apply_add_portfolio_event,
     apply_add_transaction,
+    apply_add_transfer,
     apply_delete_account,
+    apply_delete_category,
     apply_delete_holding,
     apply_delete_platform,
     apply_delete_transaction,
+    apply_delete_transaction_or_pair,
     apply_edit_account,
+    apply_edit_category,
     apply_edit_holding,
     apply_edit_platform,
     apply_edit_transaction,
     apply_merge_category,
     apply_rename_category,
     apply_set_price,
+    resolve_category_id,
 )
 from backend.schemas import (
     AccountCreate,
     AccountOut,
     AccountUpdate,
     AffectedCountResponse,
+    BalanceAdjustmentCreate,
+    BulkActionResponse,
+    BulkDeleteRequest,
+    BulkRecategorizeRequest,
     CashflowSummary,
+    CategoryCreate,
     CategoryMergeRequest,
+    CategoryNode,
     CategoryRenameRequest,
+    CategoryUpdate,
     ConfirmRequest,
+    FundedBuyCreate,
+    FundedSellCreate,
     ImportResponse,
     HoldingCreate,
     HoldingOut,
     HoldingUpdate,
+    InvestmentTransferCreate,
+    NetWorth,
     PlatformCreate,
     PlatformOut,
     PlatformUpdate,
@@ -98,6 +122,7 @@ from backend.schemas import (
     TransactionCreate,
     TransactionOut,
     TransactionUpdate,
+    TransferCreate,
     ValueHistoryResponse,
 )
 from backend.tools import (
@@ -105,9 +130,12 @@ from backend.tools import (
     income_total,
     monthly_trend,
     net_total,
+    net_worth,
     resolve_period,
     spending_by_category,
     spending_total,
+    _descendant_ids,
+    _find_category_node,
 )
 from backend.settings import (
     KEY_ANTHROPIC_API_KEY,
@@ -231,6 +259,24 @@ def update_account(account_id: int, payload: AccountUpdate, db: Session = Depend
     from backend.query import reset_engine
     reset_engine()
     return acc
+
+
+@app.post("/accounts/{account_id}/adjust-balance", status_code=201, dependencies=[Depends(require_api_key)])
+def adjust_account_balance(account_id: int, payload: BalanceAdjustmentCreate, db: Session = Depends(get_session)):
+    """Reconcile an account's derived balance to a target (ACCT-02, CHAT-09).
+
+    Routes through apply_add_balance_adjustment — the delta is computed there
+    via a fresh unfiltered SUM(amount), never re-derived here.
+    """
+    try:
+        tx = apply_add_balance_adjustment(db, account_id, payload.target_balance)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(tx)
+    from backend.query import reset_engine
+    reset_engine()
+    return {"transaction_id": tx.id, "amount": str(tx.amount)}
 
 
 @app.delete("/accounts/{account_id}", dependencies=[Depends(require_api_key)])
@@ -377,6 +423,32 @@ def delete_platform(
     return {"status": "deleted", "reassigned": reassigned}
 
 
+@app.get("/platforms/{platform_id}/detail")
+def platform_detail(platform_id: int, db: Session = Depends(get_session)):
+    """Scoped PnL detail for one platform (PLAT-01/D-05) — open read.
+
+    Reuses portfolio.portfolio_summary(db)'s existing per-platform group dict
+    (subtotal + holdings with realized_pnl/unrealized_pnl/current_value) — no
+    new response_model, matching PortfolioSummary.groups[i]'s own Decimal-
+    passthrough convention. Lazy price refresh mirrors investments_summary's
+    idiom. Not registered in backend/tools.py TOOLS (D-05 — kept off the
+    agent/MCP surface).
+    """
+    platform = db.get(Platform, platform_id)
+    if platform is None:
+        raise HTTPException(status_code=404, detail=f"Platform {platform_id} not found")
+    from backend.prices import refresh_all_prices
+
+    refresh_all_prices(db, force=False)  # only stale tickers (D-09), same idiom as investments_summary
+    db.commit()
+    summary = compose_portfolio_summary(db)
+    group = next((g for g in summary["groups"] if g["platform_id"] == platform_id), None)
+    return group or {
+        "platform_id": platform_id, "platform_name": platform.name,
+        "kind": platform.kind, "subtotal": 0, "holdings": [],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Investments (INV-01/06/07) — event ledger + direct holding override + summary.
 # Every write route requires the API key (T-05-03-AC); GET /investments/summary
@@ -402,6 +474,76 @@ def create_portfolio_event(payload: PortfolioEventCreate, db: Session = Depends(
     from backend.query import reset_engine
     reset_engine()
     return ev
+
+
+@app.get("/portfolio-events", response_model=list[PortfolioEventOut])
+def list_portfolio_events(platform_id: int, db: Session = Depends(get_session)):
+    """One platform's buy/sell/dividend event ledger, date-desc (PLAT-01/D-05)
+    — open read. Reuses PortfolioEventOut directly, no new DTO. Not
+    registered in backend/tools.py TOOLS (D-05 — kept off the agent/MCP surface).
+    """
+    return (
+        db.query(PortfolioEvent)
+        .filter(PortfolioEvent.platform_id == platform_id)
+        .order_by(desc(PortfolioEvent.date))
+        .all()
+    )
+
+
+@app.post("/portfolio-events/funded-buy", status_code=201, dependencies=[Depends(require_api_key)])
+def create_funded_buy(payload: FundedBuyCreate, db: Session = Depends(get_session)):
+    """Direct (non-agent) funded 'buy' — cash leg + portfolio event (CHAT-09/XFER-03).
+
+    Coerces quantity/price/cash_amount to float before calling apply_add_funded_buy
+    (see LOAD-BEARING comment below) — apply_add_transaction/apply_add_portfolio_event
+    write their `after` dict straight into AuditLog.after (JSONB), so a raw Decimal
+    would break serialization even on this non-proposal REST path.
+    """
+    # LOAD-BEARING: coerce to float, not Decimal — apply_add_funded_buy builds an
+    # inner after-dict that flows straight into AuditLog.after (JSONB); a raw
+    # Decimal there raises TypeError on write (auditlog-decimal-json-gotcha).
+    # float is JSON-serializable and still supports the primitive's own abs()/
+    # negation, matching 14-02's propose_add_funded_buy convention exactly.
+    after = {
+        "source_account_name": payload.source_account_name, "platform_id": payload.platform_id,
+        "ticker": payload.ticker, "quantity": float(payload.quantity), "price": float(payload.price),
+        "cash_amount": float(payload.cash_amount), "cash_currency": payload.cash_currency,
+        "event_currency": payload.event_currency, "date": payload.date,
+        "notes": payload.notes, "asset_type": payload.asset_type,
+    }
+    try:
+        result = apply_add_funded_buy(db, after)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(result["transaction"])
+    db.refresh(result["portfolio_event"])
+    from backend.query import reset_engine
+    reset_engine()
+    return {"transaction_id": result["transaction"].id, "portfolio_event_id": result["portfolio_event"].id}
+
+
+@app.post("/portfolio-events/funded-sell", status_code=201, dependencies=[Depends(require_api_key)])
+def create_funded_sell(payload: FundedSellCreate, db: Session = Depends(get_session)):
+    """Direct (non-agent) funded 'sell' — cash leg + portfolio event (CHAT-09/XFER-03)."""
+    # LOAD-BEARING: float, not Decimal — see create_funded_buy's comment above.
+    after = {
+        "source_account_name": payload.source_account_name, "platform_id": payload.platform_id,
+        "ticker": payload.ticker, "quantity": float(payload.quantity), "price": float(payload.price),
+        "cash_amount": float(payload.cash_amount), "cash_currency": payload.cash_currency,
+        "event_currency": payload.event_currency, "date": payload.date,
+        "notes": payload.notes, "asset_type": payload.asset_type,
+    }
+    try:
+        result = apply_add_funded_sell(db, after)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(result["transaction"])
+    db.refresh(result["portfolio_event"])
+    from backend.query import reset_engine
+    reset_engine()
+    return {"transaction_id": result["transaction"].id, "portfolio_event_id": result["portfolio_event"].id}
 
 
 @app.post("/holdings", response_model=HoldingOut, status_code=201, dependencies=[Depends(require_api_key)])
@@ -542,14 +684,145 @@ def override_price(payload: PriceOverrideRequest, db: Session = Depends(get_sess
     return {"status": "ok", "ticker": payload.ticker}
 
 
+# Categories tagged on is_transfer=True rows that are NOT real liquid<->liquid
+# transfer-pair legs — writes.py's apply_add_balance_adjustment (category=
+# 'Adjustment') and apply_add_funded_buy/_sell (category='Investment'). These
+# rows have transfer_pair_id=None, same as an untagged is_transfer row, so the
+# category is the only signal that distinguishes "known bookkeeping tag,
+# surface it under expense/income by sign" from "unclassified is_transfer
+# row, keep it out of both expense/income buckets until it's better understood"
+# (17-UI-SPEC Component 2 locked semantics + RESEARCH Pitfall 5).
+_NON_PAIR_TRANSFER_CATEGORIES = ("Adjustment", "Investment")
+
+
 @app.get("/transactions", response_model=list[TransactionOut])
-def list_transactions(limit: int = 50, db: Session = Depends(get_session)):
+def list_transactions(
+    q: str | None = None,
+    account_id: int | None = None,
+    category: str | None = None,
+    type: str | None = None,
+    amount_min: float | None = None,
+    amount_max: float | None = None,
+    include_transfers: bool = True,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_session),
+):
+    """Filtered, paged transaction ledger (D-01/D-02, REC-01/02/05) — open read.
+
+    Every param is one parameterized `.filter()` — never string-built SQL
+    (T-17-04). `category` resolves a parent/group name to its node + all
+    descendants via tools.py's hierarchy helpers (Pitfall 3), falling back to
+    an exact-string match when no node resolves. `type=transfer` keys off
+    `transfer_pair_id IS NOT NULL`, NOT `is_transfer` (17-UI-SPEC Component 2,
+    critical item #4) — a real transfer-pair leg. `type=expense`/`income` gate
+    on sign + `transfer_pair_id IS NULL`, additionally excluding an
+    unclassified is_transfer row that isn't one of the known Adjustment/
+    Investment bookkeeping categories (see _NON_PAIR_TRANSFER_CATEGORIES).
+    Still queries the base `transactions` table, NOT `cashflow_transactions`
+    (a full ledger must include investment-account rows). Hard-capped at 500
+    rows regardless of the requested `limit` (Pitfall 4) — the Records page
+    pages via `offset`. Open read (no require_api_key), matching the
+    unmodified endpoint's existing convention.
+    """
+    query = db.query(Transaction)
+    if q:
+        query = query.filter(
+            or_(Transaction.merchant.ilike(f"%{q}%"), Transaction.notes.ilike(f"%{q}%"))
+        )
+    if account_id is not None:
+        query = query.filter(Transaction.account_id == account_id)
+    if category is not None:
+        node = _find_category_node(category)
+        if node is not None:
+            query = query.filter(Transaction.category_id.in_(_descendant_ids(node)))
+        else:
+            query = query.filter(Transaction.category == category)  # fallback exact match
+    if type == "expense":
+        query = query.filter(
+            Transaction.amount < 0,
+            Transaction.transfer_pair_id.is_(None),
+            or_(Transaction.is_transfer.is_(False), Transaction.category.in_(_NON_PAIR_TRANSFER_CATEGORIES)),
+        )
+    elif type == "income":
+        query = query.filter(
+            Transaction.amount > 0,
+            Transaction.transfer_pair_id.is_(None),
+            or_(Transaction.is_transfer.is_(False), Transaction.category.in_(_NON_PAIR_TRANSFER_CATEGORIES)),
+        )
+    elif type == "transfer":
+        query = query.filter(Transaction.transfer_pair_id.isnot(None))  # LOCKED: pair-id, not is_transfer (Pitfall 5)
+    elif not include_transfers:
+        query = query.filter(Transaction.is_transfer == False)
+    if amount_min is not None:
+        query = query.filter(func.abs(Transaction.amount) >= amount_min)
+    if amount_max is not None:
+        query = query.filter(func.abs(Transaction.amount) <= amount_max)
+    if date_from:
+        query = query.filter(Transaction.date >= datetime.fromisoformat(date_from))
+    if date_to:
+        # date_to is an inclusive calendar day from the caller's POV — widen
+        # to an exclusive upper bound so a same-day timestamp isn't dropped
+        # (mirrors resolve_period's [start, end) convention).
+        end = datetime.fromisoformat(date_to) + timedelta(days=1)
+        query = query.filter(Transaction.date < end)
     return (
-        db.query(Transaction)
-        .order_by(desc(Transaction.date))
+        query.order_by(desc(Transaction.date))
+        .offset(offset)
         .limit(min(limit, 500))
         .all()
     )
+
+
+def _category_rollup(db: Session, rows: list, children: dict) -> list[dict]:
+    """Join id/color/icon onto spending_by_category's name-keyed rows+children
+    (11-04) to build the CategoryRollup shape (CAT-04). Root names are unique
+    (top_name is always a root, per _ROLLUP_FROM's COALESCE), so descendants
+    are collected per-root to avoid cross-root name collisions; color falls
+    back to the nearest ancestor's when NULL (D-14), same rule as GET /categories.
+    """
+    cats = db.execute(
+        text("SELECT id, name, parent_id, color, icon FROM categories")
+    ).fetchall()
+    by_id = {r[0]: {"id": r[0], "name": r[1], "parent_id": r[2], "color": r[3], "icon": r[4]} for r in cats}
+    children_of: dict[int | None, list[dict]] = {}
+    for node in by_id.values():
+        children_of.setdefault(node["parent_id"], []).append(node)
+    roots_by_name = {n["name"]: n for n in by_id.values() if n["parent_id"] is None}
+
+    def _effective_color(node: dict) -> str | None:
+        if node["color"] is not None or node["parent_id"] is None:
+            return node["color"]
+        return _effective_color(by_id[node["parent_id"]])
+
+    def _descendants(node_id: int, acc: dict[str, dict]) -> None:
+        for child in children_of.get(node_id, []):
+            acc[child["name"]] = child
+            _descendants(child["id"], acc)
+
+    result = []
+    for top_name, total in rows:
+        root = roots_by_name.get(top_name)
+        if root is None:
+            continue
+        descendants: dict[str, dict] = {}
+        _descendants(root["id"], descendants)
+        kids = []
+        for sub_name, sub_total in children.get(top_name, []):
+            node = descendants.get(sub_name)
+            if node is None:
+                continue
+            kids.append({
+                "id": node["id"], "name": node["name"],
+                "color": _effective_color(node), "icon": node["icon"], "total": sub_total,
+            })
+        result.append({
+            "id": root["id"], "name": root["name"], "color": root["color"],
+            "icon": root["icon"], "total": total, "children": kids,
+        })
+    return result
 
 
 @app.get("/cashflow/summary", response_model=CashflowSummary)
@@ -578,10 +851,27 @@ def cashflow_summary(
         "expense": spending_total(period, start_date, end_date)["total"],
         "net": net_total(period, start_date, end_date)["net"],
     }
-    by_category = spending_by_category(period, start_date, end_date, limit=10)["rows"]
+    by_cat_result = spending_by_category(period, start_date, end_date, limit=10)
+    by_category = _category_rollup(db, by_cat_result["rows"], by_cat_result["children"])
     accounts = account_balances(s, e)["rows"]
     trend = monthly_trend(6)["rows"]
     return CashflowSummary(totals=totals, by_category=by_category, accounts=accounts, trend=trend)
+
+
+@app.get("/net-worth", response_model=NetWorth)
+def net_worth_endpoint(db: Session = Depends(get_session)):
+    """Composed net-worth payload (D-01/D-02/D-05, NW-01/NW-02) — open read.
+
+    liquid side = account_balances() filtered to type='liquid'; investment
+    side = portfolio_summary(db).total_value. The coverage-assertion
+    ValueError (schema invariant violated — accounts left unclassified) maps
+    to 422, never a raw 500 (T-14-07 precedent).
+    """
+    try:
+        result = net_worth(db)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    return NetWorth(**result)
 
 
 @app.post("/transactions", response_model=TransactionOut, status_code=201, dependencies=[Depends(require_api_key)])
@@ -593,6 +883,7 @@ def create_transaction(payload: TransactionCreate, db: Session = Depends(get_ses
         currency=payload.currency,
         category=payload.category,
         raw_category=payload.category,
+        category_id=resolve_category_id(db, payload.category),  # D-08 dual-write
         merchant=payload.merchant,
         notes=payload.notes,
         account_id=acc.id,
@@ -653,32 +944,342 @@ def delete_transaction(tx_id: int, db: Session = Depends(get_session)):
         "account_id": tx.account_id,
         "is_transfer": tx.is_transfer,
     }
-    apply_delete_transaction(db, tx_id, before)
+    deleted_ids = apply_delete_transaction_or_pair(db, tx_id, before)
     db.commit()
     from backend.query import reset_engine
     reset_engine()
-    return {"status": "deleted"}
+    return {"status": "deleted", "deleted_ids": deleted_ids}
 
 
-@app.get("/categories")
-def list_category_names(db: Session = Depends(get_session)):
-    """Distinct category names across all transactions (open read).
+_BULK_ACTION_MAX_IDS = 500  # blast-radius cap (T-17-06), mirrors GET /transactions' row cap
 
-    The deterministic enumeration source Plan 05's CategoryManager consumes
-    (WARNING 2 fix) — reuses the same parameterized-SQL approach as
-    list_categories() in tools.py rather than hand-building SQL here.
+
+def _tx_before_dict(tx: Transaction) -> dict:
+    """AuditLog `before` snapshot — same shape update_transaction/delete_transaction
+    build inline, with the LOAD-BEARING str(tx.amount) (auditlog-decimal-json-gotcha)."""
+    return {
+        "id": tx.id,
+        "date": tx.date.isoformat() if tx.date else None,
+        "amount": str(tx.amount),
+        "currency": tx.currency,
+        "category": tx.category,
+        "merchant": tx.merchant,
+        "notes": tx.notes,
+        "account_id": tx.account_id,
+        "is_transfer": tx.is_transfer,
+    }
+
+
+@app.post(
+    "/transactions/bulk-delete",
+    response_model=BulkActionResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def bulk_delete_transactions(payload: BulkDeleteRequest, db: Session = Depends(get_session)):
+    """Atomically delete every listed transaction id (D-03/REC-03).
+
+    Reuses apply_delete_transaction_or_pair (the same pair-aware primitive the
+    single DELETE endpoint above already uses) — when a listed id is one leg
+    of a transfer, its sibling is looked up and deleted too even though it
+    was NOT in `ids` (D-04, critical item #1), no orphan leg. A bad/nonexistent
+    id is reported in skipped[] with a reason, never a 500 (T-17-05). One
+    db.commit() for the whole batch; one AuditLog delete row per entity
+    (written inside the primitive). ids over the 500 cap are rejected before
+    any mutation (T-17-06).
     """
-    sql = "SELECT DISTINCT category FROM transactions WHERE category IS NOT NULL ORDER BY category"
-    rows = db.execute(text(sql)).fetchall()
-    return {"categories": [r[0] for r in rows]}
+    if len(payload.ids) > _BULK_ACTION_MAX_IDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Cannot bulk-delete more than {_BULK_ACTION_MAX_IDS} transactions at once",
+        )
+    deleted: list[int] = []
+    skipped: list[dict] = []
+    for tx_id in payload.ids:
+        if tx_id in deleted:
+            continue  # already removed as the sibling leg of an earlier id in this batch
+        tx = db.get(Transaction, tx_id)
+        if tx is None:
+            skipped.append({"id": tx_id, "reason": "not found"})
+            continue
+        deleted.extend(apply_delete_transaction_or_pair(db, tx_id, _tx_before_dict(tx)))
+    db.commit()
+    from backend.query import reset_engine
+    reset_engine()
+    return BulkActionResponse(deleted=deleted, skipped=skipped)
+
+
+@app.post(
+    "/transactions/bulk-recategorize",
+    response_model=BulkActionResponse,
+    dependencies=[Depends(require_api_key)],
+)
+def bulk_recategorize_transactions(payload: BulkRecategorizeRequest, db: Session = Depends(get_session)):
+    """Atomically recategorize every listed non-transfer transaction id (D-03/REC-03).
+
+    A transfer leg (tx.is_transfer) is SKIPPED — reported in skipped[] with a
+    reason, category left unchanged, never raised on (D-03, critical item #6):
+    transfers are system-categorized. One db.commit() for the whole batch;
+    one AuditLog edit row per recategorized entity (written inside
+    apply_edit_transaction). ids over the 500 cap are rejected before any
+    mutation (T-17-06).
+    """
+    if len(payload.ids) > _BULK_ACTION_MAX_IDS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Cannot bulk-recategorize more than {_BULK_ACTION_MAX_IDS} transactions at once",
+        )
+    recategorized: list[int] = []
+    skipped: list[dict] = []
+    for tx_id in payload.ids:
+        tx = db.get(Transaction, tx_id)
+        if tx is None:
+            skipped.append({"id": tx_id, "reason": "not found"})
+            continue
+        if tx.is_transfer:
+            skipped.append({"id": tx_id, "reason": "transfer leg — system-categorized"})
+            continue
+        apply_edit_transaction(db, tx_id, {"category": payload.category}, _tx_before_dict(tx), allow_paired=False)
+        recategorized.append(tx_id)
+    db.commit()
+    from backend.query import reset_engine
+    reset_engine()
+    return BulkActionResponse(recategorized=recategorized, skipped=skipped)
+
+
+@app.post("/transactions/transfer", status_code=201, dependencies=[Depends(require_api_key)])
+def create_transfer(payload: TransferCreate, db: Session = Depends(get_session)):
+    """Direct (non-agent) liquid<->liquid transfer (CHAT-09/XFER-01).
+
+    Routes through apply_add_transfer — a confirm-free write path parallel to
+    the chat proposal flow, gated by require_api_key instead of a token.
+    """
+    leg_a_after = {
+        "account": payload.from_account, "amount": str(-abs(payload.amount)),
+        "currency": payload.currency, "date": payload.date, "notes": payload.notes,
+    }
+    leg_b_after = {
+        "account": payload.to_account, "amount": str(abs(payload.amount)),
+        "currency": payload.currency, "date": payload.date, "notes": payload.notes,
+    }
+    try:
+        leg_a, leg_b = apply_add_transfer(db, leg_a_after, leg_b_after)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(leg_a)
+    db.refresh(leg_b)
+    from backend.query import reset_engine
+    reset_engine()
+    return {"leg_a_id": leg_a.id, "leg_b_id": leg_b.id, "transfer_pair_id": leg_a.transfer_pair_id}
+
+
+@app.post("/transactions/investment-transfer", status_code=201, dependencies=[Depends(require_api_key)])
+def create_investment_transfer(payload: InvestmentTransferCreate, db: Session = Depends(get_session)):
+    """Direct (non-agent) liquid->investment funding transfer (CHAT-09/XFER-02).
+
+    Cash leg debits the liquid source account; the investment side is a
+    'deposit' PortfolioEvent using the documented CASH sentinel (ticker=CASH,
+    asset_type=cash, price=1, quantity=amount — matches the existing
+    asset_type=='cash' 1:1 valuation convention).
+    """
+    cash_leg = {
+        "account": payload.from_account, "amount": str(-abs(payload.amount)),
+        "currency": payload.currency, "date": payload.date, "notes": payload.notes,
+    }
+    event = {
+        "ticker": "CASH", "event_type": "deposit", "quantity": str(abs(payload.amount)),
+        "price": "1", "platform_id": payload.platform_id, "currency": payload.currency,
+        "date": payload.date, "asset_type": "cash",
+    }
+    try:
+        tx, ev = apply_add_investment_transfer(db, cash_leg, event)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(tx)
+    db.refresh(ev)
+    from backend.query import reset_engine
+    reset_engine()
+    return {"transaction_id": tx.id, "portfolio_event_id": ev.id}
+
+
+@app.get("/categories", response_model=list[CategoryNode])
+def list_categories(kind: str | None = None, db: Session = Depends(get_session)):
+    """Category tree (open read, CAT-01): per-node tx_count is the node's
+    OWN direct transaction count only (NOT summed into ancestors — that
+    rollup lives in tools.py's spending_by_category for the chat/cashflow
+    aggregates, not here); `color` is the row's own value, `effective_color`
+    inherits the nearest ancestor's when NULL (D-14). Optional ?kind=
+    filters ROOT categories by kind (D-03)."""
+    rows = db.execute(
+        text("SELECT id, name, parent_id, kind, color, icon, is_system FROM categories ORDER BY name")
+    ).fetchall()
+    counts = dict(
+        db.execute(
+            text(
+                "SELECT category_id, COUNT(*) FROM transactions "
+                "WHERE category_id IS NOT NULL GROUP BY category_id"
+            )
+        ).fetchall()
+    )
+    nodes = {
+        r[0]: {
+            "id": r[0], "name": r[1], "parent_id": r[2], "kind": r[3],
+            "color": r[4], "effective_color": r[4], "icon": r[5], "is_system": r[6],
+            "tx_count": counts.get(r[0], 0), "children": [],
+        }
+        for r in rows
+    }
+    roots: list[dict] = []
+    for r in rows:
+        (roots if r[2] is None else nodes[r[2]]["children"]).append(nodes[r[0]])
+
+    def _inherit(node: dict, color: str | None) -> None:
+        if node["effective_color"] is None:
+            node["effective_color"] = color
+        for child in node["children"]:
+            _inherit(child, node["effective_color"])
+
+    for root in roots:
+        _inherit(root, None)
+
+    if kind:
+        roots = [r for r in roots if r["kind"] == kind]
+    return roots
+
+
+@app.post("/categories", status_code=201, dependencies=[Depends(require_api_key)])
+def create_category(payload: CategoryCreate, db: Session = Depends(get_session)):
+    """Create a category (CAT-01). Depth cap + kind/color inheritance
+    enforced in apply_add_category; violations surface as 422."""
+    try:
+        cat = apply_add_category(db, payload.model_dump(mode="json"))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(cat)
+    from backend.query import reset_engine
+    reset_engine()
+    return {
+        "id": cat.id, "name": cat.name, "parent_id": cat.parent_id, "kind": cat.kind,
+        "color": cat.color, "icon": cat.icon, "is_system": cat.is_system,
+    }
+
+
+@app.put("/categories/{category_id}", dependencies=[Depends(require_api_key)])
+def update_category(category_id: int, payload: CategoryUpdate, db: Session = Depends(get_session)):
+    """Partial-update a category (CAT-01). System rows only allow color/icon
+    changes; re-parenting re-checks the depth cap for the node's subtree
+    (apply_edit_category). exclude_unset (not exclude_none) so an explicit
+    parent_id is distinguishable from "not provided"."""
+    cat = db.get(Category, category_id)
+    if cat is None:
+        raise HTTPException(status_code=404, detail=f"Category {category_id} not found")
+    before = {
+        "id": cat.id, "name": cat.name, "parent_id": cat.parent_id,
+        "kind": cat.kind, "color": cat.color, "icon": cat.icon,
+    }
+    try:
+        apply_edit_category(db, category_id, payload.model_dump(mode="json", exclude_unset=True), before)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(cat)
+    from backend.query import reset_engine
+    reset_engine()
+    return {
+        "id": cat.id, "name": cat.name, "parent_id": cat.parent_id, "kind": cat.kind,
+        "color": cat.color, "icon": cat.icon, "is_system": cat.is_system,
+    }
+
+
+@app.delete("/categories/{category_id}", dependencies=[Depends(require_api_key)])
+def delete_category(category_id: int, reassign_to: int | None = None, db: Session = Depends(get_session)):
+    """Delete a category with reassign-then-delete (CAT-02, Pitfall 3).
+
+    - System row (Transfer/Uncategorized) -> 422 always (D-04).
+    - Has subcategories -> 422 always, WITH child_count alongside
+      affected_count: reassign_to only ever moves TRANSACTIONS, never
+      subcategories, so a category with children can never be deleted via
+      this endpoint (merge/re-parent the children first).
+    - Leaf with transactions and no reassign_to -> 422 with affected_count.
+    - reassign_to set -> transactions reassigned + source deleted in ONE
+      audited helper call (apply_delete_category), mirroring
+      apply_delete_account (WARNING 1 fix carried over from accounts).
+    """
+    cat = db.get(Category, category_id)
+    if cat is None:
+        raise HTTPException(status_code=404, detail=f"Category {category_id} not found")
+    if cat.is_system:
+        raise HTTPException(status_code=422, detail="System categories (Transfer/Uncategorized) cannot be deleted")
+    before = {
+        "id": cat.id, "name": cat.name, "parent_id": cat.parent_id,
+        "kind": cat.kind, "color": cat.color, "icon": cat.icon,
+    }
+
+    tx_count = int(
+        db.execute(
+            text("SELECT COUNT(*) FROM transactions WHERE category_id = :cid"), {"cid": category_id}
+        ).scalar() or 0
+    )
+    child_count = int(
+        db.execute(
+            text("SELECT COUNT(*) FROM categories WHERE parent_id = :cid"), {"cid": category_id}
+        ).scalar() or 0
+    )
+
+    if child_count > 0:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": f"{child_count} subcategories use this category — remove or re-parent them first",
+                "affected_count": tx_count,
+                "child_count": child_count,
+            },
+        )
+
+    if tx_count > 0:
+        if reassign_to is None:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": f"{tx_count} transactions use this category — reassign or delete them first",
+                    "affected_count": tx_count,
+                },
+            )
+        target = db.get(Category, reassign_to)
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"Reassign target category {reassign_to} not found")
+
+    try:
+        reassigned = apply_delete_category(db, category_id, before, reassign_to=reassign_to)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    db.commit()
+    from backend.query import reset_engine
+    reset_engine()
+    return {"status": "deleted", "reassigned": reassigned}
 
 
 @app.get("/categories/{name}/affected-count", response_model=AffectedCountResponse)
 def category_affected_count(name: str, db: Session = Depends(get_session)):
-    """Count of transactions currently in the given category (open read, D-09)."""
+    """Count of transactions in a category AND its descendants (open read,
+    D-09). Unknown name -> 0 (matches the pre-hierarchy endpoint's behavior
+    of never 404ing on a read)."""
+    row = db.execute(text("SELECT id FROM categories WHERE name = :name LIMIT 1"), {"name": name}).first()
+    if row is None:
+        return AffectedCountResponse(category=name, affected_count=0)
     count = int(
         db.execute(
-            text("SELECT COUNT(*) FROM transactions WHERE category = :cat"), {"cat": name}
+            text(
+                "WITH RECURSIVE descendants AS ("
+                "  SELECT id FROM categories WHERE id = :cat_id"
+                "  UNION ALL"
+                "  SELECT c.id FROM categories c JOIN descendants d ON c.parent_id = d.id"
+                ") SELECT COUNT(*) FROM transactions WHERE category_id IN (SELECT id FROM descendants)"
+            ),
+            {"cat_id": row[0]},
         ).scalar()
         or 0
     )
@@ -687,8 +1288,12 @@ def category_affected_count(name: str, db: Session = Depends(get_session)):
 
 @app.post("/categories/rename", dependencies=[Depends(require_api_key)])
 def rename_category(req: CategoryRenameRequest, db: Session = Depends(get_session)):
-    """Rename a category across all matching transactions (CASH-06)."""
-    count = apply_rename_category(db, req.old_name, req.new_name)
+    """Rename a category (single-row UPDATE, D-11); ValueError (ambiguous
+    name, missing name, system row, or name collision) -> 422."""
+    try:
+        count = apply_rename_category(db, req.old_name, req.new_name)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     db.commit()
     from backend.query import reset_engine
     reset_engine()
@@ -697,8 +1302,12 @@ def rename_category(req: CategoryRenameRequest, db: Session = Depends(get_sessio
 
 @app.post("/categories/merge", dependencies=[Depends(require_api_key)])
 def merge_category(req: CategoryMergeRequest, db: Session = Depends(get_session)):
-    """Merge one category into another across all matching transactions (CASH-07)."""
-    count = apply_merge_category(db, req.from_name, req.into_name)
+    """Merge one category into another (D-11); ValueError (ambiguous/missing
+    name, system row, or source has children) -> 422."""
+    try:
+        count = apply_merge_category(db, req.from_name, req.into_name)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
     db.commit()
     from backend.query import reset_engine
     reset_engine()
@@ -806,7 +1415,7 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
             apply_edit_transaction(db, row.get("id"), after, before)
 
         elif operation == "delete_transaction":
-            apply_delete_transaction(db, row.get("id"), before)
+            apply_delete_transaction_or_pair(db, row.get("id"), before)
 
         elif operation == "add_account":
             apply_add_account(db, after)
@@ -836,6 +1445,31 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
                 db.delete(h)
             db.add(AuditLog(entity="holding", entity_id=h_id, operation="delete",
                             before=before, after=None))
+
+        elif operation in (
+            "add_transfer", "add_investment_transfer", "add_funded_buy",
+            "add_funded_sell", "add_balance_adjustment",
+        ):
+            # Malformed/mismatched payload keys must surface as a clean 422,
+            # never an unhandled KeyError -> 500 (Pitfall 3, autonomous
+            # decision 4) — the confirm endpoint already maps ValueError to 422.
+            try:
+                if operation == "add_transfer":
+                    apply_add_transfer(db, after["leg_a"], after["leg_b"])
+
+                elif operation == "add_investment_transfer":
+                    apply_add_investment_transfer(db, after["cash_leg"], after["event"])
+
+                elif operation == "add_funded_buy":
+                    apply_add_funded_buy(db, after)
+
+                elif operation == "add_funded_sell":
+                    apply_add_funded_sell(db, after)
+
+                elif operation == "add_balance_adjustment":
+                    apply_add_balance_adjustment(db, row["account_id"], row["target_balance"])
+            except (KeyError, TypeError) as e:
+                raise ValueError(f"malformed payload for {operation!r}: {e}")
 
         else:
             raise ValueError(f"Unknown proposal operation: {operation!r}")

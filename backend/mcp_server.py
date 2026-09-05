@@ -1,7 +1,7 @@
 """
 MCP server — read-only, API-key-gated external tool surface (MCP-01..MCP-04).
 
-Registers backend.tools.TOOLS (the 15 read callables — single source of truth,
+Registers backend.tools.TOOLS (the 16 read callables — single source of truth,
 MCP-02) as MCP tools with hand-authored external-LLM-facing descriptions
 (D-05). The write/propose_* tools are never registered here (D-03/MCP-03) —
 an external client cannot even see them in tools/list, let alone call them.
@@ -28,9 +28,15 @@ MCP_DESCRIPTIONS: dict[str, str] = {
     "spending_total": "Total money spent (expenses only, transfers excluded) over a period. " + _PERIOD_HELP,
     "income_total": "Total money received (income only, transfers excluded) over a period. " + _PERIOD_HELP,
     "net_total": "Net cash flow (income minus expenses, transfers excluded) over a period. " + _PERIOD_HELP,
-    "spending_by_category": "Top spending categories (expenses only) over a period, ranked by total. " + _PERIOD_HELP,
+    "spending_by_category": (
+        "Top spending categories (expenses only) over a period, rolled up to top-level "
+        "category groups — each group's total includes all its descendant subcategories; "
+        "per-subcategory breakdown under 'children'. Transfers and system categories "
+        "excluded. " + _PERIOD_HELP
+    ),
     "spending_in_category": (
-        "Total spent in a specific category (substring match on category/raw_category) over a period. "
+        "Total spent in one category INCLUDING all of its descendant subcategories — a "
+        "parent/group name sums its entire subtree (case-insensitive name match). "
         + _PERIOD_HELP
     ),
     "spending_before_after_purchase": (
@@ -54,7 +60,10 @@ MCP_DESCRIPTIONS: dict[str, str] = {
         "[period_start, period_end) window). Transfers excluded from both sums. Accounts with no "
         "transactions appear with 0/0."
     ),
-    "list_categories": "List distinct expense categories with their total spend (helps map a vague term to a real category).",
+    "list_categories": (
+        "The full category tree: top-level groups with nested children (id, name, kind, "
+        "icon, effective color). Helps map a vague term to a real category or group name."
+    ),
     "find_transactions": (
         "Search/filter individual transactions by merchant, category, period, and kind (all | expense | "
         "income); returns ids, dates, amounts, categories, merchants, and account ids. Rows are ordered "
@@ -62,15 +71,20 @@ MCP_DESCRIPTIONS: dict[str, str] = {
     ),
     "find_platforms": "Search/filter investment platforms by name substring; returns ids, names, and kinds.",
     "find_accounts": "Search/filter accounts by name substring; returns ids, names, types, and currencies.",
+    "net_worth": (
+        "Single trustworthy net worth = liquid accounts + investment platforms, each "
+        "counted exactly once. Returns total, liquid_total, investment_total, "
+        "liquid_accounts, investment_groups, accounts_covered, accounts_total."
+    ),
 }
 
 
 def build_mcp() -> FastMCP:
-    """Build the FastMCP instance with the 15 read-only callables registered.
+    """Build the FastMCP instance with the 16 read-only callables registered.
 
     Registers ONLY the names in backend.tools.READ_TOOL_NAMES — never the
     propose_* write tools (D-03). By the time this module loads,
-    backend.tools.TOOLS itself has already been mutated to 26 entries (15
+    backend.tools.TOOLS itself has already been mutated to 27 entries (16
     read + 11 write, via TOOLS.update() at the bottom of tools.py), so
     iterating TOOLS directly would leak write tools onto the MCP surface;
     READ_TOOL_NAMES is the pre-mutation snapshot that keeps this read-only

@@ -97,14 +97,15 @@ def test_mcp_endpoint_mounted(client, api_key):
 
 
 def test_mcp_read_parity(client, api_key):
-    """MCP-02: tools/list == the 15 TOOLS names; a tools/call result equals a direct TOOLS[name](...) dict."""
+    """MCP-02: tools/list == the 16 TOOLS names (Phase 15 adds net_worth); a
+    tools/call result equals a direct TOOLS[name](...) dict."""
     with client:
         session_headers = _mcp_session(client, api_key)
 
         listed = _tools_list(client, session_headers)
         listed_names = {t["name"] for t in listed}
         assert listed_names == set(READ_TOOL_NAMES)
-        assert len(listed_names) == 15
+        assert len(listed_names) == 16
 
         mcp_result = _tools_call(client, session_headers, "spending_total", {"period": "last_month"})
         assert mcp_result["isError"] is False
@@ -115,7 +116,8 @@ def test_mcp_read_parity(client, api_key):
 
 
 def test_agent_read_tools_count(api_key):
-    """MCP-02/D-02: backend/query.py builds a read-tool list of length 15 (parity with TOOLS)."""
+    """MCP-02/D-02: backend/query.py builds a read-tool list of length 16
+    (parity with TOOLS; Phase 15 adds net_worth)."""
     import backend.query as query_mod
 
     query_mod.reset_engine()
@@ -123,7 +125,7 @@ def test_agent_read_tools_count(api_key):
     agent = workflow.agents["Agent"]
     all_tool_names = [t.metadata.name for t in agent.tools]
     read_tool_names = [n for n in all_tool_names if not n.startswith("propose_")]
-    assert len(read_tool_names) == 15
+    assert len(read_tool_names) == 16
     assert set(read_tool_names) == set(READ_TOOL_NAMES)
     query_mod.reset_engine()
 
@@ -140,6 +142,32 @@ def test_mcp_no_write_tools(client, api_key):
         result = _tools_call(client, session_headers, "propose_add_transaction", {})
         assert result["isError"] is True
         assert "Unknown tool" in result["content"][0]["text"]
+
+
+def test_new_write_tools_registered_and_excluded(client, api_key):
+    """Phase 14 CHAT-09 SC 2 & 3: the 5 new propose_* names must be present
+    in TOOLS, ABSENT from READ_TOOL_NAMES, and ABSENT from the live MCP
+    tools/list surface. Catches an accidental rename/removal the generic
+    count/prefix checks (test_mcp_read_parity, test_mcp_no_write_tools)
+    would silently tolerate. RED until Plan 14-02 registers the tools (the
+    TOOLS membership assertion fails today)."""
+    new_tool_names = {
+        "propose_add_transfer",
+        "propose_add_investment_transfer",
+        "propose_add_funded_buy",
+        "propose_add_funded_sell",
+        "propose_add_balance_adjustment",
+    }
+    for name in new_tool_names:
+        assert name in TOOLS, f"{name} missing from TOOLS — not yet registered (RED until Plan 14-02)"
+        assert name not in READ_TOOL_NAMES, f"{name} leaked into READ_TOOL_NAMES — MCP exclusion violated"
+
+    with client:
+        session_headers = _mcp_session(client, api_key)
+        listed = _tools_list(client, session_headers)
+        listed_names = {t["name"] for t in listed}
+        leaked = new_tool_names & listed_names
+        assert not leaked, f"write tool(s) leaked onto the MCP tools/list surface: {leaked}"
 
 
 def test_mcp_requires_key(client, api_key):
