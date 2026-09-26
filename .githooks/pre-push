@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Pre-push guard: refuse to publish personal financial data or secrets.
+#
+# monai runs on its owner's real finances and the repo is public. This hook
+# scans every commit about to be pushed and blocks the push if it:
+#   - adds or changes planning docs (.planning/ stays local-only),
+#   - adds data/dump/env files (CSV exports, SQL dumps, .env, keys),
+#   - adds lines containing secret-looking tokens,
+#   - adds lines containing IDR-sized figures (>= 10,000,000 comma-grouped,
+#     8+ digit decimals, or "150M"-style shorthand next to Rp/IDR/~).
+#
+# Enable once per clone:   git config core.hooksPath .githooks
+# Allow one line on purpose (synthetic value): put `pii-ok` in that line.
+# Override a whole push deliberately:          git push --no-verify
+set -euo pipefail
+
+ZERO=0000000000000000000000000000000000000000
+remote="$1"
+
+# Tracked data files that are known to be safe (exact paths).
+ALLOWED_PATHS='^(alembic/data/category_mapping\.csv)$'
+BLOCKED_PATHS='^\.planning/|(^|/)\.env($|\.)|\.(csv|sql|dump|bak|pem|key|p12)$|(^|/)id_(rsa|ed25519)|(^|/)report_[^/]*$'
+SECRETS='sk-ant-[A-Za-z0-9_-]{20,}|sk-(proj-)?[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|xox[bap]-[A-Za-z0-9-]{10,}|AIza[0-9A-Za-z_-]{35}|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+MONEY='(^|[^0-9.,])([0-9]{2,3}(,[0-9]{3}){2,}|[0-9](,[0-9]{3}){3,})([^0-9,]|$)|(^|[^0-9.])[0-9]{8,}\.[0-9]{2}([^0-9]|$)'
+SHORTHAND='(~|≈|Rp\.? ?|IDR ?)[0-9]{1,4}([.,][0-9]{1,2})? ?(M|jt|juta|B)\b|\b[0-9]{1,4}([.,][0-9]{1,2})? ?(M|jt|juta) (IDR|Rp)'
+
+commits=""
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$ZERO" ] && continue   # branch deletion
+  if [ "$remote_sha" = "$ZERO" ]; then
+    commits+=" $(git rev-list "$local_sha" --not --remotes="$remote" | tr '\n' ' ')"
+  else
+    commits+=" $(git rev-list "$remote_sha..$local_sha" | tr '\n' ' ')"
+  fi
+done
+[ -z "${commits// /}" ] && exit 0
+
+# One pass over the pushed commits: "sha<TAB>path" for files, and
+# "sha<TAB>path<TAB>added line" for every added line worth scanning.
+paths=$(git show --no-color --format='@%h' --name-only --diff-filter=ACMR $commits \
+  | awk '/^@/{c=substr($0,2); next} NF{print c "\t" $0}')
+added=$(git show --no-color --format='@%h' --unified=0 $commits | awk -v allow="$ALLOWED_PATHS" '
+  /^@[0-9a-f]+$/ {c=substr($0,2); next}
+  /^\+\+\+ b\// {f=substr($0,7); next}
+  /^\+\+\+ / {f=""; next}
+  /^\+/ { if (f=="" || f ~ allow || f ~ /^\.githooks\// || index($0,"pii-ok")) next
+          print c "\t" f "\t" substr($0,2, 110) }')
+
+report=$(
+  printf '%s\n' "$paths" | awk -F'\t' -v allow="$ALLOWED_PATHS" -v block="$BLOCKED_PATHS" \
+    'NF==2 && $2 !~ allow && $2 ~ block {print $1 "  blocked file: " $2}'
+  printf '%s\n' "$added" | grep -E "$SECRETS" | awk -F'\t' '{print $1 "  secret-like token in " $2}' || true
+  printf '%s\n' "$added" | grep -E -e "$MONEY" -e "$SHORTHAND" | awk -F'\t' '{print $1 "  money figure in " $2 ": " $3}' || true
+)
+
+if [ -n "$report" ]; then
+  total=$(printf '%s\n' "$report" | sort -u | wc -l)
+  {
+    echo "pre-push: refusing to push — possible personal data or secrets ($total findings):"
+    printf '%s\n' "$report" | sort -u | head -40 | sed 's/^/  /'
+    [ "$total" -gt 40 ] && echo "  … and $((total - 40)) more"
+    echo
+    echo "Fix: keep .planning/ and data files out of pushed commits (use a clean"
+    echo "branch), replace real figures with synthetic ones, or mark a known-synthetic"
+    echo "line with 'pii-ok'. Deliberate override: git push --no-verify"
+  } >&2
+  exit 1
+fi
+exit 0

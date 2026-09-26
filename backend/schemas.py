@@ -358,6 +358,65 @@ class ValueHistoryResponse(BaseModel):
     points: list[ValueHistoryPointOut]
 
 
+class NetWorthHistoryLiquidOut(BaseModel):
+    """One month's liquid half of the composed net-worth series (NWH-02).
+
+    Nulls here mean the liquid half could not be verified for that month —
+    no interpolation, no carry-forward (D-06). `valuation_basis` of
+    "ledger_plus_corrections" marks pre-anchor months (23.1 D-05); it is
+    None for both a gapped month and the post-anchor D-07 basis."""
+
+    total: MoneyDecimal | None
+    by_account: dict[str, MoneyDecimal] | None
+    honest: bool
+    gap_reason: str | None
+    valuation_basis: str | None = None
+
+
+class NetWorthHistoryInvestmentOut(BaseModel):
+    """One month's investment half of the composed net-worth series (NWH-02).
+
+    Nulls here mean the investment half could not be verified for that month —
+    no interpolation, no carry-forward (D-06)."""
+
+    total: MoneyDecimal | None
+    by_position: dict[str, MoneyDecimal] | None
+    honest: bool
+    gap_reason: str | None
+    valuation_basis: str | None
+    as_of_date: date | None
+
+
+class NetWorthHistoryRowOut(BaseModel):
+    """One composed month of GET /cashflow/networth-history (NWH-02).
+
+    total is non-null only when both halves are independently honest (D-04).
+    liquid and investment are always present, honest or not, so Phase 23's
+    split view can draw either half alone (SC4/NWH-06)."""
+
+    month: str  # YYYY-MM
+    total: MoneyDecimal | None
+    honest: bool
+    gap_reason: str | None
+    liquid: NetWorthHistoryLiquidOut
+    investment: NetWorthHistoryInvestmentOut
+
+
+class NetWorthHistoryResponse(BaseModel):
+    """GET /cashflow/networth-history payload (NWH-02); preserves the
+    four-key envelope both reconstruction engines return.
+
+    `liquid_drift_estimate` is the anchor-day residual (23.1 D-06): the sum
+    of each anchored liquid account's positive residual, an upper bound on
+    how far pre-anchor liquid balances may be overstated. It is null when no
+    live liquid account has an anchor."""
+
+    rows: list[NetWorthHistoryRowOut]
+    honest_months: list[str]
+    gap_summary: dict[str, int]
+    liquid_drift_estimate: MoneyDecimal | None = None
+
+
 class PriceOverrideRequest(BaseModel):
     """Manual price override body (INV-04, D-11, T-05-04-INP).
 

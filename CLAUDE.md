@@ -1,3 +1,12 @@
+## Personal data — never push it
+
+This repo is public, but monai runs on its owner's real finances. Keep all of it out of anything pushed:
+
+- **Tracked code, tests, fixtures, docstrings and comments use synthetic values only.** Never copy real balances, amounts, net worth, holdings quantities, merchants, notes or transaction dates from the live DB or an export. Tests that check live data must derive expected values at runtime, never hardcode them.
+- **`.planning/` is local-only.** Commit it locally if you like, but never push it. Ship code through a clean branch cut from `origin/main` that carries only code changes (as with PR #3).
+- **Data files stay local.** Wallet exports (`report_*.csv`), derived fixtures (`alembic/data/corrections_*.csv`), DB dumps and `.env` are gitignored; keep them that way.
+- **The pre-push guard enforces this.** Enable it once per clone with `git config core.hooksPath .githooks`. If it blocks a push, fix the data rather than overriding. Mark a line with `pii-ok` only when the value is genuinely synthetic.
+
 <!-- GSD:project-start source:PROJECT.md -->
 ## Project
 

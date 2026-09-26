@@ -8,6 +8,7 @@ Run (dev):
 Endpoints:
     GET  /health
     GET  /cashflow/summary       aggregate dashboard payload (D-08)
+    GET  /cashflow/networth-history  composed monthly net-worth series, compute-on-read (NWH-02)
     GET  /accounts
     POST /accounts               create an account (requires API key)
     PUT  /accounts/{id}          edit an account (requires API key)
@@ -53,6 +54,7 @@ from backend.mcp_server import build_mcp
 from backend.db import get_session
 from backend.importer import _get_or_create_account, import_csv_text
 from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, Proposal, Transaction
+from backend.net_worth_history import monthly_net_worth_series
 from backend.portfolio import portfolio_summary as compose_portfolio_summary
 from backend.portfolio import value_history_series
 from backend.writes import (
@@ -107,6 +109,7 @@ from backend.schemas import (
     HoldingUpdate,
     InvestmentTransferCreate,
     NetWorth,
+    NetWorthHistoryResponse,
     PlatformCreate,
     PlatformOut,
     PlatformUpdate,
@@ -872,6 +875,25 @@ def net_worth_endpoint(db: Session = Depends(get_session)):
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     return NetWorth(**result)
+
+
+@app.get("/cashflow/networth-history", response_model=NetWorthHistoryResponse)
+def networth_history_endpoint(months: int = 72, db: Session = Depends(get_session)):
+    """Composed monthly net-worth series (NWH-02) — open read, computes on read.
+
+    Nothing is persisted (D-03): every call re-composes Phase 20's liquid
+    series and Phase 21's investment series fresh from one session. Every
+    row carries both a liquid and an investment sub-object, honest or not, so
+    Phase 23's split view can draw either half alone (SC4/NWH-06). `months`
+    outside 1-600 raises ValueError in monthly_net_worth_series, which maps to
+    422 here, never a raw 500. A sparse honest_months list is the correct
+    honest answer on today's data (D-05), not a defect.
+    """
+    try:
+        result = monthly_net_worth_series(months=months, db=db)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    return result
 
 
 @app.post("/transactions", response_model=TransactionOut, status_code=201, dependencies=[Depends(require_api_key)])
