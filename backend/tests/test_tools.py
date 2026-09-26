@@ -73,6 +73,11 @@ class TestResolvePeriod:
 # Integration tests against live Postgres
 # --------------------------------------------------------------------------
 
+# Ids of the `ZZ Test BCA` account / `ZZ Test Bitplatform` platform rows the
+# find_* ilike tests actually inserted (ON CONFLICT DO NOTHING may insert
+# nothing) — teardown deletes only these, never a same-named row it didn't make.
+_CREATED_IDS: dict[str, list[int]] = {"accounts": [], "platforms": []}
+
 _SEED_CATEGORY_NAMES = ["ZZ Tools Seed Food", "ZZ Tools Seed Salary"]
 
 
@@ -149,8 +154,13 @@ def db_available():
             )
             c.execute(text("DELETE FROM categories WHERE id = ANY(:ids)"), {"ids": [ids["food"], ids["salary"]]})
             c.execute(text("DELETE FROM accounts WHERE id = :id"), {"id": ids["account"]})
-            c.execute(text("DELETE FROM accounts WHERE name = 'ZZ Test BCA'"))
-            c.execute(text("DELETE FROM platforms WHERE name = 'ZZ Test Bitplatform'"))
+        # Separate transaction: an FK failure here must not roll back the
+        # seed cleanup above.
+        with engine.begin() as c:
+            for tbl, created in _CREATED_IDS.items():
+                if created:
+                    c.execute(text(f"DELETE FROM {tbl} WHERE id = ANY(:ids)"), {"ids": created})
+                    created.clear()
 
 
 class TestToolSQL:
@@ -253,11 +263,13 @@ class TestToolSQL:
         from backend.tools import find_platforms
 
         with engine.connect() as c:
-            c.execute(text(
+            new_id = c.execute(text(
                 "INSERT INTO platforms (name, kind) VALUES ('ZZ Test Bitplatform', 'exchange') "
-                "ON CONFLICT (name) DO NOTHING"
-            ))
+                "ON CONFLICT (name) DO NOTHING RETURNING id"
+            )).scalar()
             c.commit()
+        if new_id is not None:
+            _CREATED_IDS["platforms"].append(new_id)
         rows = find_platforms(name="zz test bit", limit=10)["rows"]
         assert any(r["name"] == "ZZ Test Bitplatform" for r in rows)
 
@@ -283,11 +295,13 @@ class TestToolSQL:
         from backend.tools import find_accounts
 
         with engine.connect() as c:
-            c.execute(text(
+            new_id = c.execute(text(
                 "INSERT INTO accounts (name, type, currency) VALUES ('ZZ Test BCA', 'liquid', 'IDR') "
-                "ON CONFLICT (name) DO NOTHING"
-            ))
+                "ON CONFLICT (name) DO NOTHING RETURNING id"
+            )).scalar()
             c.commit()
+        if new_id is not None:
+            _CREATED_IDS["accounts"].append(new_id)
         rows = find_accounts(name="zz test bca", limit=10)["rows"]
         assert any(r["name"] == "ZZ Test BCA" for r in rows)
 
