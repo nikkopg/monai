@@ -1125,11 +1125,26 @@ def test_apply_add_portfolio_event_matching_currency_succeeds(db_session):
         _cleanup_ticker(db_session, ticker)
 
 
-def test_apply_add_portfolio_event_currency_mismatch_raises(db_session):
+def test_apply_add_portfolio_event_currency_mismatch_raises(db_session, monkeypatch):
     """A buy whose currency differs from the parent holding's currency raises
     ValueError (-> 422 at the API boundary) — one currency per position, no
-    cross-currency averaging (T-07-02-CUR)."""
+    cross-currency averaging (T-07-02-CUR).
+
+    D-08: the first buy's USD->IDR cost-basis conversion goes through
+    fx.get_rate, which is a cache miss on a fresh DB; mock httpx.get (same
+    pattern as test_fx.py) so the holding is actually created and the
+    mismatch check on the second buy has something to compare against."""
+    import httpx
     from backend.writes import apply_add_portfolio_event
+
+    class _FxResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"rates": {"IDR": 15000}}
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _FxResp())
 
     ticker = "EVTCCY02"
     _cleanup_ticker(db_session, ticker)
@@ -1153,9 +1168,23 @@ def test_apply_add_portfolio_event_currency_mismatch_raises(db_session):
         _cleanup_ticker(db_session, ticker)
 
 
-def test_apply_add_portfolio_event_currency_mismatch_422_at_api(client, api_key):
-    """API boundary: a currency-mismatched event returns 422, not a 500."""
+def test_apply_add_portfolio_event_currency_mismatch_422_at_api(client, api_key, monkeypatch):
+    """API boundary: a currency-mismatched event returns 422, not a 500.
+
+    D-08: mock the USD->IDR fx.get_rate HTTP call (same pattern as
+    test_fx.py) so the first buy actually creates the holding the second
+    buy's mismatch check needs."""
+    import httpx
     from backend.db import SessionLocal
+
+    class _FxResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"rates": {"IDR": 15000}}
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _FxResp())
 
     ticker = "EVTCCY03"
     hdr = {"MONAI_API_KEY": api_key}

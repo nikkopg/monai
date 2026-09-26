@@ -47,8 +47,17 @@ def test_get_settings_returns_defaults(client):
 # ---------------------------------------------------------------------------
 
 
-def test_put_settings_requires_key(client):
-    """PUT /settings with no MONAI_API_KEY header returns 401."""
+def test_put_settings_requires_key(client, monkeypatch):
+    """PUT /settings with no MONAI_API_KEY header returns 401.
+
+    require_api_key fails closed with 503 when no key is configured
+    server-side at all (backend/auth.py); on an isolated test run with no
+    MONAI_API_KEY env var this test's own process has none, so configure
+    one (without sending it) to exercise the missing-header 401 path
+    specifically, mirroring conftest.py's `api_key` fixture."""
+    import backend.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "_CONFIGURED_KEY", "zz-test-settings-key")
     resp = client.put("/settings", json={"base_currency": "IDR"})
     assert resp.status_code == 401
 
