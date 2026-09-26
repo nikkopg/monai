@@ -80,6 +80,16 @@ def _make_account(db, name: str = "Test Account CFS") -> int:
     return acc.id
 
 
+def _months_back(today: datetime.date, i: int) -> datetime.date:
+    """First day of the calendar month i months before today's month.
+
+    Steps by calendar month, not 30-day blocks — timedelta(days=30*i) skips
+    February and repeats December when run in March-May.
+    """
+    y, m = divmod(today.year * 12 + today.month - 1 - i, 12)
+    return datetime.date(y, m + 1, 1)
+
+
 # ---------------------------------------------------------------------------
 # CASH-02: monthly_trend() rolling >=6-month window
 # ---------------------------------------------------------------------------
@@ -95,7 +105,7 @@ def test_trend_covers_six_months(db_session):
     try:
         # Seed one income + one expense transaction per month for the last 6 months.
         for i in range(6):
-            month_date = today.replace(day=1) - datetime.timedelta(days=30 * i)
+            month_date = _months_back(today, i)
             seeded_ids.append(
                 _make_transaction(
                     db_session,
@@ -273,7 +283,7 @@ def test_get_cashflow_summary_endpoint(client, db_session):
     try:
         today = datetime.date.today()
         for i in range(6):
-            month_date = today.replace(day=1) - datetime.timedelta(days=30 * i)
+            month_date = _months_back(today, i)
             seeded_ids.append(
                 _make_transaction(
                     db_session,
