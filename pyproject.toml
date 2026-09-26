@@ -1,3 +1,7 @@
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["backend/tests"]
+markers = [
+    "eval: opt-in agent eval against a real model; deselected by default, run with -m eval",
+]
+addopts = "-m 'not eval'"
