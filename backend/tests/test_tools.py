@@ -3,8 +3,11 @@ Tool correctness tests.
 
 Two groups:
   - resolve_period: pure date logic, no DB.
-  - tool SQL: integration against the live Postgres (requires `docker compose up db`
-    and a loaded database). Skipped automatically if the DB is unreachable.
+  - tool SQL: integration against Postgres (requires `docker compose up db`).
+    The `db_available` fixture seeds its own synthetic `ZZ Tools Seed *` rows
+    (D-05) so these tests are non-vacuous against an empty database, and
+    tears them down afterward. Skipped automatically only if Postgres itself
+    is unreachable.
 """
 
 import datetime
@@ -72,16 +75,67 @@ class TestResolvePeriod:
 
 @pytest.fixture(scope="module")
 def db_available():
+    """Seed synthetic `ZZ Tools Seed *` rows (D-05) so TestToolSQL is
+    non-vacuous against an empty database, then tear them down. Also cleans
+    up the `ZZ Test BCA` account / `ZZ Test Bitplatform` platform that
+    test_find_accounts_name_filter_ilike / test_find_platforms_name_filter_ilike
+    commit and previously left behind (per-file leak ownership)."""
     from sqlalchemy import text
     from backend.db import engine
+
     try:
         with engine.connect() as c:
-            n = c.execute(text("SELECT COUNT(*) FROM transactions")).scalar()
-        if not n:
-            pytest.skip("transactions table is empty")
+            c.execute(text("SELECT 1"))
     except Exception as e:
         pytest.skip(f"Postgres not available: {e}")
-    return True
+        return
+
+    ids: dict[str, int] = {}
+    with engine.begin() as c:
+        ids["account"] = c.execute(
+            text(
+                "INSERT INTO accounts (name, type, currency) "
+                "VALUES ('ZZ Tools Seed Account', 'liquid', 'IDR') RETURNING id"
+            )
+        ).scalar()
+        ids["food"] = c.execute(
+            text(
+                "INSERT INTO categories (name, parent_id, kind, is_system) "
+                "VALUES ('ZZ Tools Seed Food', NULL, 'expense', false) RETURNING id"
+            )
+        ).scalar()
+        ids["salary"] = c.execute(
+            text(
+                "INSERT INTO categories (name, parent_id, kind, is_system) "
+                "VALUES ('ZZ Tools Seed Salary', NULL, 'income', false) RETURNING id"
+            )
+        ).scalar()
+        for d, amt, merchant, cat_key, cat_name in (
+            (datetime.date(2020, 1, 10), -25000.00, "ZZ Seed Coffee Stall", "food", "ZZ Tools Seed Food"),
+            (datetime.date(2020, 1, 11), -12000.00, "ZZ Seed Coffee Stall", "food", "ZZ Tools Seed Food"),
+            (datetime.date(2020, 1, 12), 50000.00, "ZZ Seed Employer", "salary", "ZZ Tools Seed Salary"),
+        ):
+            c.execute(
+                text(
+                    "INSERT INTO transactions "
+                    "(date, amount, currency, category, category_id, merchant, account_id, is_transfer) "
+                    "VALUES (:d, :amt, 'IDR', :cat, :cid, :m, :aid, false)"
+                ),
+                {"d": d, "amt": amt, "cat": cat_name, "cid": ids[cat_key], "m": merchant, "aid": ids["account"]},
+            )
+
+    try:
+        yield True
+    finally:
+        with engine.begin() as c:
+            c.execute(
+                text("DELETE FROM transactions WHERE category_id = ANY(:ids)"),
+                {"ids": [ids["food"], ids["salary"]]},
+            )
+            c.execute(text("DELETE FROM categories WHERE id = ANY(:ids)"), {"ids": [ids["food"], ids["salary"]]})
+            c.execute(text("DELETE FROM accounts WHERE id = :id"), {"id": ids["account"]})
+            c.execute(text("DELETE FROM accounts WHERE name = 'ZZ Test BCA'"))
+            c.execute(text("DELETE FROM platforms WHERE name = 'ZZ Test Bitplatform'"))
 
 
 class TestToolSQL:
@@ -154,32 +208,19 @@ class TestToolSQL:
         assert all(r["amount"] > 0 for r in income_rows)
 
     def test_find_transactions_category_exact_match(self, db_available):
-        # find_transactions still filters on the legacy category string, so
-        # seed the filter value straight from transactions (list_categories
-        # now returns the hierarchy tree, not legacy strings).
-        from sqlalchemy import text
-        from backend.db import engine
+        # find_transactions still filters on the legacy category string; the
+        # db_available fixture seeds a "ZZ Tools Seed Food" row for this (D-05).
         from backend.tools import find_transactions
 
-        with engine.connect() as c:
-            row = c.execute(text(
-                "SELECT category FROM transactions "
-                "WHERE category IS NOT NULL AND is_transfer = false LIMIT 1"
-            )).fetchone()
-        if not row:
-            return
-        category_name = row[0]
-        rows = find_transactions(category=category_name, limit=20)["rows"]
+        rows = find_transactions(category="ZZ Tools Seed Food", limit=20)["rows"]
+        assert rows
         for r in rows:
-            assert r["category"] == category_name
+            assert r["category"] == "ZZ Tools Seed Food"
 
     def test_find_transactions_merchant_partial_match(self, db_available):
         from backend.tools import find_transactions
-        seed_rows = find_transactions(limit=1)["rows"]
-        if not seed_rows or not seed_rows[0]["merchant"]:
-            return
-        merchant = seed_rows[0]["merchant"]
-        substring = merchant.lower()[: max(1, len(merchant) // 2)]
+
+        substring = "zz seed cof"
         rows = find_transactions(merchant=substring, limit=20)["rows"]
         assert any(substring in (r["merchant"] or "").lower() for r in rows)
 
