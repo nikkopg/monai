@@ -43,3 +43,6 @@ monai_backup_*.sql
 # graphify build cache (regenerate via `graphify update .`; canonical copy lives in .planning/graphs/)
 graphify-out/
 .planning/research/.cache/
+
+# GSD planning is local-only (may reference personal data) — never push
+.planning/
