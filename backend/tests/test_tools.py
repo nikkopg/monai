@@ -73,6 +73,9 @@ class TestResolvePeriod:
 # Integration tests against live Postgres
 # --------------------------------------------------------------------------
 
+_SEED_CATEGORY_NAMES = ["ZZ Tools Seed Food", "ZZ Tools Seed Salary"]
+
+
 @pytest.fixture(scope="module")
 def db_available():
     """Seed synthetic `ZZ Tools Seed *` rows (D-05) so TestToolSQL is
@@ -92,6 +95,18 @@ def db_available():
 
     ids: dict[str, int] = {}
     with engine.begin() as c:
+        # Clear any seed leaked by a killed prior run — the seed names are
+        # UNIQUE, so a leftover would fail every later setup.
+        c.execute(
+            text(
+                "DELETE FROM transactions WHERE category_id IN "
+                "(SELECT id FROM categories WHERE name = ANY(:cats)) OR account_id IN "
+                "(SELECT id FROM accounts WHERE name = 'ZZ Tools Seed Account')"
+            ),
+            {"cats": _SEED_CATEGORY_NAMES},
+        )
+        c.execute(text("DELETE FROM categories WHERE name = ANY(:cats)"), {"cats": _SEED_CATEGORY_NAMES})
+        c.execute(text("DELETE FROM accounts WHERE name = 'ZZ Tools Seed Account'"))
         ids["account"] = c.execute(
             text(
                 "INSERT INTO accounts (name, type, currency) "

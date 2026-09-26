@@ -26,6 +26,15 @@ def _seed_cashflow_rows():
     account_ids: dict[str, int] = {}
     txn_ids: list[int] = []
     with engine.begin() as c:
+        # Clear any seed leaked by a killed prior run — the account names are
+        # UNIQUE, so a leftover would fail every later setup.
+        c.execute(
+            text(
+                "DELETE FROM transactions WHERE merchant = 'zz-cfv-null' OR account_id IN "
+                "(SELECT id FROM accounts WHERE name IN ('zz-cfv-invest', 'zz-cfv-liquid'))"
+            )
+        )
+        c.execute(text("DELETE FROM accounts WHERE name IN ('zz-cfv-invest', 'zz-cfv-liquid')"))
         account_ids["invest"] = c.execute(
             text(
                 "INSERT INTO accounts (name, type, currency) "
@@ -54,8 +63,8 @@ def _seed_cashflow_rows():
         txn_ids.append(
             c.execute(
                 text(
-                    "INSERT INTO transactions (date, amount, currency, account_id, is_transfer) "
-                    "VALUES ('2020-02-05', -2000.00, 'IDR', NULL, false) RETURNING id"
+                    "INSERT INTO transactions (date, amount, currency, account_id, is_transfer, merchant) "
+                    "VALUES ('2020-02-05', -2000.00, 'IDR', NULL, false, 'zz-cfv-null') RETURNING id"
                 )
             ).scalar()
         )
