@@ -13,7 +13,7 @@ Every apply_* function:
   - never commits the session itself — the caller owns the transaction boundary
 """
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import text
@@ -76,8 +76,10 @@ def apply_add_transaction(db: Session, after: dict) -> Transaction:
     return tx
 
 
-def apply_add_balance_adjustment(db: Session, account_id: int, target_balance) -> Transaction:
-    """Reconcile an account's derived balance to `target_balance` (ACCT-02, D-07).
+def apply_add_balance_adjustment(
+    db: Session, account_id: int, target_balance, as_of: date | None = None
+) -> Transaction:
+    """Reconcile an account's derived balance to `target_balance` (ACCT-02, D-07, D-08).
 
     Writes ONE 'Adjustment'-tagged Transaction whose amount is the delta
     between `target_balance` and the account's current derived balance — a
@@ -88,11 +90,83 @@ def apply_add_balance_adjustment(db: Session, account_id: int, target_balance) -
     cashflow totals (D-08) while still counting toward the unfiltered
     derived-balance SUM. No stored balance column is written — the balance
     stays derived.
+
+    `as_of` (D-08, revised decision 1, 2026-09-24) is an optional back-dated
+    anchor: the target balance is reconciled against the account's derived
+    balance as of the CLOSE of that date (inclusive), and the adjustment row
+    is written dated `as_of` instead of now. This lets the user enter a real
+    historical statement balance and close an adjustment window for
+    `backend/reconstruction.py`'s honesty model (RECON-03). If the account
+    has a later Adjustment (the first one dated after `as_of`), that
+    adjustment is a FIXED amount that already absorbed the same drift —
+    without correction the drift would be double-counted into every balance
+    from `as_of` onward, including `net_worth()`. So that later Adjustment's
+    amount is reduced by this call's delta X, in the same session
+    transaction and audit-logged as an 'edit' (via `apply_edit_transaction`),
+    which keeps the balance at and after it — and the all-time sum —
+    unchanged: only the window [as_of, that adjustment's date) shifts, which
+    is the intended historical correction. An `as_of` on the same day as an
+    existing Adjustment on this account is rejected before any write —
+    same-day anchor ordering is ambiguous. When `as_of` is omitted, or no
+    later Adjustment exists, behaviour is byte-for-byte identical to before
+    D-08: the all-time unfiltered SUM, and today's date via
+    `apply_add_transaction`'s `datetime.now(timezone.utc)` fallback. The
+    caller owns the transaction boundary — this function never commits.
+
+    Deliberate scope boundary: `as_of` is a Python-level capability only. No
+    REST endpoint passes it — both `backend/main.py` call sites omit it, and
+    grepping main.py for `as_of` finds nothing — and it is intentionally
+    absent from `backend.tools.propose_add_balance_adjustment`, the
+    agent-facing wrapper — that wrapper's signature is introspected to build
+    both the LlamaIndex and the MCP tool schemas, so adding a parameter
+    there would silently hand the model a capability to rewrite financial
+    history.
     """
-    current = db.execute(
-        text("SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE account_id = :id"),
-        {"id": account_id},
-    ).scalar()
+    next_adjustment = None
+    if as_of is not None:
+        if not isinstance(as_of, date):
+            raise ValueError("as_of must be a datetime.date")
+        # LOAD-BEARING: transactions.date is a DateTime, not a bare Date, so a
+        # same-day row recorded any time after midnight would be silently
+        # dropped by a direct `date <= as_of` comparison against that
+        # datetime column. Using an exclusive next-day bound instead keeps
+        # the whole row set through the close of `as_of` (inclusive
+        # semantics) while matching this codebase's half-open `date <
+        # :bound` convention used everywhere else.
+        as_of_excl = as_of + timedelta(days=1)
+
+        # Revised decision 1: find the first later Adjustment on this
+        # account, if any, BEFORE any mutation — every raising check (this
+        # lookup's same-day rejection, and apply_edit_transaction's own
+        # paired-leg guard below) must run before the first write, so a
+        # failure leaves no partial writes.
+        next_adjustment = db.execute(
+            text(
+                "SELECT id, date::date AS adj_date, amount FROM transactions "
+                "WHERE account_id = :id AND category = 'Adjustment' "
+                "AND date::date >= :as_of ORDER BY date, id LIMIT 1"
+            ),
+            {"id": account_id, "as_of": as_of},
+        ).first()
+        if next_adjustment is not None and next_adjustment.adj_date == as_of:
+            raise ValueError(
+                f"as_of {as_of.isoformat()} is the same day as an existing adjustment "
+                "on this account — same-day anchor ordering is ambiguous; "
+                "choose a different date"
+            )
+
+        current = db.execute(
+            text(
+                "SELECT COALESCE(SUM(amount), 0) FROM transactions "
+                "WHERE account_id = :id AND date < :as_of_excl"
+            ),
+            {"id": account_id, "as_of_excl": as_of_excl},
+        ).scalar()
+    else:
+        current = db.execute(
+            text("SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE account_id = :id"),
+            {"id": account_id},
+        ).scalar()
     delta = Decimal(str(target_balance)) - Decimal(str(current))
     account = db.get(Account, account_id)
     after = {
@@ -104,6 +178,20 @@ def apply_add_balance_adjustment(db: Session, account_id: int, target_balance) -
         "category": "Adjustment",
         "is_transfer": True,
     }
+    if as_of is not None:
+        after["date"] = as_of.isoformat()
+        if next_adjustment is not None:
+            # The later Adjustment already absorbed this drift as a fixed
+            # amount — subtract delta so the balance at and after it does
+            # not move (revised decision 1). str() amounts only: AuditLog
+            # JSON-serializes before/after, and Decimal isn't serializable.
+            next_amount = Decimal(str(next_adjustment.amount))
+            apply_edit_transaction(
+                db,
+                next_adjustment.id,
+                after={"amount": str(next_amount - delta)},
+                before={"amount": str(next_amount)},
+            )
     return apply_add_transaction(db, after)
 
 

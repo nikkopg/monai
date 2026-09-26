@@ -29,10 +29,13 @@ playwright/.cache/
 # Personal financial data — NEVER commit real exports
 report_*.csv
 *.export.csv
+# Recovered-transaction fixture derived from a real export (read by migration 014)
+alembic/data/corrections_*.csv
 
 # gstack
 .gstack/
 backup_pre_alembic.sql
+monai_backup_*.sql
 
 # GSD isolated-execution worktrees (transient — merged and removed automatically)
 .claude/worktrees/

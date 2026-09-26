@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { tokens, card } from "../styles";
 import CategoryDonut from "./charts/CategoryDonut";
 import TrendChart from "./charts/TrendChart";
+import NetWorthTrendChart from "./charts/NetWorthTrendChart";
 import CsvUpload from "./CsvUpload";
 
 // ---------------------------------------------------------------------------
@@ -372,6 +373,9 @@ export default function CashflowPage() {
               <TrendChart data={trendData} />
             </div>
           </div>
+
+          {/* Net worth trend — NWH-01, Phase 23 D-01 */}
+          <NetWorthTrendChart />
 
           {/* Split row — liquid vs investment (NW-02, D-08) */}
           {netWorthData && !netWorthError && (
