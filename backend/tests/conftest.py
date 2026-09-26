@@ -29,6 +29,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine.url import make_url
@@ -38,6 +39,17 @@ _DEFAULT_TEST_URL = "postgresql+psycopg://monai:monai@localhost:5434/monai_test"
 os.environ.setdefault("DATABASE_URL", _DEFAULT_TEST_URL)
 
 _TEST_DB = make_url(os.environ["DATABASE_URL"])
+# A query-string dbname= replaces the path database at connect time (the
+# psycopg dialect merges url.query over it), so the path name checked below
+# would not be the database actually used. Refuse it with any value — make_url
+# silently drops an empty ?dbname=, hence the raw parse as well.
+if "dbname" in _TEST_DB.query or "dbname" in parse_qs(
+    urlsplit(os.environ["DATABASE_URL"]).query, keep_blank_values=True
+):
+    raise SystemExit(
+        "Refusing to run: DATABASE_URL overrides the database with a "
+        "query-string dbname=. Name the test database in the URL path only."
+    )
 if _TEST_DB.database == "monai":
     raise SystemExit(
         "Refusing to run the backend test suite against the live 'monai' "
@@ -122,13 +134,14 @@ from fastapi.testclient import TestClient
 from backend.main import app
 from backend.db import engine as _app_engine
 
-# Proves the app's engine really bound to the checked database, not just that
-# the env var was set (belt-and-braces on top of the check above).
-if _app_engine.url.database != _TEST_DB.database:
+# Asks the server which database the app's engine is really connected to —
+# the URL can say one thing while the connection lands elsewhere.
+with _app_engine.connect() as _conn:
+    _actual_db = _conn.execute(text("SELECT current_database()")).scalar()
+if _actual_db == "monai" or _actual_db != _TEST_DB.database:
     raise SystemExit(
-        "Refusing to run the backend test suite against the live 'monai' "
-        "database. Unset DATABASE_URL (it defaults to monai_test) or point "
-        "it at a test database."
+        f"Refusing to run: the app engine is connected to {_actual_db!r}, "
+        f"expected the test database {_TEST_DB.database!r}."
     )
 
 # ---------------------------------------------------------------------------

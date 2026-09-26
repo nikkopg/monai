@@ -6,6 +6,8 @@ Proves:
   - The guard refuses DATABASE_URL when the parsed database name is exactly
     "monai" — with and without a trailing query string, since the check
     parses the database name component; it never does a string-suffix match.
+  - The guard refuses any query-string dbname= (including an empty one),
+    which would otherwise replace the path database at connect time.
   - The guard proceeds (no refusal) for the session's own test database name
     (monai_test locally, the postgres service database in CI) — a name that
     merely *contains* "monai" is not refused.
@@ -34,6 +36,12 @@ _DEAD_PORT_MONAI_URL = "postgresql+psycopg://monai:monai@127.0.0.1:1/monai"
 _DEAD_PORT_MONAI_URL_WITH_QUERY = (
     "postgresql+psycopg://monai:monai@127.0.0.1:1/monai?connect_timeout=1"
 )
+# A query-string dbname= replaces the path database at connect time, so both
+# must be refused even though the path names a test database (CR-01).
+_DEAD_PORT_DBNAME_OVERRIDE_URL = (
+    "postgresql+psycopg://monai:monai@127.0.0.1:1/monai_test?dbname=monai"
+)
+_DEAD_PORT_EMPTY_DBNAME_URL = "postgresql+psycopg://monai:monai@127.0.0.1:1/monai_test?dbname="
 
 
 def _run_pytest(database_url: str) -> subprocess.CompletedProcess:
@@ -55,7 +63,13 @@ def _run_pytest(database_url: str) -> subprocess.CompletedProcess:
 
 
 @pytest.mark.parametrize(
-    "database_url", [_DEAD_PORT_MONAI_URL, _DEAD_PORT_MONAI_URL_WITH_QUERY]
+    "database_url",
+    [
+        _DEAD_PORT_MONAI_URL,
+        _DEAD_PORT_MONAI_URL_WITH_QUERY,
+        _DEAD_PORT_DBNAME_OVERRIDE_URL,
+        _DEAD_PORT_EMPTY_DBNAME_URL,
+    ],
 )
 def test_refuses_live_database_name(database_url: str) -> None:
     result = _run_pytest(database_url)
