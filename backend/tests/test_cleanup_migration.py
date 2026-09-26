@@ -8,7 +8,7 @@ alembic/versions/, not an importable package.
 
 Self-seeded, id-agnostic (Phase 12's lesson, restated by 011's docstring):
 DB-backed tests create rows on a uniquely named test account and clean up
-in a `finally` block. The live 14-row / 3,145,000-IDR figures are NEVER
+in a `finally` block. The live target set's row count and total are NEVER
 asserted here — only the structural outcomes (pinned ids, JSON-safe
 snapshot, dry run mutates nothing, apply audits + deletes, a second apply
 writes zero additional audits, an empty target set is a clean no-op). Test

@@ -122,7 +122,7 @@ def test_view_keeps_null_account():
 
 def test_double_count_delta():
     """raw_spending - view_spending == investment_expense, derived live
-    (never hard-coded) — the ~45.9M "Investments" phantom removed by
+    (never hard-coded) — the investment-account double-count removed by
     construction."""
     with engine.connect() as conn:
         _assert_seeded_shape(conn)
