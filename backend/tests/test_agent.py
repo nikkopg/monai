@@ -296,3 +296,93 @@ def test_agent_stream_surfaces_proposal_fields(monkeypatch):
         if isinstance(result, dict):
             assert "proposal_token" not in result, \
                 f"proposal_token leaked into public trace: {step}"
+
+
+# ---------------------------------------------------------------------------
+# Regression: agent_stream() must serialize Decimal tool-result fields.
+#
+# net_worth() passes raw Decimal holding fields (quantity, current_value, ...)
+# straight through from portfolio_summary. json.dumps() without default=str
+# raises TypeError on a Decimal, and agent_stream's outer except turns that
+# into the generic "I couldn't process that question reliably" error answer
+# instead of a real tool_result + answer pair.
+# ---------------------------------------------------------------------------
+
+
+async def _fake_stream_events_decimal_net_worth():
+    """Async generator: one net_worth call whose result carries Decimals, then stop."""
+    from decimal import Decimal
+
+    yield _make_agent_input_event()
+    yield _make_tool_result_event(
+        "net_worth",
+        {},
+        {
+            "tool": "net_worth",
+            "investment_groups": [
+                {
+                    "holdings": [
+                        {
+                            "ticker": "TEST",
+                            "quantity": Decimal("1.5"),
+                            "current_value": Decimal("12500.00"),
+                        }
+                    ]
+                }
+            ],
+        },
+    )
+    yield _make_stop_event("Your net worth is IDR 12,500.")
+
+
+def test_agent_stream_serializes_decimal_tool_results(monkeypatch):
+    """
+    A ToolCallResult whose raw_output dict carries Decimal fields (as net_worth's
+    holdings do) must still stream a real tool_result event and a real answer
+    event, with the Decimals rendered as their exact str() form.
+    """
+    import asyncio
+    from backend.query import agent_stream
+
+    mock_handler = MagicMock()
+    mock_handler.stream_events = lambda: _fake_stream_events_decimal_net_worth()
+
+    mock_workflow = MagicMock()
+    mock_workflow.run = MagicMock(return_value=mock_handler)
+
+    monkeypatch.setattr("backend.query._agent_workflow", mock_workflow)
+
+    async def _collect():
+        lines = []
+        async for line in agent_stream("what's my net worth?"):
+            lines.append(line)
+        return lines
+
+    lines = asyncio.run(_collect())
+
+    tool_result_payload = None
+    answer_payload = None
+    for line in lines:
+        if not line.startswith("data: "):
+            continue
+        raw = line[len("data: "):].strip()
+        if raw == "[DONE]":
+            continue
+        payload = json.loads(raw)
+        if payload.get("type") == "tool_result":
+            tool_result_payload = payload
+        elif payload.get("type") == "answer":
+            answer_payload = payload
+
+    assert tool_result_payload is not None, \
+        f"No tool_result event found in stream: {lines}"
+    holding = tool_result_payload["step"]["result"]["investment_groups"][0]["holdings"][0]
+    assert holding["quantity"] == "1.5"
+    assert holding["current_value"] == "12500.00"
+
+    assert answer_payload is not None, f"No answer event found in stream: {lines}"
+    assert answer_payload["text"] == "Your net worth is IDR 12,500."
+    assert "not JSON serializable" not in answer_payload["text"]
+    trace_holding = answer_payload["trace"][0]["result"]["investment_groups"][0]["holdings"][0]
+    assert trace_holding["quantity"] == "1.5"
+    assert trace_holding["current_value"] == "12500.00"
