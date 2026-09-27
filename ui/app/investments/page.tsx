@@ -531,7 +531,7 @@ export default function InvestmentsPage() {
                   bottom: 24,
                   left: "50%",
                   transform: "translateX(-50%)",
-                  zIndex: 200,
+                  zIndex: 90, // below modals (100) and ConfirmDialog (200)
                   margin: 0,
                   maxWidth: 480,
                   width: "calc(100% - 48px)",
