@@ -25,7 +25,6 @@ Endpoints:
     POST /categories/rename     rename a category (single-row, D-11) (requires API key)
     POST /categories/merge      merge one category into another (requires API key)
     POST /import                multipart CSV upload (Wallet export)
-    POST /query                 natural-language question over your data
     POST /query-stream          streaming SSE agent response
     GET  /proposals             list pending proposals (public)
     POST /proposals/{id}/confirm  apply a pending proposal (requires API key)
@@ -119,7 +118,6 @@ from backend.schemas import (
     PriceOverrideRequest,
     ProposalOut,
     QueryRequest,
-    QueryResponse,
     SettingsOut,
     SettingsUpdate,
     TransactionCreate,
@@ -1423,16 +1421,6 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(get_ses
     from backend.query import reset_engine
     reset_engine()
     return ImportResponse(parsed=parsed, inserted=inserted, skipped=skipped, currency=currency)
-
-
-@app.post("/query", response_model=QueryResponse)
-def query(req: QueryRequest):
-    from backend.query import ask
-    try:
-        answer = ask(req.question)
-    except Exception as e:
-        raise HTTPException(500, f"Query failed: {e}")
-    return QueryResponse(question=req.question, answer=answer)
 
 
 @app.post("/query-stream")
