@@ -40,6 +40,9 @@ monai_backup_*.sql
 # GSD isolated-execution worktrees (transient — merged and removed automatically)
 .claude/worktrees/
 
+# Claude Code machine-local permissions, per-machine, never publish (R10)
+.claude/settings.local.json
+
 # graphify build cache (regenerate via `graphify update .`; canonical copy lives in .planning/graphs/)
 graphify-out/
 .planning/research/.cache/
