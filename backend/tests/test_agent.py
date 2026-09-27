@@ -101,6 +101,27 @@ def _install_mock_workflow(monkeypatch, stream_events):
     return workflow
 
 
+def _stream_payloads(question: str) -> list[dict]:
+    """Drive agent_stream(question) to completion and return every SSE data
+    payload (json.loads of each `data: ` line, except `[DONE]`), in order."""
+    import asyncio
+
+    from backend.query import agent_stream
+
+    async def _collect():
+        payloads = []
+        async for line in agent_stream(question):
+            if not line.startswith("data: "):
+                continue
+            raw = line[len("data: "):].strip()
+            if raw == "[DONE]":
+                continue
+            payloads.append(json.loads(raw))
+        return payloads
+
+    return asyncio.run(_collect())
+
+
 # ---------------------------------------------------------------------------
 # (a) CHAT-01: multi-step tool chaining
 # ---------------------------------------------------------------------------
@@ -281,6 +302,9 @@ def test_agent_stream_surfaces_proposal_fields(monkeypatch):
         f"proposal_id did not survive to answer event: {answer_payload}"
     assert answer_payload["proposal_token"] == "tok-secret-xyz", \
         f"proposal_token did not survive to answer event: {answer_payload}"
+    # D-20: exactly one entry, from the same scan as the singular fields
+    assert answer_payload["proposals"] == [{"id": "prop-abc123", "token": "tok-secret-xyz"}], \
+        f"proposals should have exactly one entry: {answer_payload}"
 
     # T-02-07: proposal_token must never appear inside the public trace results
     for step in answer_payload["trace"]:
@@ -372,6 +396,95 @@ def test_agent_stream_serializes_decimal_tool_results(monkeypatch):
     trace_holding = answer_payload["trace"][0]["result"]["investment_groups"][0]["holdings"][0]
     assert trace_holding["quantity"] == "1.5"
     assert trace_holding["current_value"] == "12500.00"
+    # AGENT-06: the success path with no proposals sends an empty list
+    assert answer_payload["proposals"] == []
+
+
+# ---------------------------------------------------------------------------
+# AGENT-06: one proposals entry per propose_* call, in call order
+# ---------------------------------------------------------------------------
+
+
+async def _fake_stream_events_two_proposals():
+    """Async generator: two propose_* tool calls (distinct ids/tokens), then stop."""
+    yield _make_agent_input_event()
+    yield _make_tool_result_event(
+        "propose_add_account",
+        {"name": "ZZ Test A"},
+        {
+            "tool": "propose_add_account",
+            "proposal_id": "prop-1",
+            "proposal_token": "tok-1",
+            "summary": "Add account: ZZ Test A",
+        },
+    )
+    yield _make_tool_result_event(
+        "propose_add_transaction",
+        {"date": "2020-01-02", "amount": -10000, "account": "ZZ Test A"},
+        {
+            "tool": "propose_add_transaction",
+            "proposal_id": "prop-2",
+            "proposal_token": "tok-2",
+            "summary": "Add transaction: -10000 IDR on 2020-01-02",
+        },
+    )
+    yield _make_stop_event("I've proposed two changes. Approve each one to apply it.")
+
+
+def test_agent_stream_two_proposals_in_call_order(monkeypatch):
+    """
+    Two propose_* calls in one turn surface as a two-entry proposals list, in
+    call order, with the singular fields mirroring the first entry and no
+    token reaching any tool_result payload or the trace (T-02-07, D-20).
+    """
+    _install_mock_workflow(monkeypatch, _fake_stream_events_two_proposals)
+
+    payloads = _stream_payloads("add account ZZ Test A and log a transaction")
+
+    answer_payloads = [p for p in payloads if p.get("type") == "answer"]
+    assert len(answer_payloads) == 1, f"Expected exactly one answer event: {payloads}"
+    answer = answer_payloads[0]
+
+    assert answer["proposals"] == [
+        {"id": "prop-1", "token": "tok-1"},
+        {"id": "prop-2", "token": "tok-2"},
+    ]
+    assert answer["proposal_id"] == "prop-1"
+    assert answer["proposal_token"] == "tok-1"
+
+    for step in answer["trace"]:
+        result = step.get("result")
+        if isinstance(result, dict):
+            assert "proposal_token" not in result, \
+                f"proposal_token leaked into public trace: {step}"
+
+    dump = json.dumps([p for p in payloads if p.get("type") == "tool_result"])
+    assert "tok-1" not in dump and "tok-2" not in dump, \
+        "proposal token leaked into a tool_result payload"
+    trace_dump = json.dumps(answer["trace"])
+    assert "tok-1" not in trace_dump and "tok-2" not in trace_dump, \
+        "proposal token leaked into the answer trace"
+
+
+def test_agent_stream_error_answer_has_empty_proposals(monkeypatch):
+    """The exception path's answer event carries proposals: [] (D-16)."""
+
+    def _raise_stream_events():
+        raise RuntimeError("synthetic stream failure")
+
+    _install_mock_workflow(monkeypatch, _raise_stream_events)
+
+    payloads = _stream_payloads("what's my net worth?")
+
+    answer_payloads = [p for p in payloads if p.get("type") == "answer"]
+    assert len(answer_payloads) == 1, f"Expected exactly one answer event: {payloads}"
+    answer = answer_payloads[0]
+
+    assert answer["proposals"] == []
+    assert answer["proposal_id"] is None
+    assert answer["proposal_token"] is None
+    assert answer["trace"] == []
+    assert "couldn't process" in answer["text"]
 
 
 # ---------------------------------------------------------------------------

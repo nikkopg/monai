@@ -134,30 +134,23 @@ def _get_agent_workflow():
 
 
 # ---------------------------------------------------------------------------
-# Proposal field extraction from tool trace
+# Proposal extraction from tool trace
 # ---------------------------------------------------------------------------
 
-def _extract_proposal_id(tool_trace: list) -> str | None:
-    """Return the first proposal_id found in the tool trace, or None."""
-    for step in tool_trace:
-        result = step.get("result")
-        if isinstance(result, dict) and "proposal_id" in result:
-            return result["proposal_id"]
-    return None
+def _extract_proposals(tool_trace: list) -> list[dict]:
+    """Return one {"id", "token"} entry per propose_* call, in call order.
 
-
-def _extract_proposal_token(tool_trace: list) -> str | None:
-    """Return the first proposal_token found in the tool trace, or None.
-
-    The token is extracted here and surfaced ONLY in the SSE answer event payload
-    to the originating chat session — it is never emitted inside the trace itself
-    (T-02-07: token must not appear in the persisted/visible tool-call log).
+    A single pass over tool_trace: any step whose result dict carries both
+    proposal_id and proposal_token contributes one entry. Tokens surface only
+    in the SSE answer event to the originating chat session — they are never
+    emitted in a tool_result event or the public trace (T-02-07).
     """
+    proposals = []
     for step in tool_trace:
         result = step.get("result")
-        if isinstance(result, dict) and "proposal_token" in result:
-            return result["proposal_token"]
-    return None
+        if isinstance(result, dict) and "proposal_id" in result and "proposal_token" in result:
+            proposals.append({"id": result["proposal_id"], "token": result["proposal_token"]})
+    return proposals
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +164,8 @@ async def agent_stream(question: str):
     Event types emitted:
       data: {"type": "step", "msg": "thinking…"}
       data: {"type": "tool_result", "step": {"tool": ..., "args": ..., "result": ...}}
-      data: {"type": "answer", "text": ..., "trace": [...], "proposal_id": ...}
+      data: {"type": "answer", "text": ..., "trace": [...], "proposals": [{"id": ..., "token": ...}, ...], "proposal_id": ..., "proposal_token": ...}
+        (proposal_id/proposal_token mirror proposals[0]; None when there are none)
       data: [DONE]
     """
     from llama_index.core.agent.workflow.workflow_events import AgentInput, ToolCallResult
@@ -213,8 +207,8 @@ async def agent_stream(question: str):
                     "args": event.tool_kwargs,
                     "result": trace_result,
                 }
-                # Keep the full result_dict (with token) in tool_trace so the
-                # _extract_proposal_token helper can find it.
+                # Keep the full result_dict (with token) in tool_trace so
+                # _extract_proposals can read the tokens.
                 tool_trace.append({
                     "tool": event.tool_name,
                     "args": event.tool_kwargs,
@@ -229,10 +223,10 @@ async def agent_stream(question: str):
                 # StopEvent.result is AgentOutput; str(AgentOutput) = response.content
                 final = event.result
                 answer_text = str(final) if final is not None else ""
-                proposal_id = _extract_proposal_id(tool_trace)
-                # proposal_token surfaces ONLY here — to the originating chat session
+                # One scan for every proposal of the turn, in call order. The
+                # token surfaces ONLY here — to the originating chat session
                 # via the SSE answer event (T-02-07, single-use 15-min TTL).
-                proposal_token = _extract_proposal_token(tool_trace)
+                proposals = _extract_proposals(tool_trace)
                 # Build the public trace using token-stripped results (T-02-07)
                 public_trace = [
                     {
@@ -242,12 +236,16 @@ async def agent_stream(question: str):
                     }
                     for s in tool_trace
                 ]
+                # Singular fields mirror proposals[0] for compatibility (accepted
+                # AGENT-06 scope) — from the same scan, not a second extraction.
+                first = proposals[0] if proposals else None
                 payload = {
                     "type": "answer",
                     "text": answer_text,
                     "trace": public_trace,
-                    "proposal_id": proposal_id,
-                    "proposal_token": proposal_token,
+                    "proposals": proposals,
+                    "proposal_id": first["id"] if first else None,
+                    "proposal_token": first["token"] if first else None,
                 }
                 yield f"data: {json.dumps(payload, default=str)}\n\n"
 
@@ -258,6 +256,7 @@ async def agent_stream(question: str):
             "type": "answer",
             "text": f"I couldn't process that question reliably ({e}). Try rephrasing.",
             "trace": [],
+            "proposals": [],
             "proposal_id": None,
             "proposal_token": None,
         }
