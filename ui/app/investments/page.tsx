@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 
 import { tokens, card, btn, btnDark } from "../styles";
-import PlatformManager, { type Platform } from "./PlatformManager";
+import PlatformManager, { type Platform, extractDetail } from "./PlatformManager";
 import HoldingModal from "./HoldingModal";
 import HoldingOverrideModal from "./HoldingOverrideModal";
 import PriceOverrideDialog from "./PriceOverrideDialog";
@@ -94,6 +94,7 @@ export default function InvestmentsPage() {
   const [summary, setSummary] = useState<Summary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
   const [historyRange, setHistoryRange] = useState<"1M" | "3M" | "6M" | "All">(
     "3M"
@@ -519,6 +520,38 @@ export default function InvestmentsPage() {
               </div>
             )}
 
+            {/* Refused delete: viewport-anchored so it's seen from deep in the list */}
+            {deleteError && (
+              <div
+                role="alert"
+                style={{
+                  ...card,
+                  position: "fixed",
+                  bottom: 24,
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  zIndex: 200,
+                  margin: 0,
+                  maxWidth: 480,
+                  width: "calc(100% - 48px)",
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 12,
+                  fontSize: 14,
+                  color: tokens.color.terracotta,
+                }}
+              >
+                <span style={{ flex: 1 }}>{deleteError}</span>
+                <button
+                  type="button"
+                  onClick={() => setDeleteError(null)}
+                  style={rowAction}
+                >
+                  Dismiss
+                </button>
+              </div>
+            )}
+
             {/* Platform-grouped holdings */}
             {activeGroups.map((g) => {
               const isUnassigned = g.platform_id === null;
@@ -733,18 +766,25 @@ export default function InvestmentsPage() {
                                 onClick={async () => {
                                   if (
                                     !confirm(
-                                      `Delete holding ${h.ticker}? This removes the position (its event history is kept).`
+                                      `Delete holding ${h.ticker}? Holdings with buy/sell history can't be deleted — record a sell to close them instead.`
                                     )
                                   )
                                     return;
-                                  const r = await fetch(`/api/holdings/${h.id}`, {
-                                    method: "DELETE",
-                                  });
-                                  if (r.ok) load();
-                                  else
-                                    setError(
-                                      `Couldn't delete ${h.ticker} — please try again.`
+                                  setDeleteError(null);
+                                  try {
+                                    const r = await fetch(`/api/holdings/${h.id}`, {
+                                      method: "DELETE",
+                                    });
+                                    if (r.ok) load();
+                                    else
+                                      setDeleteError(
+                                        `Couldn't delete ${h.ticker}: ${await extractDetail(r)}`
+                                      );
+                                  } catch (e) {
+                                    setDeleteError(
+                                      `Couldn't delete ${h.ticker}: ${e instanceof Error ? e.message : "Network error"}`
                                     );
+                                  }
                                 }}
                                 style={{
                                   ...rowAction,

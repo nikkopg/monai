@@ -336,7 +336,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
   );
 }
 
-async function extractDetail(r: Response): Promise<string> {
+export async function extractDetail(r: Response): Promise<string> {
   let detail = `HTTP ${r.status}`;
   try {
     const errBody = await r.json();
