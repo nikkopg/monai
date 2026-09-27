@@ -578,6 +578,114 @@ def test_confirm_delete_holding_via_delegation(client, api_key, db_session):
     db_session.commit()
 
 
+@pytest.mark.parametrize("action", ["confirm", "reject"])
+def test_concurrent_second_caller_gets_409(client, api_key, db_session, action):
+    """WRITE-02: confirm and reject both load the proposal with a blocking
+    SELECT ... FOR UPDATE (D-13), so a racing second caller waits on the row
+    lock and then gets the existing 409, with exactly one set of writes and
+    audit rows landing (D-15, D-16)."""
+    import threading
+    import time
+    from backend.db import SessionLocal, engine
+    from backend.main import _execute_proposal_payload
+    from backend.models import Proposal, Transaction
+
+    tx_id = _make_transaction(db_session)
+    proposal_id, token, _ = _insert_proposal(db_session, tx_id=tx_id)
+
+    # Warm up B's client BEFORE any lock exists, so startup lag can't later
+    # pass for "blocked" (D-15).
+    b_client = TestClient(app)
+    warm = b_client.get("/proposals")
+    assert warm.status_code == 200, warm.text
+
+    # Session A: a dedicated, test-only connection takes the row lock. This
+    # second connection belongs to the test only — production code keeps one
+    # session per request (D-15).
+    a_session = SessionLocal()
+    p = a_session.get(Proposal, uuid.UUID(proposal_id), with_for_update=True)
+
+    result_box: dict = {}
+    b_sent = threading.Event()
+
+    def _fire_b():
+        b_sent.set()
+        result_box["resp"] = b_client.post(
+            f"/proposals/{proposal_id}/{action}",
+            json={"token": token},
+            headers={"MONAI_API_KEY": api_key},
+        )
+
+    thread_b = threading.Thread(target=_fire_b, daemon=True)
+
+    try:
+        thread_b.start()
+        assert b_sent.wait(timeout=5), "thread B never sent its request"
+
+        # Poll for B's lock wait. Use a fresh connection per poll, because
+        # pg_stat_activity is snapshotted per transaction and a reused
+        # transaction would keep seeing stale rows.
+        deadline = time.monotonic() + 5
+        blocked = 0
+        while time.monotonic() < deadline:
+            with engine.connect() as c:
+                blocked = c.execute(text(
+                    "SELECT COUNT(*) FROM pg_stat_activity "
+                    "WHERE datname = current_database() "
+                    "AND wait_event_type = 'Lock' "
+                    "AND query ILIKE '%FOR UPDATE%'"
+                )).scalar() or 0
+            if blocked >= 1:
+                break
+            time.sleep(0.05)
+        assert blocked >= 1 and thread_b.is_alive(), (
+            "thread B was not blocked on the proposal row lock — the "
+            "with_for_update guard is missing or not blocking"
+        )
+
+        # A wins: do exactly what a winning confirm does.
+        _execute_proposal_payload(a_session, p)
+        p.status = "confirmed"
+        p.confirmed_at = datetime.datetime.now(datetime.timezone.utc)
+        a_session.commit()
+
+        thread_b.join(timeout=10)
+        assert not thread_b.is_alive(), "thread B never returned — investigate a hang"
+
+        resp_b = result_box.get("resp")
+        assert resp_b is not None, "thread B raised before completing its request"
+        assert resp_b.status_code == 409, f"Expected 409, got {resp_b.status_code}: {resp_b.text}"
+        assert resp_b.json()["detail"] == "Proposal already confirmed"
+
+        db_session.expire_all()
+        reloaded = db_session.get(Proposal, uuid.UUID(proposal_id))
+        assert reloaded.status == "confirmed"
+        tx = db_session.get(Transaction, tx_id)
+        assert tx.category == "NewCat"
+
+        audit_count = int(
+            db_session.execute(
+                text("SELECT COUNT(*) FROM audit_log WHERE entity='transaction' AND entity_id=:id"),
+                {"id": tx_id},
+            ).scalar() or 0
+        )
+        assert audit_count == 1
+    finally:
+        # Order matters: release A's lock first, then let a still-running B
+        # finish, only then clean up rows — so a failed assertion never
+        # leaves B blocked or rows behind.
+        a_session.rollback()
+        a_session.close()
+        thread_b.join(timeout=10)
+        db_session.execute(
+            text("DELETE FROM audit_log WHERE entity='transaction' AND entity_id=:id"),
+            {"id": tx_id},
+        )
+        db_session.execute(text("DELETE FROM transactions WHERE id = :id"), {"id": tx_id})
+        db_session.execute(text("DELETE FROM proposals WHERE id = :id"), {"id": proposal_id})
+        db_session.commit()
+
+
 def test_get_proposals_excludes_token(client, api_key, db_session):
     """GET /proposals response JSON has NO 'token' field anywhere (T-02-07)."""
     tx_id = _make_transaction(db_session)
