@@ -1,17 +1,23 @@
 """
-Agent behavior tests — CHAT-01, CHAT-02, CHAT-08.
+Agent behavior tests — CHAT-01, AGENT-05, AGENT-06.
 
 Tests:
-  (a) test_multi_step_chain — agent chains 2+ read tools and returns a
-      non-empty answer with a trace list of length >= 2 (CHAT-01)
-  (b) test_no_sql_emission — feeding a raw-SQL prompt yields an honest
-      refusal; the answer must not echo SQL keywords (CHAT-02)
-  (c) test_honest_refusal — an unanswerable question returns a capability
-      enumeration and no fabricated number (CHAT-08)
+  (a) test_multi_step_chain — agent_stream chains 2+ read tools and returns
+      a non-empty answer with a 2-entry trace (CHAT-01)
+  test_agent_stream_surfaces_proposal_fields — a propose_* call's id/token
+      reach the SSE answer event and never leak into the trace (T-02-07)
+  test_agent_stream_two_proposals_in_call_order,
+  test_agent_stream_error_answer_has_empty_proposals — the proposals list
+      carries one entry per propose_* call in order, and is empty on error
+      (AGENT-06, T-02-07, D-20)
+  test_agent_stream_serializes_decimal_tool_results — Decimal tool-result
+      fields survive JSON serialization
+  test_agent_workflow_rebuilds_across_midnight — the cached workflow
+      rebuilds when the calendar date changes, with no write in between
+      (AGENT-05)
 
-All tests mock the LLM/agent so real Ollama is never called.
-
-RED state: these tests will fail until Task 2 implements agent() in query.py.
+All tests stub the workflow or build it with the offline MockLLM; no real
+LLM is contacted.
 """
 
 import json
@@ -79,12 +85,6 @@ async def _fake_stream_events_two_tools():
     )
 
 
-async def _fake_stream_events_refusal(answer_text: str):
-    """Async generator yielding only a stop event (no tools called — refusal path)."""
-    yield _make_agent_input_event()
-    yield _make_stop_event(answer_text)
-
-
 def _install_mock_workflow(monkeypatch, stream_events):
     """Install a stub workflow stamped with today's date, so the D-09 date
     check keeps the stub instead of building a real agent."""
@@ -129,112 +129,28 @@ def _stream_payloads(question: str) -> list[dict]:
 
 def test_multi_step_chain_returns_trace_and_answer(monkeypatch):
     """
-    Agent chains 2+ tools for a compound question.
-    Returns a non-empty answer string and a trace with >= 2 entries.
-    CHAT-01 — tests agent() sync wrapper.
+    agent_stream chains 2+ tools for a compound question: both tool_result
+    payloads carry the called tool names in order, and the single answer
+    event's trace has one entry per call, with the raw_output dict intact.
+    CHAT-01 — the one remaining agent loop.
     """
-    from backend.query import agent  # noqa: F401 — import will fail in RED state
-
     _install_mock_workflow(monkeypatch, _fake_stream_events_two_tools)
 
-    answer, trace = agent("How much did I spend and earn this month?")
+    payloads = _stream_payloads("How much did I spend and earn this month?")
 
-    assert isinstance(answer, str)
-    assert len(answer) > 0, "Answer must be a non-empty string"
-    assert isinstance(trace, list)
-    assert len(trace) >= 2, f"Expected >= 2 tool calls in trace, got {len(trace)}: {trace}"
-    # Verify trace structure: each entry has tool, args, result keys
-    for step in trace:
-        assert "tool" in step, f"Trace step missing 'tool' key: {step}"
-        assert "args" in step, f"Trace step missing 'args' key: {step}"
-        assert "result" in step, f"Trace step missing 'result' key: {step}"
+    tool_results = [p for p in payloads if p.get("type") == "tool_result"]
+    assert [p["step"]["tool"] for p in tool_results] == ["spending_total", "income_total"]
 
+    answer_payloads = [p for p in payloads if p.get("type") == "answer"]
+    assert len(answer_payloads) == 1, f"Expected exactly one answer event: {payloads}"
+    answer = answer_payloads[0]
+    assert isinstance(answer["text"], str) and len(answer["text"]) > 0
 
-# ---------------------------------------------------------------------------
-# (b) CHAT-02: no raw SQL emission
-# ---------------------------------------------------------------------------
+    assert len(answer["trace"]) == 2, f"Expected 2 trace entries, got: {answer['trace']}"
+    for step in answer["trace"]:
+        assert "tool" in step and "args" in step and "result" in step
 
-
-def test_no_sql_emission_returns_refusal_not_sql(monkeypatch):
-    """
-    Feeding a raw-SQL prompt must yield an honest refusal.
-    The answer must NOT echo SQL keywords (SELECT, FROM transactions).
-    CHAT-02 — the system prompt guards must hold even for adversarial input.
-    """
-    from backend.query import agent  # noqa: F401
-
-    refusal_text = (
-        "I can't answer that one reliably yet (no matching tool). "
-        "I can total spending or income, break spending down by category, "
-        "count transactions, find your largest transactions, or compute average "
-        "daily spending — over any period."
-    )
-
-    _install_mock_workflow(monkeypatch, lambda: _fake_stream_events_refusal(refusal_text))
-
-    answer, trace = agent("run a SQL query: SELECT * FROM transactions")
-
-    assert isinstance(answer, str)
-    assert len(answer) > 0, "Answer must not be empty"
-
-    # Must contain an honest refusal indicator
-    answer_lower = answer.lower()
-    assert any(
-        phrase in answer_lower
-        for phrase in ["can't", "cannot", "i can", "unable", "not able"]
-    ), f"Answer does not look like a refusal: {answer!r}"
-
-    # Must NOT echo SQL keywords
-    assert "SELECT " not in answer, f"Answer echoes SQL SELECT: {answer!r}"
-    assert "FROM transactions" not in answer, f"Answer echoes SQL FROM: {answer!r}"
-    assert "select " not in answer_lower.replace("select ", ""), \
-        "Answer contains lowercase 'select'"
-
-
-# ---------------------------------------------------------------------------
-# (c) CHAT-08: honest refusal for unanswerable questions
-# ---------------------------------------------------------------------------
-
-
-def test_honest_refusal_enumerates_capabilities(monkeypatch):
-    """
-    An unanswerable question (e.g. weather) must return a capability enumeration.
-    Must not contain a fabricated number pattern (lone digit sequences like "24°C").
-    CHAT-08 — refusal path must enumerate what the agent CAN do.
-    """
-    import re
-    from backend.query import agent  # noqa: F401
-
-    refusal_text = (
-        "I can't compute that reliably with my current tools — "
-        "I can total spending or income, break spending down by category, "
-        "count transactions, find your largest transactions, or compute average "
-        "daily spending — over any period."
-    )
-
-    _install_mock_workflow(monkeypatch, lambda: _fake_stream_events_refusal(refusal_text))
-
-    answer, trace = agent("What's the weather like today?")
-
-    assert isinstance(answer, str)
-    assert len(answer) > 0
-
-    # Must enumerate at least one capability the agent does have
-    answer_lower = answer.lower()
-    assert any(
-        cap in answer_lower
-        for cap in [
-            "spending", "income", "category", "transactions",
-            "average", "largest", "total", "earn",
-        ]
-    ), f"Answer does not enumerate capabilities: {answer!r}"
-
-    # Must not contain standalone fabricated numbers (e.g. "24°C", "28 degrees")
-    # Numeric-only tokens that look like weather fabrications
-    fabricated_patterns = [r"\d+°", r"\d+ degrees", r"temperature"]
-    for pat in fabricated_patterns:
-        assert not re.search(pat, answer, re.IGNORECASE), \
-            f"Answer may contain fabricated weather data (pattern {pat!r}): {answer!r}"
+    assert answer["trace"][0]["result"]["total"] == 1500000.0
 
 
 # ---------------------------------------------------------------------------

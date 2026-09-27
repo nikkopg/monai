@@ -45,13 +45,14 @@ _DEAD_PORT_EMPTY_DBNAME_URL = "postgresql+psycopg://monai:monai@127.0.0.1:1/mona
 
 
 def _run_pytest(database_url: str) -> subprocess.CompletedProcess:
-    """Run the collection of a trivial, DB-free test file as a subprocess
-    with DATABASE_URL set, so this module never imports conftest.py's guard
-    into the parent test process's own already-checked environment."""
+    """Run the collection of this DB-free file itself, in a subprocess with
+    DATABASE_URL set, so the parent test process never re-imports conftest.py's
+    guard into its own already-checked environment. Collect-only runs no
+    tests, so there is no recursion."""
     return subprocess.run(
         [
             sys.executable, "-m", "pytest",
-            "backend/tests/test_router.py",
+            "backend/tests/test_conftest_guard.py",
             "--collect-only", "-q", "-p", "no:cacheprovider",
         ],
         cwd=_REPO_ROOT,

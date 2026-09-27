@@ -11,16 +11,15 @@ If no tool can answer the question, the agent says so honestly and enumerates
 what it CAN do — refusing beats a confident wrong number for a money app.
 
 Public surface:
-  agent(question) -> tuple[str, list]   — sync wrapper; returns (answer, trace)
-  agent_stream(question)                — async generator; yields SSE lines
-  ask(question) -> str                  — thin shim; backward-compat with /query
-  reset_engine() -> None                — clears _llm + _agent_workflow singletons
+  agent_stream(question)                — async generator; yields SSE lines.
+                                           It is the only agent loop, served by
+                                           POST /query-stream.
+  reset_engine() -> None                — clears _llm, _agent_workflow and its
+                                           build date
 """
 
-import asyncio
 import datetime
 import json
-import re
 
 from backend.config import configure_llm
 
@@ -265,78 +264,6 @@ async def agent_stream(question: str):
 
 
 # ---------------------------------------------------------------------------
-# Sync agent entry point — runs the async stream to completion
-# ---------------------------------------------------------------------------
-
-def agent(question: str) -> tuple[str, list]:
-    """
-    Drive the agent workflow synchronously; return (answer_text, tool_trace).
-
-    Wraps the entire loop in try/except — never raises to the API layer.
-    """
-    from llama_index.core.agent.workflow.workflow_events import AgentInput, ToolCallResult
-    from llama_index.core.workflow import StopEvent
-
-    try:
-        workflow = _get_agent_workflow()
-        handler = workflow.run(user_msg=question, max_iterations=10)
-        tool_trace: list = []
-        answer_text = ""
-
-        async def _run() -> tuple[str, list]:
-            nonlocal answer_text, tool_trace
-            async for event in handler.stream_events():
-                if isinstance(event, ToolCallResult):
-                    content = event.tool_output.content
-                    try:
-                        result_dict = json.loads(content)
-                    except Exception:
-                        result_dict = {"raw": content}
-                    tool_trace.append({
-                        "tool": event.tool_name,
-                        "args": event.tool_kwargs,
-                        "result": result_dict,
-                    })
-                elif isinstance(event, StopEvent):
-                    final = event.result
-                    answer_text = str(final) if final is not None else ""
-            return answer_text, tool_trace
-
-        # Run the async coroutine. If we're already in an event loop (e.g. in tests
-        # with pytest-asyncio), use a new thread to avoid "event loop already running".
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop is not None and loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(asyncio.run, _run())
-                answer_text, tool_trace = future.result()
-        else:
-            answer_text, tool_trace = asyncio.run(_run())
-
-        return answer_text, tool_trace
-
-    except Exception as e:
-        return (
-            f"I couldn't process that question reliably ({e}). Try rephrasing.",
-            [],
-        )
-
-
-# ---------------------------------------------------------------------------
-# Backward-compatible shim — POST /query handler uses this
-# ---------------------------------------------------------------------------
-
-def ask(question: str) -> str:
-    """Thin shim returning only the answer text. Backward-compatible with POST /query."""
-    answer, _ = agent(question)
-    return answer
-
-
-# ---------------------------------------------------------------------------
 # Cache invalidation — called from main.py after writes
 # ---------------------------------------------------------------------------
 
@@ -346,25 +273,3 @@ def reset_engine() -> None:
     _llm = None
     _agent_workflow = None
     _agent_workflow_date = None
-
-
-# ---------------------------------------------------------------------------
-# Kept for backward-compatibility with test_router.py
-# ---------------------------------------------------------------------------
-
-def _extract_json(textval: str) -> dict:
-    """Pull the first {...} JSON object out of a string (legacy; used in test_router.py)."""
-    textval = textval.strip()
-    textval = re.sub(r"^```(?:json)?|```$", "", textval, flags=re.MULTILINE).strip()
-    start = textval.find("{")
-    if start == -1:
-        raise ValueError("no JSON object in model output")
-    depth = 0
-    for i in range(start, len(textval)):
-        if textval[i] == "{":
-            depth += 1
-        elif textval[i] == "}":
-            depth -= 1
-            if depth == 0:
-                return json.loads(textval[start:i + 1])
-    raise ValueError("unbalanced JSON in model output")
