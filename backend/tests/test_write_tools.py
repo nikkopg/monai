@@ -825,6 +825,132 @@ def test_apply_edit_and_delete_holding_audit(db_session):
     _cleanup_ticker(db_session, ticker)
 
 
+# ---------------------------------------------------------------------------
+# WRITE-01 (27-01): refuse deleting a holding that has ledger events
+# ---------------------------------------------------------------------------
+
+
+def test_apply_delete_holding_refuses_when_events_exist(db_session):
+    """apply_delete_holding raises ValueError for an event-backed holding, but
+    an event-less holding with the same ticker on a different platform still
+    deletes cleanly (D-07: identity is (ticker, platform_id))."""
+    from backend.writes import apply_add_portfolio_event, apply_add_holding, apply_delete_holding
+    from backend.models import Holding
+
+    ticker = "ZZDEL27A"
+    _cleanup_ticker(db_session, ticker)
+    plat_b = _make_platform(db_session, "ZZ W27 Platform B")
+    plat_a = _make_platform(db_session, "ZZ W27 Platform A")
+
+    apply_add_portfolio_event(db_session, {
+        "ticker": ticker, "event_type": "buy",
+        "quantity": 1, "price": 1000, "date": "2020-01-10",
+        "platform_id": plat_b,
+    })
+    holding_a = apply_add_holding(db_session, {
+        "ticker": ticker, "quantity": 1, "avg_cost": 1000,
+        "currency": "IDR", "asset_type": "stock", "platform_id": plat_a,
+    })
+    db_session.commit()
+
+    holding_b = db_session.query(Holding).filter(
+        Holding.ticker == ticker, Holding.platform_id == plat_b
+    ).one()
+    holding_b_id = holding_b.id
+    holding_a_id = holding_a.id
+
+    with pytest.raises(ValueError) as exc_info:
+        apply_delete_holding(db_session, holding_b_id, {"id": holding_b_id, "ticker": ticker})
+    msg = str(exc_info.value)
+    assert "ZZDEL27A" in msg
+    assert "1 ledger event" in msg
+    assert "record a sell to close it" in msg
+
+    db_session.rollback()
+    assert db_session.get(Holding, holding_b_id) is not None
+
+    apply_delete_holding(db_session, holding_a_id, {"id": holding_a_id, "ticker": ticker})
+    db_session.commit()
+    assert db_session.get(Holding, holding_a_id) is None
+
+    _cleanup_ticker(db_session, ticker)
+
+
+def test_delete_holding_rest_refused_422_and_allowed_without_events(client, api_key, db_session):
+    """DELETE /holdings/{id} returns 422 with the refusal detail for an
+    event-backed holding (row survives) and 200 for an event-less one."""
+    from backend.writes import apply_add_portfolio_event, apply_add_holding
+    from backend.models import Holding
+
+    plat_id = _make_platform(db_session, "ZZ W27 Platform REST")
+
+    ticker_b = "ZZDEL27B"
+    _cleanup_ticker(db_session, ticker_b)
+    apply_add_portfolio_event(db_session, {
+        "ticker": ticker_b, "event_type": "buy",
+        "quantity": 1, "price": 1000, "date": "2020-01-10",
+        "platform_id": plat_id,
+    })
+    db_session.commit()
+    holding_b_id = db_session.query(Holding).filter(Holding.ticker == ticker_b).one().id
+
+    resp = client.delete(f"/holdings/{holding_b_id}", headers={"MONAI_API_KEY": api_key})
+    assert resp.status_code == 422, resp.text
+    assert "record a sell to close it" in resp.json()["detail"]
+
+    db_session.expire_all()
+    assert db_session.get(Holding, holding_b_id) is not None
+
+    ticker_c = "ZZDEL27C"
+    _cleanup_ticker(db_session, ticker_c)
+    holding_c = apply_add_holding(db_session, {
+        "ticker": ticker_c, "quantity": 1, "avg_cost": 1000,
+        "currency": "IDR", "asset_type": "stock", "platform_id": plat_id,
+    })
+    db_session.commit()
+    holding_c_id = holding_c.id
+
+    resp2 = client.delete(f"/holdings/{holding_c_id}", headers={"MONAI_API_KEY": api_key})
+    assert resp2.status_code == 200, resp2.text
+    assert resp2.json() == {"status": "deleted"}
+
+    db_session.expire_all()
+    assert db_session.get(Holding, holding_c_id) is None
+
+    _cleanup_ticker(db_session, ticker_b)
+    _cleanup_ticker(db_session, ticker_c)
+
+
+def test_propose_delete_holding_refused_when_events_exist(db_session):
+    """propose_delete_holding refuses (no proposal created) when the holding
+    still has ledger events, matching apply_delete_holding's guard (D-10)."""
+    from backend.tools import propose_delete_holding
+    from backend.writes import apply_add_portfolio_event
+    from backend.models import Holding
+
+    ticker = "ZZDEL27D"
+    _cleanup_ticker(db_session, ticker)
+    plat_id = _make_platform(db_session, "ZZ W27 Platform D")
+    apply_add_portfolio_event(db_session, {
+        "ticker": ticker, "event_type": "buy",
+        "quantity": 1, "price": 1000, "date": "2020-01-10",
+        "platform_id": plat_id,
+    })
+    db_session.commit()
+    holding_id = db_session.query(Holding).filter(Holding.ticker == ticker).one().id
+
+    before_count = _count_proposals(db_session)
+    result = propose_delete_holding(holding_id)
+    after_count = _count_proposals(db_session)
+
+    assert result["tool"] == "propose_delete_holding"
+    assert "record a sell to close it" in result["error"]
+    assert "proposal_id" not in result
+    assert after_count == before_count
+
+    _cleanup_ticker(db_session, ticker)
+
+
 def test_apply_add_holding_persists_coingecko_id(db_session):
     """apply_add_holding sets coingecko_id from `after` (Tier 1 override)."""
     from backend.writes import apply_add_holding

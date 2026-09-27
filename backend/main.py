@@ -645,8 +645,12 @@ def delete_holding(holding_id: int, db: Session = Depends(get_session)):
         "id": holding.id, "ticker": holding.ticker,
         "quantity": str(holding.quantity), "avg_cost": str(holding.avg_cost),
     }
-    apply_delete_holding(db, holding_id, before)
-    db.commit()
+    try:
+        apply_delete_holding(db, holding_id, before)
+        db.commit()
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
     from backend.query import reset_engine
     reset_engine()
     return {"status": "deleted"}
@@ -1492,12 +1496,7 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
             apply_edit_holding(db, row.get("id"), after, before)
 
         elif operation == "delete_holding":
-            h_id = row.get("id")
-            h = db.get(Holding, h_id)
-            if h is not None:
-                db.delete(h)
-            db.add(AuditLog(entity="holding", entity_id=h_id, operation="delete",
-                            before=before, after=None))
+            apply_delete_holding(db, row.get("id"), before)
 
         elif operation in (
             "add_transfer", "add_investment_transfer", "add_funded_buy",
@@ -1553,13 +1552,15 @@ def confirm_proposal(
     """Apply a pending proposal atomically. Requires API key + valid token.
 
     Check order (Pitfall 3 — prevents replay):
-      1. Load by id → 404 if missing
+      1. Load by id with SELECT ... FOR UPDATE (WRITE-02) → 404 if missing;
+         a concurrent confirm or reject waits on this lock, then sees the
+         committed status
       2. status == "pending" → 409 if not pending
       3. expires_at > now() → 410 if expired
       4. hmac.compare_digest(token) → 401 if wrong
       5. Execute payload + write audit_log rows + mark confirmed (single commit)
     """
-    proposal = db.get(Proposal, proposal_id)
+    proposal = db.get(Proposal, proposal_id, with_for_update=True)
     if proposal is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
     if proposal.status != "pending":
@@ -1602,9 +1603,10 @@ def reject_proposal(
     db: Session = Depends(get_session),
 ):
     """Reject a pending proposal. No target mutation; no audit row.
-    Requires API key.
+    Requires API key. The row is loaded with SELECT ... FOR UPDATE (WRITE-02),
+    so a concurrent confirm or reject waits here, then sees the committed status.
     """
-    proposal = db.get(Proposal, proposal_id)
+    proposal = db.get(Proposal, proposal_id, with_for_update=True)
     if proposal is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
     if proposal.status != "pending":

@@ -460,6 +460,124 @@ def test_confirm_edit_holding_via_delegation(client, api_key, db_session):
     db_session.commit()
 
 
+def test_confirm_delete_holding_refused_when_events_exist(client, api_key, db_session):
+    """Confirming a delete_holding proposal for an event-backed holding returns
+    422; the proposal stays pending and the holding survives (WRITE-01, D-09)."""
+    from backend.writes import apply_add_portfolio_event
+    from backend.models import Holding, Proposal
+    import secrets
+
+    ticker = "ZZDEL27E"
+    _cleanup_ticker(db_session, ticker)
+    platform_id = _make_platform_local(db_session, "zz27test-ConfirmDelete")
+    apply_add_portfolio_event(db_session, {
+        "ticker": ticker, "event_type": "buy",
+        "quantity": 1, "price": 1000, "date": "2020-01-10",
+        "platform_id": platform_id,
+    })
+    db_session.commit()
+    holding_id = db_session.query(Holding).filter(Holding.ticker == ticker).one().id
+
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=15)
+    payload = {
+        "operation": "delete_holding",
+        "rows": [{"id": holding_id, "before": {"id": holding_id, "ticker": ticker}, "after": None}],
+    }
+    p = Proposal(
+        token=token, operation="delete_holding", payload=payload,
+        status="pending", expires_at=expires_at,
+    )
+    db_session.add(p)
+    db_session.commit()
+    db_session.refresh(p)
+    proposal_id = p.id
+
+    resp = client.post(
+        f"/proposals/{proposal_id}/confirm",
+        json={"token": token},
+        headers={"MONAI_API_KEY": api_key},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "record a sell to close it" in resp.json()["detail"]
+
+    db_session.expire_all()
+    reloaded = db_session.get(Proposal, proposal_id)
+    assert reloaded.status == "pending"
+    assert db_session.get(Holding, holding_id) is not None
+
+    # Cleanup, in order: proposal row, then the ticker's rows, then the platform
+    db_session.delete(reloaded)
+    db_session.commit()
+    _cleanup_ticker(db_session, ticker)
+    _cleanup_platform(db_session, platform_id)
+
+
+def test_confirm_delete_holding_via_delegation(client, api_key, db_session):
+    """Confirming a delete_holding proposal for an event-less holding delegates
+    to apply_delete_holding: 200, holding gone, exactly one delete audit row
+    (WRITE-01, D-09)."""
+    from backend.models import Holding, Platform, Proposal
+    import secrets
+
+    platform_id = _make_platform(db_session)
+    holding = Holding(
+        ticker="ZZDEL27F", quantity=1, avg_cost=1000, currency="IDR",
+        asset_type="stock", platform_id=platform_id,
+    )
+    db_session.add(holding)
+    db_session.commit()
+    db_session.refresh(holding)
+    holding_id = holding.id
+
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=15)
+    payload = {
+        "operation": "delete_holding",
+        "rows": [{"id": holding_id, "before": {"id": holding_id, "ticker": "ZZDEL27F"}, "after": None}],
+    }
+    p = Proposal(
+        token=token, operation="delete_holding", payload=payload,
+        status="pending", expires_at=expires_at,
+    )
+    db_session.add(p)
+    db_session.commit()
+    db_session.refresh(p)
+    proposal_id = p.id
+
+    resp = client.post(
+        f"/proposals/{proposal_id}/confirm",
+        json={"token": token},
+        headers={"MONAI_API_KEY": api_key},
+    )
+    assert resp.status_code == 200, resp.text
+
+    db_session.expire_all()
+    assert db_session.get(Holding, holding_id) is None
+
+    audit_count = int(
+        db_session.execute(
+            text("SELECT COUNT(*) FROM audit_log WHERE entity='holding' AND entity_id=:id AND operation='delete'"),
+            {"id": holding_id},
+        ).scalar() or 0
+    )
+    assert audit_count == 1
+
+    # Cleanup: the audit row explicitly by entity_id (_cleanup_ticker can't find
+    # it once the holding is gone), then the proposal, then the platform
+    db_session.execute(
+        text("DELETE FROM audit_log WHERE entity='holding' AND entity_id=:id"),
+        {"id": holding_id},
+    )
+    remaining_proposal = db_session.get(Proposal, proposal_id)
+    if remaining_proposal:
+        db_session.delete(remaining_proposal)
+    platform = db_session.get(Platform, platform_id)
+    if platform:
+        db_session.delete(platform)
+    db_session.commit()
+
+
 def test_get_proposals_excludes_token(client, api_key, db_session):
     """GET /proposals response JSON has NO 'token' field anywhere (T-02-07)."""
     tx_id = _make_transaction(db_session)

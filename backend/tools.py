@@ -1169,11 +1169,15 @@ def propose_delete_holding(holding_id: int) -> dict:
     Does NOT delete any data — user must approve. D-05: holdings row CRUD only, no portfolio_events.
     """
     from backend.models import Holding
+    from backend.writes import holding_delete_refusal
 
     with get_session_sync() as db:
         h = db.get(Holding, holding_id)
         if h is None:
             return {"tool": "propose_delete_holding", "error": f"Holding {holding_id} not found"}
+        refusal = holding_delete_refusal(db, h)
+        if refusal:
+            return {"tool": "propose_delete_holding", "error": refusal}
         before = _holding_to_dict(h)
 
     payload = {
