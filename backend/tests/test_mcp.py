@@ -123,8 +123,12 @@ def test_mcp_read_parity(client, api_key):
 
 def test_agent_read_tools_count(api_key):
     """MCP-02/D-02: backend/query.py builds a read-tool list of length 16
-    (parity with TOOLS; Phase 15 adds net_worth)."""
+    (parity with TOOLS; Phase 15 adds net_worth). AGENT-02/D-12: agent tool
+    names must equal set(TOOLS) with no duplicates (len(agent.tools) ==
+    len(TOOLS)) — the MCP half (tools/list == READ_TOOL_NAMES) is asserted
+    separately in test_mcp_read_parity."""
     import backend.query as query_mod
+    from backend.tools import TOOLS
 
     query_mod.reset_engine()
     workflow = query_mod._get_agent_workflow()
@@ -133,6 +137,8 @@ def test_agent_read_tools_count(api_key):
     read_tool_names = [n for n in all_tool_names if not n.startswith("propose_")]
     assert len(read_tool_names) == 16
     assert set(read_tool_names) == set(READ_TOOL_NAMES)
+    assert {t.metadata.name for t in agent.tools} == set(TOOLS)
+    assert len(agent.tools) == len(TOOLS)
     query_mod.reset_engine()
 
 

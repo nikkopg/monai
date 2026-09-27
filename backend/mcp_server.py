@@ -84,8 +84,8 @@ def build_mcp() -> FastMCP:
 
     Registers ONLY the names in backend.tools.READ_TOOL_NAMES — never the
     propose_* write tools (D-03). By the time this module loads,
-    backend.tools.TOOLS itself has already been mutated to 27 entries (16
-    read + 11 write, via TOOLS.update() at the bottom of tools.py), so
+    backend.tools.TOOLS itself has already been mutated to 32 entries (16
+    read + 16 write, via TOOLS.update() at the bottom of tools.py), so
     iterating TOOLS directly would leak write tools onto the MCP surface;
     READ_TOOL_NAMES is the pre-mutation snapshot that keeps this read-only
     by construction. Each callable's dict return is unchanged; it serializes

@@ -696,10 +696,9 @@ TOOLS = {
 }
 
 # Snapshot of the read-only tool names, captured BEFORE the write tools are
-# merged into TOOLS below. TOOLS itself becomes 27 entries (16 read + 11
-# propose_* write) once this module finishes loading, so any read-only
-# surface (e.g. the MCP server, D-03/MCP-03) must key off this frozenset,
-# never off TOOLS directly.
+# merged into TOOLS below. TOOLS itself becomes 32 entries (16 read + 16 propose_* write)
+# once this module finishes loading, so any read-only surface (e.g. the MCP
+# server, D-03/MCP-03) must key off this frozenset, never off TOOLS directly.
 READ_TOOL_NAMES: frozenset[str] = frozenset(TOOLS)
 
 
