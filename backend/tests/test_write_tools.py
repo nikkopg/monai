@@ -970,6 +970,53 @@ def test_propose_delete_holding_refused_when_events_exist(db_session):
     _cleanup_ticker(db_session, ticker)
 
 
+def test_apply_edit_holding_refuses_identity_change_when_events_exist(db_session):
+    """WR-01: renaming/moving an event-backed holding is refused (it would let
+    a follow-up delete bypass WRITE-01); non-identity edits and event-less
+    renames still go through."""
+    from backend.writes import apply_add_portfolio_event, apply_add_holding, apply_edit_holding
+    from backend.models import Holding
+
+    ticker, renamed, free, free2 = "ZZEDT27A", "ZZEDT27B", "ZZEDT27C", "ZZEDT27D"
+    for t in (ticker, renamed, free, free2):
+        _cleanup_ticker(db_session, t)
+    plat_a = _make_platform(db_session, "ZZ W27 Edit Platform A")
+    plat_b = _make_platform(db_session, "ZZ W27 Edit Platform B")
+
+    apply_add_portfolio_event(db_session, {
+        "ticker": ticker, "event_type": "buy",
+        "quantity": 1, "price": 1000, "date": "2020-01-10",
+        "platform_id": plat_a,
+    })
+    db_session.commit()
+    h_id = db_session.query(Holding).filter(Holding.ticker == ticker).one().id
+
+    for change in ({"ticker": renamed}, {"platform_id": plat_b}):
+        with pytest.raises(ValueError, match="can't be changed"):
+            apply_edit_holding(db_session, h_id, change, {"id": h_id})
+        db_session.rollback()
+    h = db_session.get(Holding, h_id)
+    assert (h.ticker, h.platform_id) == (ticker, plat_a)
+
+    # Unchanged identity fields + a quantity edit are fine.
+    apply_edit_holding(db_session, h_id,
+                       {"ticker": ticker, "platform_id": plat_a, "quantity": 2}, {"id": h_id})
+    db_session.commit()
+
+    # Event-less holdings can still be renamed.
+    free_h = apply_add_holding(db_session, {
+        "ticker": free, "quantity": 1, "avg_cost": 1000,
+        "currency": "IDR", "asset_type": "stock", "platform_id": plat_a,
+    })
+    db_session.commit()
+    apply_edit_holding(db_session, free_h.id, {"ticker": free2}, {"id": free_h.id})
+    db_session.commit()
+    assert db_session.get(Holding, free_h.id).ticker == free2
+
+    for t in (ticker, renamed, free, free2):
+        _cleanup_ticker(db_session, t)
+
+
 def test_apply_add_holding_persists_coingecko_id(db_session):
     """apply_add_holding sets coingecko_id from `after` (Tier 1 override)."""
     from backend.writes import apply_add_holding

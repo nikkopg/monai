@@ -654,6 +654,15 @@ def apply_edit_holding(db: Session, holding_id: int, after: dict, before: dict |
     holding = db.get(Holding, holding_id)
     if holding is None:
         raise ValueError(f"Holding {holding_id} not found")
+    # WRITE-01: an identity change on an event-backed holding would orphan its
+    # ledger and let a follow-up delete slip past holding_delete_refusal.
+    if (after.get("ticker") not in (None, holding.ticker)
+            or after.get("platform_id") not in (None, holding.platform_id)):
+        if holding_delete_refusal(db, holding) is not None:
+            raise ValueError(
+                f"Holding {holding.ticker} has ledger events; its ticker and "
+                "platform can't be changed. Record a sell to close it instead."
+            )
     if after.get("ticker") is not None:
         holding.ticker = after["ticker"]
     if after.get("quantity") is not None:
@@ -674,7 +683,8 @@ def apply_edit_holding(db: Session, holding_id: int, after: dict, before: dict |
 
 
 def holding_delete_refusal(db: Session, holding: Holding) -> str | None:
-    """Shared by apply_delete_holding and tools.propose_delete_holding (WRITE-01,
+    """Shared by apply_delete_holding, apply_edit_holding's identity-change
+    check and tools.propose_delete_holding (WRITE-01,
     D-10). Position identity is (ticker, platform_id) — both columns are NOT
     NULL (D-12), so exact equality is the whole rule."""
     count = db.query(PortfolioEvent).filter(
