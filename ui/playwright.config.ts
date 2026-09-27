@@ -32,7 +32,7 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: `npx next dev -p ${PORT}`,
+    command: `npx next dev -H 127.0.0.1 -p ${PORT}`,
     url: baseURL,
     // Never reuse a foreign server in CI; locally, reuse only a server we
     // ourselves started on this dedicated port.
