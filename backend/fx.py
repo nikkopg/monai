@@ -12,6 +12,10 @@ never calls the adapter directly. It is cache-first and INSERT-only: a
 `fx_rate_cache` row for a given `(rate_date, base_currency, quote_currency)`
 is written at most once and never updated, so historical-at-purchase P&L
 (FX-03) stays reproducible even as the vendor's "latest" data moves (FX-05).
+On a cache miss, the INSERT runs on its own short-lived `SessionLocal()`
+session that commits immediately (WRITE-03) — a fetched rate survives even
+when the caller's own session never commits. The caller's session is only
+ever read; a concurrent insert of the same key resolves to the existing row.
 On adapter failure + cache miss, `get_rate` returns None — callers must
 propagate that as "rate unavailable", never fabricate rate=1.0.
 
@@ -93,8 +97,11 @@ def get_rate(base: str, quote: str, as_of: date, db: Session) -> Decimal | None:
        codes return None (SSRF guard, Pitfall 5).
     4. Cache HIT -> stored Decimal, adapter never called (FX-05).
     5. Cache MISS -> adapter called; a non-None result INSERTs exactly one
-       immutable row keyed (rate_date, base_currency, quote_currency), then
-       returns the Decimal.
+       immutable row keyed (rate_date, base_currency, quote_currency),
+       committed on its own dedicated session (WRITE-03) — independent of
+       the caller's transaction. If another writer already inserted the same
+       key, that row's rate is returned instead (FX-05). Then returns the
+       Decimal.
     6. Adapter None (vendor outage) -> None, never a fabricated rate=1.0.
     """
     base_norm = _FX_ALIASES.get(base.upper(), base.upper())
