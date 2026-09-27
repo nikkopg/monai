@@ -609,9 +609,14 @@ def find_transactions(
     if merchant is not None:
         clauses.append("merchant ILIKE :merchant")
         p["merchant"] = f"%{merchant}%"
-    if category is not None:
-        clauses.append("category = :category")
-        p["category"] = category
+    if category is not None and category.strip():
+        node = _find_category_node(category)
+        if node is None:
+            return {"tool": "find_transactions", "category": category,
+                    "error": f"No category matching '{category}' found. "
+                             "Use list_categories to see the category tree."}
+        clauses.append("category_id = ANY(:ids)")
+        p["ids"] = _descendant_ids(node)
     sign = {"expense": "amount < 0", "income": "amount > 0"}.get(kind)
     if sign:
         clauses.append(sign)
