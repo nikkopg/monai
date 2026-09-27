@@ -28,8 +28,10 @@ from decimal import Decimal
 from typing import Callable
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backend.db import SessionLocal
 from backend.models import FxRateCache
 
 # ISO-4217-shaped currency code (3-4 uppercase letters — allows USDT).
@@ -114,18 +116,23 @@ def get_rate(base: str, quote: str, as_of: date, db: Session) -> Decimal | None:
         return None  # vendor outage/no data — caller's responsibility to propagate
 
     rate, source = result
-    db.add(
-        FxRateCache(
-            rate_date=as_of,
-            base_currency=base_norm,
-            quote_currency=quote_norm,
-            rate=rate,
-            source=source,
-            fetched_at=datetime.now(timezone.utc),
+    with SessionLocal() as cache_session:
+        cache_session.add(
+            FxRateCache(
+                rate_date=as_of,
+                base_currency=base_norm,
+                quote_currency=quote_norm,
+                rate=rate,
+                source=source,
+                fetched_at=datetime.now(timezone.utc),
+            )
         )
-    )
-    db.flush()  # LOAD-BEARING (CR-02): SessionLocal is autoflush=False, so a
-    # same-request repeat lookup for this (rate_date, base, quote) must see this
-    # pending row via _latest_cache_row — otherwise it re-inserts the same unique
-    # key and the next commit raises IntegrityError (500). Same idiom as writes.py.
+        try:
+            cache_session.commit()
+        except IntegrityError:
+            cache_session.rollback()
+            existing2 = _latest_cache_row(cache_session, as_of, base_norm, quote_norm)
+            if existing2 is not None:
+                return existing2.rate  # a concurrent writer won; rows are immutable (FX-05)
+            raise  # unexpected: insert failed but no row exists — surface it
     return rate

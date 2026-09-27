@@ -16,7 +16,7 @@ import uuid
 
 import pytest
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 
 # ---------------------------------------------------------------------------
@@ -562,6 +562,25 @@ def test_post_platforms_requires_api_key(client, api_key):
 # ---------------------------------------------------------------------------
 # INV-01/06/07: portfolio events, holding override, composed summary (Plan 05-03)
 # ---------------------------------------------------------------------------
+
+
+def _cleanup_fx_usd_idr(db, *iso_dates: str) -> None:
+    """Delete fx_rate_cache rows for (USD, IDR, date) for each given ISO date.
+
+    Cross-plan data contract (27-02 D-20): since WRITE-03, a cache-miss
+    fx.get_rate call commits durably even if this test's own transaction
+    rolls back. Called before AND after the tests below that reach
+    fx.get_rate on a real USD->IDR cache miss, so their httpx.get mock is
+    actually exercised (not skipped by a leftover cached row) and no
+    real-looking rate survives the run."""
+    db.execute(
+        text(
+            "DELETE FROM fx_rate_cache WHERE base_currency = 'USD' "
+            "AND quote_currency = 'IDR' AND rate_date IN :dates"
+        ).bindparams(bindparam("dates", expanding=True)),
+        {"dates": list(iso_dates)},
+    )
+    db.commit()
 
 
 def _cleanup_ticker(db, ticker: str) -> None:
@@ -1220,14 +1239,30 @@ def test_create_holding_same_ticker_two_platforms_both_created(client, api_key):
 # Event-currency validation + cash/gold pass-through (Plan 07-02, T-07-02-CUR)
 # ---------------------------------------------------------------------------
 
-def test_apply_add_portfolio_event_matching_currency_succeeds(db_session):
+def test_apply_add_portfolio_event_matching_currency_succeeds(db_session, monkeypatch):
     """A buy whose currency matches the (new) parent holding's currency
-    succeeds and stamps event.currency."""
+    succeeds and stamps event.currency.
+
+    D-20 (cross-plan data contract): the first buy's USD->IDR cost-basis
+    conversion goes through fx.get_rate; mock httpx.get and clean the
+    fx_rate_cache key before/after, so the mock is actually exercised and no
+    real-looking rate persists past this test."""
+    import httpx
     from backend.writes import apply_add_portfolio_event
     from backend.models import PortfolioEvent
 
+    class _FxResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"rates": {"IDR": 15000}}
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _FxResp())
+
     ticker = "EVTCCY01"
     _cleanup_ticker(db_session, ticker)
+    _cleanup_fx_usd_idr(db_session, "2024-01-10", "2024-01-11")
     plat_id = _make_platform(db_session, "TestCcyMatchPlatform")
     try:
         apply_add_portfolio_event(db_session, {
@@ -1249,6 +1284,7 @@ def test_apply_add_portfolio_event_matching_currency_succeeds(db_session):
         db_session.commit()
     finally:
         _cleanup_ticker(db_session, ticker)
+        _cleanup_fx_usd_idr(db_session, "2024-01-10", "2024-01-11")
 
 
 def test_apply_add_portfolio_event_currency_mismatch_raises(db_session, monkeypatch):
@@ -1274,6 +1310,7 @@ def test_apply_add_portfolio_event_currency_mismatch_raises(db_session, monkeypa
 
     ticker = "EVTCCY02"
     _cleanup_ticker(db_session, ticker)
+    _cleanup_fx_usd_idr(db_session, "2024-01-10")
     plat_id = _make_platform(db_session, "TestCcyMismatchPlatform")
     try:
         apply_add_portfolio_event(db_session, {
@@ -1292,6 +1329,7 @@ def test_apply_add_portfolio_event_currency_mismatch_raises(db_session, monkeypa
         db_session.rollback()
     finally:
         _cleanup_ticker(db_session, ticker)
+        _cleanup_fx_usd_idr(db_session, "2024-01-10")
 
 
 def test_apply_add_portfolio_event_currency_mismatch_422_at_api(client, api_key, monkeypatch):
@@ -1317,6 +1355,7 @@ def test_apply_add_portfolio_event_currency_mismatch_422_at_api(client, api_key,
     s = SessionLocal()
     try:
         plat_id = _make_platform(s, "TestCcyMismatch422Platform")
+        _cleanup_fx_usd_idr(s, "2024-01-10")
     finally:
         s.close()
     try:
@@ -1341,6 +1380,7 @@ def test_apply_add_portfolio_event_currency_mismatch_422_at_api(client, api_key,
         s = SessionLocal()
         try:
             _cleanup_ticker(s, ticker)
+            _cleanup_fx_usd_idr(s, "2024-01-10")
         finally:
             s.close()
 
@@ -1587,18 +1627,34 @@ def test_apply_add_funded_buy_one_commit_boundary(db_session):
             db_session.commit()
 
 
-def test_funded_buy_dual_currency_legs(db_session):
+def test_funded_buy_dual_currency_legs(db_session, monkeypatch):
     """apply_add_funded_buy's cash leg and portfolio event carry independent
     currencies (XFER-04/D-09) — no forced single-currency conversion at write
     time; no schema column beyond the existing amount/currency pair is
-    touched. RED until Plan 13-04."""
+    touched. RED until Plan 13-04.
+
+    D-20 (cross-plan data contract): the event's currency conversion goes
+    through fx.get_rate on a USD->IDR cache miss; mock httpx.get and clean
+    the fx_rate_cache key before/after, so the mock is actually exercised
+    and no real-looking rate persists past this test."""
+    import httpx
     from backend.models import Transaction, PortfolioEvent, Platform
+
+    class _FxResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"rates": {"IDR": 15000}}
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _FxResp())
 
     name = "zz13test-DualCcySource"
     ticker = "ZZ13DUALCCY"
     acc_id = _make_account(db_session, name)
     plat_id = _make_platform(db_session, "zz13test-DualCcyPlatform")
     _cleanup_ticker(db_session, ticker)
+    _cleanup_fx_usd_idr(db_session, "2024-01-26")
     try:
         from backend.writes import apply_add_funded_buy  # RED: not implemented until Plan 13-04
 
@@ -1620,6 +1676,7 @@ def test_funded_buy_dual_currency_legs(db_session):
     finally:
         db_session.rollback()
         _cleanup_ticker(db_session, ticker)
+        _cleanup_fx_usd_idr(db_session, "2024-01-26")
         _cleanup_account(db_session, name)
         plat = db_session.get(Platform, plat_id)
         if plat is not None:
