@@ -85,6 +85,22 @@ async def _fake_stream_events_refusal(answer_text: str):
     yield _make_stop_event(answer_text)
 
 
+def _install_mock_workflow(monkeypatch, stream_events):
+    """Install a stub workflow stamped with today's date, so the D-09 date
+    check keeps the stub instead of building a real agent."""
+    import backend.query as query_mod
+
+    handler = MagicMock()
+    handler.stream_events = stream_events
+
+    workflow = MagicMock()
+    workflow.run = MagicMock(return_value=handler)
+
+    monkeypatch.setattr(query_mod, "_agent_workflow", workflow)
+    monkeypatch.setattr(query_mod, "_agent_workflow_date", query_mod._today())
+    return workflow
+
+
 # ---------------------------------------------------------------------------
 # (a) CHAT-01: multi-step tool chaining
 # ---------------------------------------------------------------------------
@@ -98,13 +114,7 @@ def test_multi_step_chain_returns_trace_and_answer(monkeypatch):
     """
     from backend.query import agent  # noqa: F401 — import will fail in RED state
 
-    mock_handler = MagicMock()
-    mock_handler.stream_events = lambda: _fake_stream_events_two_tools()
-
-    mock_workflow = MagicMock()
-    mock_workflow.run = MagicMock(return_value=mock_handler)
-
-    monkeypatch.setattr("backend.query._agent_workflow", mock_workflow)
+    _install_mock_workflow(monkeypatch, _fake_stream_events_two_tools)
 
     answer, trace = agent("How much did I spend and earn this month?")
 
@@ -139,13 +149,7 @@ def test_no_sql_emission_returns_refusal_not_sql(monkeypatch):
         "daily spending — over any period."
     )
 
-    mock_handler = MagicMock()
-    mock_handler.stream_events = lambda: _fake_stream_events_refusal(refusal_text)
-
-    mock_workflow = MagicMock()
-    mock_workflow.run = MagicMock(return_value=mock_handler)
-
-    monkeypatch.setattr("backend.query._agent_workflow", mock_workflow)
+    _install_mock_workflow(monkeypatch, lambda: _fake_stream_events_refusal(refusal_text))
 
     answer, trace = agent("run a SQL query: SELECT * FROM transactions")
 
@@ -187,13 +191,7 @@ def test_honest_refusal_enumerates_capabilities(monkeypatch):
         "daily spending — over any period."
     )
 
-    mock_handler = MagicMock()
-    mock_handler.stream_events = lambda: _fake_stream_events_refusal(refusal_text)
-
-    mock_workflow = MagicMock()
-    mock_workflow.run = MagicMock(return_value=mock_handler)
-
-    monkeypatch.setattr("backend.query._agent_workflow", mock_workflow)
+    _install_mock_workflow(monkeypatch, lambda: _fake_stream_events_refusal(refusal_text))
 
     answer, trace = agent("What's the weather like today?")
 
@@ -256,13 +254,7 @@ def test_agent_stream_surfaces_proposal_fields(monkeypatch):
     import asyncio
     from backend.query import agent_stream
 
-    mock_handler = MagicMock()
-    mock_handler.stream_events = lambda: _fake_stream_events_propose_edit()
-
-    mock_workflow = MagicMock()
-    mock_workflow.run = MagicMock(return_value=mock_handler)
-
-    monkeypatch.setattr("backend.query._agent_workflow", mock_workflow)
+    _install_mock_workflow(monkeypatch, _fake_stream_events_propose_edit)
 
     async def _collect():
         lines = []
@@ -344,13 +336,7 @@ def test_agent_stream_serializes_decimal_tool_results(monkeypatch):
     import asyncio
     from backend.query import agent_stream
 
-    mock_handler = MagicMock()
-    mock_handler.stream_events = lambda: _fake_stream_events_decimal_net_worth()
-
-    mock_workflow = MagicMock()
-    mock_workflow.run = MagicMock(return_value=mock_handler)
-
-    monkeypatch.setattr("backend.query._agent_workflow", mock_workflow)
+    _install_mock_workflow(monkeypatch, _fake_stream_events_decimal_net_worth)
 
     async def _collect():
         lines = []
@@ -386,3 +372,43 @@ def test_agent_stream_serializes_decimal_tool_results(monkeypatch):
     trace_holding = answer_payload["trace"][0]["result"]["investment_groups"][0]["holdings"][0]
     assert trace_holding["quantity"] == "1.5"
     assert trace_holding["current_value"] == "12500.00"
+
+
+# ---------------------------------------------------------------------------
+# AGENT-05: TODAY rebuilds across midnight with no writes in between
+# ---------------------------------------------------------------------------
+
+
+def test_agent_workflow_rebuilds_across_midnight(monkeypatch):
+    """
+    _get_agent_workflow() rebuilds when the calendar date changes, even with
+    no reset_engine() call in between (the "no writes since yesterday" case).
+    A same-day call reuses the cached object.
+    """
+    import datetime
+
+    import backend.query as query_mod
+    from llama_index.core.llms import MockLLM
+
+    monkeypatch.setattr(query_mod, "_agent_workflow", None)
+    monkeypatch.setattr(query_mod, "_agent_workflow_date", None)
+    monkeypatch.setattr(query_mod, "_get_llm", lambda: MockLLM())
+
+    d1 = datetime.date(2020, 1, 31)
+    d2 = datetime.date(2020, 2, 1)
+
+    monkeypatch.setattr(query_mod, "_today", lambda: d1)
+    wf1 = query_mod._get_agent_workflow()
+    assert "TODAY is 2020-01-31." in wf1.agents["Agent"].system_prompt
+    assert query_mod._get_agent_workflow() is wf1
+
+    monkeypatch.setattr(query_mod, "_today", lambda: d2)
+    wf2 = query_mod._get_agent_workflow()
+    assert wf2 is not wf1
+    assert "TODAY is 2020-02-01." in wf2.agents["Agent"].system_prompt
+    assert "2020-01-31" not in wf2.agents["Agent"].system_prompt
+    assert query_mod._agent_workflow_date == d2
+
+    query_mod.reset_engine()
+    assert query_mod._agent_workflow is None
+    assert query_mod._agent_workflow_date is None

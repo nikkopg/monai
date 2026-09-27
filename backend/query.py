@@ -30,6 +30,7 @@ from backend.config import configure_llm
 
 _llm = None
 _agent_workflow = None
+_agent_workflow_date: datetime.date | None = None  # the date whose TODAY the cached workflow's prompt holds
 
 # ---------------------------------------------------------------------------
 # System prompt — tool-only, no SQL, honest refusal, no fabrication
@@ -80,6 +81,16 @@ HTTP endpoint in the UI, not through the agent.
 # Agent / workflow builder
 # ---------------------------------------------------------------------------
 
+def _today() -> datetime.date:
+    """Single date source for the agent's TODAY and the test seam.
+
+    Tests patch backend.query._today directly, because datetime.date.today
+    is a C-level type method and can't be monkeypatched. Follows the process
+    TZ (Asia/Jakarta per docker-compose.yml) — unchanged timezone behavior.
+    """
+    return datetime.date.today()
+
+
 def _get_llm():
     global _llm
     if _llm is None:
@@ -90,8 +101,11 @@ def _get_llm():
 
 
 def _get_agent_workflow():
-    global _llm, _agent_workflow
-    if _agent_workflow is None:
+    global _agent_workflow, _agent_workflow_date
+    today = _today()
+    # A new calendar day rebuilds the workflow so the prompt's TODAY never
+    # goes stale on a day with no writes (AGENT-05).
+    if _agent_workflow is None or _agent_workflow_date != today:
         from llama_index.core.agent import AgentWorkflow, FunctionAgent
         from llama_index.core.tools import FunctionTool
         from backend.tools import TOOLS
@@ -106,9 +120,7 @@ def _get_agent_workflow():
             for name, fn in TOOLS.items()
         ]
 
-        system_prompt = _SYSTEM_PROMPT.format(
-            today=datetime.date.today().isoformat()
-        )
+        system_prompt = _SYSTEM_PROMPT.format(today=today.isoformat())
 
         agent = FunctionAgent(
             tools=tools,
@@ -117,6 +129,7 @@ def _get_agent_workflow():
             verbose=False,
         )
         _agent_workflow = AgentWorkflow(agents=[agent], timeout=120.0)
+        _agent_workflow_date = today
     return _agent_workflow
 
 
@@ -329,10 +342,11 @@ def ask(question: str) -> str:
 # ---------------------------------------------------------------------------
 
 def reset_engine() -> None:
-    """Clear both the LLM and agent workflow singletons (called after writes)."""
-    global _llm, _agent_workflow
+    """Clear the LLM, the agent workflow and its build date (called after writes)."""
+    global _llm, _agent_workflow, _agent_workflow_date
     _llm = None
     _agent_workflow = None
+    _agent_workflow_date = None
 
 
 # ---------------------------------------------------------------------------
