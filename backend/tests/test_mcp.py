@@ -15,11 +15,17 @@ FastAPI lifespan events, and the MCP session manager raises "Task group is
 not initialized" without it.
 """
 
+import importlib.metadata
+import inspect
 import json
+import os
+from pathlib import Path
 
 import pytest
 
 from backend.tools import READ_TOOL_NAMES, TOOLS
+
+_TOOL_SNAPSHOT = Path(__file__).with_name("agent_tool_surface.json")
 
 _MCP_HEADERS = {
     "Content-Type": "application/json",
@@ -128,6 +134,72 @@ def test_agent_read_tools_count(api_key):
     assert len(read_tool_names) == 16
     assert set(read_tool_names) == set(READ_TOOL_NAMES)
     query_mod.reset_engine()
+
+
+def _norm_description(desc: str) -> str:
+    """Strip the Python-version-dependent uniform indent from a tool description.
+
+    Python 3.13+ dedents a function's docstring at compile time; 3.12 (CI,
+    Docker) does not, so `FunctionTool.from_defaults`' generated description
+    carries a different indentation depending on the interpreter running the
+    test. `inspect.cleandoc` normalizes that away while still comparing word
+    content, line breaks and relative indentation exactly.
+    """
+    first, sep, rest = desc.partition("\n")
+    if not sep:
+        return desc
+    return first + sep + inspect.cleandoc(rest)
+
+
+def test_tool_surface_snapshot():
+    """AGENT-01: locks every agent tool's name, description and fn_schema in
+    a checked-in JSON snapshot (backend/tests/agent_tool_surface.json), so a
+    later registry refactor (26-02) or category-matching change (26-03) that
+    alters what the LLM sees shows up as a reviewed diff instead of silent
+    drift.
+
+    Regenerate deliberately with:
+        UPDATE_TOOL_SNAPSHOT=1 pytest backend/tests/test_mcp.py -k tool_surface_snapshot
+
+    Every regeneration must land as its own reviewed commit (D-05) — this
+    test never writes the file unless that env var is set.
+    """
+    import backend.query as query_mod
+
+    query_mod.reset_engine()
+    workflow = query_mod._get_agent_workflow()
+    agent = workflow.agents["Agent"]
+    entries = [
+        {
+            "name": t.metadata.name,
+            "description": _norm_description(t.metadata.description),
+            "fn_schema": t.metadata.fn_schema.model_json_schema(),
+        }
+        for t in agent.tools
+    ]
+    query_mod.reset_engine()
+
+    rendered = json.dumps(entries, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+
+    if os.environ.get("UPDATE_TOOL_SNAPSHOT") == "1":
+        _TOOL_SNAPSHOT.write_text(rendered, encoding="utf-8")
+        return
+
+    if not _TOOL_SNAPSHOT.exists():
+        pytest.fail(
+            f"{_TOOL_SNAPSHOT} is missing. Regenerate deliberately with "
+            "UPDATE_TOOL_SNAPSHOT=1 pytest backend/tests/test_mcp.py -k tool_surface_snapshot "
+            "and review the diff before committing — this test never creates the file itself."
+        )
+
+    installed_version = importlib.metadata.version("llama-index-core")
+    assert rendered == _TOOL_SNAPSHOT.read_text(encoding="utf-8"), (
+        "The agent tool surface changed (name, description or fn_schema of at least "
+        f"one tool). Installed llama-index-core=={installed_version} — check whether a "
+        "dependency bump reformatted descriptions before assuming monai's code changed "
+        "(Pitfall 1). If the change is real and reviewed, regenerate with "
+        "UPDATE_TOOL_SNAPSHOT=1 pytest backend/tests/test_mcp.py -k tool_surface_snapshot."
+    )
 
 
 def test_mcp_no_write_tools(client, api_key):
