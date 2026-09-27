@@ -4,7 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 
 import { tokens, card, btn, btnDark } from "../styles";
-import PlatformManager, { type Platform, extractDetail } from "./PlatformManager";
+import PlatformManager, { type Platform } from "./PlatformManager";
+import { extractDetail } from "../lib/api";
 import HoldingModal from "./HoldingModal";
 import HoldingOverrideModal from "./HoldingOverrideModal";
 import PriceOverrideDialog from "./PriceOverrideDialog";
