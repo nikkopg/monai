@@ -208,7 +208,9 @@ async def agent_stream(question: str):
                     "result": result_dict,  # full dict — used for token extraction only
                     "_trace_result": trace_result,  # token-stripped — used in answer trace
                 })
-                yield f"data: {json.dumps({'type': 'tool_result', 'step': step})}\n\n"
+                # default=str: some tool results (e.g. net_worth's holdings) carry
+                # raw Decimal fields that json.dumps can't serialize natively.
+                yield f"data: {json.dumps({'type': 'tool_result', 'step': step}, default=str)}\n\n"
 
             elif isinstance(event, StopEvent):
                 # StopEvent.result is AgentOutput; str(AgentOutput) = response.content
@@ -234,7 +236,7 @@ async def agent_stream(question: str):
                     "proposal_id": proposal_id,
                     "proposal_token": proposal_token,
                 }
-                yield f"data: {json.dumps(payload)}\n\n"
+                yield f"data: {json.dumps(payload, default=str)}\n\n"
 
         yield "data: [DONE]\n\n"
 
