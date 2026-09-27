@@ -54,11 +54,15 @@ echo "MONAI_API_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')
 docker compose up -d --build
 ```
 
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:8001
-- MCP endpoint: http://localhost:8001/mcp (send `MONAI_API_KEY` as a header or `Authorization: Bearer <key>`)
+- Frontend: http://127.0.0.1:3001
+- Backend API: http://127.0.0.1:8001
+- MCP endpoint: http://127.0.0.1:8001/mcp (send `MONAI_API_KEY` as a header or `Authorization: Bearer <key>`)
 
 Alembic runs `alembic upgrade head` automatically at backend startup (idempotent). A fresh install needs nothing further. **If you have an existing `monai_pgdata` volume from before Alembic**, follow the one-time runbook below first.
+
+### Network and timezone
+
+The db, API and UI all listen on `127.0.0.1` only — nothing is reachable from the LAN. For remote use, SSH-tunnel instead: `ssh -L 3001:127.0.0.1:3001 user@your-server` (add `-L 8001:127.0.0.1:8001` for MCP), then open http://127.0.0.1:3001 locally. Point `mcp-remote` / Claude Desktop configs at http://127.0.0.1:8001/mcp. The backend runs on Asia/Jakarta via `TZ`/`PGTZ` in `docker-compose.yml`; the daily 01:00 WIB portfolio snapshot used to stamp the previous (UTC) date and now stamps the Jakarta date, so expect a one-time one-day discontinuity in the value history at cutover.
 
 ## Privacy
 
