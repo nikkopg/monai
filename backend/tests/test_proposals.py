@@ -604,6 +604,8 @@ def test_concurrent_second_caller_gets_409(client, api_key, db_session, action):
     # session per request (D-15).
     a_session = SessionLocal()
     p = a_session.get(Proposal, uuid.UUID(proposal_id), with_for_update=True)
+    # Same transaction/connection as the lock, so this is the lock holder's pid.
+    a_pid = a_session.execute(text("SELECT pg_backend_pid()")).scalar()
 
     result_box: dict = {}
     b_sent = threading.Event()
@@ -629,12 +631,13 @@ def test_concurrent_second_caller_gets_409(client, api_key, db_session, action):
         blocked = 0
         while time.monotonic() < deadline:
             with engine.connect() as c:
+                # Scoped to waiters blocked by A's backend, so a concurrent
+                # run on the shared monai_test can't produce a false green.
                 blocked = c.execute(text(
                     "SELECT COUNT(*) FROM pg_stat_activity "
-                    "WHERE datname = current_database() "
-                    "AND wait_event_type = 'Lock' "
-                    "AND query ILIKE '%FOR UPDATE%'"
-                )).scalar() or 0
+                    "WHERE :a_pid = ANY(pg_blocking_pids(pid)) "
+                    "AND query ILIKE '%proposals%FOR UPDATE%'"
+                ), {"a_pid": a_pid}).scalar() or 0
             if blocked >= 1:
                 break
             time.sleep(0.05)
