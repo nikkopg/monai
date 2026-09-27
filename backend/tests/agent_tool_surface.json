@@ -66,7 +66,7 @@
     "name": "net_total"
   },
   {
-    "description": "Top spending categories (expenses only) in a period, rolled up to TOP-LEVEL category groups — each group's total includes all its descendant subcategories' transactions; per-subcategory breakdown is under 'children'. Transfers and system categories excluded. For a specific month/year/range pass period='custom' with ISO start_date/end_date (end_date inclusive).",
+    "description": "spending_by_category(period='all_time', start_date=None, end_date=None, limit=5) -> dict\nTop spending categories (expenses only) in a period, rolled up to\nTOP-LEVEL category groups — each group's total includes all its\ndescendant subcategories' transactions; per-subcategory breakdown is\nunder 'children'. Transfers and system categories excluded. For a\nspecific month/year/range pass period='custom' with ISO\nstart_date/end_date (end_date inclusive).",
     "fn_schema": {
       "properties": {
         "end_date": {
@@ -92,7 +92,7 @@
     "name": "spending_by_category"
   },
   {
-    "description": "Total spent in one category INCLUDING all of its descendant subcategories — a parent/group name sums its entire subtree (case-insensitive name match). Transfers excluded. For a specific month/year/range pass period='custom' with ISO start_date/end_date (end_date inclusive); leaving period='all_time' for a month question returns a wrong, inflated total.",
+    "description": "spending_in_category(category: str, period='all_time', start_date=None, end_date=None) -> dict\nTotal spent in one category INCLUDING all of its descendant\nsubcategories — a parent/group name sums its entire subtree\n(case-insensitive name match). Transfers excluded. For a specific\nmonth/year/range pass period='custom' with ISO start_date/end_date\n(end_date inclusive); leaving period='all_time' for a month question\nreturns a wrong, inflated total.",
     "fn_schema": {
       "properties": {
         "category": {
@@ -221,7 +221,7 @@
     "name": "average_daily_spending"
   },
   {
-    "description": "The full category TREE: top-level groups with nested children. Each node has id, name, kind, icon (emoji), effective color, and children. Use it to map a vague term to a real category or group name before other category tools.",
+    "description": "list_categories() -> dict\nThe full category TREE: top-level groups with nested children. Each\nnode has id, name, kind, icon (emoji), effective color, and children.\nUse it to map a vague term to a real category or group name before\nother category tools.",
     "fn_schema": {
       "properties": {},
       "title": "list_categories",
@@ -646,7 +646,7 @@
     "name": "propose_delete_account"
   },
   {
-    "description": "Propose renaming an existing category node (transactions follow via their category_id FK). Fails with an error dict if old_name is not a real category or new_name collides with a sibling. Returns a proposal for user confirmation — never changes data directly.",
+    "description": "propose_rename_category(old_name: str, new_name: str) -> dict\nPropose renaming an existing category node (transactions follow via\ntheir category_id FK). Fails with an error dict if old_name is not a\nreal category or new_name collides with a sibling. Returns a proposal\nfor user confirmation — never changes data directly.",
     "fn_schema": {
       "properties": {
         "new_name": {
@@ -668,7 +668,7 @@
     "name": "propose_rename_category"
   },
   {
-    "description": "Propose merging one existing category into another (transactions are repointed to the target node). Both names must be real categories and the source must have no child subcategories. Returns a proposal for user confirmation — never changes data directly.",
+    "description": "propose_merge_category(from_name: str, into_name: str) -> dict\nPropose merging one existing category into another (transactions are\nrepointed to the target node). Both names must be real categories and\nthe source must have no child subcategories. Returns a proposal for\nuser confirmation — never changes data directly.",
     "fn_schema": {
       "properties": {
         "from_name": {
@@ -908,7 +908,7 @@
     "name": "propose_add_transfer"
   },
   {
-    "description": "Propose moving cash from a liquid account into an investment platform with no immediate buy (a plain funding deposit, recorded as a CASH sentinel position). platform_id is an int — use find_platforms first to resolve a platform name to its id. amount is an unsigned magnitude. Returns a proposal for user confirmation — never moves money directly.",
+    "description": "propose_add_investment_transfer(from_account: str, platform_id: int, amount: float, currency: str = 'IDR', date: str | None = None, notes: str | None = None) -> dict\nPropose moving cash from a liquid account into an investment\nplatform with no immediate buy (a plain funding deposit, recorded as a\nCASH sentinel position). platform_id is an int — use find_platforms\nfirst to resolve a platform name to its id. amount is an unsigned\nmagnitude. Returns a proposal for user confirmation — never moves\nmoney directly.",
     "fn_schema": {
       "properties": {
         "amount": {
@@ -964,7 +964,7 @@
     "name": "propose_add_investment_transfer"
   },
   {
-    "description": "Propose a funded buy: debits source_account_name and records a 'buy' portfolio event. cash_amount, quantity, and price must be unsigned positive magnitudes — the primitive owns the debit sign. platform_id is an int — use find_platforms first to resolve a platform name to its id. Returns a proposal for user confirmation — never moves money directly.",
+    "description": "propose_add_funded_buy(source_account_name: str, platform_id: int, ticker: str, quantity: float, price: float, cash_amount: float, cash_currency: str = 'IDR', event_currency: str = 'IDR', date: str | None = None, notes: str | None = None, asset_type: str | None = None) -> dict\nPropose a funded buy: debits source_account_name and records a\n'buy' portfolio event. cash_amount, quantity, and price must be\nunsigned positive magnitudes — the primitive owns the debit sign.\nplatform_id is an int — use find_platforms first to resolve a\nplatform name to its id. Returns a proposal for user confirmation —\nnever moves money directly.",
     "fn_schema": {
       "properties": {
         "asset_type": {
@@ -1052,7 +1052,7 @@
     "name": "propose_add_funded_buy"
   },
   {
-    "description": "Propose a funded sell: credits source_account_name and records a 'sell' portfolio event. cash_amount, quantity, and price must be unsigned positive magnitudes — the primitive owns the credit sign. platform_id is an int — use find_platforms first to resolve a platform name to its id. Returns a proposal for user confirmation — never moves money directly.",
+    "description": "propose_add_funded_sell(source_account_name: str, platform_id: int, ticker: str, quantity: float, price: float, cash_amount: float, cash_currency: str = 'IDR', event_currency: str = 'IDR', date: str | None = None, notes: str | None = None, asset_type: str | None = None) -> dict\nPropose a funded sell: credits source_account_name and records a\n'sell' portfolio event. cash_amount, quantity, and price must be\nunsigned positive magnitudes — the primitive owns the credit sign.\nplatform_id is an int — use find_platforms first to resolve a\nplatform name to its id. Returns a proposal for user confirmation —\nnever moves money directly.",
     "fn_schema": {
       "properties": {
         "asset_type": {

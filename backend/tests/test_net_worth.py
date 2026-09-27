@@ -5,9 +5,9 @@ Pins the behavior of the new `net_worth()` read tool + GET /net-worth
 endpoint: liquid (type='liquid' accounts) + investment (portfolio_summary
 total_value) composed into one number, each account/holding counted exactly
 once (D-01/D-03/D-04), a loud coverage-assertion ValueError on a
-classification gap (D-05/D-06), and dual registration on both read-only
-surfaces (TOOLS/READ_TOOL_NAMES + query.py's agent tool list — the exact
-chat-tool-dual-registration gap that bit Phase 7).
+classification gap (D-05/D-06). Agent registration for net_worth (the
+chat-tool-dual-registration gap that bit Phase 7) is now guarded by
+test_mcp.py's snapshot and parity tests, not by a test in this file.
 
 Reuses the db_available/db_session fixture + _make_account/_make_transaction
 seed-helper style from test_cashflow_summary.py; _make_account here adds a
@@ -197,35 +197,6 @@ def test_net_worth_is_read_only():
     assert all(name.startswith("propose_") for name in write_tool_names), (
         "sanity check: everything outside READ_TOOL_NAMES should be a propose_* "
         "write tool — otherwise this test isn't actually checking what it claims"
-    )
-
-
-# ---------------------------------------------------------------------------
-# D-02, chat-tool-dual-registration memory: net_worth registered for the agent
-# ---------------------------------------------------------------------------
-
-def test_net_worth_registered_for_agent():
-    """Registering net_worth in TOOLS/READ_TOOL_NAMES alone does NOT surface it
-    to the agent — query.py's _get_agent_workflow builds its own explicit
-    FunctionTool list (`read_tools`, a local variable, not a module-level
-    export — `from backend.query import read_tools` is not importable). This
-    is a source-grep regression guard (same style as
-    test_cashflow_summary_resolve_period_called_once): it goes RED if the
-    net_worth import or its FunctionTool.from_defaults(fn=net_worth) line is
-    ever removed from _get_agent_workflow's body.
-    """
-    import inspect
-    from backend.query import _get_agent_workflow
-
-    src = inspect.getsource(_get_agent_workflow)
-    assert "net_worth" in src, "_get_agent_workflow must import net_worth from backend.tools"
-    # Registered via the zero-arg net_worth_tool wrapper with an explicit
-    # name="net_worth" so the LLM tool schema stays argument-free (WR-01) while
-    # still surfacing under the canonical "net_worth" tool name.
-    assert 'FunctionTool.from_defaults(fn=net_worth_tool, name="net_worth")' in src, (
-        "net_worth must be registered as a FunctionTool in the agent's read_tools "
-        "list (chat-tool-dual-registration memory) — the MCP/TOOLS registry does "
-        "not automatically surface it to the agent"
     )
 
 
