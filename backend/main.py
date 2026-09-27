@@ -51,7 +51,7 @@ from sqlalchemy.orm import Session
 from backend import auth
 from backend.auth import require_api_key
 from backend.mcp_server import build_mcp
-from backend.db import get_session
+from backend.db import get_session, get_session_sync
 from backend.importer import _get_or_create_account, import_csv_text
 from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, Proposal, Transaction
 from backend.net_worth_history import monthly_net_worth_series
@@ -149,17 +149,48 @@ from backend.settings import (
 )
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+def _check_timezone(session_factory) -> None:
+    """Log the effective Python process offset and DB session TimeZone once
+    at startup (DEPLOY-04 / D-08). WARNING on mismatch, never raises — a soft
+    check must never block boot (a briefly-unreachable DB included).
+    """
+    offset = datetime.now().astimezone().utcoffset()
+    if offset == timedelta(hours=7):
+        logger.info("Process timezone offset: +07:00 (Asia/Jakarta)")
+    else:
+        logger.warning(
+            "Process timezone offset is %s, expected +07:00 (Asia/Jakarta) — check the TZ env var",
+            offset,
+        )
+    try:
+        with session_factory() as db:
+            tz = db.execute(text("SELECT current_setting('TimeZone')")).scalar()
+        if tz == "Asia/Jakarta":
+            logger.info("DB session TimeZone: Asia/Jakarta")
+        else:
+            logger.warning(
+                "DB session TimeZone is %r, expected 'Asia/Jakarta' — check the PGTZ env var", tz
+            )
+    except Exception as exc:  # DB briefly unreachable at startup — never block boot
+        logger.warning("Could not check DB session TimeZone at startup: %s", exc)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start the in-process daily portfolio-value snapshot scheduler (D-13/D-14).
 
+    Also logs the effective process/DB timezone once at startup (D-08).
+
     entrypoint.sh runs a single uvicorn process (no --workers), so exactly one
     scheduler owns the daily job — no leader election needed.
     NOTE: a future multi-worker deploy would run N schedulers; that would need
     leader election (or an external scheduler) to avoid N duplicate snapshots.
     """
+    _check_timezone(get_session_sync)
+
     from backend.scheduler import build_scheduler
 
     scheduler = build_scheduler()
