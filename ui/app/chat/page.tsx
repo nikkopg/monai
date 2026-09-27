@@ -339,12 +339,12 @@ export default function ChatPage() {
   const [steps, setSteps] = useState<string[]>([]);
   const [trace, setTrace] = useState<TraceStep[]>([]);
   const [traceOpen, setTraceOpen] = useState(false);
-  const [proposal, setProposal] = useState<Proposal | null>(null);
+  const [proposals, setProposals] = useState<Proposal[]>([]);
 
   const cancelRef = useRef(false);
 
-  // SSE-backed ask() — POST /api/query-stream (EventSource is GET-only).
-  async function ask() {
+  // SSE-backed sendQuestion() — POST /api/query-stream (EventSource is GET-only).
+  async function sendQuestion() {
     const q = question.trim();
     if (!q) return;
 
@@ -355,7 +355,7 @@ export default function ChatPage() {
     setSteps([]);
     setTrace([]);
     setTraceOpen(false);
-    setProposal(null);
+    setProposals([]);
     cancelRef.current = false;
 
     try {
@@ -398,8 +398,7 @@ export default function ChatPage() {
             step?: TraceStep;
             text?: string;
             trace?: TraceStep[];
-            proposal_id?: string | null;
-            proposal_token?: string | null;
+            proposals?: { id: string; token: string }[];
           };
           try {
             msg = JSON.parse(dataLine);
@@ -414,25 +413,27 @@ export default function ChatPage() {
           } else if (msg.type === "answer") {
             setAnswer(msg.text ?? "");
             if (msg.trace) setTrace(msg.trace);
-            if (msg.proposal_id && msg.proposal_token) {
-              // Build Proposal from SSE answer event; client-side expiry is
-              // cosmetic — server enforces authoritatively on confirm (D-09/D-10).
-              setProposal({
-                id: msg.proposal_id,
-                token: msg.proposal_token,
-                operation:
-                  msg.trace?.find(
-                    (s) => s.result?.proposal_id === msg.proposal_id
-                  )?.tool ?? "write",
-                payload: (msg.trace?.find(
-                  (s) => s.result?.proposal_id === msg.proposal_id
-                )?.result?.payload as Proposal["payload"]) ?? {
-                  operation: "write",
-                  rows: [],
-                },
-                expiresAt: new Date(Date.now() + 15 * 60 * 1000),
-              });
-            }
+            // Build Proposal[] from SSE answer event; client-side expiry is
+            // cosmetic — server enforces authoritatively on confirm (D-09/D-10).
+            const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+            const answerTrace = msg.trace;
+            setProposals(
+              (msg.proposals ?? []).map((p) => {
+                const step = answerTrace?.find(
+                  (s) => s.result?.proposal_id === p.id
+                );
+                return {
+                  id: p.id,
+                  token: p.token,
+                  operation: step?.tool ?? "write",
+                  payload: (step?.result?.payload as Proposal["payload"]) ?? {
+                    operation: "write",
+                    rows: [],
+                  },
+                  expiresAt,
+                };
+              })
+            );
           }
         }
       }
@@ -623,10 +624,11 @@ export default function ChatPage() {
               </>
             )}
 
-            {/* Inline ProposalCard (D-01) */}
-            {proposal && (
+            {/* Inline ProposalCards — one per proposal in this turn (D-01, AGENT-06) */}
+            {proposals.map((p) => (
               <ProposalCard
-                proposal={proposal}
+                key={p.id}
+                proposal={p}
                 onApplied={() => {
                   // /cashflow re-fetches its own list on mount; nothing local.
                 }}
@@ -634,7 +636,7 @@ export default function ChatPage() {
                   // nothing extra needed
                 }}
               />
-            )}
+            ))}
           </div>
         )}
       </div>
@@ -656,7 +658,7 @@ export default function ChatPage() {
           value={question}
           placeholder="Ask anything about your finances…"
           onChange={(e) => setQuestion(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && ask()}
+          onKeyDown={(e) => e.key === "Enter" && sendQuestion()}
         />
         <button
           style={{
@@ -669,7 +671,7 @@ export default function ChatPage() {
             fontWeight: 600,
             cursor: asking ? "not-allowed" : "pointer",
           }}
-          onClick={ask}
+          onClick={sendQuestion}
           disabled={asking}
         >
           {asking ? "…" : "Ask"}
