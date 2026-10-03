@@ -22,6 +22,7 @@ import datetime
 import json
 
 from backend.config import configure_llm
+from backend.tools import PERIODS
 
 # ---------------------------------------------------------------------------
 # Module-level singletons — lazy, reset-able
@@ -35,15 +36,20 @@ _agent_workflow_date: datetime.date | None = None  # the date whose TODAY the ca
 # System prompt — tool-only, no SQL, honest refusal, no fabrication
 # ---------------------------------------------------------------------------
 
-_SYSTEM_PROMPT = """\
+# Named periods come straight from tools.PERIODS (as mcp_server._PERIOD_HELP
+# does), so the prompt can never offer a period resolve_period rejects or miss
+# one it accepts (TD-02).
+_NAMED_PERIODS = ", ".join(p for p in PERIODS if p != "custom")
+
+_SYSTEM_PROMPT = f"""\
 You are a personal finance assistant with access to parameterized query tools.
 
-TODAY is {today}.
+TODAY is {{today}}.
 
 DATES — how to scope a query to a time range:
 - Every read tool takes a `period` argument, plus optional `start_date`/`end_date` (ISO `YYYY-MM-DD`).
 - Named periods (use ONLY when the user's phrasing is itself relative to today):
-  all_time, this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days.
+  {_NAMED_PERIODS}.
   this_week and last_week are calendar weeks, Monday through Sunday — prefer them over \
 a custom range when the user says "this week" or "last week"; they do NOT mean a rolling 7-day window.
 - For ANY specific/absolute range — a named calendar month, a year, a quarter, or an \

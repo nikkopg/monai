@@ -451,24 +451,27 @@ def test_agent_workflow_rebuilds_across_midnight(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_system_prompt_lists_every_named_period():
-    """Every non-"custom" name in tools.PERIODS must appear, as a whole word,
-    in both _SYSTEM_PROMPT and spending_total's docstring — otherwise the
-    model doesn't know the period exists and falls back to a custom range
-    that isn't what the user meant (TD-02)."""
+def test_system_prompt_lists_every_named_period(monkeypatch):
+    """_SYSTEM_PROMPT's named periods are derived from tools.PERIODS, so the
+    model is offered exactly the periods resolve_period accepts (TD-02).
+    Reloading query with an extra fake period proves the list is derived,
+    not hand-written. spending_total's docstring is still hand-written, so
+    it only gets a whole-word presence check."""
+    import importlib
     import re
 
-    from backend.query import _SYSTEM_PROMPT
-    from backend.tools import PERIODS, spending_total
+    import backend.query as query_mod
+    import backend.tools as tools_mod
 
-    names = [p for p in PERIODS if p != "custom"]
+    names = [p for p in tools_mod.PERIODS if p != "custom"]
+    assert f"  {', '.join(names)}.\n" in query_mod._SYSTEM_PROMPT
 
-    missing_prompt = [n for n in names if not re.search(rf"\b{n}\b", _SYSTEM_PROMPT)]
-    missing_docstring = [
-        n for n in names if not re.search(rf"\b{n}\b", spending_total.__doc__)
-    ]
+    monkeypatch.setattr(tools_mod, "PERIODS", tools_mod.PERIODS + ("fake_period",))
+    try:
+        assert "fake_period" in importlib.reload(query_mod)._SYSTEM_PROMPT
+    finally:
+        monkeypatch.undo()
+        importlib.reload(query_mod)
 
-    assert missing_prompt == [], f"missing from _SYSTEM_PROMPT: {missing_prompt}"
-    assert missing_docstring == [], (
-        f"missing from spending_total.__doc__: {missing_docstring}"
-    )
+    missing = [n for n in names if not re.search(rf"\b{n}\b", tools_mod.spending_total.__doc__)]
+    assert missing == [], f"missing from spending_total.__doc__: {missing}"
