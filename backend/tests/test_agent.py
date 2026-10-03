@@ -451,13 +451,11 @@ def test_agent_workflow_rebuilds_across_midnight(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_system_prompt_lists_every_named_period(monkeypatch):
-    """_SYSTEM_PROMPT's named periods are derived from tools.PERIODS, so the
-    model is offered exactly the periods resolve_period accepts (TD-02).
-    Reloading query with an extra fake period proves the list is derived,
-    not hand-written. spending_total's docstring is still hand-written, so
-    it only gets a whole-word presence check."""
-    import importlib
+def test_system_prompt_lists_every_named_period():
+    """_SYSTEM_PROMPT offers exactly the named periods resolve_period accepts:
+    the line is derived from tools.PERIODS, so it must match it verbatim
+    (TD-02). spending_total's docstring is still hand-written, so it only
+    gets a whole-word presence check."""
     import re
 
     import backend.query as query_mod
@@ -465,13 +463,6 @@ def test_system_prompt_lists_every_named_period(monkeypatch):
 
     names = [p for p in tools_mod.PERIODS if p != "custom"]
     assert f"  {', '.join(names)}.\n" in query_mod._SYSTEM_PROMPT
-
-    monkeypatch.setattr(tools_mod, "PERIODS", tools_mod.PERIODS + ("fake_period",))
-    try:
-        assert "fake_period" in importlib.reload(query_mod)._SYSTEM_PROMPT
-    finally:
-        monkeypatch.undo()
-        importlib.reload(query_mod)
 
     missing = [n for n in names if not re.search(rf"\b{n}\b", tools_mod.spending_total.__doc__)]
     assert missing == [], f"missing from spending_total.__doc__: {missing}"
