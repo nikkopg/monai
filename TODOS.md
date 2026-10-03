@@ -16,17 +16,6 @@ The open-work list. `ARCHITECTURE.md` holds *decisions*; this holds *open work*.
 **Priority:** P2
 **Depends on:** isolated test database, one card per proposal (both shipped v1.4)
 
-### Tell the agent about this_week and last_week named periods
-
-**What:** Add `this_week` and `last_week` to the system prompt's named-period list in `backend/query.py` (currently: all_time, this_month, last_month, this_year, last_year, last_30_days, last_90_days).
-
-**Why:** `backend/tools.py`'s `PERIODS` tuple and `resolve_period` already support `this_week`/`last_week` as ISO Monday-Sunday calendar weeks, but the prompt never tells the model those names exist. Asked "how much did I spend last week," the agent falls back to a rolling 7-day custom range instead of the calendar week — an internally-honest answer to the wrong question, not a fabricated figure.
-
-**Context:** Found while running the agent eval: the "last week" case (case 4) failed identically across 3 live runs, and a code read showed the gap is in the prompt, not the model. The fix is one line: add `this_week`/`last_week` to the named-period line in `backend/query.py`, then re-run `--case 4`.
-
-**Effort:** S
-**Priority:** P2
-
 ### Recurring-charge / subscription detection (QRY-01)
 
 **What:** A tool that flags transactions repeating at roughly the same amount and interval (e.g. monthly) as likely subscriptions.
@@ -380,8 +369,20 @@ filtering. See `ARCHITECTURE.md`.
 
 **Why:** The only path in the repo that exercises a real LLM end to end — a gate for model or prompt changes, not something CI runs.
 
-**Context:** `backend/evals/agent_eval.py`. Run with `env -u DATABASE_URL .venv/bin/python -m backend.evals.agent_eval`. On the last recorded run, 11 of 12 cases passed (results depend on the configured model); case 4 ("last week") failed because of a real prompt gap, tracked above as "Tell the agent about this_week and last_week named periods" — not a defect in the eval itself.
+**Context:** `backend/evals/agent_eval.py`. Run with `env -u DATABASE_URL .venv/bin/python -m backend.evals.agent_eval`. The last full run passed 11 of 12; case 4 ("last week") failed on a prompt gap that is now fixed, and passes when re-run with `--case 4`.
 
 **Effort:** M
 **Priority:** P1
+**Completed:** v1.4 (2026-10-03)
+
+### Tell the agent about this_week and last_week named periods
+
+**What:** The prompt and the `spending_total` tool description now list the week periods, and a test keeps the prompt in step with the `PERIODS` tuple.
+
+**Why:** `backend/tools.py`'s `PERIODS` tuple and `resolve_period` already supported `this_week`/`last_week` as ISO Monday-Sunday calendar weeks, but the prompt never told the model those names exist. Asked "how much did I spend last week," the agent fell back to a rolling 7-day custom range instead of the calendar week — an internally-honest answer to the wrong question, not a fabricated figure.
+
+**Context:** `backend/query.py`'s `_SYSTEM_PROMPT` and `backend/tools.py`'s `spending_total` docstring now name both week periods; `backend/tests/test_agent.py::test_system_prompt_lists_every_named_period` fails if any non-custom `PERIODS` name is missing from either text.
+
+**Effort:** S
+**Priority:** P2
 **Completed:** v1.4 (2026-10-03)
