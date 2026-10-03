@@ -261,6 +261,43 @@ def _self_check() -> None:
         "Logged -25,000", "q", [{"result": {"after": {"amount": "-25000"}}}]
     ) == (True, [])
 
+    # Teardown contract: Ctrl-C mid-run, or a failure building the LLM
+    # client, must still purge every proposal id collected so far. The DB
+    # and LLM hooks are stubbed, so this stays offline.
+    g = globals()
+    saved = {k: g[k] for k in ("_check_db", "_seed", "_header_line", "_run_case", "_purge")}
+    purged: list[list[str]] = []
+
+    async def interrupted_case(question: str, proposal_ids: list[str]) -> dict:
+        proposal_ids.append("synthetic-proposal-id")
+        raise KeyboardInterrupt
+
+    def broken_header() -> str:
+        raise RuntimeError("no LLM configured")
+
+    try:
+        g.update(
+            _check_db=lambda: None, _seed=lambda: None, _header_line=lambda: "(stub header)",
+            _run_case=interrupted_case, _purge=lambda ids: purged.append(list(ids)),
+        )
+        try:
+            main([])
+            raise AssertionError("KeyboardInterrupt was swallowed")
+        except KeyboardInterrupt:
+            pass
+        assert purged == [["synthetic-proposal-id"]], purged
+
+        purged.clear()
+        g["_header_line"] = broken_header
+        try:
+            main([])
+            raise AssertionError("header failure was swallowed")
+        except RuntimeError:
+            pass
+        assert purged == [[]], purged
+    finally:
+        g.update(saved)
+
     assert "backend.db" not in sys.modules
     print("self-check OK")
 
@@ -502,8 +539,8 @@ def _run_probes() -> list[str]:
 
 def _do_seed_check() -> int:
     _check_db()
-    _seed()
     try:
+        _seed()
         failures = _run_probes()
     finally:
         _purge([])
@@ -701,15 +738,15 @@ CASES: list[dict] = [
 # ---------------------------------------------------------------------------
 
 
-async def _run_case(question: str) -> tuple[dict, list[str]]:
-    """Drive agent_stream once. Returns (answer_payload, proposal_ids_seen) —
-    proposal_ids_seen covers every tool_result's result dict, not just the
-    final answer's proposals list, so a run that crashes after proposing is
-    still cleaned up."""
+async def _run_case(question: str, proposal_ids: list[str]) -> dict:
+    """Drive agent_stream once and return the answer payload. Every proposal
+    id is appended to the caller-owned `proposal_ids` the moment its
+    tool_result arrives (not just from the final answer's proposals list),
+    so the caller's `finally` still purges it if the run crashes or is
+    interrupted mid-stream."""
     from backend.query import agent_stream
 
     answer: dict = {"text": "", "trace": [], "proposals": []}
-    proposal_ids: list[str] = []
     async for line in agent_stream(question):
         if not line.startswith("data: "):
             continue
@@ -726,7 +763,7 @@ async def _run_case(question: str) -> tuple[dict, list[str]]:
     for p in answer.get("proposals") or []:
         if p.get("id"):
             proposal_ids.append(p["id"])
-    return answer, proposal_ids
+    return answer
 
 
 def _has_number(text: str) -> bool:
@@ -769,14 +806,8 @@ def _check_case(case: dict, result: dict) -> dict:
     }
 
 
-async def _run_all_cases(selected: list[dict]) -> tuple[list[dict], list[str]]:
-    results: list[dict] = []
-    all_proposal_ids: list[str] = []
-    for case in selected:
-        answer, pids = await _run_case(case["question"])
-        all_proposal_ids.extend(pids)
-        results.append(_check_case(case, answer))
-    return results, all_proposal_ids
+async def _run_all_cases(selected: list[dict], proposal_ids: list[str]) -> list[dict]:
+    return [_check_case(case, await _run_case(case["question"], proposal_ids)) for case in selected]
 
 
 def _header_line() -> str:
@@ -872,12 +903,15 @@ def main(argv: list[str] | None = None) -> int:
     else:
         selected = CASES
 
+    # Caller-owned and mutated in place, so the finally sees every id
+    # collected before a crash or Ctrl-C. Seeding and the header (which
+    # builds the LLM client) sit inside the try so their failures purge too.
+    proposal_ids: list[str] = []
     _check_db()
-    _seed()
-    print(_header_line())
-
     try:
-        results, proposal_ids = asyncio.run(_run_all_cases(selected))
+        _seed()
+        print(_header_line())
+        results = asyncio.run(_run_all_cases(selected, proposal_ids))
     finally:
         _purge(proposal_ids)
 
