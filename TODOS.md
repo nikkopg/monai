@@ -22,7 +22,7 @@ The open-work list. `ARCHITECTURE.md` holds *decisions*; this holds *open work*.
 
 **Why:** `backend/tools.py`'s `PERIODS` tuple and `resolve_period` already support `this_week`/`last_week` as ISO Monday-Sunday calendar weeks, but the prompt never tells the model those names exist. Asked "how much did I spend last week," the agent falls back to a rolling 7-day custom range instead of the calendar week — an internally-honest answer to the wrong question, not a fabricated figure.
 
-**Context:** Found while running the agent eval: the "last week" case failed identically across 3 live runs, and a code read showed the gap is in the prompt, not the model. A one-line prompt fix once picked up; verify by adding `this_week`/`last_week` to the named-period line and re-running that case.
+**Context:** Found while running the agent eval: the "last week" case (case 4) failed identically across 3 live runs, and a code read showed the gap is in the prompt, not the model. The fix is one line: add `this_week`/`last_week` to the named-period line in `backend/query.py`, then re-run `--case 4`.
 
 **Effort:** S
 **Priority:** P2
@@ -380,7 +380,7 @@ filtering. See `ARCHITECTURE.md`.
 
 **Why:** The only path in the repo that exercises a real LLM end to end — a gate for model or prompt changes, not something CI runs.
 
-**Context:** `backend/evals/agent_eval.py`. Run with `env -u DATABASE_URL .venv/bin/python -m backend.evals.agent_eval`. 11 of the 12 cases pass; the twelfth ("last week") surfaced a real prompt gap, tracked above as "Tell the agent about this_week and last_week named periods" — not a defect in the eval itself.
+**Context:** `backend/evals/agent_eval.py`. Run with `env -u DATABASE_URL .venv/bin/python -m backend.evals.agent_eval`. On the last recorded run, 11 of 12 cases passed (results depend on the configured model); case 4 ("last week") failed because of a real prompt gap, tracked above as "Tell the agent about this_week and last_week named periods" — not a defect in the eval itself.
 
 **Effort:** M
 **Priority:** P1
