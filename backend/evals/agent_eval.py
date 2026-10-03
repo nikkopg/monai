@@ -419,10 +419,12 @@ def _purge(proposal_ids: list[str]) -> None:
         c.execute(sa_text("DELETE FROM categories WHERE name = :name"), {"name": CHILD})
         c.execute(sa_text("DELETE FROM categories WHERE name = :name"), {"name": PARENT})
         c.execute(sa_text("DELETE FROM accounts WHERE name = :name"), {"name": ACCOUNT})
+        # Exact ids only. A SIGKILL'd run's pending proposals are not swept
+        # by the next run; they are inert (never confirmed) test-DB rows.
         c.execute(
             sa_text(
                 "DELETE FROM proposals WHERE status = 'pending' AND "
-                "(id = ANY(CAST(:ids AS uuid[])) OR payload::text LIKE '%ZZEval%')"
+                "id = ANY(CAST(:ids AS uuid[]))"
             ),
             {"ids": [pid for pid in proposal_ids if pid]},
         )
@@ -484,7 +486,7 @@ def _leftovers(proposal_ids: list[str]) -> int:
                 "(SELECT count(*) FROM categories WHERE name = ANY(:cats)) + "
                 "(SELECT count(*) FROM transactions WHERE merchant LIKE 'ZZEval%') + "
                 "(SELECT count(*) FROM proposals WHERE status = 'pending' AND "
-                "(id = ANY(CAST(:ids AS uuid[])) OR payload::text LIKE '%ZZEval%'))"
+                "id = ANY(CAST(:ids AS uuid[])))"
             ),
             {"acct": ACCOUNT, "cats": [PARENT, CHILD], "ids": [pid for pid in proposal_ids if pid]},
         ).scalar()
