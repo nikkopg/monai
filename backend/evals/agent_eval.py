@@ -103,25 +103,53 @@ _GLUED_PREFIX_RE = re.compile(r"(?i)\b(Rp\.?|IDR)(?=\d)")
 # match the "m" inside "million" and leave "illion" dangling (it wouldn't —
 # \b after the scale group blocks that — but longest-first keeps intent
 # obvious and avoids relying on that fence alone).
+#
+# "M" is read as million (English usage), never as Indonesian miliar; an
+# answer that writes miliar as "M" fails as a mis-scaled figure.
 _SCALE_WORDS = {
-    "juta": 1e6, "million": 1e6, "jt": 1e6, "m": 1e6,
-    "miliar": 1e9, "billion": 1e9,
-    "ribu": 1e3, "rb": 1e3, "k": 1e3,
+    "ribu": 1e3, "rb": 1e3, "k": 1e3, "thousand": 1e3,
+    "juta": 1e6, "jt": 1e6, "million": 1e6, "mil": 1e6, "mio": 1e6, "mn": 1e6, "m": 1e6,
+    "miliar": 1e9, "billion": 1e9, "bn": 1e9, "b": 1e9,
+    "triliun": 1e12, "trillion": 1e12, "tn": 1e12, "t": 1e12,
 }
 _SCALE_PATTERN = "|".join(sorted(_SCALE_WORDS, key=len, reverse=True))
+
+# Letters glued straight onto a number that are not a scale word ("4.3lakh",
+# "1.5bil") make the figure unplaceable. Only these glued suffixes are safe
+# to ignore (ordinals, a repeat count, a currency code).
+_GLUED_OK = {"st", "nd", "rd", "th", "x", "idr", "rp", "usd"}
+
+# Tolerance sentinel for an unplaceable token: it never matches anything, so
+# a figure the parser can't read fails the case instead of vanishing.
+_UNPLACEABLE = -1.0
 
 # ponytail: regex heuristic, not a real number grammar — a lone "1.234" with
 # 3 trailing digits after one separator reads as grouping (Indonesian-style),
 # never as a 3-decimal fraction; spelled-out numbers ("one million") are
-# ignored entirely; every new format this misses needs its own self-check
-# assert and a tweak here, not a rewrite.
+# ignored entirely; an unknown scale word after a SPACE ("1.5 zillion") is
+# not caught (only glued ones are), since "3 items" must stay a plain count;
+# every new format this misses needs its own self-check assert and a tweak
+# here, not a rewrite.
 _TOKEN_RE = re.compile(
     r"(?<![\w.,])"
     r"(?P<num>\d+(?:[.,]\d+)*)"
-    r"(?:\s*(?P<scale>" + _SCALE_PATTERN + r")\b)?"
+    r"(?:\s*(?P<scale>" + _SCALE_PATTERN + r")\b|(?P<glued>[A-Za-z]+))?"
     r"(?!\d)"
     r"(?!\s?%)",
     re.IGNORECASE,
+)
+
+_MONTHS = (
+    "january|february|march|april|may|june|july|august|september|october|"
+    "november|december|januari|februari|maret|mei|juni|juli|agustus|oktober|"
+    "desember|jan|feb|mar|apr|jun|jul|aug|agu|sept|sep|oct|okt|nov|dec|des"
+)
+# Text right before a bare 1900-2100 integer that marks it as a year ("in
+# 2024", "March 2024", "March 14, 2024", "year (2026)", "Q1 2024"). Without
+# one of these cues the integer is kept as an amount ("Rp 2000 fee").
+_YEAR_CUE_RE = re.compile(
+    r"(?i)\b(?:in|since|during|year|tahun|q[1-4]|(?:" + _MONTHS + r")\.?"
+    r"(?:\s+\d{1,2}(?:st|nd|rd|th)?,?)?)\W{0,3}$"
 )
 
 
@@ -144,8 +172,10 @@ def extract_numbers(text: str) -> list[tuple[float, float]]:
 
     Returns (value, tolerance) pairs. A token matches a trace leaf when
     abs(abs(value) - leaf) <= tolerance (numbers_ok does that comparison).
-    Drops UUIDs, ISO dates, percentages, bare 1900-2100 years and anything
-    under 100 in absolute value (small counts, day numbers).
+    Drops UUIDs, ISO dates, percentages, 1900-2100 integers preceded by a
+    year cue (_YEAR_CUE_RE) and anything under 100 in absolute value (small
+    counts, day numbers). A number with unknown letters glued on comes back
+    as (mantissa, _UNPLACEABLE), which never matches.
     """
     cleaned = _UUID_RE.sub(" ", text)
     cleaned = _ISO_DATE_RE.sub(" ", cleaned)
@@ -155,17 +185,27 @@ def extract_numbers(text: str) -> list[tuple[float, float]]:
     for m in _TOKEN_RE.finditer(cleaned):
         raw_num = m.group("num")
         scale_word = m.group("scale")
+        glued = (m.group("glued") or "").lower()
         try:
             value, decimals = _parse_number_str(raw_num)
         except ValueError:
             continue
+        if glued and glued not in _GLUED_OK:
+            out.append((value, _UNPLACEABLE))
+            continue
         if scale_word:
             scale = _SCALE_WORDS[scale_word.lower()]
             value *= scale
-            tolerance = 0.5 * (10 ** -decimals) * scale
+            # Half a unit of the last quoted digit, capped at 5% of the value
+            # so "about 1jt" can't claim a 1.49M leaf.
+            tolerance = min(0.5 * (10 ** -decimals) * scale, 0.05 * value)
         else:
-            if re.fullmatch(r"\d+", raw_num) and 1900 <= value <= 2100:
-                continue  # bare year
+            if (
+                re.fullmatch(r"\d+", raw_num)
+                and 1900 <= value <= 2100
+                and _YEAR_CUE_RE.search(cleaned[max(0, m.start() - 30):m.start()])
+            ):
+                continue  # a year, not an amount
             tolerance = 1.0
         if abs(value) < 100:
             continue  # small count / day number
@@ -211,6 +251,9 @@ def numbers_ok(answer: str, question: str, trace: list) -> tuple[bool, list[floa
 
     unmatched: list[float] = []
     for value, tolerance in extract_numbers(answer):
+        if tolerance == _UNPLACEABLE:
+            unmatched.append(value)  # unreadable figure: fail, never skip
+            continue
         if any(abs(abs(value) - abs(qv)) <= qtol for qv, qtol in question_tokens):
             continue  # echoes the question, not a claimed figure
         if any(abs(abs(value) - leaf) <= tolerance for leaf in leaves):
@@ -260,6 +303,25 @@ def _self_check() -> None:
     assert numbers_ok(
         "Logged -25,000", "q", [{"result": {"after": {"amount": "-25000"}}}]
     ) == (True, [])
+
+    # Every scale word the parser knows is applied, not dropped as a small count.
+    assert vals("Net worth 1.5B, or 1.5bn, or 2.3 thousand, or 1.2 mil.") == [
+        1.5e9, 1.5e9, 2300.0, 1.2e6,
+    ]
+    assert vals("About 3 triliun, or 2.5 mio.") == [3e12, 2.5e6]
+    # Unknown letters glued to a number fail the case instead of vanishing,
+    # even when a trace leaf equals the bare mantissa.
+    assert extract_numbers("Worth 4.3lakh") == [(4.3, _UNPLACEABLE)]
+    assert numbers_ok("Worth 4.3lakh", "q", [{"result": {"total": 4.3}}]) == (False, [4.3])
+    assert vals("On the 14th you paid 43000IDR.") == [43000.0]
+    # A bare 1900-2100 integer is dropped as a year only after a year cue.
+    assert vals("You spent 2000 on fees and Rp 2050 on admin.") == [2000.0, 2050.0]
+    assert vals("In March 2024, since 2023, this year (2026): 43,000.") == [43000.0]
+    assert vals("On March 14, 2024 you spent 43,000.") == [43000.0]
+    # Scaled tolerance is capped at 5% of the value.
+    assert numbers_ok("about 1jt", "q", [{"result": {"total": 1490000}}]) == (False, [1e6])
+    assert numbers_ok("about 1jt", "q", [{"result": {"total": 1040000}}]) == (True, [])
+    assert numbers_ok("about 2 billion", "q", [{"result": {"total": 1.6e9}}]) == (False, [2e9])
 
     # Teardown contract: Ctrl-C mid-run, or a failure building the LLM
     # client, must still purge every proposal id collected so far. The DB
