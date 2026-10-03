@@ -37,10 +37,9 @@ and inserts nothing. Every insert is additionally marked in audit_log.after with
 source='opening_balance_backfill_012'.
 
 Report-only (never auto-fixed, mirrors 011's flagged-ids idiom): holdings that
-HAVE events whose ledger does not reproduce the stored quantity, e.g. a
-holding whose ledger carries one stray event, so its event sum does not
-reproduce the stored quantity. That is a human decision (real second buy vs.
-stray event), so it is printed and left untouched. PARITY ABORT: if any
+HAVE events whose ledger does not reproduce the stored quantity (e.g. one
+stray event). That is a human decision (real second buy vs. stray event), so
+it is printed and left untouched. PARITY ABORT: if any
 backfilled position fails to reproduce its holding after insert, the whole
 migration raises and rolls back (env.py runs online migrations in one
 transaction).
