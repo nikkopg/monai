@@ -863,17 +863,17 @@ def test_funded_buy_on_backed_position_sums_not_replaces(db_session):
         # A later funded buy.
         apply_add_portfolio_event(db_session, {
             "date": "2026-09-01", "ticker": t, "event_type": "buy",
-            "quantity": 140, "price": 5350, "platform_id": plat, "currency": "IDR",
+            "quantity": 100, "price": 5000, "platform_id": plat, "currency": "IDR",
         })
         db_session.commit()
 
         h = db_session.query(Holding).filter(
             Holding.ticker == t, Holding.platform_id == plat
         ).one()
-        # SUMS: 1000 + 140 == 1140 (a clobber would have left 140).
-        assert h.quantity == Decimal("1140"), (
-            f"funded buy must sum: expected 1140, got {h.quantity} "
-            "(140 would mean the prior lot was clobbered)"
+        # SUMS: 1000 + 100 == 1100 (a clobber would have left 100).
+        assert h.quantity == Decimal("1100"), (
+            f"funded buy must sum: expected 1100, got {h.quantity} "
+            "(100 would mean the prior lot was clobbered)"
         )
     finally:
         _cleanup_ticker(db_session, t)
@@ -901,7 +901,7 @@ def test_guard_blocks_buy_on_eventless_nonzero_holding(db_session):
         with pytest.raises(ValueError, match="no backing portfolio_events"):
             apply_add_portfolio_event(db_session, {
                 "date": "2026-09-01", "ticker": t, "event_type": "buy",
-                "quantity": 140, "price": 5350, "platform_id": plat, "currency": "IDR",
+                "quantity": 100, "price": 5000, "platform_id": plat, "currency": "IDR",
             })
         db_session.rollback()
 
