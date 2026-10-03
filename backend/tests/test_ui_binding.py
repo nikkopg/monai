@@ -16,8 +16,11 @@ import pytest
 
 UI = Path(__file__).resolve().parents[2] / "ui"
 
-_NEXT_COMMAND_RE = re.compile(r"next (?:dev|start)\b[^\"'`\n]*")
-_LOCALHOST_RE = re.compile(r"-H 127\.0\.0\.1(?:\s|$)")
+# `next`, any whitespace, then dev/start; runs to the end of the enclosing
+# string, so a template string's later lines are included.
+_NEXT_COMMAND_RE = re.compile(r"next\s+(?:dev|start)\b[^\"'`]*")
+# -H/--hostname as a whole token, value after a space or "=".
+_HOST_FLAG_RE = re.compile(r"(?<!\S)(?:-H|--hostname)(?:\s+|=)([^\s;,&|]+)")
 
 
 def _next_commands(text: str) -> list[str]:
@@ -26,23 +29,44 @@ def _next_commands(text: str) -> list[str]:
 
 
 def _binds_localhost(cmd: str) -> bool:
-    """True iff cmd carries -H 127.0.0.1 as a whole token (not 127.0.0.10)."""
-    return bool(_LOCALHOST_RE.search(cmd))
+    """True iff the LAST host flag in cmd is 127.0.0.1. Next's arg parser
+    lets the last -H/--hostname win, so an earlier 127.0.0.1 proves nothing."""
+    hosts = _HOST_FLAG_RE.findall(cmd)
+    return bool(hosts) and hosts[-1] == "127.0.0.1"
 
 
 @pytest.mark.parametrize("filename", ["package.json", "playwright.config.ts"])
 def test_ui_servers_bind_localhost(filename):
     text = (UI / filename).read_text(encoding="utf-8")
+    # Catches what the per-command check can't see, e.g. an
+    # `npm run dev -- -H 0.0.0.0` passthrough script.
+    assert "0.0.0.0" not in text, f"{filename}: mentions 0.0.0.0"
+
     commands = _next_commands(text)
     assert commands, f"{filename}: no next dev/start command found (guard is vacuous)"
 
     unbound = [c for c in commands if not _binds_localhost(c)]
-    assert unbound == [], f"{filename}: command(s) missing -H 127.0.0.1: {unbound}"
+    assert unbound == [], f"{filename}: command(s) not bound to 127.0.0.1: {unbound}"
 
 
 def test_guard_flags_unbound_command():
-    """Self-check (D-12): the guard must actually fail on a bare command."""
+    """Self-check (D-12): the guard must fail on every known bypass."""
     found = _next_commands('"dev": "next dev -p 3099"')
     assert found == ["next dev -p 3099"]
     assert not _binds_localhost(found[0])
-    assert _binds_localhost("next dev -H 127.0.0.1 -p 3099")
+
+    for bad in (
+        "next dev -H 127.0.0.1 -p 3099 -H 0.0.0.0",  # later flag overrides
+        "next dev -H 127.0.0.1 --hostname=0.0.0.0",
+        "next dev -H 127.0.0.10 -p 3099",
+    ):
+        assert not _binds_localhost(bad), bad
+    assert _next_commands('"x": "next  dev -H 0.0.0.0"') == ["next  dev -H 0.0.0.0"]
+    assert _next_commands('"x": "next\tstart -p 1"') == ["next\tstart -p 1"]
+
+    for good in (
+        "next dev -H 127.0.0.1 -p 3099",
+        "next dev --hostname 127.0.0.1",
+        "next dev -H=127.0.0.1",
+    ):
+        assert _binds_localhost(good), good
