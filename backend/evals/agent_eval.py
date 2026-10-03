@@ -323,6 +323,18 @@ def _self_check() -> None:
     assert numbers_ok("about 1jt", "q", [{"result": {"total": 1040000}}]) == (True, [])
     assert numbers_ok("about 2 billion", "q", [{"result": {"total": 1.6e9}}]) == (False, [2e9])
 
+    # A step_args case matches answer figures only against the steps that
+    # passed, so quoting a wrong-range sibling call's total fails.
+    fake_case = {
+        "id": 0, "question": "q", "tools": ["spending_total"],
+        "step_args": lambda s: s["args"]["period"] == "this_year",
+        "answer": "numbers", "needs_number": True,
+    }
+    right = {"tool": "spending_total", "args": {"period": "this_year"}, "result": {"total": 43000.0}}
+    wrong = {"tool": "spending_total", "args": {"period": "all_time"}, "result": {"total": 134000.0}}
+    assert _check_case(fake_case, {"text": "You spent 43,000", "trace": [right, wrong]})["passed"]
+    assert not _check_case(fake_case, {"text": "You spent 134,000", "trace": [right, wrong]})["passed"]
+
     # Teardown contract: Ctrl-C mid-run, or a failure building the LLM
     # client, must still purge every proposal id collected so far. The DB
     # and LLM hooks are stubbed, so this stays offline.
@@ -564,7 +576,7 @@ def _leftovers(proposal_ids: list[str]) -> int:
 # unknown-category and period data paths the 12 cases rely on.
 # ---------------------------------------------------------------------------
 
-_PROBE_COUNT = 6
+_PROBE_COUNT = 7
 
 
 def _run_probes() -> list[str]:
@@ -601,6 +613,22 @@ def _run_probes() -> list[str]:
     p6 = net_worth_tool()
     if not (isinstance(p6, dict) and isinstance(p6.get("total"), (int, float))):
         failures.append(f"P6: net_worth_tool() total = {p6!r}")
+
+    # P7: case 5's check rejects the cross-step false pass (an all_time total
+    # quoted while a different step carries the this_year range) and accepts
+    # the honest single-step answer.
+    case5 = next(c for c in CASES if c["id"] == 5)
+    all_time = {"tool": "spending_in_category", "args": {"category": PARENT},
+                "result": spending_in_category(PARENT)}
+    pottery = {"tool": "find_transactions", "args": {"category": CHILD, "period": "this_year"},
+               "result": find_transactions(category=CHILD, period="this_year")}
+    honest = {"tool": "spending_in_category", "args": {"category": PARENT, "period": "this_year"},
+              "result": p1}
+    bad = _check_case(case5, {"text": f"You spent {all_time['result']['total']:,.0f}.",
+                              "trace": [all_time, pottery]})
+    good = _check_case(case5, {"text": f"You spent {p1['total']:,.0f}.", "trace": [honest]})
+    if bad["passed"] or not good["passed"]:
+        failures.append(f"P7: case-5 check cross-step passed={bad['passed']}, honest passed={good['passed']}")
 
     return failures
 
@@ -654,59 +682,52 @@ def _category_arg_matches(step: dict, expected_lower: str) -> bool:
     return ((step.get("args") or {}).get("category") or "").strip().lower() == expected_lower
 
 
-def _args_spending_total(period_name: str):
-    def check(trace, payload):
-        return any(_resolved_args(s) == _period_range(period_name) for s in _steps_for(trace, ["spending_total"]))
-    return check
+# Per-step args checks ("step_args"): each takes ONE step of the case's
+# tools and every condition must hold on that same step. _check_case also
+# matches answer figures only against the steps that pass, so a sibling call
+# with the wrong range can't supply the quoted number.
 
 
-def _args_custom_march(trace, payload):
-    steps = _steps_for(trace, ["spending_total"])
-    expected = _period_range("custom", "2024-03-01", "2024-03-31")
-    return any(
-        (s.get("args") or {}).get("period") == "custom" and _resolved_args(s) == expected
-        for s in steps
+def _range_is(period_name: str):
+    return lambda step: _resolved_args(step) == _period_range(period_name)
+
+
+def _custom_march_step(step: dict) -> bool:
+    return (
+        (step.get("args") or {}).get("period") == "custom"
+        and _resolved_args(step) == _period_range("custom", "2024-03-01", "2024-03-31")
     )
 
 
-def _args_hobbies_subtree(trace, payload):
-    steps = _steps_for(trace, ["spending_in_category", "find_transactions"])
-    cat_ok = any(_category_arg_matches(s, PARENT.lower()) for s in steps)
-    range_ok = any(_resolved_args(s) == _period_range("this_year") for s in steps)
-    expected_total = _seeded_sum_in("this_year")
-    data_ok = any(
-        (isinstance(s.get("result"), dict) and isinstance(s["result"].get("total"), (int, float))
-         and s["result"]["total"] >= expected_total - 1e-6)
-        or (isinstance(s.get("result"), dict) and s["result"].get("rows")
-            and any(r.get("category") == CHILD for r in s["result"]["rows"]))
-        for s in steps
-    )
-    return cat_ok and range_ok and data_ok
+def _hobbies_step(step: dict) -> bool:
+    """Category PARENT and range this_year on this step, plus either a total
+    exactly equal to the seeded this_year child sum or rows that are all
+    CHILD. An all_time total (which includes the 2024 row) fails."""
+    if not (
+        _category_arg_matches(step, PARENT.lower())
+        and _resolved_args(step) == _period_range("this_year")
+    ):
+        return False
+    r = step.get("result") if isinstance(step.get("result"), dict) else {}
+    if isinstance(r.get("total"), (int, float)):
+        return abs(r["total"] - _seeded_sum_in("this_year")) < 1e-6
+    rows = r.get("rows")
+    return bool(rows) and all(row.get("category") == CHILD for row in rows)
 
 
-def _args_unknown_category(trace, payload):
-    steps = _steps_for(trace, ["spending_in_category", "find_transactions"])
-    return any(
-        "yacht" in ((s.get("args") or {}).get("category") or "").lower()
-        and isinstance(s.get("result"), dict) and "error" in s["result"]
-        for s in steps
-    )
-
-
-def _args_largest_last_month(trace, payload):
-    return any(
-        _resolved_args(s) == _period_range("last_month")
-        for s in _steps_for(trace, ["largest_transactions"])
+def _unknown_category_step(step: dict) -> bool:
+    return (
+        "yacht" in ((step.get("args") or {}).get("category") or "").lower()
+        and isinstance(step.get("result"), dict) and "error" in step["result"]
     )
 
 
-def _args_find_last_in_hobbies(trace, payload):
-    steps = _steps_for(trace, ["find_transactions"])
-    return any(
-        _category_arg_matches(s, PARENT.lower())
-        and isinstance(s.get("result"), dict) and s["result"].get("rows")
-        and s["result"]["rows"][0].get("category") == CHILD
-        for s in steps
+def _last_in_hobbies_step(step: dict) -> bool:
+    r = step.get("result")
+    return (
+        _category_arg_matches(step, PARENT.lower())
+        and isinstance(r, dict) and bool(r.get("rows"))
+        and r["rows"][0].get("category") == CHILD
     )
 
 
@@ -730,43 +751,43 @@ def _answer_has_parent_name(text: str) -> bool:
 CASES: list[dict] = [
     {
         "id": 1, "question": "How much did I spend this month?",
-        "tools": ["spending_total"], "args": _args_spending_total("this_month"),
+        "tools": ["spending_total"], "step_args": _range_is("this_month"),
         "args_desc": "period range == this_month",
         "answer": "numbers", "needs_number": True,
     },
     {
         "id": 2, "question": "How much did I spend last month?",
-        "tools": ["spending_total"], "args": _args_spending_total("last_month"),
+        "tools": ["spending_total"], "step_args": _range_is("last_month"),
         "args_desc": "period range == last_month",
         "answer": "numbers", "needs_number": True,
     },
     {
         "id": 3, "question": "How much did I spend between 2024-03-01 and 2024-03-31?",
-        "tools": ["spending_total"], "args": _args_custom_march,
+        "tools": ["spending_total"], "step_args": _custom_march_step,
         "args_desc": "period == 'custom' and range == resolve_period('custom', '2024-03-01', '2024-03-31')",
         "answer": "numbers", "needs_number": True,
     },
     {
         "id": 4, "question": "How much did I spend last week?",
-        "tools": ["spending_total"], "args": _args_spending_total("last_week"),
+        "tools": ["spending_total"], "step_args": _range_is("last_week"),
         "args_desc": "range == resolve_period('last_week') computed at run time (D-14)",
         "answer": "numbers", "needs_number": True,
     },
     {
         "id": 5, "question": "How much did I spend on ZZEval Hobbies this year?",
-        "tools": ["spending_in_category", "find_transactions"], "args": _args_hobbies_subtree,
-        "args_desc": "category (ci) == PARENT, range == this_year, data check against seeded child sum",
+        "tools": ["spending_in_category", "find_transactions"], "step_args": _hobbies_step,
+        "args_desc": "one step: category (ci) == PARENT, range == this_year, and total == seeded this_year child sum (or every row is CHILD)",
         "answer": "numbers", "needs_number": True,
     },
     {
         "id": 6, "question": "how much did i spend on zzeval hobbies this year",
-        "tools": ["spending_in_category", "find_transactions"], "args": _args_hobbies_subtree,
+        "tools": ["spending_in_category", "find_transactions"], "step_args": _hobbies_step,
         "args_desc": "same as case 5",
         "answer": "numbers", "needs_number": True,
     },
     {
         "id": 7, "question": "How much did I spend on Yachts this year?",
-        "tools": ["spending_in_category", "find_transactions"], "args": _args_unknown_category,
+        "tools": ["spending_in_category", "find_transactions"], "step_args": _unknown_category_step,
         "args_desc": "category contains 'yacht' (ci) and that step's result has an 'error' key",
         "answer": "numbers", "needs_number": False,
     },
@@ -782,13 +803,13 @@ CASES: list[dict] = [
     },
     {
         "id": 10, "question": "What was my biggest expense last month?",
-        "tools": ["largest_transactions"], "args": _args_largest_last_month,
+        "tools": ["largest_transactions"], "step_args": _range_is("last_month"),
         "args_desc": "range == last_month",
         "answer": "numbers", "needs_number": True,
     },
     {
         "id": 11, "question": "Show my last transaction in ZZEval Hobbies.",
-        "tools": ["find_transactions"], "args": _args_find_last_in_hobbies,
+        "tools": ["find_transactions"], "step_args": _last_in_hobbies_step,
         "args_desc": "category (ci) == PARENT and result rows[0].category == CHILD",
         "answer": "numbers", "needs_number": True,
     },
@@ -845,17 +866,25 @@ def _check_case(case: dict, result: dict) -> dict:
     steps = _steps_for(trace, case["tools"])
     tool_ok = len(steps) > 0
 
-    args_na = case["args"] is None
-    if args_na:
+    step_args = case.get("step_args")
+    trace_args = case.get("args")
+    args_na = step_args is None and trace_args is None
+    number_trace = trace
+    if step_args is not None:
+        # Answer figures may only come from the steps that passed the args
+        # check, never from a sibling call with the wrong range/category.
+        number_trace = [s for s in steps if step_args(s)]
+        args_ok = bool(number_trace)
+    elif args_na:
         args_ok = True
     elif not tool_ok:
         args_ok = False
     else:
-        args_ok = bool(case["args"](trace, result or {}))
+        args_ok = bool(trace_args(trace, result or {}))
 
     numbers_na = not isinstance(case["answer"], str)
     if case["answer"] == "numbers":
-        ok, unmatched = numbers_ok(answer_text, case["question"], trace)
+        ok, unmatched = numbers_ok(answer_text, case["question"], number_trace)
     else:
         ok, unmatched = bool(case["answer"](answer_text)), []
 
