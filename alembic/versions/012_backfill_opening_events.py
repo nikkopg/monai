@@ -144,7 +144,7 @@ def backfill_opening_events(conn) -> dict:
         ledger_qty = Decimal(str(r.ledger_qty))
 
         # Report-only: a position that HAS events but whose ledger does not
-        # reproduce the stored qty (e.g. holding 262 phantom event). Never
+        # reproduce the stored qty (e.g. one stray event). Never
         # auto-fixed — a human decides. Rounded to holdings' 8-dp precision.
         if r.n_events > 0 and ledger_qty.quantize(Decimal("1.00000000")) != qty.quantize(Decimal("1.00000000")):
             anomalies.append({
