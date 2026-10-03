@@ -847,7 +847,7 @@ def test_portfolio_events_by_platform(client, db_session):
 def test_funded_buy_on_backed_position_sums_not_replaces(db_session):
     """A funded buy on an event-backed position must SUM into the prior
     quantity, never REPLACE it. This is the exact behaviour the clobber bug
-    violated (Danamas Pasti 1691.9681 -> 140.1614)."""
+    violated."""
     from decimal import Decimal
     from backend.models import Holding
     from backend.writes import apply_add_portfolio_event
