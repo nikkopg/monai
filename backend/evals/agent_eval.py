@@ -1,5 +1,5 @@
 """
-Opt-in golden-question eval for the production agent loop (EVAL-01).
+Opt-in golden-question eval for the production agent loop.
 
 What this is: a standalone script, NOT a pytest test and NOT collected by
 default pytest or CI (backend/evals/ sits outside pyproject.toml's
@@ -40,11 +40,12 @@ from urllib.parse import parse_qs, urlsplit
 from sqlalchemy.engine.url import make_url
 
 # ---------------------------------------------------------------------------
-# Live-DB guard (D-02, D-05) — mirrors backend/tests/conftest.py:36-63.
+# Live-DB guard — mirrors backend/tests/conftest.py:36-63.
 # Deliberately duplicated, not imported: importing conftest.py would re-run
-# its create-and-migrate bootstrap, which D-06 forbids for this script, and
-# an extraction would put test_conftest_guard.py's collection-time contract
-# at risk (see 29-RESEARCH.md Pitfall 2). Keep this block in sync BY HAND
+# its create-and-migrate bootstrap (this script must never create or migrate
+# a database), and moving the guard into a shared module would break
+# test_conftest_guard.py, which relies on the guard running at conftest
+# collection time. Keep this block in sync BY HAND
 # with conftest.py's guard if that guard ever changes.
 #
 # This block must run, and finish, before any `from backend...`/`import
@@ -84,7 +85,7 @@ if not _TEST_DB.database or not re.fullmatch(r"[A-Za-z0-9_]+", _TEST_DB.database
 
 
 # ---------------------------------------------------------------------------
-# Answer-number extraction + matching (D-09, D-17). Pure stdlib, no DB, no
+# Answer-number extraction + matching. Pure stdlib, no DB, no
 # LLM — this is the logic that decides pass/fail, so it gets its own
 # --self-check with no side effects.
 # ---------------------------------------------------------------------------
@@ -377,9 +378,8 @@ def _self_check() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Seed data (D-07, D-08, D-19). Names checked against monai_test at plan
-# time (see 29-01-PLAN.md interfaces) — "food"/"groceries" collide with
-# migration 009's real category tree, these do not.
+# Seed data. Synthetic ZZEval-prefixed names so they never collide with real
+# categories — "food"/"groceries" would, via migration 009's category tree.
 # ---------------------------------------------------------------------------
 
 MARKER = "ZZEval"
@@ -391,9 +391,9 @@ UNKNOWN = "Yachts"
 
 def _seed_rows(today: datetime.date) -> list[tuple[datetime.date, int, str]]:
     """Four synthetic ZZEval child-category expenses, all under CHILD.
-    Dates are computed from resolve_period (D-07) so the relative-period
+    Dates are computed from resolve_period so the relative-period
     cases are never empty regardless of when the eval runs; one fixed 2024-03
-    row covers the absolute-range case (D-08). Amounts are plain integers
+    row covers the absolute-range case. Amounts are plain integers
     that pass the pre-push MONEY/SHORTHAND regexes."""
     from backend.tools import resolve_period
 
@@ -409,7 +409,7 @@ def _seed_rows(today: datetime.date) -> list[tuple[datetime.date, int, str]]:
 
 def _seeded_sum_in(period_name: str) -> float:
     """Absolute sum of this run's seed rows dated inside resolve_period
-    (period_name). Never a hardcoded total (D-09)."""
+    (period_name). Never a hardcoded total."""
     from backend.tools import resolve_period
 
     s, e = resolve_period(period_name)
@@ -421,7 +421,7 @@ def _seeded_sum_in(period_name: str) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Fail-fast migrated-DB check (D-06). Mirrors conftest.py:88-124's alembic
+# Fail-fast migrated-DB check. Mirrors conftest.py:88-124's alembic
 # shadow workaround for the HEAD LOOKUP only — never its command.upgrade
 # call. Creates and migrates nothing.
 # ---------------------------------------------------------------------------
@@ -470,7 +470,7 @@ def _check_db() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Purge / seed / leftover-count (D-01, D-07, D-15). Exact eval-only names
+# Purge / seed / leftover-count. Exact eval-only names
 # only — never a broader name-pattern sweep that could catch another test's
 # leaked rows.
 # ---------------------------------------------------------------------------
@@ -511,7 +511,7 @@ def _purge(proposal_ids: list[str]) -> None:
 def _seed() -> None:
     """Purge any leftovers from a killed prior run (the seed names are
     unique), then commit the account/categories/four transactions in one
-    transaction (D-07) — agent tool calls open their own sessions, so a
+    transaction — agent tool calls open their own sessions, so a
     seed that's only rolled back would be invisible to them."""
     from sqlalchemy import text as sa_text
     from backend.db import engine
@@ -572,7 +572,7 @@ def _leftovers(proposal_ids: list[str]) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Probes (D-08, D-09) — no LLM. Prove the subtree, case-insensitive,
+# Probes — no LLM. Prove the subtree, case-insensitive,
 # unknown-category and period data paths the 12 cases rely on.
 # ---------------------------------------------------------------------------
 
@@ -656,7 +656,7 @@ def _do_seed_check() -> int:
 
 
 # ---------------------------------------------------------------------------
-# The 12 golden cases (D-12..D-16).
+# The 12 golden cases.
 # ---------------------------------------------------------------------------
 
 
@@ -770,7 +770,7 @@ CASES: list[dict] = [
     {
         "id": 4, "question": "How much did I spend last week?",
         "tools": ["spending_total"], "step_args": _range_is("last_week"),
-        "args_desc": "range == resolve_period('last_week') computed at run time (D-14)",
+        "args_desc": "range == resolve_period('last_week') computed at run time",
         "answer": "numbers", "needs_number": True,
     },
     {
@@ -823,7 +823,7 @@ CASES: list[dict] = [
 
 
 # ---------------------------------------------------------------------------
-# Runner (D-04, D-10, D-11) — drives the real agent_stream loop.
+# Runner — drives the real agent_stream loop.
 # ---------------------------------------------------------------------------
 
 
@@ -917,7 +917,7 @@ def _header_line() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Output (D-18) — plain-text table + failing-case detail blocks. No results
+# Output — plain-text table + failing-case detail blocks. No results
 # file, no JSON mode.
 # ---------------------------------------------------------------------------
 
