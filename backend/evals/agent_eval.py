@@ -402,17 +402,21 @@ def _check_db() -> None:
 # ---------------------------------------------------------------------------
 
 
+# Shared by _purge and _leftovers so the count covers exactly the rows the
+# purge deletes.
+_EVAL_TXN_WHERE = (
+    "account_id IN (SELECT id FROM accounts WHERE name = :acct) "
+    "OR category_id IN (SELECT id FROM categories WHERE name = ANY(:cats))"
+)
+
+
 def _purge(proposal_ids: list[str]) -> None:
     from sqlalchemy import text as sa_text
     from backend.db import engine
 
     with engine.begin() as c:
         c.execute(
-            sa_text(
-                "DELETE FROM transactions WHERE account_id = "
-                "(SELECT id FROM accounts WHERE name = :acct) "
-                "OR category_id IN (SELECT id FROM categories WHERE name = ANY(:cats))"
-            ),
+            sa_text("DELETE FROM transactions WHERE " + _EVAL_TXN_WHERE),
             {"acct": ACCOUNT, "cats": [PARENT, CHILD]},
         )
         # Child before parent — FK order.
@@ -484,7 +488,7 @@ def _leftovers(proposal_ids: list[str]) -> int:
                 "SELECT "
                 "(SELECT count(*) FROM accounts WHERE name = :acct) + "
                 "(SELECT count(*) FROM categories WHERE name = ANY(:cats)) + "
-                "(SELECT count(*) FROM transactions WHERE merchant LIKE 'ZZEval%') + "
+                "(SELECT count(*) FROM transactions WHERE " + _EVAL_TXN_WHERE + ") + "
                 "(SELECT count(*) FROM proposals WHERE status = 'pending' AND "
                 "id = ANY(CAST(:ids AS uuid[])))"
             ),
