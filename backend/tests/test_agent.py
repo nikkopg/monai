@@ -15,6 +15,9 @@ Tests:
   test_agent_workflow_rebuilds_across_midnight — the cached workflow
       rebuilds when the calendar date changes, with no write in between
       (AGENT-05)
+  test_system_prompt_lists_every_named_period — every non-custom name in
+      tools.PERIODS appears in both _SYSTEM_PROMPT and spending_total's
+      docstring, so the two can't drift apart again (TD-02)
 
 All tests stub the workflow or build it with the offline MockLLM; no real
 LLM is contacted.
@@ -441,3 +444,31 @@ def test_agent_workflow_rebuilds_across_midnight(monkeypatch):
     query_mod.reset_engine()
     assert query_mod._agent_workflow is None
     assert query_mod._agent_workflow_date is None
+
+
+# ---------------------------------------------------------------------------
+# TD-02: the prompt and spending_total's docstring must name every PERIOD
+# ---------------------------------------------------------------------------
+
+
+def test_system_prompt_lists_every_named_period():
+    """Every non-"custom" name in tools.PERIODS must appear, as a whole word,
+    in both _SYSTEM_PROMPT and spending_total's docstring — otherwise the
+    model doesn't know the period exists and falls back to a custom range
+    that isn't what the user meant (TD-02)."""
+    import re
+
+    from backend.query import _SYSTEM_PROMPT
+    from backend.tools import PERIODS, spending_total
+
+    names = [p for p in PERIODS if p != "custom"]
+
+    missing_prompt = [n for n in names if not re.search(rf"\b{n}\b", _SYSTEM_PROMPT)]
+    missing_docstring = [
+        n for n in names if not re.search(rf"\b{n}\b", spending_total.__doc__)
+    ]
+
+    assert missing_prompt == [], f"missing from _SYSTEM_PROMPT: {missing_prompt}"
+    assert missing_docstring == [], (
+        f"missing from spending_total.__doc__: {missing_docstring}"
+    )

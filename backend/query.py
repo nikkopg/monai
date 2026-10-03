@@ -43,7 +43,9 @@ TODAY is {today}.
 DATES — how to scope a query to a time range:
 - Every read tool takes a `period` argument, plus optional `start_date`/`end_date` (ISO `YYYY-MM-DD`).
 - Named periods (use ONLY when the user's phrasing is itself relative to today):
-  all_time, this_month, last_month, this_year, last_year, last_30_days, last_90_days.
+  all_time, this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days.
+  this_week and last_week are calendar weeks, Monday through Sunday — prefer them over \
+a custom range when the user says "this week" or "last week"; they do NOT mean a rolling 7-day window.
 - For ANY specific/absolute range — a named calendar month, a year, a quarter, or an \
 explicit "from X to Y" — you MUST pass period="custom" with start_date and end_date. \
 end_date is INCLUSIVE (the last day you want counted).

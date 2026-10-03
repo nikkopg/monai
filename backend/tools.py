@@ -117,9 +117,11 @@ def _period_label(period, start, end) -> str:
 def spending_total(period="all_time", start_date=None, end_date=None) -> dict:
     """Total money spent (expenses only, transfers excluded) in a period.
 
-    period: named (all_time/this_month/last_month/this_year/last_year/
-      last_30_days/last_90_days) or "custom" with ISO start_date/end_date
-      (end inclusive). Use custom for a specific month, year, or date range.
+    period: named (all_time/this_week/last_week/this_month/last_month/
+      this_year/last_year/last_30_days/last_90_days) or "custom" with ISO
+      start_date/end_date (end inclusive). this_week/last_week are
+      Monday-Sunday calendar weeks. Use custom for a specific month, year,
+      or date range.
     """
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {}
