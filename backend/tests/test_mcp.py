@@ -232,7 +232,7 @@ def test_mcp_surface_is_exact(client, api_key):
         listed = _tools_list(client, session_headers)
         assert {t["name"] for t in listed} == set(READ_TOOL_NAMES) | MCP_WRITE_NAMES
         for t in listed:
-            bad = _FORBIDDEN_PARAMS & set(_all_keys(t["inputSchema"].get("properties", {})))
+            bad = _FORBIDDEN_PARAMS & set(_all_keys(t["inputSchema"]))  # $defs too (TxnRow)
             assert not bad, f"{t['name']} exposes {bad}"
         assert not (MCP_WRITE_NAMES & set(TOOLS))
 
