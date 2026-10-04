@@ -47,8 +47,14 @@ def _clean_text(value: str | None, limit: int | None = 80) -> str | None:
     """Strip control/format characters and cap length (ledger text flows to an LLM)."""
     if value is None:
         return None
-    kept = "".join(c for c in value if unicodedata.category(c)[0] != "C" and c not in "  ")
-    return kept[:limit]
+    # Line breaks and tabs become a space so "a\nb" stays two words; other
+    # control/format characters (incl. bidi overrides) are dropped.
+    kept = "".join(
+        " " if c in "\t\n\r\u2028\u2029" else c
+        for c in value
+        if c in "\t\n\r\u2028\u2029" or unicodedata.category(c)[0] != "C"
+    )
+    return kept.strip()[:limit]
 
 
 def _entries(p: Proposal, ids: dict[str, int]):

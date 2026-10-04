@@ -241,7 +241,7 @@ def test_duplicate_flag_cap_and_text_cleaning(db_session, wallets, mcp_proposal)
     q = mcp_proposal(_txn_payload((w2.name, -301, _d(0))))
     merchant = _flags(db_session, q)[q.id][0][0]["merchant"]
     assert len(merchant) <= 80
-    assert merchant.startswith("BadShopName")
+    assert merchant.startswith("BadShop Name")
     assert not any(c in merchant for c in "\x07\n‮")
 
 
@@ -311,11 +311,11 @@ def test_propose_single_row_shape_and_canonical_names(db_session, wallets, track
 
 def test_propose_strips_control_and_bidi_characters(db_session, wallets, track):
     a, b = wallets(2)
-    r = mcp_writes.propose_transactions([_row(a.name, merchant="Coffee\u202e Shop\n", notes="pa\x1bid\u200b")])
+    r = mcp_writes.propose_transactions([_row(a.name, merchant="Coffee\u202e Shop\n", notes="pa\x1bid\u200b\nlater")])
     t = mcp_writes.propose_transfer(a.name, b.name, 10, "2026-01-10", notes="top\u2066 up\r")
     track += [r["proposal_id"], t["proposal_id"]]
     after = _db_row(db_session, r["proposal_id"]).payload["rows"][0]["after"]
-    assert (after["merchant"], after["notes"]) == ("Coffee Shop", "paid")
+    assert (after["merchant"], after["notes"]) == ("Coffee Shop", "paid later")
     legs = _db_row(db_session, t["proposal_id"]).payload["rows"][0]["after"]
     assert legs["leg_a"]["notes"] == legs["leg_b"]["notes"] == "top up"
 
