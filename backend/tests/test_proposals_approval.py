@@ -473,3 +473,85 @@ def test_transition_grep_no_status_writes_outside_proposals_module():
                 offenders.append(f"{rel}:{n}")
     assert offenders == []
     assert any(_STATUS_ATTR.search(l) for l in (backend / "proposals.py").read_text().splitlines())
+
+
+# ---------------------------------------------------------------------------
+# Lazy-expiry reads, approver-only code, counts (APPR-02; D-11, D-19..D-21, D-25)
+# ---------------------------------------------------------------------------
+
+CODE = "ABCD-EF12"
+
+
+def _has_key(obj, names) -> bool:
+    if isinstance(obj, dict):
+        return any(k in names or _has_key(v, names) for k, v in obj.items())
+    if isinstance(obj, list):
+        return any(_has_key(v, names) for v in obj)
+    return False
+
+
+def test_expired_never_reads_pending(client, seed):
+    pid, _ = seed(expires_delta=timedelta(minutes=-1))
+    r = client.get("/proposals?status=pending")
+    assert r.status_code == 200
+    assert pid not in [p["id"] for p in r.json()]
+    row = _row(pid)
+    assert row.status == "expired" and row.status_changed_at >= row.created_at
+    r = client.get("/proposals?status=expired")
+    assert [p["status"] for p in r.json() if p["id"] == pid] == ["expired"]
+
+
+def test_expired_flip_then_confirm_410(client, api_key, seed):
+    pid, tok = seed(expires_delta=timedelta(minutes=-1))
+    client.get("/proposals")
+    r = client.post(f"/proposals/{pid}/confirm", json={"token": tok}, headers=_api(api_key))
+    assert (r.status_code, r.json()["detail"]) == (410, EXPIRED_MSG)
+
+
+def test_counts_returns_pending_after_lazy_expiry(client, seed):
+    r = client.get("/proposals/counts")
+    assert r.status_code == 200 and set(r.json()) == {"pending"}
+    base = r.json()["pending"]
+    seed()
+    seed(channel="mcp", expires_delta=timedelta(hours=48))
+    seed(expires_delta=timedelta(minutes=-1))
+    r = client.get("/proposals/counts")
+    assert set(r.json()) == {"pending"} and r.json()["pending"] == base + 2
+
+
+def test_code_visibility_list_requires_approver_and_mcp(client, api_key, approver_key, seed, monkeypatch):
+    import backend.auth as auth
+
+    mcp_id, _ = seed(channel="mcp", expires_delta=timedelta(hours=48), code=CODE)
+    chat_id, _ = seed()
+
+    r = client.get("/proposals")
+    assert r.status_code == 200 and not _has_key(r.json(), {"code", "token"})
+    assert CODE not in r.text
+
+    r = client.get("/proposals", headers=_appr(approver_key))
+    items = {p["id"]: p for p in r.json()}
+    assert items[mcp_id]["code"] == CODE
+    assert "code" not in items[chat_id]
+    assert not _has_key(r.json(), {"token"})
+
+    r = client.get("/proposals", headers=_appr("wrong"))
+    assert r.status_code == 200 and not _has_key(r.json(), {"code"})
+
+    monkeypatch.setattr(auth, "_CONFIGURED_APPROVER_KEY", api_key)
+    r = client.get("/proposals", headers=_appr(api_key))
+    assert r.status_code == 200 and not _has_key(r.json(), {"code"})
+
+
+def test_code_visibility_never_in_action_responses(client, api_key, approver_key, seed):
+    a, _ = seed(channel="mcp", expires_delta=timedelta(hours=48), code=CODE)
+    b, _ = seed(channel="mcp", expires_delta=timedelta(hours=48), code=CODE)
+    c, tok = seed(channel="mcp", expires_delta=timedelta(hours=48), code=CODE)
+    for r in (
+        client.post(f"/proposals/{a}/approve", headers=_appr(approver_key)),
+        client.post(f"/proposals/{b}/reject", headers=_appr(approver_key)),
+    ):
+        assert r.status_code == 200
+        assert "code" not in r.json() and CODE not in r.text
+    r = client.post(f"/proposals/{c}/confirm", json={"token": tok}, headers=_api(api_key))
+    assert r.status_code == 403 and CODE not in r.text

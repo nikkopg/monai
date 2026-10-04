@@ -26,7 +26,8 @@ Endpoints:
     POST /categories/merge      merge one category into another (requires API key)
     POST /import                multipart CSV upload (Wallet export)
     POST /query-stream          streaming SSE agent response
-    GET  /proposals             list pending proposals (public)
+    GET  /proposals             list pending proposals, lazy expiry first (public)
+    GET  /proposals/counts      {"pending": N} after lazy expiry (public)
     POST /proposals/{id}/confirm  apply a pending chat proposal by token (requires API key)
     POST /proposals/{id}/approve  apply any pending proposal, any channel (requires MONAI_APPROVER_KEY)
     POST /proposals/{id}/reject   reject a pending proposal (API key: chat only; MONAI_APPROVER_KEY: any channel)
@@ -49,14 +50,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend import auth
-from backend.auth import require_api_key, require_approver_key, require_reject_scope
+from backend.auth import optional_approver, require_api_key, require_approver_key, require_reject_scope
 from backend.mcp_server import build_mcp
 from backend.db import get_session, get_session_sync
 from backend.importer import _get_or_create_account, import_csv_text
 from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, Proposal, Transaction
 from backend.net_worth_history import monthly_net_worth_series
 from backend.portfolio import portfolio_summary as compose_portfolio_summary
-from backend.proposals import transition
+from backend.proposals import expire_stale, transition
 from backend.portfolio import value_history_series
 from backend.writes import (
     apply_add_account,
@@ -118,6 +119,7 @@ from backend.schemas import (
     PortfolioEventOut,
     PortfolioSummary,
     PriceOverrideRequest,
+    ProposalApproverOut,
     ProposalOut,
     QueryRequest,
     SettingsOut,
@@ -1521,12 +1523,40 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
 # Proposal endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/proposals", response_model=list[ProposalOut])
-def list_proposals(status: str = "pending", db: Session = Depends(get_session)):
-    """List proposals by status. Public endpoint — token is never serialized."""
-    return db.query(Proposal).filter(Proposal.status == status).order_by(
+@app.get("/proposals")
+def list_proposals(
+    status: str = "pending",
+    is_approver: bool = Depends(optional_approver),
+    db: Session = Depends(get_session),
+):
+    """List proposals by status. Public endpoint (D-20, auth deferred).
+
+    Lazy expiry runs first (D-11), so a proposal past expires_at never reads as
+    pending. The token is never serialized; `code` appears only on channel mcp
+    rows and only when the request carries a valid approver key. No
+    response_model: it cannot vary per request, so each item serializes its own
+    model's fields.
+    """
+    expire_stale(db)
+    rows = db.query(Proposal).filter(Proposal.status == status).order_by(
         desc(Proposal.created_at)
     ).all()
+    return [
+        ProposalApproverOut.model_validate(p)
+        if is_approver and p.channel == "mcp"
+        else ProposalOut.model_validate(p)
+        for p in rows
+    ]
+
+
+# Must stay above any GET route with a path parameter under /proposals so the
+# literal path wins (D-21).
+@app.get("/proposals/counts")
+def proposal_counts(db: Session = Depends(get_session)) -> dict[str, int]:
+    """Pending proposal count for the sidebar badge, after lazy expiry. Public."""
+    expire_stale(db)
+    n = db.query(func.count(Proposal.id)).filter(Proposal.status == "pending").scalar()
+    return {"pending": n}
 
 
 def _apply_proposal(db: Session, proposal_id: uuid.UUID, token: str | None) -> Proposal:
