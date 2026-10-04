@@ -197,3 +197,279 @@ def test_mcp_guard_rejects_approver_key(client, api_key, approver_key):
         {"MONAI_APPROVER_KEY": approver_key},
     ):
         assert client.post("/mcp", json={}, headers=headers).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Approve / confirm / reject across channels (APPR-01, APPR-05; D-12..D-17, D-24)
+# ---------------------------------------------------------------------------
+
+import re
+import secrets
+from pathlib import Path
+
+EXPIRED_MSG = "Proposal expired — ask again to redo this"
+CHAT_ONLY_MSG = "Token confirm is chat-only; approve this proposal in monai"
+REJECT_SCOPE_MSG = "Rejecting a non-chat proposal requires the approver key"
+
+
+@pytest.fixture()
+def seed(db_available):
+    from backend.db import SessionLocal
+    from backend.models import Proposal
+
+    ids: list[uuid.UUID] = []
+
+    def _seed(*, channel="chat", status="pending", expires_delta=timedelta(minutes=15),
+              code=None, payload=None):
+        payload = payload or {"operation": "add_transaction", "rows": []}
+        token = secrets.token_urlsafe(32)
+        db = SessionLocal()
+        try:
+            p = Proposal(
+                token=token, operation=payload["operation"], payload=payload,
+                status=status, channel=channel, code=code,
+                expires_at=datetime.datetime.now(datetime.timezone.utc) + expires_delta,
+            )
+            db.add(p)
+            db.commit()
+            ids.append(p.id)
+            return str(p.id), token
+        finally:
+            db.close()
+
+    yield _seed
+    db = SessionLocal()
+    try:
+        for i in ids:
+            db.execute(text("DELETE FROM proposals WHERE id = :i"), {"i": i})
+        db.commit()
+    finally:
+        db.close()
+
+
+def _row(pid: str):
+    from backend.db import SessionLocal
+    from backend.models import Proposal
+
+    db = SessionLocal()
+    try:
+        p = db.get(Proposal, uuid.UUID(pid))
+        db.expunge(p)
+        return p
+    finally:
+        db.close()
+
+
+def _api(api_key):
+    return {"MONAI_API_KEY": api_key}
+
+
+def _appr(approver_key):
+    return {"MONAI_APPROVER_KEY": approver_key}
+
+
+def test_legacy_pending_chat_proposal_confirms_by_token(client, api_key, db_available):
+    from backend.db import SessionLocal
+
+    pid, token = str(uuid.uuid4()), secrets.token_urlsafe(32)
+    db = SessionLocal()
+    try:
+        db.execute(
+            text(
+                "INSERT INTO proposals (id, token, operation, payload, status, expires_at) "
+                "VALUES (:i, :t, 'add_transaction', CAST(:p AS jsonb), 'pending', "
+                "now() + interval '15 minutes')"
+            ),
+            {"i": pid, "t": token, "p": '{"operation": "add_transaction", "rows": []}'},
+        )
+        db.commit()
+        row = _row(pid)
+        assert row.channel == "chat" and row.failed_attempts == 0
+        assert row.status_changed_at is not None
+        r = client.post(f"/proposals/{pid}/confirm", json={"token": token}, headers=_api(api_key))
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "confirmed"
+    finally:
+        db.execute(text("DELETE FROM proposals WHERE id = :i"), {"i": pid})
+        db.commit()
+        db.close()
+
+
+def test_confirm_chat_outcomes_unchanged(client, api_key, seed):
+    h = _api(api_key)
+    r = client.post(f"/proposals/{uuid.uuid4()}/confirm", json={"token": "x"}, headers=h)
+    assert (r.status_code, r.json()["detail"]) == (404, "Proposal not found")
+
+    pid, tok = seed(status="rejected")
+    r = client.post(f"/proposals/{pid}/confirm", json={"token": tok}, headers=h)
+    assert (r.status_code, r.json()["detail"]) == (409, "Proposal already rejected")
+
+    pid, tok = seed(expires_delta=timedelta(minutes=-1))
+    r = client.post(f"/proposals/{pid}/confirm", json={"token": tok}, headers=h)
+    assert (r.status_code, r.json()["detail"]) == (410, EXPIRED_MSG)
+
+    pid, tok = seed()
+    r = client.post(f"/proposals/{pid}/confirm", json={"token": "wrong"}, headers=h)
+    assert (r.status_code, r.json()["detail"]) == (401, "Invalid confirmation token")
+    assert _row(pid).status == "pending"
+
+    pid, tok = seed(status="expired")
+    r = client.post(f"/proposals/{pid}/confirm", json={"token": tok}, headers=h)
+    assert (r.status_code, r.json()["detail"]) == (410, EXPIRED_MSG)
+
+
+@pytest.mark.parametrize("channel", ["mcp", "discord", "upload"])
+def test_confirm_chat_only_403_for_non_chat(client, api_key, seed, channel):
+    pid, tok = seed(channel=channel)
+    r = client.post(f"/proposals/{pid}/confirm", json={"token": tok}, headers=_api(api_key))
+    assert (r.status_code, r.json()["detail"]) == (403, CHAT_ONLY_MSG)
+    assert _row(pid).status == "pending"
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"status": "confirmed"},
+        {"status": "expired"},
+        {"expires_delta": timedelta(minutes=-1)},
+    ],
+)
+def test_confirm_chat_only_403_precedes_status_and_expiry(client, api_key, seed, kwargs):
+    pid, tok = seed(channel="mcp", **kwargs)
+    r = client.post(f"/proposals/{pid}/confirm", json={"token": tok}, headers=_api(api_key))
+    assert (r.status_code, r.json()["detail"]) == (403, CHAT_ONLY_MSG)
+
+
+@pytest.mark.parametrize("channel", ["chat", "mcp", "discord", "upload"])
+def test_approver_approves_every_channel(client, api_key, approver_key, seed, channel):
+    pid, tok = seed(channel=channel)
+    r = client.post(f"/proposals/{pid}/approve", headers=_appr(approver_key))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["status"] == "confirmed"
+    assert "token" not in body and "code" not in body
+    row = _row(pid)
+    assert row.status == "confirmed" and row.confirmed_at == row.status_changed_at
+
+
+def test_approver_approve_applies_effects_once(client, api_key, approver_key, seed, db_session):
+    from backend.models import Transaction
+
+    tx = Transaction(
+        date=datetime.datetime(2020, 5, 1, 12, 0, 0), amount=-30000, currency="IDR",
+        category="ZZ31Cat", merchant="ZZ31Merchant", is_transfer=False,
+    )
+    db_session.add(tx)
+    db_session.commit()
+    tx_id = tx.id
+    payload = {
+        "operation": "edit_transaction",
+        "rows": [{
+            "id": tx_id,
+            "before": {"id": tx_id, "category": "ZZ31Cat", "amount": "-30000"},
+            "after": {"id": tx_id, "category": "ZZ31New", "amount": "-30000"},
+        }],
+    }
+    pid, _ = seed(channel="mcp", payload=payload)
+    try:
+        r = client.post(f"/proposals/{pid}/approve", headers=_appr(approver_key))
+        assert r.status_code == 200, r.text
+        db_session.expire_all()
+        assert db_session.get(Transaction, tx_id).category == "ZZ31New"
+        n = db_session.execute(
+            text("SELECT count(*) FROM audit_log WHERE entity='transaction' AND entity_id=:i"),
+            {"i": tx_id},
+        ).scalar()
+        assert n == 1
+        r = client.post(f"/proposals/{pid}/approve", headers=_appr(approver_key))
+        assert (r.status_code, r.json()["detail"]) == (409, "Proposal already confirmed")
+    finally:
+        db_session.rollback()
+        db_session.execute(
+            text("DELETE FROM audit_log WHERE entity='transaction' AND entity_id=:i"), {"i": tx_id}
+        )
+        db_session.execute(text("DELETE FROM transactions WHERE id=:i"), {"i": tx_id})
+        db_session.commit()
+
+
+@pytest.mark.parametrize(
+    "kwargs", [{"status": "expired"}, {"expires_delta": timedelta(minutes=-1)}]
+)
+def test_approver_approve_expired_410(client, approver_key, seed, kwargs):
+    pid, _ = seed(channel="mcp", **kwargs)
+    r = client.post(f"/proposals/{pid}/approve", headers=_appr(approver_key))
+    assert (r.status_code, r.json()["detail"]) == (410, EXPIRED_MSG)
+
+
+def test_approver_auth_on_approve_route(client, api_key, approver_key, seed, monkeypatch):
+    import backend.auth as auth
+
+    pid, _ = seed(channel="mcp")
+    url = f"/proposals/{pid}/approve"
+    assert client.post(url).status_code == 401
+    assert client.post(url, headers=_api(api_key)).status_code == 401
+    assert client.post(url, headers=_appr("wrong")).status_code == 401
+    monkeypatch.setattr(auth, "_CONFIGURED_APPROVER_KEY", "")
+    assert client.post(url, headers=_appr(approver_key)).status_code == 503
+    monkeypatch.setattr(auth, "_CONFIGURED_APPROVER_KEY", api_key)
+    assert client.post(url, headers=_appr(api_key)).status_code == 503
+    assert _row(pid).status == "pending"
+
+
+@pytest.mark.parametrize("channel", ["chat", "mcp", "discord", "upload"])
+def test_approver_rejects_every_channel(client, approver_key, seed, channel):
+    pid, _ = seed(channel=channel)
+    r = client.post(f"/proposals/{pid}/reject", headers=_appr(approver_key))
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "rejected"
+    row = _row(pid)
+    assert row.status == "rejected" and row.confirmed_at is None
+    assert row.status_changed_at is not None
+
+
+@pytest.mark.parametrize("channel", ["chat", "mcp", "discord", "upload"])
+def test_reject_scope_api_key_chat_only(client, api_key, approver_key, seed, channel):
+    pid, _ = seed(channel=channel)
+    r = client.post(f"/proposals/{pid}/reject", headers=_api(api_key))
+    if channel == "chat":
+        assert r.status_code == 200 and _row(pid).status == "rejected"
+    else:
+        assert (r.status_code, r.json()["detail"]) == (403, REJECT_SCOPE_MSG)
+        assert _row(pid).status == "pending"
+
+
+def test_reject_scope_wrong_approver_header_401(client, api_key, approver_key, seed):
+    pid, _ = seed(channel="chat")
+    r = client.post(
+        f"/proposals/{pid}/reject", headers={**_api(api_key), **_appr("wrong")}
+    )
+    assert r.status_code == 401
+    assert _row(pid).status == "pending"
+
+
+def test_reject_expired_status_409_and_pending_past_expiry_200(client, api_key, seed):
+    pid, _ = seed(status="expired")
+    r = client.post(f"/proposals/{pid}/reject", headers=_api(api_key))
+    assert (r.status_code, r.json()["detail"]) == (409, "Proposal already expired")
+    pid, _ = seed(expires_delta=timedelta(minutes=-1))
+    r = client.post(f"/proposals/{pid}/reject", headers=_api(api_key))
+    assert r.status_code == 200 and r.json()["status"] == "rejected"
+
+
+_STATUS_ATTR = re.compile(r"\.status\s*=(?!=)")
+_STATUS_SQL = re.compile(r"\bSET\s+status\b", re.IGNORECASE)
+_STATUS_VALUES = re.compile(r"values\([^)]*\bstatus\s*=")
+
+
+def test_transition_grep_no_status_writes_outside_proposals_module():
+    backend = Path(__file__).resolve().parents[1]
+    offenders = []
+    for path in backend.rglob("*.py"):
+        rel = path.relative_to(backend)
+        if rel.parts[0] in ("tests", "tests_live_audit") or rel == Path("proposals.py"):
+            continue
+        for n, line in enumerate(path.read_text().splitlines(), 1):
+            if _STATUS_ATTR.search(line) or _STATUS_SQL.search(line) or _STATUS_VALUES.search(line):
+                offenders.append(f"{rel}:{n}")
+    assert offenders == []
+    assert any(_STATUS_ATTR.search(l) for l in (backend / "proposals.py").read_text().splitlines())

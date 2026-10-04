@@ -514,6 +514,8 @@ class ProposalOut(BaseModel):
     NOTE: the `token` field is DELIBERATELY EXCLUDED — it is never returned
     in GET /proposals or any list/read path (T-02-07). The token is surfaced
     only in the agent_stream SSE answer event to the originating chat session.
+    `code` is deliberately excluded too; only ProposalApproverOut carries it
+    (D-19, D-25).
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -525,6 +527,10 @@ class ProposalOut(BaseModel):
     expires_at: datetime
     created_at: datetime
     confirmed_at: datetime | None
+    channel: str
+    status_changed_at: datetime
+    supersedes_id: _uuid.UUID | None
+    failed_attempts: int
 
 
 class ConfirmRequest(BaseModel):

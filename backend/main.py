@@ -27,8 +27,9 @@ Endpoints:
     POST /import                multipart CSV upload (Wallet export)
     POST /query-stream          streaming SSE agent response
     GET  /proposals             list pending proposals (public)
-    POST /proposals/{id}/confirm  apply a pending proposal (requires API key)
-    POST /proposals/{id}/reject   reject a pending proposal (requires API key)
+    POST /proposals/{id}/confirm  apply a pending chat proposal by token (requires API key)
+    POST /proposals/{id}/approve  apply any pending proposal, any channel (requires MONAI_APPROVER_KEY)
+    POST /proposals/{id}/reject   reject a pending proposal (API key: chat only; MONAI_APPROVER_KEY: any channel)
     GET  /settings              effective settings, keys masked (public)
     PUT  /settings              partial-update settings (requires API key)
 """
@@ -48,13 +49,14 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend import auth
-from backend.auth import require_api_key
+from backend.auth import require_api_key, require_approver_key, require_reject_scope
 from backend.mcp_server import build_mcp
 from backend.db import get_session, get_session_sync
 from backend.importer import _get_or_create_account, import_csv_text
 from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, Proposal, Transaction
 from backend.net_worth_history import monthly_net_worth_series
 from backend.portfolio import portfolio_summary as compose_portfolio_summary
+from backend.proposals import transition
 from backend.portfolio import value_history_series
 from backend.writes import (
     apply_add_account,
@@ -1527,41 +1529,40 @@ def list_proposals(status: str = "pending", db: Session = Depends(get_session)):
     ).all()
 
 
-@app.post(
-    "/proposals/{proposal_id}/confirm",
-    response_model=ProposalOut,
-    dependencies=[Depends(require_api_key)],
-)
-def confirm_proposal(
-    proposal_id: uuid.UUID,
-    req: ConfirmRequest,
-    db: Session = Depends(get_session),
-):
-    """Apply a pending proposal atomically. Requires API key + valid token.
+def _apply_proposal(db: Session, proposal_id: uuid.UUID, token: str | None) -> Proposal:
+    """Shared lock/check/execute core for /confirm and /approve (D-16).
 
-    Check order (Pitfall 3 — prevents replay):
-      1. Load by id with SELECT ... FOR UPDATE (WRITE-02) → 404 if missing;
-         a concurrent confirm or reject waits on this lock, then sees the
+    Check order (D-13, Pitfall 3 — prevents replay):
+      1. Load by id with SELECT ... FOR UPDATE (WRITE-02) -> 404 if missing;
+         a concurrent confirm/approve/reject waits on this lock, then sees the
          committed status
-      2. status == "pending" → 409 if not pending
-      3. expires_at > now() → 410 if expired
-      4. hmac.compare_digest(token) → 401 if wrong
-      5. Execute payload + write audit_log rows + mark confirmed (single commit)
+      2. token path only: channel != "chat" -> 403 (never token-confirmable)
+      3. status "expired" -> 410; any other non-pending status -> 409
+      4. now > expires_at -> 410 (no status write here; reads flip it lazily)
+      5. token path only: hmac.compare_digest(token) -> 401 if wrong
+      6. Execute payload + audit_log rows + transition to confirmed (one commit)
+
+    `token is None` is the approver path: it skips the channel and token checks.
     """
     proposal = db.get(Proposal, proposal_id, with_for_update=True)
     if proposal is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
+    if token is not None and proposal.channel != "chat":
+        raise HTTPException(
+            status_code=403, detail="Token confirm is chat-only; approve this proposal in monai"
+        )
+    if proposal.status == "expired":
+        raise HTTPException(status_code=410, detail="Proposal expired — ask again to redo this")
     if proposal.status != "pending":
         raise HTTPException(status_code=409, detail=f"Proposal already {proposal.status}")
     if datetime.now(timezone.utc) > proposal.expires_at:
         raise HTTPException(status_code=410, detail="Proposal expired — ask again to redo this")
-    if not hmac.compare_digest(req.token, proposal.token):
+    if token is not None and not hmac.compare_digest(token, proposal.token):
         raise HTTPException(status_code=401, detail="Invalid confirmation token")
 
     try:
         _execute_proposal_payload(db, proposal)
-        proposal.status = "confirmed"
-        proposal.confirmed_at = datetime.now(timezone.utc)
+        transition(proposal, "confirmed")
         db.commit()
     except ValueError as e:
         # IN-02: delegated apply_* helpers raise ValueError for domain errors
@@ -1582,23 +1583,59 @@ def confirm_proposal(
 
 
 @app.post(
-    "/proposals/{proposal_id}/reject",
+    "/proposals/{proposal_id}/confirm",
     response_model=ProposalOut,
     dependencies=[Depends(require_api_key)],
 )
+def confirm_proposal(
+    proposal_id: uuid.UUID,
+    req: ConfirmRequest,
+    db: Session = Depends(get_session),
+):
+    """Apply a pending chat proposal by token. Requires API key + valid token.
+
+    Check order (D-13): API key 401 -> 404 -> channel != chat 403 ->
+    status 409 (expired 410) -> expiry 410 -> token 401 -> execute. A non-chat
+    proposal is never token-confirmable; use /approve with the approver key.
+    """
+    return _apply_proposal(db, proposal_id, req.token)
+
+
+@app.post(
+    "/proposals/{proposal_id}/approve",
+    response_model=ProposalOut,
+    dependencies=[Depends(require_approver_key)],
+)
+def approve_proposal(proposal_id: uuid.UUID, db: Session = Depends(get_session)):
+    """Apply a pending proposal of any channel. Approver key only, no token
+    (APPR-01, D-16); same lock/check/execute core as /confirm."""
+    return _apply_proposal(db, proposal_id, None)
+
+
+@app.post("/proposals/{proposal_id}/reject", response_model=ProposalOut)
 def reject_proposal(
     proposal_id: uuid.UUID,
+    scope: str = Depends(require_reject_scope),
     db: Session = Depends(get_session),
 ):
     """Reject a pending proposal. No target mutation; no audit row.
-    Requires API key. The row is loaded with SELECT ... FOR UPDATE (WRITE-02),
-    so a concurrent confirm or reject waits here, then sees the committed status.
+
+    Key scopes (D-17): MONAI_API_KEY rejects chat proposals only (403 for any
+    other channel); MONAI_APPROVER_KEY rejects any channel. A wrong approver
+    header is 401 even with a valid API key. The row is loaded with
+    SELECT ... FOR UPDATE (WRITE-02), so a concurrent confirm or reject waits
+    here, then sees the committed status. An expired status is 409
+    "Proposal already expired"; a pending row past expires_at still rejects (D-24).
     """
     proposal = db.get(Proposal, proposal_id, with_for_update=True)
     if proposal is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
+    if scope == "chat" and proposal.channel != "chat":
+        raise HTTPException(
+            status_code=403, detail="Rejecting a non-chat proposal requires the approver key"
+        )
     if proposal.status != "pending":
         raise HTTPException(status_code=409, detail=f"Proposal already {proposal.status}")
-    proposal.status = "rejected"
+    transition(proposal, "rejected")
     db.commit()
     return proposal
