@@ -707,23 +707,27 @@ READ_TOOL_NAMES: frozenset[str] = frozenset(TOOLS)
 # Helpers for write tools
 # ---------------------------------------------------------------------------
 
-def _make_proposal(operation: str, payload: dict) -> tuple[str, str]:
+def _make_proposal(operation: str, payload: dict, channel: str = "chat") -> tuple[str, str]:
     """Insert a Proposal row; return (proposal_id_str, token).
 
     proposal_token is returned to the caller so the SSE answer event can carry
     it to the originating session — it is NEVER stored in the trace or returned
-    by GET /proposals (T-02-07).
+    by GET /proposals (T-02-07). `channel` picks the TTL from
+    backend.proposals.TTL (chat 15 min, mcp 48 h); unknown channels raise
+    ValueError before any insert.
     """
     from backend.models import Proposal
+    from backend.proposals import ttl_for
 
     token = secrets.token_urlsafe(32)
-    expires_at = datetime.datetime.now(timezone.utc) + timedelta(minutes=15)
+    expires_at = datetime.datetime.now(timezone.utc) + ttl_for(channel)
     with get_session_sync() as db:
         proposal = Proposal(
             token=token,
             operation=operation,
             payload=payload,
             status="pending",
+            channel=channel,
             expires_at=expires_at,
         )
         db.add(proposal)
