@@ -8,7 +8,7 @@ Data-only backfill (no schema change). Fixes recompute-clobbers-holdings: a
 legacy holding created as a direct `holding add` row (Phase 5/7) has NO backing
 `portfolio_events`, so `recompute_holding_from_events` rebuilds its position
 from an empty ledger and the FIRST funded buy silently overwrites the opening
-balance (live loss: Danamas Pasti 1691.9681 -> 140.1614, Phase 18 UAT #3).
+balance (Phase 18 UAT #3).
 
 Fix: for every holding whose event ledger does NOT already reproduce its stored
 quantity because it has ZERO events, synthesize a single opening `buy` event so
@@ -19,12 +19,12 @@ funded buy SUM rather than replace.
 SOURCE OF THE OPENING LOT (important, verified live 2026-09-03):
 The audit_log holding-add snapshot is used for the opening DATE + provenance,
 but the opening lot's quantity/price are taken from the CURRENT holding row,
-NOT the snapshot. 5 of 11 snapshots are STALE (TAO/USDT-avg/PYTH/SOL/PENGU) —
-those holdings were edited via apply_edit_holding after creation. Because these
-are zero-event holdings the clobber bug never fired on them, so the current row
-is authoritative; using it guarantees the backfill changes no displayed number
-and passes parity by construction. A holding with NO snapshot at all is SURFACED
-(never fabricated) and skipped.
+NOT the snapshot. Some snapshots are STALE: those holdings were edited via
+apply_edit_holding after creation. Because these are zero-event holdings the
+clobber bug never fired on them, so the current row is authoritative; using
+it guarantees the backfill changes no displayed number and passes parity by
+construction. A holding with NO snapshot at all is SURFACED (never
+fabricated) and skipped.
 
 Scope (IDR-only, single opening buy): parity avg-cost is computed as
 SUM(price*qty)/SUM(qty) over buys with FX rate 1 (fx IDR->IDR = 1). Any non-IDR
@@ -37,13 +37,12 @@ and inserts nothing. Every insert is additionally marked in audit_log.after with
 source='opening_balance_backfill_012'.
 
 Report-only (never auto-fixed, mirrors 011's flagged-ids idiom): holdings that
-HAVE events whose ledger does not reproduce the stored quantity — e.g. holding
-262 (BTC/64) carries a phantom event 216 (0.00024563 @ 1956430502.30, values
-matching PENGU/BTC-65 test data) making its ledger sum 0.00707369 != stored
-0.00682806. That is a human decision (real second buy vs. stray event), so it is
-printed and left untouched. PARITY ABORT: if any backfilled position fails to
-reproduce its holding after insert, the whole migration raises and rolls back
-(env.py runs online migrations in one transaction).
+HAVE events whose ledger does not reproduce the stored quantity (e.g. one
+stray event). That is a human decision (real second buy vs. stray event), so
+it is printed and left untouched. PARITY ABORT: if any
+backfilled position fails to reproduce its holding after insert, the whole
+migration raises and rolls back (env.py runs online migrations in one
+transaction).
 
 downgrade(): documented no-op (009/010/011 posture — backfilled data values are
 left in place; there is no structural schema object to revert).
@@ -144,7 +143,7 @@ def backfill_opening_events(conn) -> dict:
         ledger_qty = Decimal(str(r.ledger_qty))
 
         # Report-only: a position that HAS events but whose ledger does not
-        # reproduce the stored qty (e.g. holding 262 phantom event). Never
+        # reproduce the stored qty (e.g. one stray event). Never
         # auto-fixed — a human decides. Rounded to holdings' 8-dp precision.
         if r.n_events > 0 and ledger_qty.quantize(Decimal("1.00000000")) != qty.quantize(Decimal("1.00000000")):
             anomalies.append({

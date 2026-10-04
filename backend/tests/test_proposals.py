@@ -460,6 +460,235 @@ def test_confirm_edit_holding_via_delegation(client, api_key, db_session):
     db_session.commit()
 
 
+def test_confirm_delete_holding_refused_when_events_exist(client, api_key, db_session):
+    """Confirming a delete_holding proposal for an event-backed holding returns
+    422; the proposal stays pending and the holding survives (WRITE-01, D-09)."""
+    from backend.writes import apply_add_portfolio_event
+    from backend.models import Holding, Proposal
+    import secrets
+
+    ticker = "ZZDEL27E"
+    _cleanup_ticker(db_session, ticker)
+    platform_id = _make_platform_local(db_session, "zz27test-ConfirmDelete")
+    apply_add_portfolio_event(db_session, {
+        "ticker": ticker, "event_type": "buy",
+        "quantity": 1, "price": 1000, "date": "2020-01-10",
+        "platform_id": platform_id,
+    })
+    db_session.commit()
+    holding_id = db_session.query(Holding).filter(Holding.ticker == ticker).one().id
+
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=15)
+    payload = {
+        "operation": "delete_holding",
+        "rows": [{"id": holding_id, "before": {"id": holding_id, "ticker": ticker}, "after": None}],
+    }
+    p = Proposal(
+        token=token, operation="delete_holding", payload=payload,
+        status="pending", expires_at=expires_at,
+    )
+    db_session.add(p)
+    db_session.commit()
+    db_session.refresh(p)
+    proposal_id = p.id
+
+    resp = client.post(
+        f"/proposals/{proposal_id}/confirm",
+        json={"token": token},
+        headers={"MONAI_API_KEY": api_key},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "record a sell to close it" in resp.json()["detail"]
+
+    db_session.expire_all()
+    reloaded = db_session.get(Proposal, proposal_id)
+    assert reloaded.status == "pending"
+    assert db_session.get(Holding, holding_id) is not None
+
+    # Cleanup, in order: proposal row, then the ticker's rows, then the platform
+    db_session.delete(reloaded)
+    db_session.commit()
+    _cleanup_ticker(db_session, ticker)
+    _cleanup_platform(db_session, platform_id)
+
+
+def test_confirm_delete_holding_via_delegation(client, api_key, db_session):
+    """Confirming a delete_holding proposal for an event-less holding delegates
+    to apply_delete_holding: 200, holding gone, exactly one delete audit row
+    (WRITE-01, D-09)."""
+    from backend.models import Holding, Platform, Proposal
+    import secrets
+
+    platform_id = _make_platform(db_session)
+    holding = Holding(
+        ticker="ZZDEL27F", quantity=1, avg_cost=1000, currency="IDR",
+        asset_type="stock", platform_id=platform_id,
+    )
+    db_session.add(holding)
+    db_session.commit()
+    db_session.refresh(holding)
+    holding_id = holding.id
+
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=15)
+    payload = {
+        "operation": "delete_holding",
+        "rows": [{"id": holding_id, "before": {"id": holding_id, "ticker": "ZZDEL27F"}, "after": None}],
+    }
+    p = Proposal(
+        token=token, operation="delete_holding", payload=payload,
+        status="pending", expires_at=expires_at,
+    )
+    db_session.add(p)
+    db_session.commit()
+    db_session.refresh(p)
+    proposal_id = p.id
+
+    resp = client.post(
+        f"/proposals/{proposal_id}/confirm",
+        json={"token": token},
+        headers={"MONAI_API_KEY": api_key},
+    )
+    assert resp.status_code == 200, resp.text
+
+    db_session.expire_all()
+    assert db_session.get(Holding, holding_id) is None
+
+    audit_count = int(
+        db_session.execute(
+            text("SELECT COUNT(*) FROM audit_log WHERE entity='holding' AND entity_id=:id AND operation='delete'"),
+            {"id": holding_id},
+        ).scalar() or 0
+    )
+    assert audit_count == 1
+
+    # Cleanup: the audit row explicitly by entity_id (_cleanup_ticker can't find
+    # it once the holding is gone), then the proposal, then the platform
+    db_session.execute(
+        text("DELETE FROM audit_log WHERE entity='holding' AND entity_id=:id"),
+        {"id": holding_id},
+    )
+    remaining_proposal = db_session.get(Proposal, proposal_id)
+    if remaining_proposal:
+        db_session.delete(remaining_proposal)
+    platform = db_session.get(Platform, platform_id)
+    if platform:
+        db_session.delete(platform)
+    db_session.commit()
+
+
+@pytest.mark.parametrize("action", ["confirm", "reject"])
+def test_concurrent_second_caller_gets_409(client, api_key, db_session, action):
+    """WRITE-02: confirm and reject both load the proposal with a blocking
+    SELECT ... FOR UPDATE (D-13), so a racing second caller waits on the row
+    lock and then gets the existing 409, with exactly one set of writes and
+    audit rows landing (D-15, D-16)."""
+    import threading
+    import time
+    from backend.db import SessionLocal, engine
+    from backend.main import _execute_proposal_payload
+    from backend.models import Proposal, Transaction
+
+    tx_id = _make_transaction(db_session)
+    proposal_id, token, _ = _insert_proposal(db_session, tx_id=tx_id)
+
+    # Warm up B's client BEFORE any lock exists, so startup lag can't later
+    # pass for "blocked" (D-15).
+    b_client = TestClient(app)
+    warm = b_client.get("/proposals")
+    assert warm.status_code == 200, warm.text
+
+    # Session A: a dedicated, test-only connection takes the row lock. This
+    # second connection belongs to the test only — production code keeps one
+    # session per request (D-15).
+    a_session = SessionLocal()
+    p = a_session.get(Proposal, uuid.UUID(proposal_id), with_for_update=True)
+    # Same transaction/connection as the lock, so this is the lock holder's pid.
+    a_pid = a_session.execute(text("SELECT pg_backend_pid()")).scalar()
+
+    result_box: dict = {}
+    b_sent = threading.Event()
+
+    def _fire_b():
+        b_sent.set()
+        result_box["resp"] = b_client.post(
+            f"/proposals/{proposal_id}/{action}",
+            json={"token": token},
+            headers={"MONAI_API_KEY": api_key},
+        )
+
+    thread_b = threading.Thread(target=_fire_b, daemon=True)
+
+    try:
+        thread_b.start()
+        assert b_sent.wait(timeout=5), "thread B never sent its request"
+
+        # Poll for B's lock wait. Use a fresh connection per poll, because
+        # pg_stat_activity is snapshotted per transaction and a reused
+        # transaction would keep seeing stale rows.
+        deadline = time.monotonic() + 5
+        blocked = 0
+        while time.monotonic() < deadline:
+            with engine.connect() as c:
+                # Scoped to waiters blocked by A's backend, so a concurrent
+                # run on the shared monai_test can't produce a false green.
+                blocked = c.execute(text(
+                    "SELECT COUNT(*) FROM pg_stat_activity "
+                    "WHERE :a_pid = ANY(pg_blocking_pids(pid)) "
+                    "AND query ILIKE '%proposals%FOR UPDATE%'"
+                ), {"a_pid": a_pid}).scalar() or 0
+            if blocked >= 1:
+                break
+            time.sleep(0.05)
+        assert blocked >= 1 and thread_b.is_alive(), (
+            "thread B was not blocked on the proposal row lock — the "
+            "with_for_update guard is missing or not blocking"
+        )
+
+        # A wins: do exactly what a winning confirm does.
+        _execute_proposal_payload(a_session, p)
+        p.status = "confirmed"
+        p.confirmed_at = datetime.datetime.now(datetime.timezone.utc)
+        a_session.commit()
+
+        thread_b.join(timeout=10)
+        assert not thread_b.is_alive(), "thread B never returned — investigate a hang"
+
+        resp_b = result_box.get("resp")
+        assert resp_b is not None, "thread B raised before completing its request"
+        assert resp_b.status_code == 409, f"Expected 409, got {resp_b.status_code}: {resp_b.text}"
+        assert resp_b.json()["detail"] == "Proposal already confirmed"
+
+        db_session.expire_all()
+        reloaded = db_session.get(Proposal, uuid.UUID(proposal_id))
+        assert reloaded.status == "confirmed"
+        tx = db_session.get(Transaction, tx_id)
+        assert tx.category == "NewCat"
+
+        audit_count = int(
+            db_session.execute(
+                text("SELECT COUNT(*) FROM audit_log WHERE entity='transaction' AND entity_id=:id"),
+                {"id": tx_id},
+            ).scalar() or 0
+        )
+        assert audit_count == 1
+    finally:
+        # Order matters: release A's lock first, then let a still-running B
+        # finish, only then clean up rows — so a failed assertion never
+        # leaves B blocked or rows behind.
+        a_session.rollback()
+        a_session.close()
+        thread_b.join(timeout=10)
+        db_session.execute(
+            text("DELETE FROM audit_log WHERE entity='transaction' AND entity_id=:id"),
+            {"id": tx_id},
+        )
+        db_session.execute(text("DELETE FROM transactions WHERE id = :id"), {"id": tx_id})
+        db_session.execute(text("DELETE FROM proposals WHERE id = :id"), {"id": proposal_id})
+        db_session.commit()
+
+
 def test_get_proposals_excludes_token(client, api_key, db_session):
     """GET /proposals response JSON has NO 'token' field anywhere (T-02-07)."""
     tx_id = _make_transaction(db_session)

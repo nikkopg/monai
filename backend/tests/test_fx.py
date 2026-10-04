@@ -1,17 +1,77 @@
 """
-FX adapter + immutable rate-cache tests (Plan 07-01).
+FX adapter + immutable rate-cache tests (Plan 07-01; durable write tests
+added Plan 27-02).
 
 Mirrors test_prices.py's mocked-httpx style. Proves (not assumes): the
 adapter never raises, the cache is immutable per (date, base, quote)
-(FX-05), and the SSRF guard rejects invalid currency codes before any HTTP
-request is issued (Pitfall 5).
+(FX-05), the SSRF guard rejects invalid currency codes before any HTTP
+request is issued (Pitfall 5), and (WRITE-03) a fetched rate is committed
+durably through a dedicated session no matter what the caller's own
+transaction does.
 """
 
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 import httpx
 import pytest
+from sqlalchemy import text
+
+# Synthetic key: 1900-01-01 predates all vendor data. Committed rows persist
+# in monai_test across runs, so every durable-write test below uses only
+# this key and cleans it via the fx_key_clean fixture (before AND after).
+_KEY_DATE = date(1900, 1, 1)
+
+
+@pytest.fixture()
+def fx_key_clean():
+    """Deletes the synthetic (1900-01-01, USD, IDR) fx_rate_cache row before
+    and after the test. Skips when Postgres is unreachable (test_proposals.py
+    db_available idiom)."""
+    from backend.db import SessionLocal, engine
+
+    try:
+        with engine.connect() as c:
+            c.execute(text("SELECT 1"))
+    except Exception as e:
+        pytest.skip(f"Postgres not available: {e}")
+
+    def _clean():
+        db = SessionLocal()
+        try:
+            db.execute(
+                text(
+                    "DELETE FROM fx_rate_cache WHERE rate_date = :d "
+                    "AND base_currency = 'USD' AND quote_currency = 'IDR'"
+                ),
+                {"d": _KEY_DATE},
+            )
+            db.commit()
+        finally:
+            db.close()
+
+    _clean()
+    yield
+    _clean()
+
+
+def _count_key_rows() -> int:
+    from backend.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        return int(
+            db.execute(
+                text(
+                    "SELECT COUNT(*) FROM fx_rate_cache WHERE rate_date = :d "
+                    "AND base_currency = 'USD' AND quote_currency = 'IDR'"
+                ),
+                {"d": _KEY_DATE},
+            ).scalar()
+            or 0
+        )
+    finally:
+        db.close()
 
 
 def test_fetch_frankfurter_rate_success(monkeypatch):
@@ -79,8 +139,12 @@ def test_get_rate_invalid_currency_no_http_call(monkeypatch):
     assert fx.get_rate("XX!", "IDR", date(2024, 1, 15), db=None) is None
 
 
-def test_get_rate_usdt_treated_as_usd(monkeypatch):
-    """base='USDT' -> normalized to USD before the frankfurter call (FX-02)."""
+def test_get_rate_usdt_treated_as_usd(monkeypatch, fx_key_clean):
+    """base='USDT' -> normalized to USD before the frankfurter call (FX-02).
+
+    Uses the cleaned synthetic key (fx_key_clean): a cache miss now commits
+    durably (WRITE-03), so this test needs a key it can safely clean up.
+    """
     from backend import fx
 
     captured = {}
@@ -98,7 +162,7 @@ def test_get_rate_usdt_treated_as_usd(monkeypatch):
         return _Resp()
 
     monkeypatch.setattr(httpx, "get", _get)
-    result = fx.get_rate("USDT", "IDR", date(2024, 1, 15), db=_FakeDb())
+    result = fx.get_rate("USDT", "IDR", _KEY_DATE, db=_FakeDb())
     assert result == Decimal("15561")
     assert captured["base"] == "USD"
 
@@ -130,7 +194,11 @@ class _FakeQuery:
 
 
 class _FakeDb:
-    """Minimal Session stand-in: tracks .add() calls, cache starts empty."""
+    """Minimal Session stand-in for the CALLER side of get_rate. Read-only:
+    get_rate no longer add()s/flush()es onto the caller's session (WRITE-03,
+    D-17) — the cache-miss write now happens on its own dedicated
+    SessionLocal(). This fake's `added` must stay empty for every test that
+    uses it."""
 
     def __init__(self, existing_row=None):
         self.added = []
@@ -141,11 +209,6 @@ class _FakeDb:
 
     def add(self, obj):
         self.added.append(obj)
-
-    def flush(self):
-        # get_rate flushes after the cache insert (CR-02); no-op here — this
-        # fake's scalars() returns a fixed existing_row regardless.
-        pass
 
 
 def test_get_rate_cache_hit_does_not_call_adapter(monkeypatch):
@@ -164,9 +227,12 @@ def test_get_rate_cache_hit_does_not_call_adapter(monkeypatch):
     assert db.added == []
 
 
-def test_get_rate_cache_miss_writes_exactly_one_row(monkeypatch):
-    """Cache MISS calls adapter, writes exactly one fx_rate_cache row."""
+def test_get_rate_durable_when_caller_never_commits(monkeypatch, fx_key_clean):
+    """WRITE-03/D-17: a fetched rate is committed even when the caller's own
+    session is closed without ever committing — the write lands on a short
+    dedicated SessionLocal(), never on the caller's session."""
     from backend import fx
+    from backend.db import SessionLocal
 
     call_count = {"n": 0}
 
@@ -178,75 +244,112 @@ def test_get_rate_cache_miss_writes_exactly_one_row(monkeypatch):
                 pass
 
             def json(self):
-                return {"rates": {"IDR": 15561}}
+                return {"rates": {"IDR": 12345}}
 
         return _Resp()
 
     monkeypatch.setattr(httpx, "get", _get)
 
-    db = _FakeDb(existing_row=None)
-    result = fx.get_rate("USD", "IDR", date(2024, 1, 15), db=db)
-    assert result == Decimal("15561")
+    caller = SessionLocal()
+    try:
+        result = fx.get_rate("USD", "IDR", _KEY_DATE, db=caller)
+        assert result == Decimal("12345")
+        # get_rate never add()s/flush()es anything onto the caller's session.
+        assert not caller.new
+        assert not caller.dirty
+    finally:
+        caller.close()  # closed WITHOUT committing
+
     assert call_count["n"] == 1
-    assert len(db.added) == 1
-    row = db.added[0]
-    assert row.rate_date == date(2024, 1, 15)
-    assert row.base_currency == "USD"
-    assert row.quote_currency == "IDR"
-    assert row.rate == Decimal("15561")
-    assert row.source == "frankfurter"
+    assert _count_key_rows() == 1
 
 
-def test_get_rate_second_call_same_pair_does_not_refetch(monkeypatch):
-    """A second get_rate for the same (date, USD, IDR) reads the cache — no
-    second HTTP call, no second row write (FX-05 immutability, full round-trip)."""
+def test_get_rate_no_refetch_after_durable_write(monkeypatch, fx_key_clean):
+    """WRITE-03/D-18: a second get_rate on the SAME caller session sees the
+    durably committed row under READ COMMITTED — no re-fetch. A third call on
+    a fresh session also sees it, still with no re-fetch and no second row."""
     from backend import fx
+    from backend.db import SessionLocal
 
-    call_count = {"n": 0}
-
-    def _get(url, params, timeout):
-        call_count["n"] += 1
-
+    def _first_get(url, params, timeout):
         class _Resp:
             def raise_for_status(self):
                 pass
 
             def json(self):
-                return {"rates": {"IDR": 15561}}
+                return {"rates": {"IDR": 12345}}
+
+        return _Resp()
+
+    monkeypatch.setattr(httpx, "get", _first_get)
+
+    caller1 = SessionLocal()
+    try:
+        first = fx.get_rate("USD", "IDR", _KEY_DATE, db=caller1)
+        assert first == Decimal("12345")
+
+        def _boom(*a, **k):
+            raise AssertionError("must not refetch — the row is already durably committed")
+
+        monkeypatch.setattr(httpx, "get", _boom)
+
+        second = fx.get_rate("USD", "IDR", _KEY_DATE, db=caller1)
+        assert second == Decimal("12345")
+    finally:
+        caller1.close()  # closed WITHOUT committing
+
+    caller2 = SessionLocal()
+    try:
+        third = fx.get_rate("USD", "IDR", _KEY_DATE, db=caller2)
+        assert third == Decimal("12345")
+    finally:
+        caller2.close()
+
+    assert _count_key_rows() == 1
+
+
+def test_get_rate_integrity_conflict_returns_existing_row(monkeypatch, fx_key_clean):
+    """WRITE-03/D-19: when the dedicated insert loses a race, the pre-existing
+    (immutable) row wins — the freshly fetched rate is discarded, never
+    fabricated on top of it (FX-05)."""
+    from backend import fx
+    from backend.db import SessionLocal
+    from backend.models import FxRateCache
+
+    seed = SessionLocal()
+    try:
+        seed.add(
+            FxRateCache(
+                rate_date=_KEY_DATE,
+                base_currency="USD",
+                quote_currency="IDR",
+                rate=Decimal("11111"),
+                source="zz-test",
+                fetched_at=datetime.now(timezone.utc),
+            )
+        )
+        seed.commit()
+    finally:
+        seed.close()
+
+    def _get(url, params, timeout):
+        class _Resp:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {"rates": {"IDR": 22222}}
 
         return _Resp()
 
     monkeypatch.setattr(httpx, "get", _get)
 
-    # Models the REAL SessionLocal (autoflush=False, backend/db.py): a plain
-    # SELECT sees only rows that have been *flushed*, not merely add()ed. So
-    # scalars() reads `flushed`, add() stages into `pending`, and flush() moves
-    # pending -> flushed. This is a genuine regression test for CR-02: if
-    # get_rate forgets to db.flush() after the cache insert, the second call's
-    # _latest_cache_row SELECT misses the pending row, re-fetches, and re-adds —
-    # tripping call_count == 2 / two rows below.
-    class _StatefulDb:
-        def __init__(self):
-            self.pending = []
-            self.flushed = []
+    db = _FakeDb()  # existing_row=None -> forces a cache miss on the caller's read
+    result = fx.get_rate("USD", "IDR", _KEY_DATE, db=db)
+    assert result == Decimal("11111")
+    assert db.added == []
 
-        def scalars(self, _stmt):
-            return _FakeQuery(self.flushed[0] if self.flushed else None)
-
-        def add(self, obj):
-            self.pending.append(obj)
-
-        def flush(self):
-            self.flushed.extend(self.pending)
-            self.pending = []
-
-    db = _StatefulDb()
-    first = fx.get_rate("USD", "IDR", date(2024, 1, 15), db=db)
-    second = fx.get_rate("USD", "IDR", date(2024, 1, 15), db=db)
-    assert first == Decimal("15561")
-    assert second == Decimal("15561")
-    assert call_count["n"] == 1, "adapter must be called exactly once across both get_rate calls"
-    assert len(db.flushed) + len(db.pending) == 1, "exactly one fx_rate_cache row must be written"
+    assert _count_key_rows() == 1
 
 
 def test_cash_and_gold_have_explicit_ttl_entries():

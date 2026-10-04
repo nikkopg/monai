@@ -3,7 +3,7 @@ uvicorn[standard]>=0.27.0
 sqlalchemy>=2.0.0
 psycopg[binary]>=3.1.0
 python-multipart>=0.0.9
-llama-index-core>=0.10.0
+llama-index-core==0.14.25
 llama-index-llms-ollama>=0.1.0
 llama-index-embeddings-ollama>=0.1.0
 llama-index-llms-anthropic>=0.1.0
@@ -15,3 +15,4 @@ yfinance>=1.5.1
 apscheduler>=3.11.3
 pytest>=8.0.0
 fastmcp>=3.4,<4
+pytest-asyncio>=1.4,<2

@@ -306,8 +306,13 @@ def upgrade() -> None:
             f"Category migration left {null_count} transactions with NULL category_id"
         )
 
+    # On a fresh/empty transactions table (e.g. a newly bootstrapped
+    # monai_test or CI database) there is nothing to compare the CSV against
+    # — skip the drift check rather than requiring zero rows to cover 74 CSV
+    # keys. Mirrors the "no-op gracefully on an empty DB" discipline already
+    # used by migrations 012-014.
     seen_count = len(distinct_strings)
-    if seen_count != len(mapping):
+    if distinct_strings and seen_count != len(mapping):
         raise RuntimeError(
             f"Category migration drift: {seen_count} distinct categories seen in DB, "
             f"{len(mapping)} keys in category_mapping.csv — expected exact match "

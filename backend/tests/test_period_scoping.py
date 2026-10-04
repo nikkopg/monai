@@ -1,9 +1,9 @@
 """
 Regression: category spending must honor an absolute (custom) date range.
 
-Bug: "how much did I spend on food in June 2026" returned ~60M IDR — the
-all-time food total — because the query defaulted to period="all_time" instead
-of scoping to June. These tests pin the deterministic contract the LLM relies
+Bug: "how much did I spend on food in June 2026" returned the all-time food
+total because the query defaulted to period="all_time" instead of scoping to
+June. These tests pin the deterministic contract the LLM relies
 on: a custom single-month period must exclude out-of-range rows, for ANY
 category (not just food), and must differ from the all-time total.
 
@@ -106,7 +106,7 @@ def test_custom_june_range_is_half_open_and_inclusive():
 
 def test_custom_month_scopes_category_and_excludes_other_months(seeded_scoping_data):
     """A custom single-month period returns only that month's spend for the
-    category, not the all-time total (the exact 60M bug)."""
+    category, not the all-time total (the all-time-total bug)."""
     june = spending_in_category(
         _CAT_ALPHA, period="custom", start_date="2026-06-01", end_date="2026-06-30"
     )["total"]

@@ -117,9 +117,11 @@ def _period_label(period, start, end) -> str:
 def spending_total(period="all_time", start_date=None, end_date=None) -> dict:
     """Total money spent (expenses only, transfers excluded) in a period.
 
-    period: named (all_time/this_month/last_month/this_year/last_year/
-      last_30_days/last_90_days) or "custom" with ISO start_date/end_date
-      (end inclusive). Use custom for a specific month, year, or date range.
+    period: named (all_time/this_week/last_week/this_month/last_month/
+      this_year/last_year/last_30_days/last_90_days) or "custom" with ISO
+      start_date/end_date (end inclusive). this_week/last_week are
+      Monday-Sunday calendar weeks. Use custom for a specific month, year,
+      or date range.
     """
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {}
@@ -245,14 +247,11 @@ _ROLLUP_FROM = (
 
 def spending_by_category(period="all_time", start_date=None, end_date=None, limit=5) -> dict:
     """Top spending categories (expenses only) in a period, rolled up to
-    TOP-LEVEL category groups via the category hierarchy — a group's total
-    includes all its subcategories' transactions. Each group's per-subcategory
-    breakdown is returned under "children". Transfers and system categories
-    (Transfer/Uncategorized) are excluded from totals.
-
-    period: one of all_time, this_month, last_month, this_year, last_year,
-      last_30_days, last_90_days, or "custom". For a specific month/year/range
-      pass period="custom" with ISO start_date/end_date (end_date inclusive).
+    TOP-LEVEL category groups — each group's total includes all its
+    descendant subcategories' transactions; per-subcategory breakdown is
+    under 'children'. Transfers and system categories excluded. For a
+    specific month/year/range pass period='custom' with ISO
+    start_date/end_date (end_date inclusive).
     """
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {"lim": max(1, min(int(limit), 50))}
@@ -280,16 +279,12 @@ def spending_by_category(period="all_time", start_date=None, end_date=None, limi
 
 
 def spending_in_category(category: str, period="all_time", start_date=None, end_date=None) -> dict:
-    """Total spent in a category INCLUDING all of its descendant
-    subcategories — a parent/group name sums its entire subtree (name match
-    is case-insensitive, exact first then substring). Transfers excluded.
-
-    period: one of all_time, this_month, last_month, this_year, last_year,
-      last_30_days, last_90_days, or "custom". For a specific month/year/range
-      (e.g. "food in June 2026") pass period="custom" with start_date and
-      end_date as ISO YYYY-MM-DD; end_date is inclusive. Leaving period at the
-      "all_time" default when the user asked about a specific month sums every
-      year on record and returns a wrong, inflated total.
+    """Total spent in one category INCLUDING all of its descendant
+    subcategories — a parent/group name sums its entire subtree
+    (case-insensitive name match). Transfers excluded. For a specific
+    month/year/range pass period='custom' with ISO start_date/end_date
+    (end_date inclusive); leaving period='all_time' for a month question
+    returns a wrong, inflated total.
     """
     s, e = resolve_period(period, start_date, end_date)
     node = _find_category_node(category)
@@ -585,11 +580,10 @@ def net_worth_tool() -> dict:
 
 
 def list_categories() -> dict:
-    """The full category TREE (not a flat list): top-level groups with nested
-    children. Each node has id, name, kind (expense/income/transfer), icon
-    (emoji), effective color (inherits the parent's when unset), is_system,
-    and children. Includes the Transfer and Uncategorized system nodes. Use
-    this to map a vague term to a real category or group name.
+    """The full category TREE: top-level groups with nested children. Each
+    node has id, name, kind, icon (emoji), effective color, and children.
+    Use it to map a vague term to a real category or group name before
+    other category tools.
     """
     return {"tool": "list_categories", "categories": _category_tree()}
 
@@ -609,7 +603,9 @@ def find_transactions(
     calling propose_edit_transaction or propose_delete_transaction. amount is signed
     (negative=expense, positive=income); kind: all | expense | income. Transfers are
     always excluded (is_transfer = false), matching the other read tools. Rows are
-    ordered most-recent-first, so rows[0] is "my last X".
+    ordered most-recent-first, so rows[0] is "my last X". Category names match
+    case-insensitively (exact first, then substring) and include every
+    subcategory, so a parent/group name returns its whole subtree.
     """
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {"lim": max(1, min(int(limit), 50))}
@@ -617,9 +613,14 @@ def find_transactions(
     if merchant is not None:
         clauses.append("merchant ILIKE :merchant")
         p["merchant"] = f"%{merchant}%"
-    if category is not None:
-        clauses.append("category = :category")
-        p["category"] = category
+    if category is not None and category.strip():
+        node = _find_category_node(category)
+        if node is None:
+            return {"tool": "find_transactions", "category": category,
+                    "error": f"No category matching '{category}' found. "
+                             "Use list_categories to see the category tree."}
+        clauses.append("category_id = ANY(:ids)")
+        p["ids"] = _descendant_ids(node)
     sign = {"expense": "amount < 0", "income": "amount > 0"}.get(kind)
     if sign:
         clauses.append(sign)
@@ -696,10 +697,9 @@ TOOLS = {
 }
 
 # Snapshot of the read-only tool names, captured BEFORE the write tools are
-# merged into TOOLS below. TOOLS itself becomes 27 entries (16 read + 11
-# propose_* write) once this module finishes loading, so any read-only
-# surface (e.g. the MCP server, D-03/MCP-03) must key off this frozenset,
-# never off TOOLS directly.
+# merged into TOOLS below. TOOLS itself becomes 32 entries (16 read + 16 propose_* write)
+# once this module finishes loading, so any read-only surface (e.g. the MCP
+# server, D-03/MCP-03) must key off this frozenset, never off TOOLS directly.
 READ_TOOL_NAMES: frozenset[str] = frozenset(TOOLS)
 
 
@@ -989,11 +989,10 @@ def propose_delete_account(account_id: int) -> dict:
 
 
 def propose_rename_category(old_name: str, new_name: str) -> dict:
-    """Propose renaming a category. A rename edits the categories row once;
-    every transaction follows via its category_id FK. old_name must be an
-    existing category; new_name must not collide with a sibling under the
-    same parent. Returns a proposal for user confirmation. Does NOT change
-    any data — user must approve.
+    """Propose renaming an existing category node (transactions follow via
+    their category_id FK). Fails with an error dict if old_name is not a
+    real category or new_name collides with a sibling. Returns a proposal
+    for user confirmation — never changes data directly.
     """
     with engine.connect() as c:
         row = c.execute(
@@ -1035,11 +1034,10 @@ def propose_rename_category(old_name: str, new_name: str) -> dict:
 
 
 def propose_merge_category(from_name: str, into_name: str) -> dict:
-    """Propose merging one category into another: transactions on from_name
-    are repointed to into_name's category node. Both must be existing
-    categories, and from_name must have no child subcategories (merge or move
-    those first). Returns a proposal for user confirmation. Does NOT change
-    any data — user must approve.
+    """Propose merging one existing category into another (transactions are
+    repointed to the target node). Both names must be real categories and
+    the source must have no child subcategories. Returns a proposal for
+    user confirmation — never changes data directly.
     """
     with engine.connect() as c:
         src = c.execute(
@@ -1173,11 +1171,15 @@ def propose_delete_holding(holding_id: int) -> dict:
     Does NOT delete any data — user must approve. D-05: holdings row CRUD only, no portfolio_events.
     """
     from backend.models import Holding
+    from backend.writes import holding_delete_refusal
 
     with get_session_sync() as db:
         h = db.get(Holding, holding_id)
         if h is None:
             return {"tool": "propose_delete_holding", "error": f"Holding {holding_id} not found"}
+        refusal = holding_delete_refusal(db, h)
+        if refusal:
+            return {"tool": "propose_delete_holding", "error": refusal}
         before = _holding_to_dict(h)
 
     payload = {
@@ -1245,13 +1247,12 @@ def propose_add_investment_transfer(
     date: str | None = None,
     notes: str | None = None,
 ) -> dict:
-    """Propose moving cash from a liquid account into an investment platform
-    with no immediate buy (a plain funding deposit). Recorded as a per-platform
-    sentinel position: ticker='CASH', event_type='deposit', asset_type='cash',
-    price=1, quantity=amount — consistent with the existing asset_type=='cash'
-    1:1 valuation convention. platform_id is an int; use find_platforms first
-    to resolve a platform name to its id. Returns a proposal for user
-    confirmation. Does NOT move any money — user must approve. (XFER-02)
+    """Propose moving cash from a liquid account into an investment
+    platform with no immediate buy (a plain funding deposit, recorded as a
+    CASH sentinel position). platform_id is an int — use find_platforms
+    first to resolve a platform name to its id. amount is an unsigned
+    magnitude. Returns a proposal for user confirmation — never moves
+    money directly.
     """
     cash_leg = {
         "account": from_account,
@@ -1298,12 +1299,12 @@ def propose_add_funded_buy(
     notes: str | None = None,
     asset_type: str | None = None,
 ) -> dict:
-    """Propose a funded buy: debit source_account_name for cash_amount (an
-    unsigned positive magnitude — the primitive owns the debit sign) and
-    record a 'buy' PortfolioEvent for quantity units of ticker at price on
-    platform_id. platform_id is an int; use find_platforms first to resolve a
-    platform name to its id. Returns a proposal for user confirmation. Does
-    NOT move any money — user must approve. (XFER-03)
+    """Propose a funded buy: debits source_account_name and records a
+    'buy' portfolio event. cash_amount, quantity, and price must be
+    unsigned positive magnitudes — the primitive owns the debit sign.
+    platform_id is an int — use find_platforms first to resolve a
+    platform name to its id. Returns a proposal for user confirmation —
+    never moves money directly.
     """
     after = {
         "source_account_name": source_account_name,
@@ -1343,12 +1344,12 @@ def propose_add_funded_sell(
     notes: str | None = None,
     asset_type: str | None = None,
 ) -> dict:
-    """Propose a funded sell: credit source_account_name for cash_amount (an
-    unsigned positive magnitude — the primitive owns the credit sign) and
-    record a 'sell' PortfolioEvent for quantity units of ticker at price on
-    platform_id. platform_id is an int; use find_platforms first to resolve a
-    platform name to its id. Returns a proposal for user confirmation. Does
-    NOT move any money — user must approve. (XFER-03)
+    """Propose a funded sell: credits source_account_name and records a
+    'sell' portfolio event. cash_amount, quantity, and price must be
+    unsigned positive magnitudes — the primitive owns the credit sign.
+    platform_id is an int — use find_platforms first to resolve a
+    platform name to its id. Returns a proposal for user confirmation —
+    never moves money directly.
     """
     after = {
         "source_account_name": source_account_name,

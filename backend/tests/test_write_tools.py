@@ -16,7 +16,7 @@ import uuid
 
 import pytest
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 
 # ---------------------------------------------------------------------------
@@ -564,6 +564,25 @@ def test_post_platforms_requires_api_key(client, api_key):
 # ---------------------------------------------------------------------------
 
 
+def _cleanup_fx_usd_idr(db, *iso_dates: str) -> None:
+    """Delete fx_rate_cache rows for (USD, IDR, date) for each given ISO date.
+
+    Cross-plan data contract (27-02 D-20): since WRITE-03, a cache-miss
+    fx.get_rate call commits durably even if this test's own transaction
+    rolls back. Called before AND after the tests below that reach
+    fx.get_rate on a real USD->IDR cache miss, so their httpx.get mock is
+    actually exercised (not skipped by a leftover cached row) and no
+    real-looking rate survives the run."""
+    db.execute(
+        text(
+            "DELETE FROM fx_rate_cache WHERE base_currency = 'USD' "
+            "AND quote_currency = 'IDR' AND rate_date IN :dates"
+        ).bindparams(bindparam("dates", expanding=True)),
+        {"dates": list(iso_dates)},
+    )
+    db.commit()
+
+
 def _cleanup_ticker(db, ticker: str) -> None:
     """Remove any holding/events/price_cache/audit rows for a ticker."""
     from backend.models import Holding, PortfolioEvent, PriceCache, AuditLog
@@ -823,6 +842,179 @@ def test_apply_edit_and_delete_holding_audit(db_session):
     assert db_session.get(Holding, h_id) is None
 
     _cleanup_ticker(db_session, ticker)
+
+
+# ---------------------------------------------------------------------------
+# WRITE-01 (27-01): refuse deleting a holding that has ledger events
+# ---------------------------------------------------------------------------
+
+
+def test_apply_delete_holding_refuses_when_events_exist(db_session):
+    """apply_delete_holding raises ValueError for an event-backed holding, but
+    an event-less holding with the same ticker on a different platform still
+    deletes cleanly (D-07: identity is (ticker, platform_id))."""
+    from backend.writes import apply_add_portfolio_event, apply_add_holding, apply_delete_holding
+    from backend.models import Holding
+
+    ticker = "ZZDEL27A"
+    _cleanup_ticker(db_session, ticker)
+    plat_b = _make_platform(db_session, "ZZ W27 Platform B")
+    plat_a = _make_platform(db_session, "ZZ W27 Platform A")
+
+    apply_add_portfolio_event(db_session, {
+        "ticker": ticker, "event_type": "buy",
+        "quantity": 1, "price": 1000, "date": "2020-01-10",
+        "platform_id": plat_b,
+    })
+    holding_a = apply_add_holding(db_session, {
+        "ticker": ticker, "quantity": 1, "avg_cost": 1000,
+        "currency": "IDR", "asset_type": "stock", "platform_id": plat_a,
+    })
+    db_session.commit()
+
+    holding_b = db_session.query(Holding).filter(
+        Holding.ticker == ticker, Holding.platform_id == plat_b
+    ).one()
+    holding_b_id = holding_b.id
+    holding_a_id = holding_a.id
+
+    with pytest.raises(ValueError) as exc_info:
+        apply_delete_holding(db_session, holding_b_id, {"id": holding_b_id, "ticker": ticker})
+    msg = str(exc_info.value)
+    assert "ZZDEL27A" in msg
+    assert "1 ledger event" in msg
+    assert "record a sell to close it" in msg
+
+    db_session.rollback()
+    assert db_session.get(Holding, holding_b_id) is not None
+
+    apply_delete_holding(db_session, holding_a_id, {"id": holding_a_id, "ticker": ticker})
+    db_session.commit()
+    assert db_session.get(Holding, holding_a_id) is None
+
+    _cleanup_ticker(db_session, ticker)
+
+
+def test_delete_holding_rest_refused_422_and_allowed_without_events(client, api_key, db_session):
+    """DELETE /holdings/{id} returns 422 with the refusal detail for an
+    event-backed holding (row survives) and 200 for an event-less one."""
+    from backend.writes import apply_add_portfolio_event, apply_add_holding
+    from backend.models import Holding
+
+    plat_id = _make_platform(db_session, "ZZ W27 Platform REST")
+
+    ticker_b = "ZZDEL27B"
+    _cleanup_ticker(db_session, ticker_b)
+    apply_add_portfolio_event(db_session, {
+        "ticker": ticker_b, "event_type": "buy",
+        "quantity": 1, "price": 1000, "date": "2020-01-10",
+        "platform_id": plat_id,
+    })
+    db_session.commit()
+    holding_b_id = db_session.query(Holding).filter(Holding.ticker == ticker_b).one().id
+
+    resp = client.delete(f"/holdings/{holding_b_id}", headers={"MONAI_API_KEY": api_key})
+    assert resp.status_code == 422, resp.text
+    assert "record a sell to close it" in resp.json()["detail"]
+
+    db_session.expire_all()
+    assert db_session.get(Holding, holding_b_id) is not None
+
+    ticker_c = "ZZDEL27C"
+    _cleanup_ticker(db_session, ticker_c)
+    holding_c = apply_add_holding(db_session, {
+        "ticker": ticker_c, "quantity": 1, "avg_cost": 1000,
+        "currency": "IDR", "asset_type": "stock", "platform_id": plat_id,
+    })
+    db_session.commit()
+    holding_c_id = holding_c.id
+
+    resp2 = client.delete(f"/holdings/{holding_c_id}", headers={"MONAI_API_KEY": api_key})
+    assert resp2.status_code == 200, resp2.text
+    assert resp2.json() == {"status": "deleted"}
+
+    db_session.expire_all()
+    assert db_session.get(Holding, holding_c_id) is None
+
+    _cleanup_ticker(db_session, ticker_b)
+    _cleanup_ticker(db_session, ticker_c)
+
+
+def test_propose_delete_holding_refused_when_events_exist(db_session):
+    """propose_delete_holding refuses (no proposal created) when the holding
+    still has ledger events, matching apply_delete_holding's guard (D-10)."""
+    from backend.tools import propose_delete_holding
+    from backend.writes import apply_add_portfolio_event
+    from backend.models import Holding
+
+    ticker = "ZZDEL27D"
+    _cleanup_ticker(db_session, ticker)
+    plat_id = _make_platform(db_session, "ZZ W27 Platform D")
+    apply_add_portfolio_event(db_session, {
+        "ticker": ticker, "event_type": "buy",
+        "quantity": 1, "price": 1000, "date": "2020-01-10",
+        "platform_id": plat_id,
+    })
+    db_session.commit()
+    holding_id = db_session.query(Holding).filter(Holding.ticker == ticker).one().id
+
+    before_count = _count_proposals(db_session)
+    result = propose_delete_holding(holding_id)
+    after_count = _count_proposals(db_session)
+
+    assert result["tool"] == "propose_delete_holding"
+    assert "record a sell to close it" in result["error"]
+    assert "proposal_id" not in result
+    assert after_count == before_count
+
+    _cleanup_ticker(db_session, ticker)
+
+
+def test_apply_edit_holding_refuses_identity_change_when_events_exist(db_session):
+    """WR-01: renaming/moving an event-backed holding is refused (it would let
+    a follow-up delete bypass WRITE-01); non-identity edits and event-less
+    renames still go through."""
+    from backend.writes import apply_add_portfolio_event, apply_add_holding, apply_edit_holding
+    from backend.models import Holding
+
+    ticker, renamed, free, free2 = "ZZEDT27A", "ZZEDT27B", "ZZEDT27C", "ZZEDT27D"
+    for t in (ticker, renamed, free, free2):
+        _cleanup_ticker(db_session, t)
+    plat_a = _make_platform(db_session, "ZZ W27 Edit Platform A")
+    plat_b = _make_platform(db_session, "ZZ W27 Edit Platform B")
+
+    apply_add_portfolio_event(db_session, {
+        "ticker": ticker, "event_type": "buy",
+        "quantity": 1, "price": 1000, "date": "2020-01-10",
+        "platform_id": plat_a,
+    })
+    db_session.commit()
+    h_id = db_session.query(Holding).filter(Holding.ticker == ticker).one().id
+
+    for change in ({"ticker": renamed}, {"platform_id": plat_b}):
+        with pytest.raises(ValueError, match="can't be changed"):
+            apply_edit_holding(db_session, h_id, change, {"id": h_id})
+        db_session.rollback()
+    h = db_session.get(Holding, h_id)
+    assert (h.ticker, h.platform_id) == (ticker, plat_a)
+
+    # Unchanged identity fields + a quantity edit are fine.
+    apply_edit_holding(db_session, h_id,
+                       {"ticker": ticker, "platform_id": plat_a, "quantity": 2}, {"id": h_id})
+    db_session.commit()
+
+    # Event-less holdings can still be renamed.
+    free_h = apply_add_holding(db_session, {
+        "ticker": free, "quantity": 1, "avg_cost": 1000,
+        "currency": "IDR", "asset_type": "stock", "platform_id": plat_a,
+    })
+    db_session.commit()
+    apply_edit_holding(db_session, free_h.id, {"ticker": free2}, {"id": free_h.id})
+    db_session.commit()
+    assert db_session.get(Holding, free_h.id).ticker == free2
+
+    for t in (ticker, renamed, free, free2):
+        _cleanup_ticker(db_session, t)
 
 
 def test_apply_add_holding_persists_coingecko_id(db_session):
@@ -1094,14 +1286,30 @@ def test_create_holding_same_ticker_two_platforms_both_created(client, api_key):
 # Event-currency validation + cash/gold pass-through (Plan 07-02, T-07-02-CUR)
 # ---------------------------------------------------------------------------
 
-def test_apply_add_portfolio_event_matching_currency_succeeds(db_session):
+def test_apply_add_portfolio_event_matching_currency_succeeds(db_session, monkeypatch):
     """A buy whose currency matches the (new) parent holding's currency
-    succeeds and stamps event.currency."""
+    succeeds and stamps event.currency.
+
+    D-20 (cross-plan data contract): the first buy's USD->IDR cost-basis
+    conversion goes through fx.get_rate; mock httpx.get and clean the
+    fx_rate_cache key before/after, so the mock is actually exercised and no
+    real-looking rate persists past this test."""
+    import httpx
     from backend.writes import apply_add_portfolio_event
     from backend.models import PortfolioEvent
 
+    class _FxResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"rates": {"IDR": 15000}}
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _FxResp())
+
     ticker = "EVTCCY01"
     _cleanup_ticker(db_session, ticker)
+    _cleanup_fx_usd_idr(db_session, "2024-01-10", "2024-01-11")
     plat_id = _make_platform(db_session, "TestCcyMatchPlatform")
     try:
         apply_add_portfolio_event(db_session, {
@@ -1123,16 +1331,33 @@ def test_apply_add_portfolio_event_matching_currency_succeeds(db_session):
         db_session.commit()
     finally:
         _cleanup_ticker(db_session, ticker)
+        _cleanup_fx_usd_idr(db_session, "2024-01-10", "2024-01-11")
 
 
-def test_apply_add_portfolio_event_currency_mismatch_raises(db_session):
+def test_apply_add_portfolio_event_currency_mismatch_raises(db_session, monkeypatch):
     """A buy whose currency differs from the parent holding's currency raises
     ValueError (-> 422 at the API boundary) — one currency per position, no
-    cross-currency averaging (T-07-02-CUR)."""
+    cross-currency averaging (T-07-02-CUR).
+
+    D-08: the first buy's USD->IDR cost-basis conversion goes through
+    fx.get_rate, which is a cache miss on a fresh DB; mock httpx.get (same
+    pattern as test_fx.py) so the holding is actually created and the
+    mismatch check on the second buy has something to compare against."""
+    import httpx
     from backend.writes import apply_add_portfolio_event
+
+    class _FxResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"rates": {"IDR": 15000}}
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _FxResp())
 
     ticker = "EVTCCY02"
     _cleanup_ticker(db_session, ticker)
+    _cleanup_fx_usd_idr(db_session, "2024-01-10")
     plat_id = _make_platform(db_session, "TestCcyMismatchPlatform")
     try:
         apply_add_portfolio_event(db_session, {
@@ -1151,17 +1376,33 @@ def test_apply_add_portfolio_event_currency_mismatch_raises(db_session):
         db_session.rollback()
     finally:
         _cleanup_ticker(db_session, ticker)
+        _cleanup_fx_usd_idr(db_session, "2024-01-10")
 
 
-def test_apply_add_portfolio_event_currency_mismatch_422_at_api(client, api_key):
-    """API boundary: a currency-mismatched event returns 422, not a 500."""
+def test_apply_add_portfolio_event_currency_mismatch_422_at_api(client, api_key, monkeypatch):
+    """API boundary: a currency-mismatched event returns 422, not a 500.
+
+    D-08: mock the USD->IDR fx.get_rate HTTP call (same pattern as
+    test_fx.py) so the first buy actually creates the holding the second
+    buy's mismatch check needs."""
+    import httpx
     from backend.db import SessionLocal
+
+    class _FxResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"rates": {"IDR": 15000}}
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _FxResp())
 
     ticker = "EVTCCY03"
     hdr = {"MONAI_API_KEY": api_key}
     s = SessionLocal()
     try:
         plat_id = _make_platform(s, "TestCcyMismatch422Platform")
+        _cleanup_fx_usd_idr(s, "2024-01-10")
     finally:
         s.close()
     try:
@@ -1186,6 +1427,7 @@ def test_apply_add_portfolio_event_currency_mismatch_422_at_api(client, api_key)
         s = SessionLocal()
         try:
             _cleanup_ticker(s, ticker)
+            _cleanup_fx_usd_idr(s, "2024-01-10")
         finally:
             s.close()
 
@@ -1432,18 +1674,34 @@ def test_apply_add_funded_buy_one_commit_boundary(db_session):
             db_session.commit()
 
 
-def test_funded_buy_dual_currency_legs(db_session):
+def test_funded_buy_dual_currency_legs(db_session, monkeypatch):
     """apply_add_funded_buy's cash leg and portfolio event carry independent
     currencies (XFER-04/D-09) — no forced single-currency conversion at write
     time; no schema column beyond the existing amount/currency pair is
-    touched. RED until Plan 13-04."""
+    touched. RED until Plan 13-04.
+
+    D-20 (cross-plan data contract): the event's currency conversion goes
+    through fx.get_rate on a USD->IDR cache miss; mock httpx.get and clean
+    the fx_rate_cache key before/after, so the mock is actually exercised
+    and no real-looking rate persists past this test."""
+    import httpx
     from backend.models import Transaction, PortfolioEvent, Platform
+
+    class _FxResp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"rates": {"IDR": 15000}}
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _FxResp())
 
     name = "zz13test-DualCcySource"
     ticker = "ZZ13DUALCCY"
     acc_id = _make_account(db_session, name)
     plat_id = _make_platform(db_session, "zz13test-DualCcyPlatform")
     _cleanup_ticker(db_session, ticker)
+    _cleanup_fx_usd_idr(db_session, "2024-01-26")
     try:
         from backend.writes import apply_add_funded_buy  # RED: not implemented until Plan 13-04
 
@@ -1465,6 +1723,7 @@ def test_funded_buy_dual_currency_legs(db_session):
     finally:
         db_session.rollback()
         _cleanup_ticker(db_session, ticker)
+        _cleanup_fx_usd_idr(db_session, "2024-01-26")
         _cleanup_account(db_session, name)
         plat = db_session.get(Platform, plat_id)
         if plat is not None:

@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { card, input, btn, label } from "../styles";
 import ConfirmDialog from "../cashflow/ConfirmDialog";
+import { extractDetail } from "../lib/api";
 
 // ---------------------------------------------------------------------------
 // PlatformManager — list platforms with inline edit + delete (D-12).
@@ -334,18 +335,4 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
       )}
     </section>
   );
-}
-
-async function extractDetail(r: Response): Promise<string> {
-  let detail = `HTTP ${r.status}`;
-  try {
-    const errBody = await r.json();
-    detail =
-      typeof errBody?.detail === "string"
-        ? errBody.detail
-        : errBody?.detail?.message ?? detail;
-  } catch {
-    // keep the status-based detail
-  }
-  return detail;
 }

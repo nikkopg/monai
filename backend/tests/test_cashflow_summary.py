@@ -80,6 +80,16 @@ def _make_account(db, name: str = "Test Account CFS") -> int:
     return acc.id
 
 
+def _months_back(today: datetime.date, i: int) -> datetime.date:
+    """First day of the calendar month i months before today's month.
+
+    Steps by calendar month, not 30-day blocks — timedelta(days=30*i) skips
+    February and repeats December when run in March-May.
+    """
+    y, m = divmod(today.year * 12 + today.month - 1 - i, 12)
+    return datetime.date(y, m + 1, 1)
+
+
 # ---------------------------------------------------------------------------
 # CASH-02: monthly_trend() rolling >=6-month window
 # ---------------------------------------------------------------------------
@@ -95,7 +105,7 @@ def test_trend_covers_six_months(db_session):
     try:
         # Seed one income + one expense transaction per month for the last 6 months.
         for i in range(6):
-            month_date = today.replace(day=1) - datetime.timedelta(days=30 * i)
+            month_date = _months_back(today, i)
             seeded_ids.append(
                 _make_transaction(
                     db_session,
@@ -262,12 +272,34 @@ def test_summary_totals_shape(db_session):
 def test_get_cashflow_summary_endpoint(client, db_session):
     """GET /cashflow/summary returns 200 with totals/accounts/by_category/trend,
     trend has >=6 rows, accounts rows carry current_balance + period_net.
+
+    trend = monthly_trend(6) is global, not period-scoped (main.py), and
+    only returns a month bucket that actually has a transaction (D-05) — so
+    this seeds one income+expense pair per month for the last 6 months
+    (mirrors test_trend_covers_six_months), not two same-day rows.
     """
     acc_id = _make_account(db_session, "SummaryEndpointCFS")
     seeded_ids = []
     try:
-        seeded_ids.append(_make_transaction(db_session, amount=300000, account_id=acc_id))
-        seeded_ids.append(_make_transaction(db_session, amount=-50000, account_id=acc_id))
+        today = datetime.date.today()
+        for i in range(6):
+            month_date = _months_back(today, i)
+            seeded_ids.append(
+                _make_transaction(
+                    db_session,
+                    date=datetime.datetime(month_date.year, month_date.month, 10, 12, 0, 0),
+                    amount=300000,
+                    account_id=acc_id,
+                )
+            )
+            seeded_ids.append(
+                _make_transaction(
+                    db_session,
+                    date=datetime.datetime(month_date.year, month_date.month, 20, 12, 0, 0),
+                    amount=-50000,
+                    account_id=acc_id,
+                )
+            )
 
         resp = client.get("/cashflow/summary?period=this_month")
         assert resp.status_code == 200, resp.text

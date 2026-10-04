@@ -501,11 +501,6 @@ class QueryRequest(BaseModel):
     question: str
 
 
-class QueryResponse(BaseModel):
-    question: str
-    answer: str
-
-
 class ImportResponse(BaseModel):
     parsed: int
     inserted: int

@@ -13,7 +13,7 @@ absent from the live database. Implementing that formula would subtract
 money out of the bank ledger that was never there (D-04). The three replacement
 invariants (D-05) — additive restoration, transfer-pair closure, and anchor
 parity — are the real substance of this phase and are enforced by test in
-`backend/tests/test_reconstruction.py`, never eyeballed.
+`backend/tests_live_audit/test_reconstruction.py`, never eyeballed.
 
 D-05 (Phase 23.1): the user relaxed Phase 20's conservative
 `no_opening_anchor` gate for every month strictly before the single liquid

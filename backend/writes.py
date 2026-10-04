@@ -654,6 +654,15 @@ def apply_edit_holding(db: Session, holding_id: int, after: dict, before: dict |
     holding = db.get(Holding, holding_id)
     if holding is None:
         raise ValueError(f"Holding {holding_id} not found")
+    # WRITE-01: an identity change on an event-backed holding would orphan its
+    # ledger and let a follow-up delete slip past holding_delete_refusal.
+    if (after.get("ticker") not in (None, holding.ticker)
+            or after.get("platform_id") not in (None, holding.platform_id)):
+        if holding_delete_refusal(db, holding) is not None:
+            raise ValueError(
+                f"Holding {holding.ticker} has ledger events; its ticker and "
+                "platform can't be changed. Record a sell to close it instead."
+            )
     if after.get("ticker") is not None:
         holding.ticker = after["ticker"]
     if after.get("quantity") is not None:
@@ -673,10 +682,33 @@ def apply_edit_holding(db: Session, holding_id: int, after: dict, before: dict |
     return holding
 
 
+def holding_delete_refusal(db: Session, holding: Holding) -> str | None:
+    """Shared by apply_delete_holding, apply_edit_holding's identity-change
+    check and tools.propose_delete_holding (WRITE-01,
+    D-10). Position identity is (ticker, platform_id) — both columns are NOT
+    NULL (D-12), so exact equality is the whole rule."""
+    count = db.query(PortfolioEvent).filter(
+        PortfolioEvent.ticker == holding.ticker,
+        PortfolioEvent.platform_id == holding.platform_id,
+    ).count()
+    if count == 0:
+        return None
+    return (
+        f"Holding {holding.ticker} has {count} ledger event(s); "
+        "record a sell to close it instead of deleting."
+    )
+
+
 def apply_delete_holding(db: Session, holding_id: int, before: dict | None) -> None:
-    """D-03 direct override: delete a holding by id (no-op if gone) and audit it."""
+    """D-03 direct override: delete a holding by id (no-op if gone) and audit it.
+
+    Raises ValueError when the position still has ledger events (WRITE-01).
+    """
     holding = db.get(Holding, holding_id)
     if holding is not None:
+        refusal = holding_delete_refusal(db, holding)
+        if refusal is not None:
+            raise ValueError(refusal)
         db.delete(holding)
     db.add(AuditLog(entity="holding", entity_id=holding_id, operation="delete",
                     before=before, after=None))

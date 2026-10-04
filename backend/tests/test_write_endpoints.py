@@ -538,7 +538,9 @@ def test_category_filter_hierarchy(client, db_session):
     from backend.models import Transaction
     import datetime as _dt
 
-    cats = db_session.execute(_text("SELECT id, name, parent_id FROM categories")).fetchall()
+    cats = db_session.execute(
+        _text("SELECT id, name, parent_id FROM categories ORDER BY id")
+    ).fetchall()
     child_counts: dict[int, int] = {}
     for _id, _name, _pid in cats:
         if _pid is not None:
@@ -562,7 +564,13 @@ def test_category_filter_hierarchy(client, db_session):
             ))
         db_session.commit()
 
-        resp = client.get(f"/transactions?account_id={acc_id}&category={parent_name}&limit=500")
+        # params= (not an f-string URL) so a category name containing "&"
+        # (e.g. "Life & Entertainment") is percent-encoded, not parsed as a
+        # second query-string delimiter (D-05 fresh-DB flake, Rule A).
+        resp = client.get(
+            "/transactions",
+            params={"account_id": acc_id, "category": parent_name, "limit": 500},
+        )
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == len(ids), (

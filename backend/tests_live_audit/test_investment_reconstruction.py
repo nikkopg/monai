@@ -1,12 +1,17 @@
 """Tests for backend/investment_reconstruction.py -- Phase 21 Investment-Value
 Backfill (RECON-04, RECON-05, RECON-06).
 
-D-17 HAZARD -- no isolated test database (mirrors backend/tests/test_reconstruction.py's
-own warning verbatim). backend/tests/conftest.py wires a TestClient against the
-live app and the live DATABASE_URL; there is no separate test database in this
-repo. Therefore every test in this file is either read-only against that
-database, or performs its writes inside a transaction that is ALWAYS unwound
-in a finally block. Seed rows are created with db.add(...) followed by
+LIVE AUDIT -- this file lives in backend/tests_live_audit/, outside
+`testpaths` (pyproject.toml) and outside backend/tests/conftest.py's guard
+(mirrors backend/tests_live_audit/test_reconstruction.py's own warning
+verbatim), so a default `pytest` run never collects it and it never
+inherits the guarded conftest's monai_test default or its refusal. It is
+re-run deliberately against live `monai`:
+`DATABASE_URL=postgresql+psycopg://monai:monai@localhost:5434/monai .venv/bin/pytest backend/tests_live_audit/test_investment_reconstruction.py -x -q -p no:cacheprovider`
+
+Every test in this file is either read-only against that database, or
+performs its writes inside a transaction that is ALWAYS unwound in a
+finally block. Seed rows are created with db.add(...) followed by
 db.flush(), never a session-persist call, on any receiver.
 
 Wave 0 scaffold: tests 1-6 and 9 import backend.investment_reconstruction
@@ -25,7 +30,7 @@ _TEST_PREFIX = "zzInvTest"
 
 
 # ---------------------------------------------------------------------------
-# DB fixtures -- copied verbatim from backend/tests/test_reconstruction.py
+# DB fixtures -- copied verbatim from backend/tests_live_audit/test_reconstruction.py
 # (that file's own convention is copy, not import/share).
 # ---------------------------------------------------------------------------
 
@@ -780,7 +785,7 @@ def test_pre_floor_portfolio_event_keeps_the_replay_regime(db_session):
 def test_investment_reconstruction_module_has_no_write_imports():
     """RECON-06 / D-04. Static scan of the module's own source, the
     `_offending()` idiom copied from
-    backend/tests/test_reconstruction.py::test_reconstruction_module_has_no_write_imports.
+    backend/tests_live_audit/test_reconstruction.py::test_reconstruction_module_has_no_write_imports.
     No line imports from the write module, the portfolio module or the
     liquid-sibling reconstruction module; no line matches a SQL write
     statement; no line contains a session-commit call; no line imports the

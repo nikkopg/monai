@@ -11,18 +11,18 @@ If no tool can answer the question, the agent says so honestly and enumerates
 what it CAN do — refusing beats a confident wrong number for a money app.
 
 Public surface:
-  agent(question) -> tuple[str, list]   — sync wrapper; returns (answer, trace)
-  agent_stream(question)                — async generator; yields SSE lines
-  ask(question) -> str                  — thin shim; backward-compat with /query
-  reset_engine() -> None                — clears _llm + _agent_workflow singletons
+  agent_stream(question)                — async generator; yields SSE lines.
+                                           It is the only agent loop, served by
+                                           POST /query-stream.
+  reset_engine() -> None                — clears _llm, _agent_workflow and its
+                                           build date
 """
 
-import asyncio
 import datetime
 import json
-import re
 
 from backend.config import configure_llm
+from backend.tools import PERIODS
 
 # ---------------------------------------------------------------------------
 # Module-level singletons — lazy, reset-able
@@ -30,20 +30,28 @@ from backend.config import configure_llm
 
 _llm = None
 _agent_workflow = None
+_agent_workflow_date: datetime.date | None = None  # the date whose TODAY the cached workflow's prompt holds
 
 # ---------------------------------------------------------------------------
 # System prompt — tool-only, no SQL, honest refusal, no fabrication
 # ---------------------------------------------------------------------------
 
-_SYSTEM_PROMPT = """\
+# Named periods come straight from tools.PERIODS (as mcp_server._PERIOD_HELP
+# does), so the prompt can never offer a period resolve_period rejects or miss
+# one it accepts (TD-02).
+_NAMED_PERIODS = ", ".join(p for p in PERIODS if p != "custom")
+
+_SYSTEM_PROMPT = f"""\
 You are a personal finance assistant with access to parameterized query tools.
 
-TODAY is {today}.
+TODAY is {{today}}.
 
 DATES — how to scope a query to a time range:
 - Every read tool takes a `period` argument, plus optional `start_date`/`end_date` (ISO `YYYY-MM-DD`).
 - Named periods (use ONLY when the user's phrasing is itself relative to today):
-  all_time, this_month, last_month, this_year, last_year, last_30_days, last_90_days.
+  {_NAMED_PERIODS}.
+  this_week and last_week are calendar weeks, Monday through Sunday — prefer them over \
+a custom range when the user says "this week" or "last week"; they do NOT mean a rolling 7-day window.
 - For ANY specific/absolute range — a named calendar month, a year, a quarter, or an \
 explicit "from X to Y" — you MUST pass period="custom" with start_date and end_date. \
 end_date is INCLUSIVE (the last day you want counted).
@@ -80,6 +88,16 @@ HTTP endpoint in the UI, not through the agent.
 # Agent / workflow builder
 # ---------------------------------------------------------------------------
 
+def _today() -> datetime.date:
+    """Single date source for the agent's TODAY and the test seam.
+
+    Tests patch backend.query._today directly, because datetime.date.today
+    is a C-level type method and can't be monkeypatched. Follows the process
+    TZ (Asia/Jakarta per docker-compose.yml) — unchanged timezone behavior.
+    """
+    return datetime.date.today()
+
+
 def _get_llm():
     global _llm
     if _llm is None:
@@ -90,184 +108,56 @@ def _get_llm():
 
 
 def _get_agent_workflow():
-    global _llm, _agent_workflow
-    if _agent_workflow is None:
+    global _agent_workflow, _agent_workflow_date
+    today = _today()
+    # A new calendar day rebuilds the workflow so the prompt's TODAY never
+    # goes stale on a day with no writes (AGENT-05).
+    if _agent_workflow is None or _agent_workflow_date != today:
         from llama_index.core.agent import AgentWorkflow, FunctionAgent
         from llama_index.core.tools import FunctionTool
-        from backend.tools import (
-            # Read tools
-            spending_total, income_total, net_total,
-            spending_by_category, spending_in_category,
-            spending_before_after_purchase,
-            transaction_count, largest_transactions,
-            average_daily_spending, list_categories, find_transactions,
-            monthly_trend, account_balances, net_worth_tool,
-            # Investment lookup tools (resolve platform/account names -> ids)
-            find_platforms, find_accounts,
-            # Write tools (proposal-producers — never mutate directly)
-            propose_add_transaction, propose_edit_transaction, propose_delete_transaction,
-            propose_add_account, propose_edit_account, propose_delete_account,
-            propose_rename_category, propose_merge_category,
-            propose_add_holding, propose_edit_holding, propose_delete_holding,
-            propose_add_transfer, propose_add_investment_transfer,
-            propose_add_funded_buy, propose_add_funded_sell,
-            propose_add_balance_adjustment,
-        )
+        from backend.tools import TOOLS
 
         llm = _get_llm()
 
-        read_tools = [
-            FunctionTool.from_defaults(fn=spending_total),
-            FunctionTool.from_defaults(fn=income_total),
-            FunctionTool.from_defaults(fn=net_total),
-            FunctionTool.from_defaults(
-                fn=spending_by_category,
-                description=(
-                    "Top spending categories (expenses only) in a period, rolled up to "
-                    "TOP-LEVEL category groups — each group's total includes all its "
-                    "descendant subcategories' transactions; per-subcategory breakdown is "
-                    "under 'children'. Transfers and system categories excluded. For a "
-                    "specific month/year/range pass period='custom' with ISO "
-                    "start_date/end_date (end_date inclusive)."
-                ),
-            ),
-            FunctionTool.from_defaults(
-                fn=spending_in_category,
-                description=(
-                    "Total spent in one category INCLUDING all of its descendant "
-                    "subcategories — a parent/group name sums its entire subtree "
-                    "(case-insensitive name match). Transfers excluded. For a specific "
-                    "month/year/range pass period='custom' with ISO start_date/end_date "
-                    "(end_date inclusive); leaving period='all_time' for a month question "
-                    "returns a wrong, inflated total."
-                ),
-            ),
-            FunctionTool.from_defaults(fn=spending_before_after_purchase),
-            FunctionTool.from_defaults(fn=transaction_count),
-            FunctionTool.from_defaults(fn=largest_transactions),
-            FunctionTool.from_defaults(fn=average_daily_spending),
-            FunctionTool.from_defaults(
-                fn=list_categories,
-                description=(
-                    "The full category TREE: top-level groups with nested children. Each "
-                    "node has id, name, kind, icon (emoji), effective color, and children. "
-                    "Use it to map a vague term to a real category or group name before "
-                    "other category tools."
-                ),
-            ),
-            FunctionTool.from_defaults(fn=find_transactions),
-            FunctionTool.from_defaults(fn=find_platforms),
-            FunctionTool.from_defaults(fn=find_accounts),
-            FunctionTool.from_defaults(fn=monthly_trend),
-            FunctionTool.from_defaults(fn=account_balances),
-            FunctionTool.from_defaults(fn=net_worth_tool, name="net_worth"),
+        # Tools come from the single TOOLS registry (16 read + 16 propose_*
+        # writes); descriptions live in the functions' docstrings. A new
+        # tool needs only a TOOLS entry — nothing here changes.
+        tools = [
+            FunctionTool.from_defaults(fn=fn, name=name)
+            for name, fn in TOOLS.items()
         ]
 
-        # Write tools — proposal-producers (CHAT-07, D-04 single source of truth)
-        write_tools = [
-            FunctionTool.from_defaults(fn=propose_add_transaction),
-            FunctionTool.from_defaults(fn=propose_edit_transaction),
-            FunctionTool.from_defaults(fn=propose_delete_transaction),
-            FunctionTool.from_defaults(fn=propose_add_account),
-            FunctionTool.from_defaults(fn=propose_edit_account),
-            FunctionTool.from_defaults(fn=propose_delete_account),
-            FunctionTool.from_defaults(
-                fn=propose_rename_category,
-                description=(
-                    "Propose renaming an existing category node (transactions follow via "
-                    "their category_id FK). Fails with an error dict if old_name is not a "
-                    "real category or new_name collides with a sibling. Returns a proposal "
-                    "for user confirmation — never changes data directly."
-                ),
-            ),
-            FunctionTool.from_defaults(
-                fn=propose_merge_category,
-                description=(
-                    "Propose merging one existing category into another (transactions are "
-                    "repointed to the target node). Both names must be real categories and "
-                    "the source must have no child subcategories. Returns a proposal for "
-                    "user confirmation — never changes data directly."
-                ),
-            ),
-            FunctionTool.from_defaults(fn=propose_add_holding),
-            FunctionTool.from_defaults(fn=propose_edit_holding),
-            FunctionTool.from_defaults(fn=propose_delete_holding),
-            FunctionTool.from_defaults(fn=propose_add_transfer),
-            FunctionTool.from_defaults(
-                fn=propose_add_investment_transfer,
-                description=(
-                    "Propose moving cash from a liquid account into an investment "
-                    "platform with no immediate buy (a plain funding deposit, "
-                    "recorded as a CASH sentinel position). platform_id is an int "
-                    "— use find_platforms first to resolve a platform name to its "
-                    "id. amount is an unsigned magnitude. Returns a proposal for "
-                    "user confirmation — never moves money directly."
-                ),
-            ),
-            FunctionTool.from_defaults(
-                fn=propose_add_funded_buy,
-                description=(
-                    "Propose a funded buy: debits source_account_name and records "
-                    "a 'buy' portfolio event. cash_amount, quantity, and price must "
-                    "be unsigned positive magnitudes — the primitive owns the debit "
-                    "sign. platform_id is an int — use find_platforms first to "
-                    "resolve a platform name to its id. Returns a proposal for user "
-                    "confirmation — never moves money directly."
-                ),
-            ),
-            FunctionTool.from_defaults(
-                fn=propose_add_funded_sell,
-                description=(
-                    "Propose a funded sell: credits source_account_name and records "
-                    "a 'sell' portfolio event. cash_amount, quantity, and price must "
-                    "be unsigned positive magnitudes — the primitive owns the credit "
-                    "sign. platform_id is an int — use find_platforms first to "
-                    "resolve a platform name to its id. Returns a proposal for user "
-                    "confirmation — never moves money directly."
-                ),
-            ),
-            FunctionTool.from_defaults(fn=propose_add_balance_adjustment),
-        ]
-
-        system_prompt = _SYSTEM_PROMPT.format(
-            today=datetime.date.today().isoformat()
-        )
+        system_prompt = _SYSTEM_PROMPT.format(today=today.isoformat())
 
         agent = FunctionAgent(
-            tools=read_tools + write_tools,
+            tools=tools,
             llm=llm,
             system_prompt=system_prompt,
             verbose=False,
         )
         _agent_workflow = AgentWorkflow(agents=[agent], timeout=120.0)
+        _agent_workflow_date = today
     return _agent_workflow
 
 
 # ---------------------------------------------------------------------------
-# Proposal field extraction from tool trace
+# Proposal extraction from tool trace
 # ---------------------------------------------------------------------------
 
-def _extract_proposal_id(tool_trace: list) -> str | None:
-    """Return the first proposal_id found in the tool trace, or None."""
-    for step in tool_trace:
-        result = step.get("result")
-        if isinstance(result, dict) and "proposal_id" in result:
-            return result["proposal_id"]
-    return None
+def _extract_proposals(tool_trace: list) -> list[dict]:
+    """Return one {"id", "token"} entry per propose_* call, in call order.
 
-
-def _extract_proposal_token(tool_trace: list) -> str | None:
-    """Return the first proposal_token found in the tool trace, or None.
-
-    The token is extracted here and surfaced ONLY in the SSE answer event payload
-    to the originating chat session — it is never emitted inside the trace itself
-    (T-02-07: token must not appear in the persisted/visible tool-call log).
+    A single pass over tool_trace: any step whose result dict carries both
+    proposal_id and proposal_token contributes one entry. Tokens surface only
+    in the SSE answer event to the originating chat session — they are never
+    emitted in a tool_result event or the public trace (T-02-07).
     """
+    proposals = []
     for step in tool_trace:
         result = step.get("result")
-        if isinstance(result, dict) and "proposal_token" in result:
-            return result["proposal_token"]
-    return None
+        if isinstance(result, dict) and "proposal_id" in result and "proposal_token" in result:
+            proposals.append({"id": result["proposal_id"], "token": result["proposal_token"]})
+    return proposals
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +171,8 @@ async def agent_stream(question: str):
     Event types emitted:
       data: {"type": "step", "msg": "thinking…"}
       data: {"type": "tool_result", "step": {"tool": ..., "args": ..., "result": ...}}
-      data: {"type": "answer", "text": ..., "trace": [...], "proposal_id": ...}
+      data: {"type": "answer", "text": ..., "trace": [...], "proposals": [{"id": ..., "token": ...}, ...], "proposal_id": ..., "proposal_token": ...}
+        (proposal_id/proposal_token mirror proposals[0]; None when there are none)
       data: [DONE]
     """
     from llama_index.core.agent.workflow.workflow_events import AgentInput, ToolCallResult
@@ -323,24 +214,26 @@ async def agent_stream(question: str):
                     "args": event.tool_kwargs,
                     "result": trace_result,
                 }
-                # Keep the full result_dict (with token) in tool_trace so the
-                # _extract_proposal_token helper can find it.
+                # Keep the full result_dict (with token) in tool_trace so
+                # _extract_proposals can read the tokens.
                 tool_trace.append({
                     "tool": event.tool_name,
                     "args": event.tool_kwargs,
                     "result": result_dict,  # full dict — used for token extraction only
                     "_trace_result": trace_result,  # token-stripped — used in answer trace
                 })
-                yield f"data: {json.dumps({'type': 'tool_result', 'step': step})}\n\n"
+                # default=str: some tool results (e.g. net_worth's holdings) carry
+                # raw Decimal fields that json.dumps can't serialize natively.
+                yield f"data: {json.dumps({'type': 'tool_result', 'step': step}, default=str)}\n\n"
 
             elif isinstance(event, StopEvent):
                 # StopEvent.result is AgentOutput; str(AgentOutput) = response.content
                 final = event.result
                 answer_text = str(final) if final is not None else ""
-                proposal_id = _extract_proposal_id(tool_trace)
-                # proposal_token surfaces ONLY here — to the originating chat session
+                # One scan for every proposal of the turn, in call order. The
+                # token surfaces ONLY here — to the originating chat session
                 # via the SSE answer event (T-02-07, single-use 15-min TTL).
-                proposal_token = _extract_proposal_token(tool_trace)
+                proposals = _extract_proposals(tool_trace)
                 # Build the public trace using token-stripped results (T-02-07)
                 public_trace = [
                     {
@@ -350,14 +243,18 @@ async def agent_stream(question: str):
                     }
                     for s in tool_trace
                 ]
+                # Singular fields mirror proposals[0] for compatibility (accepted
+                # AGENT-06 scope) — from the same scan, not a second extraction.
+                first = proposals[0] if proposals else None
                 payload = {
                     "type": "answer",
                     "text": answer_text,
                     "trace": public_trace,
-                    "proposal_id": proposal_id,
-                    "proposal_token": proposal_token,
+                    "proposals": proposals,
+                    "proposal_id": first["id"] if first else None,
+                    "proposal_token": first["token"] if first else None,
                 }
-                yield f"data: {json.dumps(payload)}\n\n"
+                yield f"data: {json.dumps(payload, default=str)}\n\n"
 
         yield "data: [DONE]\n\n"
 
@@ -366,6 +263,7 @@ async def agent_stream(question: str):
             "type": "answer",
             "text": f"I couldn't process that question reliably ({e}). Try rephrasing.",
             "trace": [],
+            "proposals": [],
             "proposal_id": None,
             "proposal_token": None,
         }
@@ -374,105 +272,12 @@ async def agent_stream(question: str):
 
 
 # ---------------------------------------------------------------------------
-# Sync agent entry point — runs the async stream to completion
-# ---------------------------------------------------------------------------
-
-def agent(question: str) -> tuple[str, list]:
-    """
-    Drive the agent workflow synchronously; return (answer_text, tool_trace).
-
-    Wraps the entire loop in try/except — never raises to the API layer.
-    """
-    from llama_index.core.agent.workflow.workflow_events import AgentInput, ToolCallResult
-    from llama_index.core.workflow import StopEvent
-
-    try:
-        workflow = _get_agent_workflow()
-        handler = workflow.run(user_msg=question, max_iterations=10)
-        tool_trace: list = []
-        answer_text = ""
-
-        async def _run() -> tuple[str, list]:
-            nonlocal answer_text, tool_trace
-            async for event in handler.stream_events():
-                if isinstance(event, ToolCallResult):
-                    content = event.tool_output.content
-                    try:
-                        result_dict = json.loads(content)
-                    except Exception:
-                        result_dict = {"raw": content}
-                    tool_trace.append({
-                        "tool": event.tool_name,
-                        "args": event.tool_kwargs,
-                        "result": result_dict,
-                    })
-                elif isinstance(event, StopEvent):
-                    final = event.result
-                    answer_text = str(final) if final is not None else ""
-            return answer_text, tool_trace
-
-        # Run the async coroutine. If we're already in an event loop (e.g. in tests
-        # with pytest-asyncio), use a new thread to avoid "event loop already running".
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop is not None and loop.is_running():
-            import concurrent.futures
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(asyncio.run, _run())
-                answer_text, tool_trace = future.result()
-        else:
-            answer_text, tool_trace = asyncio.run(_run())
-
-        return answer_text, tool_trace
-
-    except Exception as e:
-        return (
-            f"I couldn't process that question reliably ({e}). Try rephrasing.",
-            [],
-        )
-
-
-# ---------------------------------------------------------------------------
-# Backward-compatible shim — POST /query handler uses this
-# ---------------------------------------------------------------------------
-
-def ask(question: str) -> str:
-    """Thin shim returning only the answer text. Backward-compatible with POST /query."""
-    answer, _ = agent(question)
-    return answer
-
-
-# ---------------------------------------------------------------------------
 # Cache invalidation — called from main.py after writes
 # ---------------------------------------------------------------------------
 
 def reset_engine() -> None:
-    """Clear both the LLM and agent workflow singletons (called after writes)."""
-    global _llm, _agent_workflow
+    """Clear the LLM, the agent workflow and its build date (called after writes)."""
+    global _llm, _agent_workflow, _agent_workflow_date
     _llm = None
     _agent_workflow = None
-
-
-# ---------------------------------------------------------------------------
-# Kept for backward-compatibility with test_router.py
-# ---------------------------------------------------------------------------
-
-def _extract_json(textval: str) -> dict:
-    """Pull the first {...} JSON object out of a string (legacy; used in test_router.py)."""
-    textval = textval.strip()
-    textval = re.sub(r"^```(?:json)?|```$", "", textval, flags=re.MULTILINE).strip()
-    start = textval.find("{")
-    if start == -1:
-        raise ValueError("no JSON object in model output")
-    depth = 0
-    for i in range(start, len(textval)):
-        if textval[i] == "{":
-            depth += 1
-        elif textval[i] == "}":
-            depth -= 1
-            if depth == 0:
-                return json.loads(textval[start:i + 1])
-    raise ValueError("unbalanced JSON in model output")
+    _agent_workflow_date = None

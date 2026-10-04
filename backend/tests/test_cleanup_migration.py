@@ -8,7 +8,7 @@ alembic/versions/, not an importable package.
 
 Self-seeded, id-agnostic (Phase 12's lesson, restated by 011's docstring):
 DB-backed tests create rows on a uniquely named test account and clean up
-in a `finally` block. The live 14-row / 3,145,000-IDR figures are NEVER
+in a `finally` block. The live target set's row count and total are NEVER
 asserted here — only the structural outcomes (pinned ids, JSON-safe
 snapshot, dry run mutates nothing, apply audits + deletes, a second apply
 writes zero additional audits, an empty target set is a clean no-op). Test
@@ -333,30 +333,6 @@ def test_empty_target_set_is_a_clean_no_op(migration, db_session):
 
     db_session.rollback()
 
-
-# ---------------------------------------------------------------------------
-# 6. D-10 orphan tripwire — the ONE deliberate live-database invariant
-# assertion in this file. Every other test above is self-seeded and
-# id-agnostic (see module docstring); this one intentionally is not. Do NOT
-# "fix" it into a seeded test — it exists to fail loudly the moment the
-# orphan class returns, because orphaned transactions (account_id IS NULL)
-# are invisible to account_balances()'s `accounts LEFT JOIN transactions`
-# and therefore to net_worth(), but ARE counted by the cashflow_transactions
-# view (its `NOT EXISTS` predicate matches nothing for a NULL account_id),
-# silently reintroducing the phantom-cashflow parity break that Phase 22's
-# baseline depends on staying at zero. Actually fixing the write path that
-# mints orphans (apply_delete_account) is deferred to Phase 22 (D-DEF-01);
-# this assertion is the agreed interim coverage (D-10).
-# ---------------------------------------------------------------------------
-
-def test_no_orphan_transactions(db_session):
-    n = db_session.execute(
-        text("SELECT count(*) FROM transactions WHERE account_id IS NULL")
-    ).scalar()
-    assert n == 0, (
-        f"{n} orphaned transaction(s) with account_id IS NULL: these are "
-        "invisible to account_balances()'s accounts LEFT JOIN transactions "
-        "(and therefore to net_worth()), but ARE counted by the "
-        "cashflow_transactions view — their return silently breaks Phase "
-        "22's parity baseline."
-    )
+# test_no_orphan_transactions (D-10 live-ledger tripwire) moved to
+# backend/tests_live_audit/test_live_invariants.py (D-05 Rule B, 24-CONTEXT.md)
+# — its assertion is explicitly about the live database, not seedable.

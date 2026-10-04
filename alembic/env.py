@@ -6,6 +6,13 @@ Base.metadata so autogenerate sees all ORM models.
 
 Env vars:
   DATABASE_URL  (default: postgresql+psycopg://monai:monai@localhost:5434/monai)
+
+Programmatic override: a caller driving Alembic in-process (e.g.
+backend/tests/conftest.py) can set `config.attributes["sqlalchemy.url"]`
+before invoking `command.upgrade(...)` — both migration functions below
+prefer that over the DATABASE_URL environment lookup, so the same env.py
+serves the CLI (no attributes set) and in-process callers (explicit URL)
+without any behavior change for `alembic upgrade head` / entrypoint.sh.
 """
 
 import os
@@ -32,7 +39,7 @@ def run_migrations_offline() -> None:
 
     Emits SQL to stdout; used for reviewing migration SQL before applying.
     """
-    db_url = os.environ.get(
+    db_url = config.attributes.get("sqlalchemy.url") or os.environ.get(
         "DATABASE_URL",
         "postgresql+psycopg://monai:monai@localhost:5434/monai",
     )
@@ -53,7 +60,7 @@ def run_migrations_online() -> None:
     sqlalchemy.url to avoid configparser % interpolation issues (Pitfall 3).
     Uses pool.NullPool so the connection is not held between migrations.
     """
-    db_url = os.environ.get(
+    db_url = config.attributes.get("sqlalchemy.url") or os.environ.get(
         "DATABASE_URL",
         "postgresql+psycopg://monai:monai@localhost:5434/monai",
     )

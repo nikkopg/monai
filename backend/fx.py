@@ -12,6 +12,10 @@ never calls the adapter directly. It is cache-first and INSERT-only: a
 `fx_rate_cache` row for a given `(rate_date, base_currency, quote_currency)`
 is written at most once and never updated, so historical-at-purchase P&L
 (FX-03) stays reproducible even as the vendor's "latest" data moves (FX-05).
+On a cache miss, the INSERT runs on its own short-lived `SessionLocal()`
+session that commits immediately (WRITE-03) — a fetched rate survives even
+when the caller's own session never commits. The caller's session is only
+ever read; a concurrent insert of the same key resolves to the existing row.
 On adapter failure + cache miss, `get_rate` returns None — callers must
 propagate that as "rate unavailable", never fabricate rate=1.0.
 
@@ -28,8 +32,10 @@ from decimal import Decimal
 from typing import Callable
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from backend.db import SessionLocal
 from backend.models import FxRateCache
 
 # ISO-4217-shaped currency code (3-4 uppercase letters — allows USDT).
@@ -91,8 +97,11 @@ def get_rate(base: str, quote: str, as_of: date, db: Session) -> Decimal | None:
        codes return None (SSRF guard, Pitfall 5).
     4. Cache HIT -> stored Decimal, adapter never called (FX-05).
     5. Cache MISS -> adapter called; a non-None result INSERTs exactly one
-       immutable row keyed (rate_date, base_currency, quote_currency), then
-       returns the Decimal.
+       immutable row keyed (rate_date, base_currency, quote_currency),
+       committed on its own dedicated session (WRITE-03) — independent of
+       the caller's transaction. If another writer already inserted the same
+       key, that row's rate is returned instead (FX-05). Then returns the
+       Decimal.
     6. Adapter None (vendor outage) -> None, never a fabricated rate=1.0.
     """
     base_norm = _FX_ALIASES.get(base.upper(), base.upper())
@@ -114,18 +123,23 @@ def get_rate(base: str, quote: str, as_of: date, db: Session) -> Decimal | None:
         return None  # vendor outage/no data — caller's responsibility to propagate
 
     rate, source = result
-    db.add(
-        FxRateCache(
-            rate_date=as_of,
-            base_currency=base_norm,
-            quote_currency=quote_norm,
-            rate=rate,
-            source=source,
-            fetched_at=datetime.now(timezone.utc),
+    with SessionLocal() as cache_session:
+        cache_session.add(
+            FxRateCache(
+                rate_date=as_of,
+                base_currency=base_norm,
+                quote_currency=quote_norm,
+                rate=rate,
+                source=source,
+                fetched_at=datetime.now(timezone.utc),
+            )
         )
-    )
-    db.flush()  # LOAD-BEARING (CR-02): SessionLocal is autoflush=False, so a
-    # same-request repeat lookup for this (rate_date, base, quote) must see this
-    # pending row via _latest_cache_row — otherwise it re-inserts the same unique
-    # key and the next commit raises IntegrityError (500). Same idiom as writes.py.
+        try:
+            cache_session.commit()
+        except IntegrityError:
+            cache_session.rollback()
+            existing2 = _latest_cache_row(cache_session, as_of, base_norm, quote_norm)
+            if existing2 is not None:
+                return existing2.rate  # a concurrent writer won; rows are immutable (FX-05)
+            raise  # unexpected: insert failed but no row exists — surface it
     return rate

@@ -7,7 +7,7 @@ services:
       POSTGRES_PASSWORD: monai
       POSTGRES_DB: monai
     ports:
-      - "5434:5432"
+      - "127.0.0.1:5434:5432"
     volumes:
       - monai_pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -27,11 +27,14 @@ services:
     # rebind to 0.0.0.0. Linux-only; on Mac/Windows switch to bridge + host.docker.internal.
     network_mode: host
     environment:
-      DATABASE_URL: postgresql+psycopg://monai:monai@localhost:5434/monai
+      DATABASE_URL: postgresql+psycopg://monai:monai@127.0.0.1:5434/monai
       LLM_PROVIDER: ollama
-      OLLAMA_BASE_URL: http://localhost:11434
+      OLLAMA_BASE_URL: http://127.0.0.1:11434
       OLLAMA_MODEL: gemma4:31b-cloud
       OLLAMA_EMBED_MODEL: gemma4:31b-cloud
+      # TZ drives Python's date.today(); PGTZ sets the Postgres session TimeZone that CURRENT_DATE uses.
+      TZ: Asia/Jakarta
+      PGTZ: Asia/Jakarta
       MONAI_API_KEY: ${MONAI_API_KEY:?MONAI_API_KEY must be set - add it to .env}
     depends_on:
       db:
@@ -47,7 +50,7 @@ services:
     environment:
       # Next.js route handler at ui/app/api/[...proxy]/route.ts proxies /api/* to
       # the backend and injects MONAI_API_KEY server-side (key never in the JS bundle).
-      MONAI_API: http://localhost:8001
+      MONAI_API: http://127.0.0.1:8001
       MONAI_API_KEY: ${MONAI_API_KEY:?MONAI_API_KEY must be set - add it to .env}
     depends_on:
       - backend

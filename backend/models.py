@@ -325,7 +325,9 @@ class FxRateCache(Base):
     `get_rate()` (backend/fx.py) only ever INSERTs a new row on a genuine
     cache miss — an existing (rate_date, base_currency, quote_currency) row
     is never UPDATEd, so historical-at-purchase P&L (FX-03) stays
-    reproducible even as the vendor's "latest" rate moves.
+    reproducible even as the vendor's "latest" rate moves. get_rate() commits
+    that row on its own short-lived session, independent of the caller's
+    transaction (WRITE-03).
     """
 
     __tablename__ = "fx_rate_cache"

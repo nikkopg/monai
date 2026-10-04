@@ -6,7 +6,7 @@ Tests:
   (b) POST /transactions with wrong key → 401
   (c) POST /transactions with correct key → not 401 (422 from body validation, proves key accepted)
   (d) GET /accounts without key → 200 (public)
-  (e) POST /query without key → not 401 (public)
+  (e) POST /query-stream without key → not 401 (public; agent stream stubbed)
   (h) POST /transactions with empty _CONFIGURED_KEY → 503 JSON error (fail-closed misconfiguration)
 
 Note on test (c): We POST with an incomplete body to trigger 422 from body validation rather
@@ -18,6 +18,8 @@ Note on _CONFIGURED_KEY: backend.auth reads _CONFIGURED_KEY at import time from 
 The `api_key` fixture (conftest.py) patches backend.auth._CONFIGURED_KEY directly after import
 so the dependency sees a valid non-empty key regardless of import order.
 """
+
+import json
 
 import pytest
 
@@ -81,19 +83,36 @@ def test_get_accounts_public_no_key(client):
 
 
 # ---------------------------------------------------------------------------
-# (e) POST /query without key → not 401 (public, D-06)
+# (e) POST /query-stream without key → not 401 (public, D-06)
 # ---------------------------------------------------------------------------
 
 
-def test_post_query_public_no_key(client, api_key):
+def test_post_query_stream_public_no_key(client, api_key, monkeypatch):
     """
-    POST /query is a read-only operation and MUST remain public (D-06).
+    POST /query-stream is a read-only operation and MUST remain public (D-06).
     No key header → must not return 401.
     We use api_key fixture only to ensure _CONFIGURED_KEY is non-empty (fail-closed guard);
-    the request deliberately omits the header to verify /query has no auth gate.
+    the request deliberately omits the header to verify /query-stream has no auth gate.
+    agent_stream is stubbed so no LLM or network is touched.
     """
-    resp = client.post("/query", json={"question": "health check"})
+    async def _stub_stream(question):
+        yield "data: " + json.dumps({
+            "type": "answer",
+            "text": "stub answer",
+            "trace": [],
+            "proposals": [],
+            "proposal_id": None,
+            "proposal_token": None,
+        }) + "\n\n"
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr("backend.query.agent_stream", _stub_stream)
+
+    resp = client.post("/query-stream", json={"question": "health check"})
+    assert resp.status_code == 200
     assert resp.status_code != 401
+    assert "stub answer" in resp.text
+    assert "[DONE]" in resp.text
 
 
 # ---------------------------------------------------------------------------

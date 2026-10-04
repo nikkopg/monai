@@ -5,10 +5,14 @@ Reconstruction (RECON-01, RECON-02, D-02, D-05.2, D-12, D-13).
 This is the single test file for the whole phase; later plans (20-02, 20-03)
 append to it.
 
-D-17 HAZARD — no isolated test database. This repo runs its suite against the
-live dev database (see backend/tests/conftest.py). Therefore every test in
-this file is either read-only against that database, or performs its writes
-inside a transaction that is ALWAYS rolled back in a finally block. The rule,
+LIVE AUDIT — this file lives in backend/tests_live_audit/, outside
+`testpaths` (pyproject.toml) and outside backend/tests/conftest.py's guard,
+so a default `pytest` run never collects it and it never inherits the
+guarded conftest's monai_test default or its refusal. It is re-run
+deliberately against live `monai`:
+`DATABASE_URL=postgresql+psycopg://monai:monai@localhost:5434/monai .venv/bin/pytest backend/tests_live_audit/test_reconstruction.py -x -q -p no:cacheprovider`
+
+The rule,
 stated in words so it is unambiguous and so the phase-wide acceptance grep for
 a session-persist call over this file stays clean: no test in this file may
 persist its session on any receiver — not the Session, not a Connection. Every

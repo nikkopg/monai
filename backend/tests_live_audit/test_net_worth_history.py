@@ -1,21 +1,20 @@
 """Tests for backend/net_worth_history.py -- Phase 22 Trend Series
 Composition & Data-Model Decision (NWH-02).
 
-HAZARD -- no isolated test database (mirrors
-backend/tests/test_investment_reconstruction.py's own warning verbatim).
-backend/tests/conftest.py wires a TestClient against the live app and the
-live DATABASE_URL; there is no separate test database in this repo.
-Therefore every test in this file is either read-only against that
-database, or performs its writes inside a transaction that is ALWAYS
-unwound in a finally block. Seed rows, where any exist, are created with
-db.add(...) followed by db.flush(), never a session-persist call, and the
-caller always runs db_session.rollback() in a finally block -- the session
-is NEVER persisted with a commit call.
+LIVE AUDIT -- this file lives in backend/tests_live_audit/, outside
+`testpaths` (pyproject.toml) and outside backend/tests/conftest.py's guard
+(mirrors backend/tests_live_audit/test_investment_reconstruction.py's own
+warning verbatim), so a default `pytest` run never collects it and it
+never inherits the guarded conftest's monai_test default or its refusal.
+It is re-run deliberately against live `monai`:
+`DATABASE_URL=postgresql+psycopg://monai:monai@localhost:5434/monai .venv/bin/pytest backend/tests_live_audit/test_net_worth_history.py -x -q -p no:cacheprovider`
 
-Run this file by path alone:
-`.venv/bin/pytest backend/tests/test_net_worth_history.py -x -q` -- never as
-part of a full-suite `pytest backend/tests` run, which leaks rows into the
-live production database (memory/pytest-suite-writes-to-live-db.md).
+Every test in this file is either read-only against that database, or
+performs its writes inside a transaction that is ALWAYS unwound in a
+finally block. Seed rows, where any exist, are created with db.add(...)
+followed by db.flush(), never a session-persist call, and the caller
+always runs db_session.rollback() in a finally block -- the session is
+NEVER persisted with a commit call.
 
 Parity is verified per D-11 (22-CONTEXT.md), not ROADMAP SC2's literal
 wording: half by half against like-typed sources, never the composed total
@@ -30,7 +29,7 @@ from sqlalchemy import text
 
 # ---------------------------------------------------------------------------
 # DB fixtures -- copied verbatim from
-# backend/tests/test_investment_reconstruction.py (that file's own
+# backend/tests_live_audit/test_investment_reconstruction.py (that file's own
 # convention is copy, not import/share).
 # ---------------------------------------------------------------------------
 
@@ -56,6 +55,17 @@ def db_session(db_available):
         db.close()
 
 
+@pytest.fixture(scope="module")
+def client():
+    """This file no longer sees backend/tests/conftest.py's session-scoped
+    `client` fixture (it lives outside testpaths), so define it locally --
+    same TestClient(app) the guarded conftest builds."""
+    from backend.main import app
+    from fastapi.testclient import TestClient
+
+    return TestClient(app)
+
+
 def _current_month() -> str:
     """The current-month bucket, resolved dynamically -- never a literal
     'YYYY-MM' string, so this file does not silently rot (T-22-19)."""
@@ -64,7 +74,7 @@ def _current_month() -> str:
 
 def _end_excl_for_month(month: str) -> date:
     """Exclusive month-end boundary for a 'YYYY-MM' string -- copied
-    verbatim from backend/tests/test_investment_reconstruction.py, the same
+    verbatim from backend/tests_live_audit/test_investment_reconstruction.py, the same
     half-open convention `_MONTH_SQL` uses."""
     year, mon = (int(p) for p in month.split("-"))
     return date(year + 1, 1, 1) if mon == 12 else date(year, mon + 1, 1)
@@ -335,7 +345,7 @@ def test_archival_months_compose_honestly_and_pre_ledger_months_gap(db_session):
 
     # Independently-derived liquid anchor: MAX over every live liquid
     # account's own first Adjustment date (same derivation as
-    # backend/tests/test_reconstruction.py's own anchor oracle).
+    # backend/tests_live_audit/test_reconstruction.py's own anchor oracle).
     anchor_rows = conn.execute(
         text(
             "SELECT a.name, MIN(t.date)::date FROM transactions t "
@@ -639,7 +649,7 @@ def test_double_call_is_identical(db_session):
 def test_net_worth_history_module_has_no_write_imports():
     """D-09, SC3-b. Static scan of backend/net_worth_history.py's own
     source, the `_offending()` idiom copied from
-    backend/tests/test_reconstruction.py:575-600. No write-module import, no
+    backend/tests_live_audit/test_reconstruction.py:575-600. No write-module import, no
     write statement, no session-commit call. Positive half: module-level
     backend.* imports are limited to the two sibling engines + db module,
     and the only lazy in-function backend.* import is the read-side parity

@@ -1,0 +1,46 @@
+name: backend-tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: monai
+          POSTGRES_PASSWORD: monai
+          POSTGRES_DB: monai_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U monai -d monai_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://monai:monai@localhost:5432/monai_test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -r backend/requirements.txt
+      - name: Migrate fresh monai_test
+        run: alembic upgrade head
+      - name: Run backend tests
+        env:
+          # Any unmocked outbound HTTP(S) call (prices, FX, hosted LLMs) now
+          # fails instead of quietly using the runner's network (D-08). Kept
+          # on this step only — the pip install step above still needs the
+          # real network.
+          ALL_PROXY: http://127.0.0.1:9
+          NO_PROXY: localhost,127.0.0.1
+        run: pytest backend/tests -q -rs

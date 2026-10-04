@@ -25,7 +25,6 @@ Endpoints:
     POST /categories/rename     rename a category (single-row, D-11) (requires API key)
     POST /categories/merge      merge one category into another (requires API key)
     POST /import                multipart CSV upload (Wallet export)
-    POST /query                 natural-language question over your data
     POST /query-stream          streaming SSE agent response
     GET  /proposals             list pending proposals (public)
     POST /proposals/{id}/confirm  apply a pending proposal (requires API key)
@@ -51,7 +50,7 @@ from sqlalchemy.orm import Session
 from backend import auth
 from backend.auth import require_api_key
 from backend.mcp_server import build_mcp
-from backend.db import get_session
+from backend.db import get_session, get_session_sync
 from backend.importer import _get_or_create_account, import_csv_text
 from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, Proposal, Transaction
 from backend.net_worth_history import monthly_net_worth_series
@@ -119,7 +118,6 @@ from backend.schemas import (
     PriceOverrideRequest,
     ProposalOut,
     QueryRequest,
-    QueryResponse,
     SettingsOut,
     SettingsUpdate,
     TransactionCreate,
@@ -149,17 +147,48 @@ from backend.settings import (
 )
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+def _check_timezone(session_factory) -> None:
+    """Log the effective Python process offset and DB session TimeZone once
+    at startup (DEPLOY-04 / D-08). WARNING on mismatch, never raises — a soft
+    check must never block boot (a briefly-unreachable DB included).
+    """
+    offset = datetime.now().astimezone().utcoffset()
+    if offset == timedelta(hours=7):
+        logger.info("Process timezone offset: +07:00 (Asia/Jakarta)")
+    else:
+        logger.warning(
+            "Process timezone offset is %s, expected +07:00 (Asia/Jakarta) — check the TZ env var",
+            offset,
+        )
+    try:
+        with session_factory() as db:
+            tz = db.execute(text("SELECT current_setting('TimeZone')")).scalar()
+        if tz == "Asia/Jakarta":
+            logger.info("DB session TimeZone: Asia/Jakarta")
+        else:
+            logger.warning(
+                "DB session TimeZone is %r, expected 'Asia/Jakarta' — check the PGTZ env var", tz
+            )
+    except Exception as exc:  # DB briefly unreachable at startup — never block boot
+        logger.warning("Could not check DB session TimeZone at startup: %s", exc)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start the in-process daily portfolio-value snapshot scheduler (D-13/D-14).
 
+    Also logs the effective process/DB timezone once at startup (D-08).
+
     entrypoint.sh runs a single uvicorn process (no --workers), so exactly one
     scheduler owns the daily job — no leader election needed.
     NOTE: a future multi-worker deploy would run N schedulers; that would need
     leader election (or an external scheduler) to avoid N duplicate snapshots.
     """
+    _check_timezone(get_session_sync)
+
     from backend.scheduler import build_scheduler
 
     scheduler = build_scheduler()
@@ -614,8 +643,12 @@ def delete_holding(holding_id: int, db: Session = Depends(get_session)):
         "id": holding.id, "ticker": holding.ticker,
         "quantity": str(holding.quantity), "avg_cost": str(holding.avg_cost),
     }
-    apply_delete_holding(db, holding_id, before)
-    db.commit()
+    try:
+        apply_delete_holding(db, holding_id, before)
+        db.commit()
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
     from backend.query import reset_engine
     reset_engine()
     return {"status": "deleted"}
@@ -1390,16 +1423,6 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(get_ses
     return ImportResponse(parsed=parsed, inserted=inserted, skipped=skipped, currency=currency)
 
 
-@app.post("/query", response_model=QueryResponse)
-def query(req: QueryRequest):
-    from backend.query import ask
-    try:
-        answer = ask(req.question)
-    except Exception as e:
-        raise HTTPException(500, f"Query failed: {e}")
-    return QueryResponse(question=req.question, answer=answer)
-
-
 @app.post("/query-stream")
 async def query_stream(req: QueryRequest):
     """Stream agent reasoning as SSE events (CHAT-01, D-08)."""
@@ -1461,12 +1484,7 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
             apply_edit_holding(db, row.get("id"), after, before)
 
         elif operation == "delete_holding":
-            h_id = row.get("id")
-            h = db.get(Holding, h_id)
-            if h is not None:
-                db.delete(h)
-            db.add(AuditLog(entity="holding", entity_id=h_id, operation="delete",
-                            before=before, after=None))
+            apply_delete_holding(db, row.get("id"), before)
 
         elif operation in (
             "add_transfer", "add_investment_transfer", "add_funded_buy",
@@ -1522,13 +1540,15 @@ def confirm_proposal(
     """Apply a pending proposal atomically. Requires API key + valid token.
 
     Check order (Pitfall 3 — prevents replay):
-      1. Load by id → 404 if missing
+      1. Load by id with SELECT ... FOR UPDATE (WRITE-02) → 404 if missing;
+         a concurrent confirm or reject waits on this lock, then sees the
+         committed status
       2. status == "pending" → 409 if not pending
       3. expires_at > now() → 410 if expired
       4. hmac.compare_digest(token) → 401 if wrong
       5. Execute payload + write audit_log rows + mark confirmed (single commit)
     """
-    proposal = db.get(Proposal, proposal_id)
+    proposal = db.get(Proposal, proposal_id, with_for_update=True)
     if proposal is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
     if proposal.status != "pending":
@@ -1571,9 +1591,10 @@ def reject_proposal(
     db: Session = Depends(get_session),
 ):
     """Reject a pending proposal. No target mutation; no audit row.
-    Requires API key.
+    Requires API key. The row is loaded with SELECT ... FOR UPDATE (WRITE-02),
+    so a concurrent confirm or reject waits here, then sees the committed status.
     """
-    proposal = db.get(Proposal, proposal_id)
+    proposal = db.get(Proposal, proposal_id, with_for_update=True)
     if proposal is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
     if proposal.status != "pending":

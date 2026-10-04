@@ -5,17 +5,18 @@ Encodes Criterion 1 (D-02 classification, zero NULL), the CHECK+default
 constraint (`accounts.type` becomes a real discriminator), and Criterion 3
 (transfer/funding pairing columns on transactions and portfolio_events).
 
-All four tests run against the LIVE dev DB via the `backend.db.engine`
-singleton (no fresh-migrate fixture exists in conftest.py). They are
-INTENTIONALLY RED until migration 010_typed_accounts.py lands (Plan 02):
+The tests below run against `backend.db.engine`, which after 24-01 is
+`monai_test`, not the live DB. `test_account_classification` (D-02
+classification of every LIVE account) is explicitly about the live data
+itself and is NOT here — it moved to
+backend/tests_live_audit/test_live_invariants.py (D-05 Rule B,
+24-CONTEXT.md). The three tests that remain read/introspect migration 010's
+schema and constraints, which exist on any migrated database:
   - test_account_type_map lazy-loads the migration module INSIDE the test
-    body, so collection succeeds today and the test simply fails
-    (FileNotFoundError) until the file exists.
-  - test_account_classification / test_pairing_columns query/introspect
-    live state that migration 010 has not yet created — they fail on
-    assertion, never on collection.
+    body via importlib.
   - test_type_check_and_default proves the CHECK constraint and server
-    default do not exist yet (IntegrityError does NOT raise pre-migration).
+    default, rolling back both probes.
+  - test_pairing_columns introspects column/index metadata.
 """
 
 import importlib.util
@@ -95,31 +96,10 @@ def test_account_type_map():
     assert migration.ACCOUNT_TYPE == {1: "liquid", 2: "liquid", 3: "investment", 559: "liquid"}
 
 
-def test_account_classification():
-    """Every live accounts row is classified: no NULLs, the original liquid
-    ids stay liquid, and there is exactly one investment account ('Investments').
-
-    The investment account's surrogate id is intentionally NOT asserted — it is
-    not load-bearing and changes if the account is ever deleted+recreated (it
-    moved 3 -> 994 after an accidental delete/restore). The D-02 classification
-    invariant is what matters, not the id."""
-    with engine.connect() as conn:
-        rows = conn.execute(text("SELECT id, name, type FROM accounts")).fetchall()
-    types_by_id = {row[0]: row[2] for row in rows}
-
-    assert all(t in {"liquid", "investment"} for t in types_by_id.values()), (
-        f"non-liquid/investment types present: {types_by_id}"
-    )
-    null_count = sum(1 for t in types_by_id.values() if t is None)
-    assert null_count == 0, f"{null_count} accounts still have type IS NULL"
-
-    assert types_by_id.get(1) == "liquid"
-    assert types_by_id.get(2) == "liquid"
-    assert types_by_id.get(559) == "liquid"
-
-    investments = [(row[0], row[1]) for row in rows if row[2] == "investment"]
-    assert len(investments) == 1, f"expected exactly one investment account, got {investments}"
-    assert investments[0][1] == "Investments", f"investment account misnamed: {investments}"
+# test_account_classification (D-02 live classification, specific live
+# account ids, exactly one live "Investments" account) moved to
+# backend/tests_live_audit/test_live_invariants.py (D-05 Rule B,
+# 24-CONTEXT.md) — its assertions are explicitly about the live data itself.
 
 
 # ---------------------------------------------------------------------------

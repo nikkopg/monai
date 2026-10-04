@@ -3,8 +3,11 @@ Tool correctness tests.
 
 Two groups:
   - resolve_period: pure date logic, no DB.
-  - tool SQL: integration against the live Postgres (requires `docker compose up db`
-    and a loaded database). Skipped automatically if the DB is unreachable.
+  - tool SQL: integration against Postgres (requires `docker compose up db`).
+    The `db_available` fixture seeds its own synthetic `ZZ Tools Seed *` rows
+    (D-05) so these tests are non-vacuous against an empty database, and
+    tears them down afterward. Skipped automatically only if Postgres itself
+    is unreachable.
 """
 
 import datetime
@@ -70,18 +73,112 @@ class TestResolvePeriod:
 # Integration tests against live Postgres
 # --------------------------------------------------------------------------
 
+# Ids of the `ZZ Test BCA` account / `ZZ Test Bitplatform` platform rows the
+# find_* ilike tests actually inserted (ON CONFLICT DO NOTHING may insert
+# nothing) — teardown deletes only these, never a same-named row it didn't make.
+_CREATED_IDS: dict[str, list[int]] = {"accounts": [], "platforms": []}
+
+_SEED_CATEGORY_NAMES = ["ZZ Tools Seed Food", "ZZ Tools Seed Salary"]
+_SEED_CHILD_CATEGORY_NAME = "ZZ Tools Seed Snacks"
+
+
 @pytest.fixture(scope="module")
 def db_available():
+    """Seed synthetic `ZZ Tools Seed *` rows (D-05) so TestToolSQL is
+    non-vacuous against an empty database, then tear them down. Also cleans
+    up the `ZZ Test BCA` account / `ZZ Test Bitplatform` platform that
+    test_find_accounts_name_filter_ilike / test_find_platforms_name_filter_ilike
+    commit and previously left behind (per-file leak ownership). A child
+    category ("ZZ Tools Seed Snacks", under Food) exists for the AGENT-03
+    subtree test."""
     from sqlalchemy import text
     from backend.db import engine
+
     try:
         with engine.connect() as c:
-            n = c.execute(text("SELECT COUNT(*) FROM transactions")).scalar()
-        if not n:
-            pytest.skip("transactions table is empty")
+            c.execute(text("SELECT 1"))
     except Exception as e:
         pytest.skip(f"Postgres not available: {e}")
-    return True
+        return
+
+    ids: dict[str, int] = {}
+    with engine.begin() as c:
+        # Clear any seed leaked by a killed prior run — the seed names are
+        # UNIQUE, so a leftover would fail every later setup. Child category
+        # deleted before its parents (FK).
+        c.execute(
+            text(
+                "DELETE FROM transactions WHERE category_id IN "
+                "(SELECT id FROM categories WHERE name = ANY(:cats) OR name = :child) "
+                "OR account_id IN "
+                "(SELECT id FROM accounts WHERE name = 'ZZ Tools Seed Account')"
+            ),
+            {"cats": _SEED_CATEGORY_NAMES, "child": _SEED_CHILD_CATEGORY_NAME},
+        )
+        c.execute(text("DELETE FROM categories WHERE name = :child"), {"child": _SEED_CHILD_CATEGORY_NAME})
+        c.execute(text("DELETE FROM categories WHERE name = ANY(:cats)"), {"cats": _SEED_CATEGORY_NAMES})
+        c.execute(text("DELETE FROM accounts WHERE name = 'ZZ Tools Seed Account'"))
+        ids["account"] = c.execute(
+            text(
+                "INSERT INTO accounts (name, type, currency) "
+                "VALUES ('ZZ Tools Seed Account', 'liquid', 'IDR') RETURNING id"
+            )
+        ).scalar()
+        ids["food"] = c.execute(
+            text(
+                "INSERT INTO categories (name, parent_id, kind, is_system) "
+                "VALUES ('ZZ Tools Seed Food', NULL, 'expense', false) RETURNING id"
+            )
+        ).scalar()
+        ids["salary"] = c.execute(
+            text(
+                "INSERT INTO categories (name, parent_id, kind, is_system) "
+                "VALUES ('ZZ Tools Seed Salary', NULL, 'income', false) RETURNING id"
+            )
+        ).scalar()
+        # Child of food, parent_id set (never NULL) — a second root-level
+        # name would collide with uq_categories_name_root (Pitfall 3).
+        ids["snacks"] = c.execute(
+            text(
+                "INSERT INTO categories (name, parent_id, kind, is_system) "
+                "VALUES (:name, :pid, 'expense', false) RETURNING id"
+            ),
+            {"name": _SEED_CHILD_CATEGORY_NAME, "pid": ids["food"]},
+        ).scalar()
+        for d, amt, merchant, cat_key, cat_name in (
+            (datetime.date(2020, 1, 10), -25000.00, "ZZ Seed Coffee Stall", "food", "ZZ Tools Seed Food"),
+            (datetime.date(2020, 1, 11), -12000.00, "ZZ Seed Coffee Stall", "food", "ZZ Tools Seed Food"),
+            (datetime.date(2020, 1, 12), 50000.00, "ZZ Seed Employer", "salary", "ZZ Tools Seed Salary"),
+            (datetime.date(2020, 1, 13), -8000.00, "ZZ Seed Snack Kiosk", "snacks", _SEED_CHILD_CATEGORY_NAME),
+        ):
+            c.execute(
+                text(
+                    "INSERT INTO transactions "
+                    "(date, amount, currency, category, category_id, merchant, account_id, is_transfer) "
+                    "VALUES (:d, :amt, 'IDR', :cat, :cid, :m, :aid, false)"
+                ),
+                {"d": d, "amt": amt, "cat": cat_name, "cid": ids[cat_key], "m": merchant, "aid": ids["account"]},
+            )
+
+    try:
+        yield True
+    finally:
+        with engine.begin() as c:
+            c.execute(
+                text("DELETE FROM transactions WHERE category_id = ANY(:ids)"),
+                {"ids": [ids["food"], ids["salary"], ids["snacks"]]},
+            )
+            # Child deleted before its parents (FK).
+            c.execute(text("DELETE FROM categories WHERE id = :id"), {"id": ids["snacks"]})
+            c.execute(text("DELETE FROM categories WHERE id = ANY(:ids)"), {"ids": [ids["food"], ids["salary"]]})
+            c.execute(text("DELETE FROM accounts WHERE id = :id"), {"id": ids["account"]})
+        # Separate transaction: an FK failure here must not roll back the
+        # seed cleanup above.
+        with engine.begin() as c:
+            for tbl, created in _CREATED_IDS.items():
+                if created:
+                    c.execute(text(f"DELETE FROM {tbl} WHERE id = ANY(:ids)"), {"ids": created})
+                    created.clear()
 
 
 class TestToolSQL:
@@ -154,32 +251,60 @@ class TestToolSQL:
         assert all(r["amount"] > 0 for r in income_rows)
 
     def test_find_transactions_category_exact_match(self, db_available):
-        # find_transactions still filters on the legacy category string, so
-        # seed the filter value straight from transactions (list_categories
-        # now returns the hierarchy tree, not legacy strings).
-        from sqlalchemy import text
-        from backend.db import engine
+        # The filter now resolves category_id over the subtree via
+        # _find_category_node, the same way spending_in_category does (D-15).
         from backend.tools import find_transactions
 
-        with engine.connect() as c:
-            row = c.execute(text(
-                "SELECT category FROM transactions "
-                "WHERE category IS NOT NULL AND is_transfer = false LIMIT 1"
-            )).fetchone()
-        if not row:
-            return
-        category_name = row[0]
-        rows = find_transactions(category=category_name, limit=20)["rows"]
-        for r in rows:
-            assert r["category"] == category_name
+        rows = find_transactions(category="ZZ Tools Seed Food", limit=50)["rows"]
+        pairs = {(r["date"], r["amount"]) for r in rows}
+        assert {("2020-01-10", -25000.0), ("2020-01-11", -12000.0)} <= pairs
+
+    def test_find_transactions_category_subtree(self, db_available):
+        from backend.tools import find_transactions
+
+        parent_pairs = {
+            (r["date"], r["amount"])
+            for r in find_transactions(category="ZZ Tools Seed Food", limit=50)["rows"]
+        }
+        assert ("2020-01-13", -8000.0) in parent_pairs
+
+        child_pairs = {
+            (r["date"], r["amount"])
+            for r in find_transactions(category="ZZ Tools Seed Snacks", limit=50)["rows"]
+        }
+        assert child_pairs == {("2020-01-13", -8000.0)}
+
+    def test_find_transactions_category_case_insensitive(self, db_available):
+        from backend.tools import find_transactions
+
+        exact = {r["id"] for r in find_transactions(category="ZZ Tools Seed Food", limit=50)["rows"]}
+        lower = {r["id"] for r in find_transactions(category="zz tools seed food", limit=50)["rows"]}
+        upper = {r["id"] for r in find_transactions(category="ZZ TOOLS SEED FOOD", limit=50)["rows"]}
+        assert exact and exact == lower == upper
+
+    def test_find_transactions_unknown_category_error(self, db_available):
+        from backend.tools import find_transactions, spending_in_category
+
+        name = "ZZ No Such Category 26"
+        result = find_transactions(category=name, limit=50)
+        expected_error = spending_in_category(name)["error"]
+        assert result == {"tool": "find_transactions", "category": name, "error": expected_error}
+        assert "rows" not in result
+
+    def test_find_transactions_blank_category_no_filter(self, db_available):
+        from backend.tools import find_transactions
+
+        for blank in ("", "   "):
+            result = find_transactions(category=blank, merchant="ZZ Seed", limit=50)
+            assert "error" not in result
+            merchants = {r["merchant"] for r in result["rows"]}
+            assert "ZZ Seed Employer" in merchants
+            assert "ZZ Seed Coffee Stall" in merchants
 
     def test_find_transactions_merchant_partial_match(self, db_available):
         from backend.tools import find_transactions
-        seed_rows = find_transactions(limit=1)["rows"]
-        if not seed_rows or not seed_rows[0]["merchant"]:
-            return
-        merchant = seed_rows[0]["merchant"]
-        substring = merchant.lower()[: max(1, len(merchant) // 2)]
+
+        substring = "zz seed cof"
         rows = find_transactions(merchant=substring, limit=20)["rows"]
         assert any(substring in (r["merchant"] or "").lower() for r in rows)
 
@@ -197,11 +322,13 @@ class TestToolSQL:
         from backend.tools import find_platforms
 
         with engine.connect() as c:
-            c.execute(text(
+            new_id = c.execute(text(
                 "INSERT INTO platforms (name, kind) VALUES ('ZZ Test Bitplatform', 'exchange') "
-                "ON CONFLICT (name) DO NOTHING"
-            ))
+                "ON CONFLICT (name) DO NOTHING RETURNING id"
+            )).scalar()
             c.commit()
+        if new_id is not None:
+            _CREATED_IDS["platforms"].append(new_id)
         rows = find_platforms(name="zz test bit", limit=10)["rows"]
         assert any(r["name"] == "ZZ Test Bitplatform" for r in rows)
 
@@ -227,11 +354,13 @@ class TestToolSQL:
         from backend.tools import find_accounts
 
         with engine.connect() as c:
-            c.execute(text(
+            new_id = c.execute(text(
                 "INSERT INTO accounts (name, type, currency) VALUES ('ZZ Test BCA', 'liquid', 'IDR') "
-                "ON CONFLICT (name) DO NOTHING"
-            ))
+                "ON CONFLICT (name) DO NOTHING RETURNING id"
+            )).scalar()
             c.commit()
+        if new_id is not None:
+            _CREATED_IDS["accounts"].append(new_id)
         rows = find_accounts(name="zz test bca", limit=10)["rows"]
         assert any(r["name"] == "ZZ Test BCA" for r in rows)
 

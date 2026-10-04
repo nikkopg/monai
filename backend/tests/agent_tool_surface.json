@@ -1,0 +1,1164 @@
+[
+  {
+    "description": "spending_total(period='all_time', start_date=None, end_date=None) -> dict\nTotal money spent (expenses only, transfers excluded) in a period.\n\nperiod: named (all_time/this_week/last_week/this_month/last_month/\n  this_year/last_year/last_30_days/last_90_days) or \"custom\" with ISO\n  start_date/end_date (end inclusive). this_week/last_week are\n  Monday-Sunday calendar weeks. Use custom for a specific month, year,\n  or date range.",
+    "fn_schema": {
+      "properties": {
+        "end_date": {
+          "default": null,
+          "title": "End Date"
+        },
+        "period": {
+          "default": "all_time",
+          "title": "Period"
+        },
+        "start_date": {
+          "default": null,
+          "title": "Start Date"
+        }
+      },
+      "title": "spending_total",
+      "type": "object"
+    },
+    "name": "spending_total"
+  },
+  {
+    "description": "income_total(period='all_time', start_date=None, end_date=None) -> dict\nTotal money received (income only, transfers excluded) in a period.\n\nperiod: named or \"custom\" with ISO start_date/end_date (end inclusive).\nUse custom for a specific month, year, or date range.",
+    "fn_schema": {
+      "properties": {
+        "end_date": {
+          "default": null,
+          "title": "End Date"
+        },
+        "period": {
+          "default": "all_time",
+          "title": "Period"
+        },
+        "start_date": {
+          "default": null,
+          "title": "Start Date"
+        }
+      },
+      "title": "income_total",
+      "type": "object"
+    },
+    "name": "income_total"
+  },
+  {
+    "description": "net_total(period='all_time', start_date=None, end_date=None) -> dict\nNet cash flow (income minus expenses, transfers excluded).\n\nperiod: named or \"custom\" with ISO start_date/end_date (end inclusive).\nUse custom for a specific month, year, or date range.",
+    "fn_schema": {
+      "properties": {
+        "end_date": {
+          "default": null,
+          "title": "End Date"
+        },
+        "period": {
+          "default": "all_time",
+          "title": "Period"
+        },
+        "start_date": {
+          "default": null,
+          "title": "Start Date"
+        }
+      },
+      "title": "net_total",
+      "type": "object"
+    },
+    "name": "net_total"
+  },
+  {
+    "description": "spending_by_category(period='all_time', start_date=None, end_date=None, limit=5) -> dict\nTop spending categories (expenses only) in a period, rolled up to\nTOP-LEVEL category groups — each group's total includes all its\ndescendant subcategories' transactions; per-subcategory breakdown is\nunder 'children'. Transfers and system categories excluded. For a\nspecific month/year/range pass period='custom' with ISO\nstart_date/end_date (end_date inclusive).",
+    "fn_schema": {
+      "properties": {
+        "end_date": {
+          "default": null,
+          "title": "End Date"
+        },
+        "limit": {
+          "default": 5,
+          "title": "Limit"
+        },
+        "period": {
+          "default": "all_time",
+          "title": "Period"
+        },
+        "start_date": {
+          "default": null,
+          "title": "Start Date"
+        }
+      },
+      "title": "spending_by_category",
+      "type": "object"
+    },
+    "name": "spending_by_category"
+  },
+  {
+    "description": "spending_in_category(category: str, period='all_time', start_date=None, end_date=None) -> dict\nTotal spent in one category INCLUDING all of its descendant\nsubcategories — a parent/group name sums its entire subtree\n(case-insensitive name match). Transfers excluded. For a specific\nmonth/year/range pass period='custom' with ISO start_date/end_date\n(end_date inclusive); leaving period='all_time' for a month question\nreturns a wrong, inflated total.",
+    "fn_schema": {
+      "properties": {
+        "category": {
+          "title": "Category",
+          "type": "string"
+        },
+        "end_date": {
+          "default": null,
+          "title": "End Date"
+        },
+        "period": {
+          "default": "all_time",
+          "title": "Period"
+        },
+        "start_date": {
+          "default": null,
+          "title": "Start Date"
+        }
+      },
+      "required": [
+        "category"
+      ],
+      "title": "spending_in_category",
+      "type": "object"
+    },
+    "name": "spending_in_category"
+  },
+  {
+    "description": "spending_before_after_purchase(ticker: str, category: str) -> dict\nCHAT-03: 'since I bought BBCA, how has my eating-out spending changed?'\n\nPivot date = earliest 'buy' event for this ticker in portfolio_events\n(D-15). Compares category spending in the N days before vs N days after\nthat date, where N = days elapsed since the purchase (equal-length\nwindows, so the comparison isn't skewed by an arbitrarily longer \"after\"\nwindow as time passes).\n\nReuses spending_in_category()'s period=\"custom\" contract (end_date\ninclusive) — no new date-range SQL. When there is no buy event, or the\npurchase is dated today/future (no \"after\" window yet), returns a\nstructured error dict instead of a fabricated number.",
+    "fn_schema": {
+      "properties": {
+        "category": {
+          "title": "Category",
+          "type": "string"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker",
+        "category"
+      ],
+      "title": "spending_before_after_purchase",
+      "type": "object"
+    },
+    "name": "spending_before_after_purchase"
+  },
+  {
+    "description": "transaction_count(period='all_time', start_date=None, end_date=None, kind='all') -> dict\nCount transactions in a period. kind: all | expense | income.\n\nperiod: named or \"custom\" with ISO start_date/end_date (end inclusive).\nUse custom for a specific month, year, or date range.",
+    "fn_schema": {
+      "properties": {
+        "end_date": {
+          "default": null,
+          "title": "End Date"
+        },
+        "kind": {
+          "default": "all",
+          "title": "Kind"
+        },
+        "period": {
+          "default": "all_time",
+          "title": "Period"
+        },
+        "start_date": {
+          "default": null,
+          "title": "Start Date"
+        }
+      },
+      "title": "transaction_count",
+      "type": "object"
+    },
+    "name": "transaction_count"
+  },
+  {
+    "description": "largest_transactions(period='all_time', start_date=None, end_date=None, limit=5, kind='expense') -> dict\nLargest individual transactions by magnitude. kind: expense | income.\n\nperiod: named or \"custom\" with ISO start_date/end_date (end inclusive).\nUse custom for a specific month, year, or date range.",
+    "fn_schema": {
+      "properties": {
+        "end_date": {
+          "default": null,
+          "title": "End Date"
+        },
+        "kind": {
+          "default": "expense",
+          "title": "Kind"
+        },
+        "limit": {
+          "default": 5,
+          "title": "Limit"
+        },
+        "period": {
+          "default": "all_time",
+          "title": "Period"
+        },
+        "start_date": {
+          "default": null,
+          "title": "Start Date"
+        }
+      },
+      "title": "largest_transactions",
+      "type": "object"
+    },
+    "name": "largest_transactions"
+  },
+  {
+    "description": "average_daily_spending(period='this_month', start_date=None, end_date=None) -> dict\nAverage spending per day over the period.\n\nperiod: named or \"custom\" with ISO start_date/end_date (end inclusive).\nUse custom for a specific month, year, or date range.",
+    "fn_schema": {
+      "properties": {
+        "end_date": {
+          "default": null,
+          "title": "End Date"
+        },
+        "period": {
+          "default": "this_month",
+          "title": "Period"
+        },
+        "start_date": {
+          "default": null,
+          "title": "Start Date"
+        }
+      },
+      "title": "average_daily_spending",
+      "type": "object"
+    },
+    "name": "average_daily_spending"
+  },
+  {
+    "description": "list_categories() -> dict\nThe full category TREE: top-level groups with nested children. Each\nnode has id, name, kind, icon (emoji), effective color, and children.\nUse it to map a vague term to a real category or group name before\nother category tools.",
+    "fn_schema": {
+      "properties": {},
+      "title": "list_categories",
+      "type": "object"
+    },
+    "name": "list_categories"
+  },
+  {
+    "description": "find_transactions(merchant: str | None = None, category: str | None = None, period='all_time', start_date=None, end_date=None, kind='all', limit=10) -> dict\nSearch/filter individual transactions and return their ids, dates, amounts,\ncategories, merchants, and account ids, so the agent can resolve a merchant or\ncategory (e.g. \"my last Gojek transaction\") to a concrete transaction id before\ncalling propose_edit_transaction or propose_delete_transaction. amount is signed\n(negative=expense, positive=income); kind: all | expense | income. Transfers are\nalways excluded (is_transfer = false), matching the other read tools. Rows are\nordered most-recent-first, so rows[0] is \"my last X\". Category names match\ncase-insensitively (exact first, then substring) and include every\nsubcategory, so a parent/group name returns its whole subtree.",
+    "fn_schema": {
+      "properties": {
+        "category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Category"
+        },
+        "end_date": {
+          "default": null,
+          "title": "End Date"
+        },
+        "kind": {
+          "default": "all",
+          "title": "Kind"
+        },
+        "limit": {
+          "default": 10,
+          "title": "Limit"
+        },
+        "merchant": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Merchant"
+        },
+        "period": {
+          "default": "all_time",
+          "title": "Period"
+        },
+        "start_date": {
+          "default": null,
+          "title": "Start Date"
+        }
+      },
+      "title": "find_transactions",
+      "type": "object"
+    },
+    "name": "find_transactions"
+  },
+  {
+    "description": "find_platforms(name: str | None = None, limit: int = 10) -> dict\nSearch/filter investment platforms and return their ids, names, and kinds,\nso the agent can resolve a platform name (e.g. \"bibit\") to a concrete\nplatform_id before calling propose_add_holding. Rows are ordered by name.",
+    "fn_schema": {
+      "properties": {
+        "limit": {
+          "default": 10,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        }
+      },
+      "title": "find_platforms",
+      "type": "object"
+    },
+    "name": "find_platforms"
+  },
+  {
+    "description": "find_accounts(name: str | None = None, limit: int = 10) -> dict\nSearch/filter accounts and return their ids, names, types, and\ncurrencies, so the agent can resolve an account name (e.g. \"BCA\") to a\nconcrete account_id before calling propose_edit_account/propose_delete_account.\nRows are ordered by name.",
+    "fn_schema": {
+      "properties": {
+        "limit": {
+          "default": 10,
+          "title": "Limit",
+          "type": "integer"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        }
+      },
+      "title": "find_accounts",
+      "type": "object"
+    },
+    "name": "find_accounts"
+  },
+  {
+    "description": "monthly_trend(months: int = 6) -> dict\nMonth-over-month income/expense/net for the last N months (CASH-02).\n\nmonths: clamped to a minimum of 6 (>=6-month rolling window, not a\n  calendar-year bound — early-in-the-year calls still return a full\n  trailing window). Transfers excluded.",
+    "fn_schema": {
+      "properties": {
+        "months": {
+          "default": 6,
+          "title": "Months",
+          "type": "integer"
+        }
+      },
+      "title": "monthly_trend",
+      "type": "object"
+    },
+    "name": "monthly_trend"
+  },
+  {
+    "description": "account_balances(period_start=None, period_end=None) -> dict\nPer-account current_balance (all-time) + period_net (scoped) — CASH-03/D-04.\n\nperiod_start/period_end: an already-resolved [start_inclusive, end_exclusive)\ntuple, e.g. from resolve_period() called once by the caller (Plan 03 endpoint).\nThis function does NOT call resolve_period itself. current_balance sums ALL\nof an account's transactions regardless of period — transfers INCLUDED, a\ntransfer moves real money between accounts and the derived balance must\nreflect it (Finding 2 / Phase 16 UAT#3; matches the unfiltered SUM that\napply_add_balance_adjustment reconciles against). period_net sums only the\nin-period NON-transfer rows (cashflow/net-income semantics). Accounts with\nzero transactions appear with 0/0 (LEFT JOIN).",
+    "fn_schema": {
+      "properties": {
+        "period_end": {
+          "default": null,
+          "title": "Period End"
+        },
+        "period_start": {
+          "default": null,
+          "title": "Period Start"
+        }
+      },
+      "title": "account_balances",
+      "type": "object"
+    },
+    "name": "account_balances"
+  },
+  {
+    "description": "net_worth() -> dict\nZero-arg agent/MCP-facing wrapper for net_worth (WR-01).\n\nThe LLM tool schema (LlamaIndex FunctionTool + FastMCP) is generated by\nintrospecting the registered callable's signature. Registering the\ndb-taking net_worth directly leaked its internal `db` Session param onto\nboth schemas, inviting the model to hallucinate a value that skips the\nowns_session branch and crashes portfolio_summary. This wrapper keeps the\nadvertised tool argument-free; net_worth opens (and closes) its own\nsession. The request-scoped session stays on the endpoint path (main.py),\nwhich calls net_worth(db) directly.",
+    "fn_schema": {
+      "properties": {},
+      "title": "net_worth",
+      "type": "object"
+    },
+    "name": "net_worth"
+  },
+  {
+    "description": "propose_add_transaction(date: str, amount: float, account: str, category: str | None = None, merchant: str | None = None, notes: str | None = None, currency: str = 'IDR', is_transfer: bool = False) -> dict\nPropose adding a new transaction. Returns a proposal for user confirmation.\nDoes NOT add any data — user must approve. amount is signed (negative=expense, positive=income).",
+    "fn_schema": {
+      "properties": {
+        "account": {
+          "title": "Account",
+          "type": "string"
+        },
+        "amount": {
+          "title": "Amount",
+          "type": "number"
+        },
+        "category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Category"
+        },
+        "currency": {
+          "default": "IDR",
+          "title": "Currency",
+          "type": "string"
+        },
+        "date": {
+          "title": "Date",
+          "type": "string"
+        },
+        "is_transfer": {
+          "default": false,
+          "title": "Is Transfer",
+          "type": "boolean"
+        },
+        "merchant": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Merchant"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        }
+      },
+      "required": [
+        "date",
+        "amount",
+        "account"
+      ],
+      "title": "propose_add_transaction",
+      "type": "object"
+    },
+    "name": "propose_add_transaction"
+  },
+  {
+    "description": "propose_edit_transaction(transaction_id: int, category: str | None = None, merchant: str | None = None, amount: float | None = None, notes: str | None = None) -> dict\nPropose editing a transaction. Only provided fields will be changed.\nReturns a proposal for user confirmation. Does NOT change any data — user must approve.",
+    "fn_schema": {
+      "properties": {
+        "amount": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Amount"
+        },
+        "category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Category"
+        },
+        "merchant": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Merchant"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        },
+        "transaction_id": {
+          "title": "Transaction Id",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "transaction_id"
+      ],
+      "title": "propose_edit_transaction",
+      "type": "object"
+    },
+    "name": "propose_edit_transaction"
+  },
+  {
+    "description": "propose_delete_transaction(transaction_id: int) -> dict\nPropose deleting a transaction. Returns a proposal for user confirmation.\nDoes NOT delete any data — user must approve.",
+    "fn_schema": {
+      "properties": {
+        "transaction_id": {
+          "title": "Transaction Id",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "transaction_id"
+      ],
+      "title": "propose_delete_transaction",
+      "type": "object"
+    },
+    "name": "propose_delete_transaction"
+  },
+  {
+    "description": "propose_add_account(name: str, type: str | None = None, currency: str | None = None) -> dict\nPropose adding a new account. Returns a proposal for user confirmation.\nDoes NOT add any data — user must approve.",
+    "fn_schema": {
+      "properties": {
+        "currency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Currency"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Type"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "propose_add_account",
+      "type": "object"
+    },
+    "name": "propose_add_account"
+  },
+  {
+    "description": "propose_edit_account(account_id: int, name: str | None = None, type: str | None = None, currency: str | None = None) -> dict\nPropose editing an account. Only provided fields will be changed.\nReturns a proposal for user confirmation. Does NOT change any data — user must approve.",
+    "fn_schema": {
+      "properties": {
+        "account_id": {
+          "title": "Account Id",
+          "type": "integer"
+        },
+        "currency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Currency"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Type"
+        }
+      },
+      "required": [
+        "account_id"
+      ],
+      "title": "propose_edit_account",
+      "type": "object"
+    },
+    "name": "propose_edit_account"
+  },
+  {
+    "description": "propose_delete_account(account_id: int) -> dict\nPropose deleting an account. Blocked if the account has any transactions — reassign them first.\nReturns a proposal for user confirmation if allowed. Does NOT delete any data — user must approve.",
+    "fn_schema": {
+      "properties": {
+        "account_id": {
+          "title": "Account Id",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "account_id"
+      ],
+      "title": "propose_delete_account",
+      "type": "object"
+    },
+    "name": "propose_delete_account"
+  },
+  {
+    "description": "propose_rename_category(old_name: str, new_name: str) -> dict\nPropose renaming an existing category node (transactions follow via\ntheir category_id FK). Fails with an error dict if old_name is not a\nreal category or new_name collides with a sibling. Returns a proposal\nfor user confirmation — never changes data directly.",
+    "fn_schema": {
+      "properties": {
+        "new_name": {
+          "title": "New Name",
+          "type": "string"
+        },
+        "old_name": {
+          "title": "Old Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "old_name",
+        "new_name"
+      ],
+      "title": "propose_rename_category",
+      "type": "object"
+    },
+    "name": "propose_rename_category"
+  },
+  {
+    "description": "propose_merge_category(from_name: str, into_name: str) -> dict\nPropose merging one existing category into another (transactions are\nrepointed to the target node). Both names must be real categories and\nthe source must have no child subcategories. Returns a proposal for\nuser confirmation — never changes data directly.",
+    "fn_schema": {
+      "properties": {
+        "from_name": {
+          "title": "From Name",
+          "type": "string"
+        },
+        "into_name": {
+          "title": "Into Name",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from_name",
+        "into_name"
+      ],
+      "title": "propose_merge_category",
+      "type": "object"
+    },
+    "name": "propose_merge_category"
+  },
+  {
+    "description": "propose_add_holding(ticker: str, quantity: float, avg_cost: float, platform_id: int | None = None, purchase_date: str | None = None, currency: str = 'IDR', asset_type: str | None = None) -> dict\nPropose adding a new holding (investment position). Returns a proposal for user confirmation.\nDoes NOT add any data — user must approve. D-05: holdings row CRUD only, no portfolio_events.\nplatform_id is required by the holdings schema (multi-platform, D-17) — use\nfind_platforms to resolve a platform name to its id before calling this.",
+    "fn_schema": {
+      "properties": {
+        "asset_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Asset Type"
+        },
+        "avg_cost": {
+          "title": "Avg Cost",
+          "type": "number"
+        },
+        "currency": {
+          "default": "IDR",
+          "title": "Currency",
+          "type": "string"
+        },
+        "platform_id": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Platform Id"
+        },
+        "purchase_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Purchase Date"
+        },
+        "quantity": {
+          "title": "Quantity",
+          "type": "number"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker",
+        "quantity",
+        "avg_cost"
+      ],
+      "title": "propose_add_holding",
+      "type": "object"
+    },
+    "name": "propose_add_holding"
+  },
+  {
+    "description": "propose_edit_holding(holding_id: int, quantity: float | None = None, avg_cost: float | None = None, purchase_date: str | None = None, currency: str | None = None, asset_type: str | None = None) -> dict\nPropose editing a holding. Only provided fields will be changed.\nReturns a proposal for user confirmation. Does NOT change any data — user must approve.\nD-05: holdings row CRUD only, no portfolio_events.",
+    "fn_schema": {
+      "properties": {
+        "asset_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Asset Type"
+        },
+        "avg_cost": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Avg Cost"
+        },
+        "currency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Currency"
+        },
+        "holding_id": {
+          "title": "Holding Id",
+          "type": "integer"
+        },
+        "purchase_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Purchase Date"
+        },
+        "quantity": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Quantity"
+        }
+      },
+      "required": [
+        "holding_id"
+      ],
+      "title": "propose_edit_holding",
+      "type": "object"
+    },
+    "name": "propose_edit_holding"
+  },
+  {
+    "description": "propose_delete_holding(holding_id: int) -> dict\nPropose deleting a holding. Returns a proposal for user confirmation.\nDoes NOT delete any data — user must approve. D-05: holdings row CRUD only, no portfolio_events.",
+    "fn_schema": {
+      "properties": {
+        "holding_id": {
+          "title": "Holding Id",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "holding_id"
+      ],
+      "title": "propose_delete_holding",
+      "type": "object"
+    },
+    "name": "propose_delete_holding"
+  },
+  {
+    "description": "propose_add_transfer(from_account: str, to_account: str, amount: float, currency: str = 'IDR', date: str | None = None, notes: str | None = None) -> dict\nPropose a transfer between two liquid accounts. amount is an unsigned\nmagnitude — the source leg is debited (-abs) and the destination leg is\ncredited (+abs); do not pass a signed amount. Returns a proposal for user\nconfirmation. Does NOT move any money — user must approve. (XFER-01)",
+    "fn_schema": {
+      "properties": {
+        "amount": {
+          "title": "Amount",
+          "type": "number"
+        },
+        "currency": {
+          "default": "IDR",
+          "title": "Currency",
+          "type": "string"
+        },
+        "date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Date"
+        },
+        "from_account": {
+          "title": "From Account",
+          "type": "string"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        },
+        "to_account": {
+          "title": "To Account",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from_account",
+        "to_account",
+        "amount"
+      ],
+      "title": "propose_add_transfer",
+      "type": "object"
+    },
+    "name": "propose_add_transfer"
+  },
+  {
+    "description": "propose_add_investment_transfer(from_account: str, platform_id: int, amount: float, currency: str = 'IDR', date: str | None = None, notes: str | None = None) -> dict\nPropose moving cash from a liquid account into an investment\nplatform with no immediate buy (a plain funding deposit, recorded as a\nCASH sentinel position). platform_id is an int — use find_platforms\nfirst to resolve a platform name to its id. amount is an unsigned\nmagnitude. Returns a proposal for user confirmation — never moves\nmoney directly.",
+    "fn_schema": {
+      "properties": {
+        "amount": {
+          "title": "Amount",
+          "type": "number"
+        },
+        "currency": {
+          "default": "IDR",
+          "title": "Currency",
+          "type": "string"
+        },
+        "date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Date"
+        },
+        "from_account": {
+          "title": "From Account",
+          "type": "string"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        },
+        "platform_id": {
+          "title": "Platform Id",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from_account",
+        "platform_id",
+        "amount"
+      ],
+      "title": "propose_add_investment_transfer",
+      "type": "object"
+    },
+    "name": "propose_add_investment_transfer"
+  },
+  {
+    "description": "propose_add_funded_buy(source_account_name: str, platform_id: int, ticker: str, quantity: float, price: float, cash_amount: float, cash_currency: str = 'IDR', event_currency: str = 'IDR', date: str | None = None, notes: str | None = None, asset_type: str | None = None) -> dict\nPropose a funded buy: debits source_account_name and records a\n'buy' portfolio event. cash_amount, quantity, and price must be\nunsigned positive magnitudes — the primitive owns the debit sign.\nplatform_id is an int — use find_platforms first to resolve a\nplatform name to its id. Returns a proposal for user confirmation —\nnever moves money directly.",
+    "fn_schema": {
+      "properties": {
+        "asset_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Asset Type"
+        },
+        "cash_amount": {
+          "title": "Cash Amount",
+          "type": "number"
+        },
+        "cash_currency": {
+          "default": "IDR",
+          "title": "Cash Currency",
+          "type": "string"
+        },
+        "date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Date"
+        },
+        "event_currency": {
+          "default": "IDR",
+          "title": "Event Currency",
+          "type": "string"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        },
+        "platform_id": {
+          "title": "Platform Id",
+          "type": "integer"
+        },
+        "price": {
+          "title": "Price",
+          "type": "number"
+        },
+        "quantity": {
+          "title": "Quantity",
+          "type": "number"
+        },
+        "source_account_name": {
+          "title": "Source Account Name",
+          "type": "string"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_account_name",
+        "platform_id",
+        "ticker",
+        "quantity",
+        "price",
+        "cash_amount"
+      ],
+      "title": "propose_add_funded_buy",
+      "type": "object"
+    },
+    "name": "propose_add_funded_buy"
+  },
+  {
+    "description": "propose_add_funded_sell(source_account_name: str, platform_id: int, ticker: str, quantity: float, price: float, cash_amount: float, cash_currency: str = 'IDR', event_currency: str = 'IDR', date: str | None = None, notes: str | None = None, asset_type: str | None = None) -> dict\nPropose a funded sell: credits source_account_name and records a\n'sell' portfolio event. cash_amount, quantity, and price must be\nunsigned positive magnitudes — the primitive owns the credit sign.\nplatform_id is an int — use find_platforms first to resolve a\nplatform name to its id. Returns a proposal for user confirmation —\nnever moves money directly.",
+    "fn_schema": {
+      "properties": {
+        "asset_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Asset Type"
+        },
+        "cash_amount": {
+          "title": "Cash Amount",
+          "type": "number"
+        },
+        "cash_currency": {
+          "default": "IDR",
+          "title": "Cash Currency",
+          "type": "string"
+        },
+        "date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Date"
+        },
+        "event_currency": {
+          "default": "IDR",
+          "title": "Event Currency",
+          "type": "string"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        },
+        "platform_id": {
+          "title": "Platform Id",
+          "type": "integer"
+        },
+        "price": {
+          "title": "Price",
+          "type": "number"
+        },
+        "quantity": {
+          "title": "Quantity",
+          "type": "number"
+        },
+        "source_account_name": {
+          "title": "Source Account Name",
+          "type": "string"
+        },
+        "ticker": {
+          "title": "Ticker",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source_account_name",
+        "platform_id",
+        "ticker",
+        "quantity",
+        "price",
+        "cash_amount"
+      ],
+      "title": "propose_add_funded_sell",
+      "type": "object"
+    },
+    "name": "propose_add_funded_sell"
+  },
+  {
+    "description": "propose_add_balance_adjustment(account_id: int, target_balance: float) -> dict\nPropose reconciling an account's derived balance to target_balance. The\nstored delta becomes a visible 'Adjustment' record (ACCT-02). Returns a\nproposal for user confirmation. Does NOT change any data — user must\napprove.",
+    "fn_schema": {
+      "properties": {
+        "account_id": {
+          "title": "Account Id",
+          "type": "integer"
+        },
+        "target_balance": {
+          "title": "Target Balance",
+          "type": "number"
+        }
+      },
+      "required": [
+        "account_id",
+        "target_balance"
+      ],
+      "title": "propose_add_balance_adjustment",
+      "type": "object"
+    },
+    "name": "propose_add_balance_adjustment"
+  }
+]

@@ -64,9 +64,13 @@ def upgrade() -> None:
             {"t": acc_type, "id": account_id},
         )
 
-    # 2. Abort-loudly asserts — live account set must match D-02 exactly.
+    # 2. Abort-loudly asserts — live account set must match D-02 exactly. On
+    # a fresh/empty accounts table (e.g. a newly bootstrapped monai_test or
+    # CI database) there is nothing to audit against — skip the check rather
+    # than requiring zero accounts to cover the 4-id D-02 map. Mirrors the
+    # same fresh-DB no-op discipline as migration 009's drift check.
     live_ids = {r[0] for r in conn.execute(sa.text("SELECT id FROM accounts"))}
-    if live_ids != set(ACCOUNT_TYPE):
+    if live_ids and live_ids != set(ACCOUNT_TYPE):
         unexpected = live_ids - set(ACCOUNT_TYPE)
         missing = set(ACCOUNT_TYPE) - live_ids
         raise RuntimeError(
