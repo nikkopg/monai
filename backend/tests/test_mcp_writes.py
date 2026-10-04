@@ -693,3 +693,61 @@ def test_confirm_is_not_an_agent_tool_and_write_tools_are_exactly_four():
     assert "confirm_proposal" not in tools.TOOLS and "confirm_proposal" not in tools.READ_TOOL_NAMES
     assert list(inspect.signature(mcp_writes.confirm_proposal).parameters) == ["proposal_id", "code"]
     assert set(mcp_writes.WRITE_TOOLS) == {"propose_transactions", "propose_transfer", "confirm_proposal", "reject_proposal"}
+
+
+# ---------------------------------------------------------------------------
+# Cap durability and concurrency (D-12, D-25)
+# ---------------------------------------------------------------------------
+
+def test_cap_survives_restart_and_reopens_next_hour(db_session, wallets, mcp_proposal):
+    from backend.db import engine
+    w = wallets()
+    guessed, target = (mcp_proposal(_txn_payload((w.name, -10 - i, _d(0)))) for i in range(2))
+    _seed_cap(db_session, mcp_writes.HOURLY_CAP - 1)
+    with pytest.raises(ToolError, match="attempts left"):
+        _confirm(guessed, _wrong(_db_row(db_session, guessed.id).code))
+    good = _db_row(db_session, target.id).code
+    with pytest.raises(ToolError, match="reopen at"):
+        _confirm(target, good)
+    engine.dispose()  # a restart: all cap state lives in Postgres
+    with pytest.raises(ToolError, match="reopen at"):
+        _confirm(target, good)
+    db_session.rollback()
+    db_session.execute(text("UPDATE audit_log SET created_at = created_at - interval '1 hour' "
+                            "WHERE entity = 'proposal' AND operation = 'mcp_confirm_failed'"))
+    db_session.commit()
+    _confirm(target, good)
+    assert _db_row(db_session, target.id).status == "confirmed"
+
+
+def test_cap_counts_only_current_hour(db_session, wallets, mcp_proposal):
+    p = mcp_proposal(_txn_payload((wallets().name, -10, _d(0))))
+    _seed_cap(db_session)
+    db_session.execute(text("UPDATE audit_log SET created_at = created_at - interval '1 hour' "
+                            "WHERE entity = 'proposal' AND operation = 'mcp_confirm_failed'"))
+    db_session.commit()
+    _confirm(p, _db_row(db_session, p.id).code)
+    assert _db_row(db_session, p.id).status == "confirmed"
+
+
+def test_cap_parallel_guesses_never_overshoot(db_session, mcp_proposal):
+    from concurrent.futures import ThreadPoolExecutor
+    props = [mcp_proposal({"operation": "add_transaction", "rows": []}) for _ in range(10)]
+    ids = [str(p.id) for p in props]
+    codes = {str(p.id): _db_row(db_session, p.id).code for p in props}
+
+    def guess(n):
+        pid = ids[n % len(ids)]
+        try:
+            mcp_writes.confirm_proposal(pid, _wrong(codes[pid]))
+        except ToolError as e:
+            return str(e)
+        return "NO ERROR"
+
+    with ThreadPoolExecutor(max_workers=12) as ex:
+        texts = list(ex.map(guess, range(60)))
+    assert all(t.startswith("Wrong code") or "locked" in t or "Too many wrong codes" in t for t in texts)
+    assert len(_fail_rows(db_session)) == mcp_writes.HOURLY_CAP
+    rows = [_db_row(db_session, i) for i in ids]
+    assert sum(r.failed_attempts for r in rows) == mcp_writes.HOURLY_CAP
+    assert all(r.status == "pending" for r in rows)
