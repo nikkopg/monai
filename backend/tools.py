@@ -19,10 +19,12 @@ main.py applies the write atomically when the user approves.
 
 import datetime
 import secrets
+import uuid
 from datetime import timezone, timedelta
 from decimal import Decimal
 
 from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from backend.db import engine, get_session_sync
 
@@ -707,7 +709,22 @@ READ_TOOL_NAMES: frozenset[str] = frozenset(TOOLS)
 # Helpers for write tools
 # ---------------------------------------------------------------------------
 
-def _make_proposal(operation: str, payload: dict, channel: str = "chat") -> tuple[str, str]:
+_CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"  # base32 without I L O U
+
+
+def _new_code() -> str:
+    """Six-character confirm code drawn from the Crockford alphabet."""
+    return "".join(secrets.choice(_CROCKFORD) for _ in range(6))
+
+
+def _make_proposal(
+    operation: str,
+    payload: dict,
+    channel: str = "chat",
+    *,
+    db: Session | None = None,
+    supersedes_id: uuid.UUID | None = None,
+) -> tuple[str, str]:
     """Insert a Proposal row; return (proposal_id_str, token).
 
     proposal_token is returned to the caller so the SSE answer event can carry
@@ -715,24 +732,40 @@ def _make_proposal(operation: str, payload: dict, channel: str = "chat") -> tupl
     by GET /proposals (T-02-07). `channel` picks the TTL from
     backend.proposals.TTL (chat 15 min, mcp 48 h); unknown channels raise
     ValueError before any insert.
+
+    mcp proposals also get a 6-character confirm code, stored plaintext (shown
+    only to approver-key readers); chat proposals keep code NULL. Callers on the
+    MCP path must discard the returned token. With `db=` the row is added and
+    flushed in the caller's transaction and NOT committed (used by MCP replace).
     """
     from backend.models import Proposal
     from backend.proposals import ttl_for
 
     token = secrets.token_urlsafe(32)
     expires_at = datetime.datetime.now(timezone.utc) + ttl_for(channel)
-    with get_session_sync() as db:
-        proposal = Proposal(
+
+    def build() -> Proposal:
+        return Proposal(
             token=token,
             operation=operation,
             payload=payload,
             status="pending",
             channel=channel,
             expires_at=expires_at,
+            code=_new_code() if channel == "mcp" else None,
+            supersedes_id=supersedes_id,
         )
+
+    if db is not None:
+        proposal = build()
         db.add(proposal)
-        db.commit()
-        db.refresh(proposal)
+        db.flush()
+        return str(proposal.id), token
+    with get_session_sync() as own:
+        proposal = build()
+        own.add(proposal)
+        own.commit()
+        own.refresh(proposal)
         proposal_id = str(proposal.id)
     return proposal_id, token
 

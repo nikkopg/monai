@@ -55,7 +55,10 @@ def _make_and_check(db, channel, ttl):
         assert row.channel == (channel or "chat")
         assert row.status == "pending"
         assert row.failed_attempts == 0
-        assert row.code is None
+        if row.channel == "mcp":
+            assert re.fullmatch(r"[0-9A-HJKMNP-TV-Z]{6}", row.code)
+        else:
+            assert row.code is None
         assert abs((row.expires_at - row.created_at) - ttl) < timedelta(seconds=60)
     finally:
         db.rollback()

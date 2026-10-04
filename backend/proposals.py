@@ -3,7 +3,8 @@
 `transition()` is the only place application code assigns a proposal's status
 (a grep test in test_proposals_approval.py enforces it, D-09). Expiry is lazy
 (`expire_stale()`, run at the top of proposal reads); there is no background
-job (D-11). Status values are pending, confirmed, rejected, expired; there is
+job (D-11). Status values are pending, confirmed, rejected, expired, superseded
+(superseded = replaced by a newer MCP proposal, Phase 32 D-14); there is
 no `locked` status, Phase 32 derives MCP lockout from failed_attempts (D-04).
 """
 from datetime import datetime, timedelta, timezone
@@ -16,7 +17,9 @@ TTL: dict[str, timedelta] = {
     "mcp": timedelta(hours=48),
 }
 
-_TARGETS = ("confirmed", "rejected", "expired")
+_TARGETS = ("confirmed", "rejected", "expired", "superseded")
+
+ALL_SKIPPED_MSG = "Every row is skipped — reject this proposal instead"
 
 
 def ttl_for(channel: str) -> timedelta:
@@ -28,7 +31,7 @@ def ttl_for(channel: str) -> timedelta:
 
 
 def transition(proposal, new_status: str) -> None:
-    """Move a pending proposal to confirmed, rejected or expired. Caller commits."""
+    """Move a pending proposal to confirmed, rejected, expired or superseded. Caller commits."""
     if new_status not in _TARGETS:
         raise ValueError(f"Invalid proposal status {new_status!r}")
     if proposal.status != "pending":
