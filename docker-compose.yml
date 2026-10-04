@@ -36,6 +36,11 @@ services:
       TZ: Asia/Jakarta
       PGTZ: Asia/Jakarta
       MONAI_API_KEY: ${MONAI_API_KEY:?MONAI_API_KEY must be set - add it to .env}
+      # Optional second secret that approves or rejects any proposal. Must differ from
+      # MONAI_API_KEY; never put it in any MCP client config. Empty means the approver
+      # routes answer 503 (fail-closed). The frontend deliberately does not receive it
+      # (Phase 33 adds proxy injection on an allowlist).
+      MONAI_APPROVER_KEY: ${MONAI_APPROVER_KEY:-}
     depends_on:
       db:
         condition: service_healthy

@@ -52,6 +52,14 @@ Requires Docker + Docker Compose. Host networking is used so the backend can rea
 echo "MONAI_API_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
 ```
 
+Optionally add a separate approver key. It approves or rejects any pending proposal whatever channel created it (`POST /proposals/{id}/approve` and `POST /proposals/{id}/reject`, sent in the `MONAI_APPROVER_KEY` header):
+
+```sh
+echo "MONAI_APPROVER_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
+```
+
+It must differ from `MONAI_API_KEY` (the backend answers 503 if they match or if it is unset). Never put it in any MCP client config: MCP clients hold `MONAI_API_KEY`, and the split is what stops a client approving its own writes.
+
 **2. (Default provider) Have Ollama running** on the host at `http://localhost:11434` with the model in `docker-compose.yml` (`gemma4:31b-cloud`). To use Claude or OpenAI instead, set `LLM_PROVIDER=claude` (+ `ANTHROPIC_API_KEY`) or `LLM_PROVIDER=openai` (+ `OPENAI_API_KEY`) — these are also switchable in the Settings page.
 
 **3. Start the stack:**
