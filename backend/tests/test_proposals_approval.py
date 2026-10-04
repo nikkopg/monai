@@ -126,3 +126,74 @@ def test_transition_refuses_non_pending_and_unknown_target():
         with pytest.raises(ValueError):
             transition(p, bad)
         assert p.status == "pending"
+
+
+# ---------------------------------------------------------------------------
+# Approver key dependencies (APPR-01, D-15)
+# ---------------------------------------------------------------------------
+
+def _set_keys(monkeypatch, api, approver):
+    import backend.auth as auth
+
+    monkeypatch.setattr(auth, "_CONFIGURED_KEY", api)
+    monkeypatch.setattr(auth, "_CONFIGURED_APPROVER_KEY", approver, raising=False)
+    return auth
+
+
+def test_approver_auth_key_ok_matrix(monkeypatch):
+    auth = _set_keys(monkeypatch, "api-x", "appr-y")
+    assert auth.approver_key_ok("appr-y") is True
+    for bad in ("api-x", None, ""):
+        assert auth.approver_key_ok(bad) is False
+    auth = _set_keys(monkeypatch, "api-x", "api-x")
+    for v in ("api-x", None, "", "appr-y"):
+        assert auth.approver_key_ok(v) is False
+    auth = _set_keys(monkeypatch, "api-x", "")
+    for v in ("api-x", None, "", "appr-y"):
+        assert auth.approver_key_ok(v) is False
+
+
+def test_approver_auth_require_dependency(monkeypatch):
+    from fastapi import HTTPException
+
+    auth = _set_keys(monkeypatch, "api-x", "")
+    with pytest.raises(HTTPException) as e:
+        auth.require_approver_key("anything")
+    assert e.value.status_code == 503
+    auth = _set_keys(monkeypatch, "api-x", "api-x")
+    with pytest.raises(HTTPException) as e:
+        auth.require_approver_key("api-x")
+    assert e.value.status_code == 503
+    assert "api-x" not in e.value.detail
+    auth = _set_keys(monkeypatch, "api-x", "appr-y")
+    for bad in (None, "wrong"):
+        with pytest.raises(HTTPException) as e:
+            auth.require_approver_key(bad)
+        assert e.value.status_code == 401
+        assert e.value.detail == "Invalid or missing approver key"
+        assert "appr-y" not in e.value.detail and "api-x" not in e.value.detail
+    assert auth.require_approver_key("appr-y") is None
+    assert auth.optional_approver("appr-y") is True
+    assert auth.optional_approver("nope") is False
+    assert auth.optional_approver(None) is False
+
+
+def test_approver_auth_reject_scope_dependency(monkeypatch):
+    from fastapi import HTTPException
+
+    auth = _set_keys(monkeypatch, "api-x", "appr-y")
+    assert auth.require_reject_scope("api-x", None) == "chat"
+    assert auth.require_reject_scope(None, "appr-y") == "approver"
+    for args in (("api-x", "wrong"), (None, None), ("wrong", None)):
+        with pytest.raises(HTTPException) as e:
+            auth.require_reject_scope(*args)
+        assert e.value.status_code == 401
+
+
+def test_mcp_guard_rejects_approver_key(client, api_key, approver_key):
+    for headers in (
+        {"MONAI_API_KEY": approver_key},
+        {"Authorization": f"Bearer {approver_key}"},
+        {"MONAI_APPROVER_KEY": approver_key},
+    ):
+        assert client.post("/mcp", json={}, headers=headers).status_code == 401

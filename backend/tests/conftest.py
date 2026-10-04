@@ -5,6 +5,7 @@ Provides:
   client       — FastAPI TestClient for all HTTP-level tests (sync)
   async_client — httpx.AsyncClient for async endpoint tests (query-stream, proposals)
   api_key      — sets MONAI_API_KEY env var for tests that exercise write endpoints
+  approver_key — sets MONAI_APPROVER_KEY for approve/reject tests; differs from api_key
 
 Import-time note:
   backend.auth reads _CONFIGURED_KEY (from the MONAI_API_KEY env var, default
@@ -190,6 +191,18 @@ def api_key(monkeypatch: pytest.MonkeyPatch) -> str:
 
     monkeypatch.setattr(auth_mod, "_CONFIGURED_KEY", _TEST_API_KEY)
     return _TEST_API_KEY
+
+
+_TEST_APPROVER_KEY = "test-approver-key-fixture"
+
+
+@pytest.fixture()
+def approver_key(monkeypatch: pytest.MonkeyPatch) -> str:
+    """Set a known MONAI_APPROVER_KEY (differs from the api_key fixture value)."""
+    import backend.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "_CONFIGURED_APPROVER_KEY", _TEST_APPROVER_KEY)
+    return _TEST_APPROVER_KEY
 
 
 # ---------------------------------------------------------------------------
