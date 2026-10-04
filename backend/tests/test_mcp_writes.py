@@ -7,6 +7,7 @@ any GET /proposals bulk-expires stale rows.
 import datetime
 import inspect
 import json
+import logging
 import secrets
 import types
 import uuid
@@ -19,6 +20,7 @@ from sqlalchemy import text
 
 from backend import mcp_writes
 from backend.mcp_writes import TxnRow
+from backend.tests.test_mcp import _mcp_session, _sse_json, _tools_call, _tools_list
 from backend.tests.test_write_endpoints import _cleanup_account
 
 D = datetime.date(2026, 1, 10)
@@ -751,3 +753,139 @@ def test_cap_parallel_guesses_never_overshoot(db_session, mcp_proposal):
     rows = [_db_row(db_session, i) for i in ids]
     assert sum(r.failed_attempts for r in rows) == mcp_writes.HOURLY_CAP
     assert all(r.status == "pending" for r in rows)
+
+
+# ---------------------------------------------------------------------------
+# Over the real MCP transport: secret absence and code-gated writes (D-21..D-23)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def all_logs(caplog):
+    """caplog that really sees FastMCP: its logger does not propagate (Pitfall 3)."""
+    saved = {}
+    for name in ("", "fastmcp", "mcp"):
+        lg = logging.getLogger(name)
+        saved[name] = lg.level
+        lg.addHandler(caplog.handler)
+        lg.setLevel(logging.DEBUG)
+    caplog.set_level(logging.DEBUG)
+    yield caplog
+    for name, lvl in saved.items():
+        lg = logging.getLogger(name)
+        lg.setLevel(lvl)
+        if name:
+            lg.removeHandler(caplog.handler)
+
+
+def _max_audit_id(db):
+    db.rollback()
+    return db.execute(text("SELECT coalesce(max(id), 0) FROM audit_log")).scalar()
+
+
+def _new_audit_blob(db, since):
+    db.rollback()
+    rows = db.execute(text("SELECT before, after FROM audit_log WHERE id > :i"), {"i": since}).all()
+    return json.dumps([[r.before, r.after] for r in rows], default=str)
+
+
+def _assert_absent(blob, *secrets_):
+    for s in secrets_:
+        assert s not in blob, "a secret leaked"
+
+
+def test_secret_absent_propose_and_listing(client, api_key, approver_key, db_session, wallets, track, all_logs):
+    w = wallets()
+    since = _max_audit_id(db_session)
+    with client:
+        hdr = _mcp_session(client, api_key)
+        res = _tools_call(client, hdr, "propose_transactions", {"rows": [
+            {"date": _d(0), "amount": -45000, "account": w.name, "merchant": "Coffee Shop"}]})
+        listing = json.dumps(_tools_list(client, hdr))
+    assert res["isError"] is False
+    out = res["structuredContent"]
+    assert set(out) == {"proposal_id", "summary", "row_count", "expires_at", "duplicates", "next_step"}
+    track.append(out["proposal_id"])
+    st = _db_row(db_session, out["proposal_id"])
+    keys = (st.token, st.code, approver_key, api_key)
+    _assert_absent(json.dumps(res), *keys)
+    _assert_absent(listing, st.token, st.code, approver_key)
+    _assert_absent(all_logs.text, st.token, st.code, approver_key)
+    _assert_absent(json.dumps(st.payload), st.token, st.code)
+    _assert_absent(_new_audit_blob(db_session, since), st.token, st.code, approver_key, api_key)
+    assert "<redacted>" in all_logs.text  # positive control: the call_tool debug line was seen
+
+
+def test_secret_absent_wrong_locked_and_capped_confirm(
+        client, api_key, approver_key, db_session, wallets, mcp_proposal, all_logs):
+    w = wallets()
+    wrong_p, locked_p, capped_p = (mcp_proposal(_txn_payload((w.name, -10 - i, _d(0)))) for i in range(3))
+    stored = {p.id: _db_row(db_session, p.id) for p in (wrong_p, locked_p, capped_p)}
+    since = _max_audit_id(db_session)
+    guess = _wrong(stored[wrong_p.id].code)
+    db_session.execute(text("UPDATE proposals SET failed_attempts = 5 WHERE id = :i"), {"i": locked_p.id})
+    db_session.commit()
+    with client:
+        hdr = _mcp_session(client, api_key)
+        results = [
+            _tools_call(client, hdr, "confirm_proposal", {"proposal_id": str(wrong_p.id), "code": guess}),
+            _tools_call(client, hdr, "confirm_proposal",
+                        {"proposal_id": str(locked_p.id), "code": stored[locked_p.id].code}),
+        ]
+        _seed_cap(db_session)
+        results.append(_tools_call(client, hdr, "confirm_proposal",
+                                   {"proposal_id": str(capped_p.id), "code": stored[capped_p.id].code}))
+    assert all(r["isError"] is True for r in results)
+    secrets_ = [approver_key, api_key]
+    for st in stored.values():
+        secrets_ += [st.token, st.code]
+    blob = json.dumps(results)
+    _assert_absent(blob, *secrets_)
+    assert guess not in blob
+    _assert_absent(all_logs.text, *secrets_, guess)
+    _assert_absent(_new_audit_blob(db_session, since), *secrets_, guess)
+    assert "<redacted>" in all_logs.text
+
+
+def test_secret_absent_malformed_code_in_logs(client, api_key, approver_key, db_session, wallets, mcp_proposal, all_logs):
+    p = mcp_proposal(_txn_payload((wallets().name, -10, _d(0))))
+    stored = _db_row(db_session, p.id)
+    bad = _wrong(stored.code)
+    with client:
+        hdr = _mcp_session(client, api_key)
+        payload = {"jsonrpc": "2.0", "id": 9, "method": "tools/call", "params": {
+            "name": "confirm_proposal", "arguments": {"proposal_id": str(p.id), "code": [bad]}}}
+        r = client.post("/mcp", json=payload, headers=hdr, follow_redirects=True)
+    assert r.status_code == 200 and _sse_json(r)["result"]["isError"] is True  # refused, not applied
+    assert _db_row(db_session, p.id).status == "pending"
+    _assert_absent(all_logs.text, stored.code, stored.token, approver_key)
+    # The client's own bad input is echoed in its response (T-32-38, accepted), which sse_starlette
+    # logs at DEBUG only; every other logger (FastMCP's validation WARNING included) is redacted.
+    other = "\n".join(rec.getMessage() for rec in all_logs.records if rec.name != "sse_starlette.sse")
+    assert bad not in other and "<redacted>" in other
+
+
+def test_mcp_writes_need_code_over_mcp(client, api_key, db_session, wallets, track):
+    a, b = wallets(2)
+    count = lambda: (db_session.rollback(), db_session.execute(text("SELECT count(*) FROM transactions")).scalar())[1]
+    before = count()
+    with client:
+        hdr = _mcp_session(client, api_key)
+        txn = _tools_call(client, hdr, "propose_transactions", {"rows": [
+            {"date": _d(0), "amount": -45000, "account": a.name, "merchant": "Coffee Shop"}]})
+        xfer = _tools_call(client, hdr, "propose_transfer", {
+            "from_account": a.name, "to_account": b.name, "amount": 1000, "date": _d(0)})
+        assert txn["isError"] is False and xfer["isError"] is False
+        tid, xid = txn["structuredContent"]["proposal_id"], xfer["structuredContent"]["proposal_id"]
+        track += [tid, xid]
+        assert count() == before
+
+        rej = _tools_call(client, hdr, "reject_proposal", {"proposal_id": xid})
+        assert rej["isError"] is False and count() == before
+
+        code = _db_row(db_session, tid).code
+        wrong = _tools_call(client, hdr, "confirm_proposal", {"proposal_id": tid, "code": _wrong(code)})
+        assert wrong["isError"] is True and count() == before
+
+        ok = _tools_call(client, hdr, "confirm_proposal", {"proposal_id": tid, "code": code})
+        assert ok["isError"] is False
+    assert count() == before + 1

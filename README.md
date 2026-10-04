@@ -29,7 +29,7 @@ The AI never fabricates a number (it chains a fixed set of tested tools, never r
   - allocation and historical charts
   - funded buy/sell from a liquid account
 - **Settings**: LLM provider/model, API keys, base currency and price source, all set in the UI.
-- **MCP server**: read-only finance tools for external MCP clients such as Claude Desktop, from the same registry the web agent uses.
+- **MCP server**: read-only finance tools for external MCP clients such as Claude Desktop (same registry as the web agent), plus curated write tools that only create proposals you approve with a code.
 
 Not built yet: recurring-charge detection, arbitrary two-period comparison, token-by-token streaming, an automated reksadana NAV feed.
 
@@ -39,7 +39,7 @@ Not built yet: recurring-charge detection, arbitrary two-period comparison, toke
 - **Database** — PostgreSQL 16, Alembic-managed schema, on port `5434`
 - **AI** — LlamaIndex `FunctionAgent` over one tool registry (`backend/tools.py` `TOOLS`), streamed through `POST /query-stream`; multi-provider via `LLM_PROVIDER` (Ollama local default / Claude / OpenAI). Each tool's docstring is its prompt, and the LLM-visible tool surface is locked by a checked-in snapshot (`backend/tests/agent_tool_surface.json`)
 - **Frontend** — Next.js 14 (App Router) + React 18; a server-side route handler proxies `/api/*` to the backend and injects the API key so it never reaches the browser bundle
-- **MCP** — FastMCP co-mounted in the FastAPI app at `/mcp` (read-only, auth-gated)
+- **MCP** — FastMCP co-mounted in the FastAPI app at `/mcp` (auth-gated)
 - **Correctness by construction** — the LLM selects and chains parameterized tools; it never emits SQL. All agent writes require explicit user confirmation and are audit-logged.
 
 ## Getting started
@@ -71,6 +71,8 @@ docker compose up -d --build
 - Frontend: http://127.0.0.1:3001
 - Backend API: http://127.0.0.1:8001
 - MCP endpoint: http://127.0.0.1:8001/mcp (send `MONAI_API_KEY` as a header or `Authorization: Bearer <key>`)
+
+**MCP writes.** Four tools let an MCP client capture data: `propose_transactions` (one row or a batch of up to 500), `propose_transfer`, `confirm_proposal` and `reject_proposal`. Every write lands as a pending proposal. Claude can apply it only with the 6-character code shown in monai; until the Inbox ships, read it with `curl -s -H "MONAI_APPROVER_KEY: $MONAI_APPROVER_KEY" http://127.0.0.1:8001/proposals` (the code appears only with the approver key). 5 wrong codes lock that proposal for MCP and 20 wrong codes per hour stop MCP confirms; you can still approve with `POST /proposals/{id}/approve` and the approver key. Skip a row with `PATCH /proposals/{id}/rows/{index}` and body `{"skip": true}`. Likely duplicates are flagged, never blocked. Never put the approver key in any MCP client config.
 
 Alembic runs `alembic upgrade head` automatically at backend startup (idempotent). A fresh install needs nothing further. **If you have an existing `monai_pgdata` volume from before Alembic**, follow the one-time runbook below first.
 
