@@ -5,14 +5,20 @@ in teardown. Never assert that a leftover row from another test is still pending
 any GET /proposals bulk-expires stale rows.
 """
 import datetime
+import inspect
+import json
 import secrets
 import types
 import uuid
 from datetime import timedelta
+from decimal import Decimal
 
 import pytest
+from fastmcp.exceptions import ToolError
 from sqlalchemy import text
 
+from backend import mcp_writes
+from backend.mcp_writes import TxnRow
 from backend.tests.test_write_endpoints import _cleanup_account
 
 D = datetime.date(2026, 1, 10)
@@ -60,15 +66,16 @@ def wallets(db_session, track):
     from backend.models import Account
     made: list[str] = []
 
-    def make(n=1, *, type="liquid", currency="IDR"):
+    def make(n=1, *, type="liquid", currency="IDR", name=None):
         out = []
         for _ in range(n):
-            name = f"MCP Test Wallet {secrets.token_hex(4)}"
+            name = name or f"MCP Test Wallet {secrets.token_hex(4)}"
             acc = Account(name=name, type=type, currency=currency)
             db_session.add(acc)
             db_session.commit()
             made.append(name)
             out.append(types.SimpleNamespace(id=acc.id, name=name, currency=currency))
+            name = None
         return out if n > 1 else out[0]
 
     yield make
@@ -83,8 +90,8 @@ def mcp_proposal(db_session, track):
     from backend.models import Proposal
     from backend.tools import _make_proposal
 
-    def make(payload):
-        pid, _ = _make_proposal(payload["operation"], payload, channel="mcp")
+    def make(payload, channel="mcp"):
+        pid, _ = _make_proposal(payload["operation"], payload, channel=channel)
         track.append(pid)
         return db_session.get(Proposal, uuid.UUID(pid))
 
@@ -238,3 +245,256 @@ def test_get_proposals_duplicates_per_row_without_mutating_stored_payload(client
     db_session.expire_all()
     fresh = db_session.get(type(p), p.id)
     assert all("duplicates" not in row for row in fresh.payload["rows"])
+
+
+# ---------------------------------------------------------------------------
+# propose_transactions / propose_transfer (D-01..D-07)
+# ---------------------------------------------------------------------------
+
+GENERIC = "Could not complete this request. Nothing was changed."
+
+
+def _today():
+    from zoneinfo import ZoneInfo
+    return datetime.datetime.now(ZoneInfo("Asia/Jakarta")).date()
+
+
+def _row(account, **kw):
+    kw.setdefault("date", "2026-01-10")
+    kw.setdefault("amount", -12500)
+    return TxnRow(account=account, **kw)
+
+
+def _count(db):
+    db.rollback()
+    return db.execute(text("SELECT count(*) FROM proposals")).scalar()
+
+
+def _db_row(db, pid):
+    db.rollback()
+    return db.execute(
+        text("SELECT status, code, token, supersedes_id, failed_attempts, payload FROM proposals WHERE id = :i"),
+        {"i": uuid.UUID(str(pid))},
+    ).one()
+
+
+def test_propose_single_row_shape_and_canonical_names(db_session, wallets, track):
+    from backend.models import Category
+    w = wallets()
+    r = mcp_writes.propose_transactions([_row(w.name.lower(), merchant="Coffee Shop", category="uncategorized")])
+    track.append(r["proposal_id"])
+    assert set(r) == {"proposal_id", "summary", "row_count", "expires_at", "duplicates", "next_step"}
+    assert r["next_step"] == mcp_writes.NEXT_STEP and r["row_count"] == 1 and r["duplicates"] == []
+    st = _db_row(db_session, r["proposal_id"])
+    assert st.status == "pending" and st.code and st.token
+    assert st.token not in json.dumps(r) and st.code not in json.dumps(r)
+    after = st.payload["rows"][0]["after"]
+    assert after["account"] == w.name and after["currency"] == "IDR" and after["is_transfer"] is False
+    assert Decimal(after["amount"]) == Decimal(-12500) and isinstance(after["amount"], str)
+    assert after["category"] == db_session.query(Category).filter(Category.name == "Uncategorized").first().name
+    exp = datetime.datetime.fromisoformat(r["expires_at"])
+    assert abs((exp - datetime.datetime.now(datetime.timezone.utc)) - timedelta(hours=48)) < timedelta(minutes=2)
+
+
+def test_propose_unknown_category_refused(db_session, wallets):
+    w = wallets()
+    n = _count(db_session)
+    with pytest.raises(ToolError, match="list_categories"):
+        mcp_writes.propose_transactions([_row(w.name, category="No Such Category " + secrets.token_hex(4))])
+    assert _count(db_session) == n
+
+
+def test_propose_unknown_account_refused_and_not_created(db_session):
+    name = "MCP Test Ghost " + secrets.token_hex(4)
+    with pytest.raises(ToolError, match="find_accounts"):
+        mcp_writes.propose_transactions([_row(name)])
+    assert db_session.execute(text("SELECT count(*) FROM accounts WHERE name = :n"), {"n": name}).scalar() == 0
+
+
+def test_propose_ambiguous_and_investment_accounts_refused(db_session, wallets):
+    base = "MCP Test Dupe " + secrets.token_hex(4)
+    wallets(name=base)
+    wallets(name=base.upper())
+    with pytest.raises(ToolError, match="more than one account"):
+        mcp_writes.propose_transactions([_row(base.lower())])
+    inv = wallets(type="investment")
+    with pytest.raises(ToolError, match="unknown account"):
+        mcp_writes.propose_transactions([_row(inv.name)])
+
+
+def test_batch_limits(db_session, wallets, track):
+    w = wallets()
+    r = mcp_writes.propose_transactions([_row(w.name, amount=-(i + 1)) for i in range(500)])
+    track.append(r["proposal_id"])
+    assert r["row_count"] == 500
+    assert len(_db_row(db_session, r["proposal_id"]).payload["rows"]) == 500
+    n = _count(db_session)
+    with pytest.raises(ToolError, match="split"):
+        mcp_writes.propose_transactions([_row(w.name)] * 501)
+    with pytest.raises(ToolError):
+        mcp_writes.propose_transactions([])
+    assert _count(db_session) == n
+
+
+@pytest.mark.parametrize("bad", [
+    {"amount": 0}, {"amount": "abc"}, {"amount": "NaN"}, {"amount": "1.234"},
+    {"amount": str(Decimal(10) ** 16)}, {"date": "20260101"}, {"merchant": "m" * 513},
+    {"date": "future"},
+])
+def test_batch_one_bad_row_refuses_everything(db_session, wallets, bad):
+    w = wallets()
+    if bad.get("date") == "future":
+        bad = {"date": (_today() + timedelta(days=2)).isoformat()}
+    n = _count(db_session)
+    with pytest.raises(ToolError, match="row 1") as ei:
+        mcp_writes.propose_transactions([_row(w.name), _row(w.name, **bad), _row(w.name)])
+    assert "row 0" not in str(ei.value) and "row 2" not in str(ei.value)
+    assert _count(db_session) == n
+
+
+def test_propose_duplicate_is_flagged_not_blocked(db_session, wallets, track):
+    w = wallets()
+    _ledger(db_session, w.id, D, -12500)
+    r = mcp_writes.propose_transactions([_row(w.name)])
+    track.append(r["proposal_id"])
+    assert r["duplicates"][0]["row"] == 0 and r["duplicates"][0]["matches"][0]["kind"] == "transaction"
+    assert "flagged" in r["summary"]
+
+
+def test_transfer_valid_and_refusals(db_session, wallets, track):
+    a, b = wallets(2)
+    usd = wallets(currency="USD")
+    r = mcp_writes.propose_transfer(a.name.lower(), b.name, 25000, "2026-01-10")
+    track.append(r["proposal_id"])
+    assert set(r) == {"proposal_id", "summary", "row_count", "expires_at", "duplicates", "next_step"}
+    after = _db_row(db_session, r["proposal_id"]).payload["rows"][0]["after"]
+    assert after["leg_a"]["account"] == a.name and Decimal(after["leg_a"]["amount"]) == -25000
+    assert after["leg_b"]["account"] == b.name and Decimal(after["leg_b"]["amount"]) == 25000
+    assert after["leg_a"]["currency"] == after["leg_b"]["currency"] == "IDR"
+    n = _count(db_session)
+    for args, msg in [((a.name, a.name, 10, "2026-01-10"), "different"), ((a.name, b.name, 0, "2026-01-10"), "positive"),
+                      ((a.name, b.name, -5, "2026-01-10"), "positive"), ((a.name, usd.name, 10, "2026-01-10"), "same currency")]:
+        with pytest.raises(ToolError, match=msg):
+            mcp_writes.propose_transfer(*args)
+    assert _count(db_session) == n
+
+
+# ---------------------------------------------------------------------------
+# reject_proposal (D-13)
+# ---------------------------------------------------------------------------
+
+def test_reject_own_pending_and_locked(db_session, wallets, mcp_proposal):
+    w = wallets()
+    p = mcp_proposal(_txn_payload((w.name, -10, _d(0))))
+    locked = mcp_proposal(_txn_payload((w.name, -11, _d(0))))
+    db_session.execute(text("UPDATE proposals SET failed_attempts = 5 WHERE id = :i"), {"i": locked.id})
+    db_session.commit()
+    for x in (p, locked):
+        assert mcp_writes.reject_proposal(str(x.id)) == {"proposal_id": str(x.id), "status": "rejected"}
+        assert _db_row(db_session, x.id).status == "rejected"
+    with pytest.raises(ToolError, match="already rejected"):
+        mcp_writes.reject_proposal(str(p.id))
+
+
+def test_reject_refuses_other_channels_and_operations(db_session, wallets, mcp_proposal):
+    w = wallets()
+    chat = mcp_proposal(_txn_payload((w.name, -10, _d(0))), channel="chat")
+    other = mcp_proposal({"operation": "edit_holding", "rows": []})
+    with pytest.raises(ToolError, match="reject this in monai"):
+        mcp_writes.reject_proposal(str(chat.id))
+    with pytest.raises(ToolError, match="reject this in monai"):
+        mcp_writes.reject_proposal(str(other.id))
+    with pytest.raises(ToolError, match="No proposal"):
+        mcp_writes.reject_proposal(str(uuid.uuid4()))
+    assert _db_row(db_session, chat.id).status == "pending"
+
+
+# ---------------------------------------------------------------------------
+# replaces= (D-14, D-16)
+# ---------------------------------------------------------------------------
+
+def test_replace_supersedes_old_and_does_not_carry_skips(db_session, wallets, mcp_proposal, track):
+    w = wallets()
+    old = mcp_proposal(_txn_payload((w.name, -10, _d(0), True)))
+    old_code = _db_row(db_session, old.id).code
+    r = mcp_writes.propose_transactions([_row(w.name, amount=-10)], replaces=str(old.id))
+    track.append(r["proposal_id"])
+    assert _db_row(db_session, old.id).status == "superseded"
+    new = _db_row(db_session, r["proposal_id"])
+    assert new.supersedes_id == old.id and new.status == "pending" and new.code != old_code
+    assert "skip" not in new.payload["rows"][0]
+    assert r["duplicates"] == []  # not flagged against its own predecessor
+
+
+def test_replace_across_operations(db_session, wallets, mcp_proposal, track):
+    a, b = wallets(2)
+    old = mcp_proposal(_txn_payload((a.name, -10, _d(0))))
+    r = mcp_writes.propose_transfer(a.name, b.name, 10, "2026-01-10", replaces=str(old.id))
+    track.append(r["proposal_id"])
+    assert _db_row(db_session, old.id).status == "superseded"
+    assert _db_row(db_session, r["proposal_id"]).payload["operation"] == "add_transfer"
+
+
+def _make_target(kind, db, w, mcp_proposal):
+    payload = _txn_payload((w.name, -10, _d(0)))
+    if kind == "chat":
+        return mcp_proposal(payload, channel="chat")
+    if kind == "non_capture":
+        return mcp_proposal({"operation": "edit_holding", "rows": []})
+    p = mcp_proposal(payload)
+    sql = {"locked": "UPDATE proposals SET failed_attempts = 5 WHERE id = :i",
+           "rejected": "UPDATE proposals SET status = 'rejected' WHERE id = :i",
+           "expired": "UPDATE proposals SET expires_at = now() - interval '1 hour' WHERE id = :i"}[kind]
+    db.execute(text(sql), {"i": p.id})
+    db.commit()
+    return p
+
+
+@pytest.mark.parametrize("kind", ["chat", "non_capture", "locked", "rejected", "expired"])
+def test_replace_refused_targets_stay_untouched(kind, db_session, wallets, mcp_proposal):
+    w = wallets()
+    old = _make_target(kind, db_session, w, mcp_proposal)
+    before = _db_row(db_session, old.id).status
+    n = _count(db_session)
+    with pytest.raises(ToolError):
+        mcp_writes.propose_transactions([_row(w.name)], replaces=str(old.id))
+    assert _count(db_session) == n
+    assert _db_row(db_session, old.id).status == before
+
+
+def test_replace_is_atomic_when_flagging_fails(db_session, wallets, mcp_proposal, monkeypatch):
+    w = wallets()
+    old = mcp_proposal(_txn_payload((w.name, -10, _d(0))))
+
+    def boom(*a, **k):
+        raise RuntimeError("marker-boom")
+
+    monkeypatch.setattr(mcp_writes, "duplicate_flags", boom)
+    with pytest.raises(ToolError) as ei:
+        mcp_writes.propose_transactions([_row(w.name)], replaces=str(old.id))
+    assert str(ei.value) == GENERIC
+    assert _db_row(db_session, old.id).status == "pending"
+    assert db_session.execute(text("SELECT count(*) FROM proposals WHERE supersedes_id = :i"), {"i": old.id}).scalar() == 0
+
+
+# ---------------------------------------------------------------------------
+# _safe (D-21) and surface (D-02, D-03)
+# ---------------------------------------------------------------------------
+
+def test_safe_hides_unexpected_exception_text(db_session, wallets, monkeypatch, caplog):
+    w = wallets()
+    monkeypatch.setattr(mcp_writes, "_make_proposal", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("marker-secret")))
+    with caplog.at_level("ERROR"), pytest.raises(ToolError) as ei:
+        mcp_writes.propose_transactions([_row(w.name)])
+    assert str(ei.value) == GENERIC and "marker-secret" not in str(ei.value)
+    assert "marker-secret" not in caplog.text and "RuntimeError" in caplog.text
+
+
+def test_wrappers_are_not_registered_as_agent_tools_and_have_fixed_params():
+    from backend import tools
+    for name in ("propose_transactions", "propose_transfer", "reject_proposal"):
+        assert name not in tools.TOOLS and name not in tools.READ_TOOL_NAMES
+    params = lambda f: list(inspect.signature(f).parameters)
+    assert params(mcp_writes.propose_transactions) == ["rows", "replaces"]
+    assert params(mcp_writes.propose_transfer) == ["from_account", "to_account", "amount", "date", "notes", "replaces"]
+    assert params(mcp_writes.reject_proposal) == ["proposal_id"]
