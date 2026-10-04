@@ -35,6 +35,7 @@ Endpoints:
     PUT  /settings              partial-update settings (requires API key)
 """
 
+import copy
 import hmac
 import logging
 import uuid
@@ -55,6 +56,7 @@ from backend.auth import optional_approver, require_api_key, require_approver_ke
 from backend.mcp_server import build_mcp
 from backend.db import get_session, get_session_sync
 from backend.importer import _get_or_create_account, import_csv_text
+from backend.mcp_writes import duplicate_flags
 from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, Proposal, Transaction
 from backend.net_worth_history import monthly_net_worth_series
 from backend.portfolio import portfolio_summary as compose_portfolio_summary
@@ -1544,17 +1546,29 @@ def list_proposals(
     rows and only when the request carries a valid approver key. No
     response_model: it cannot vary per request, so each item serializes its own
     model's fields.
+
+    Pending add_transaction/add_transfer payload rows each carry an additive
+    `duplicates` list (advisory flags, computed on read, Phase 33 renders them);
+    it lives on a deep copy and is never written to the stored payload.
     """
     expire_stale(db)
     rows = db.query(Proposal).filter(Proposal.status == status).order_by(
         desc(Proposal.created_at)
     ).all()
-    return [
+    items = [
         ProposalApproverOut.model_validate(p)
         if is_approver and p.channel == "mcp"
         else ProposalOut.model_validate(p)
         for p in rows
     ]
+    if status == "pending":
+        flags = duplicate_flags(db, rows)
+        for item in items:
+            if item.id in flags:
+                item.payload = copy.deepcopy(item.payload)
+                for row, row_flags in zip(item.payload.get("rows") or [], flags[item.id]):
+                    row["duplicates"] = row_flags
+    return items
 
 
 # Must stay above any GET route with a path parameter under /proposals so the
