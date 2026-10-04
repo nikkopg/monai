@@ -217,6 +217,17 @@ def test_duplicate_inactive_proposals_and_unknown_accounts_never_match(db_sessio
     assert res[ghost.id] == [[]]
 
 
+def test_duplicate_flags_survive_extreme_chat_dates(db_session, wallets, mcp_proposal):
+    # Chat stores dates unvalidated; one at date.min/date.max must not 500 GET /proposals (WR-01).
+    w = wallets()
+    tx = _ledger(db_session, w.id, D, -4200)
+    p = mcp_proposal(_txn_payload((w.name, -4200, "0001-01-01"), (w.name, -4200, "9999-12-31"),
+                                  (w.name, -4200, _d(0))))
+    rows = _flags(db_session, p)[p.id]
+    assert rows[0] == [] and rows[1] == []
+    assert [f["id"] for f in rows[2] if f["kind"] == "transaction"] == [tx.id]
+
+
 def test_duplicate_flag_cap_and_text_cleaning(db_session, wallets, mcp_proposal):
     w = wallets()
     for i in range(7):
@@ -341,7 +352,7 @@ def test_batch_limits(db_session, wallets, track):
 @pytest.mark.parametrize("bad", [
     {"amount": 0}, {"amount": "abc"}, {"amount": "NaN"}, {"amount": "1.234"},
     {"amount": str(Decimal(10) ** 16)}, {"date": "20260101"}, {"merchant": "m" * 513},
-    {"date": "future"},
+    {"date": "future"}, {"date": "0001-01-02"}, {"date": "1969-12-31"},
 ])
 def test_batch_one_bad_row_refuses_everything(db_session, wallets, bad):
     w = wallets()

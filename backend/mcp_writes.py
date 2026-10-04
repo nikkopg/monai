@@ -40,6 +40,7 @@ _MERCHANT_MAX = 512
 _JAKARTA = ZoneInfo("Asia/Jakarta")
 _MAX_FLAGS = 5
 _FLAG_WINDOW_DAYS = 3
+_MIN_DAY = date(1970, 1, 1)  # propose floor; also keeps flag-window arithmetic off date.min
 
 
 def _clean_text(value: str | None, limit: int = 80) -> str | None:
@@ -65,10 +66,11 @@ def _entries(p: Proposal, ids: dict[str, int]):
         for leg in legs:
             try:
                 amount = Decimal(str(leg["amount"]))
-                if not amount.is_finite():
+                day = date.fromisoformat(str(leg["date"])[:10])
+                # Chat stores dates unvalidated; an extreme one would overflow the window (WR-01).
+                if not amount.is_finite() or not _MIN_DAY <= day <= date(9000, 1, 1):
                     continue
-                yield (i, ids[leg["account"]], amount,
-                       date.fromisoformat(str(leg["date"])[:10]), bool(row.get("skip")))
+                yield (i, ids[leg["account"]], amount, day, bool(row.get("skip")))
             except (KeyError, TypeError, ValueError, InvalidOperation):
                 continue
 
@@ -235,6 +237,8 @@ def _date_error(value, today: date) -> str | None:
     day = _parse_day(value)
     if day is None:
         return "date must be YYYY-MM-DD"
+    if day < _MIN_DAY:
+        return "date is too far in the past"
     return "date is in the future" if day > today else None
 
 
