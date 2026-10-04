@@ -858,10 +858,10 @@ def test_secret_absent_malformed_code_in_logs(client, api_key, approver_key, db_
     assert r.status_code == 200 and _sse_json(r)["result"]["isError"] is True  # refused, not applied
     assert _db_row(db_session, p.id).status == "pending"
     _assert_absent(all_logs.text, stored.code, stored.token, approver_key)
-    # The client's own bad input is echoed in its response (T-32-38, accepted), which sse_starlette
-    # logs at DEBUG only; every other logger (FastMCP's validation WARNING included) is redacted.
-    other = "\n".join(rec.getMessage() for rec in all_logs.records if rec.name != "sse_starlette.sse")
-    assert bad not in other and "<redacted>" in other
+    # The client's own bad input is echoed in its response only (T-32-38, accepted); no logger,
+    # sse_starlette's DEBUG chunk log included, may write it even with root at DEBUG.
+    logged = "\n".join(rec.getMessage() for rec in all_logs.records)
+    assert bad not in logged and "<redacted>" in logged
 
 
 def test_mcp_writes_need_code_over_mcp(client, api_key, db_session, wallets, track):

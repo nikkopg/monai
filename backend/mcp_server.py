@@ -38,6 +38,9 @@ class _RedactToolArgs(logging.Filter):
 
 for _name in ("fastmcp.server.mixins.mcp_operations", "fastmcp.server.server"):
     logging.getLogger(_name).addFilter(_RedactToolArgs())
+# sse_starlette logs every SSE chunk at DEBUG, and a validation-error chunk echoes
+# the submitted arguments; pin it so a root DEBUG setting cannot log a code (T-32-38).
+logging.getLogger("sse_starlette").setLevel(logging.INFO)
 
 # Valid named periods, shared across every period-taking tool's description
 # (D-05) — sourced from backend.tools.PERIODS, never hard-coded.
