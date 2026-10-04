@@ -17,21 +17,27 @@ The AI never fabricates a number (it chains a fixed set of tested tools, never r
 
 ## Status
 
-✅ **v1.0 shipped** (2026-07-17) — a working four-page app.
+✅ **v1.4 shipped** (2026-10-04). See [Releases](https://github.com/nikkopg/monai/releases) for per-version notes.
 
-- **Chat** — agentic, multi-step reasoning that plans and chains tools; confirm-before-write edits with an audit log.
-- **Cashflow** — dashboard (totals, category donut, income-vs-expense, month trend, per-account balances) + full CRUD on transactions/accounts/categories + Wallet CSV upload.
-- **Investments** — holdings CRUD with live prices (crypto via CoinGecko, IDX via yfinance, manual fallback), P&L and staleness badges, multi-platform / multi-currency (USD→IDR) positions, cash + physical gold, allocation pie + historical value/P&L charts.
-- **Settings** — configure LLM provider/model, API keys, base currency, and price source in-UI.
-- **MCP server** — read-only finance tools exposed to external MCP clients (e.g. Claude Desktop) over the same tool source the web agent uses.
+- **Chat**: an agent that plans and chains tools over several steps. Every write is proposed as an Approve/Reject card (one card per proposal), applied only after you confirm, and audit-logged.
+- **Cashflow**: one net-worth figure, liquids plus investments, each counted once. The dashboard has totals, a category donut, income vs expense, a month trend and per-account balances. A net-worth trend card goes back years: months without trustworthy data show as explained gaps, never interpolated.
+- **Records**: a date-grouped ledger with daily nets, filters, transfer pairs and bulk actions. One modal records an expense, income or transfer.
+- **Accounts and categories**: typed liquid/investment accounts with balance adjustments. Categories form a 3-level hierarchy, managed in Settings. Wallet (BudgetBakers) CSV import.
+- **Investments**:
+  - holdings across platforms, with live prices (crypto via CoinGecko, IDX via yfinance, manual fallback), P&L and staleness badges
+  - USD→IDR conversion, cash and physical gold
+  - allocation and historical charts
+  - funded buy/sell from a liquid account
+- **Settings**: LLM provider/model, API keys, base currency and price source, all set in the UI.
+- **MCP server**: read-only finance tools for external MCP clients such as Claude Desktop, from the same registry the web agent uses.
 
-Deferred to v2: recurring-charge/subscription detection, arbitrary two-period comparison, token-by-token streaming, automated reksadana NAV feed.
+Not built yet: recurring-charge detection, arbitrary two-period comparison, token-by-token streaming, an automated reksadana NAV feed.
 
 ## Architecture
 
 - **Backend** — Python 3.12 · FastAPI · SQLAlchemy 2.0 · psycopg3, on port `8001`
 - **Database** — PostgreSQL 16, Alembic-managed schema, on port `5434`
-- **AI** — LlamaIndex `FunctionAgent` over a fixed tool registry; multi-provider via `LLM_PROVIDER` (Ollama local default / Claude / OpenAI)
+- **AI** — LlamaIndex `FunctionAgent` over one tool registry (`backend/tools.py` `TOOLS`), streamed through `POST /query-stream`; multi-provider via `LLM_PROVIDER` (Ollama local default / Claude / OpenAI). Each tool's docstring is its prompt, and the LLM-visible tool surface is locked by a checked-in snapshot (`backend/tests/agent_tool_surface.json`)
 - **Frontend** — Next.js 14 (App Router) + React 18; a server-side route handler proxies `/api/*` to the backend and injects the API key so it never reaches the browser bundle
 - **MCP** — FastMCP co-mounted in the FastAPI app at `/mcp` (read-only, auth-gated)
 - **Correctness by construction** — the LLM selects and chains parameterized tools; it never emits SQL. All agent writes require explicit user confirmation and are audit-logged.
@@ -63,6 +69,26 @@ Alembic runs `alembic upgrade head` automatically at backend startup (idempotent
 ### Network and timezone
 
 The db, API and UI all listen on `127.0.0.1` only — nothing is reachable from the LAN. For remote use, SSH-tunnel instead: `ssh -L 3001:127.0.0.1:3001 user@your-server` (add `-L 8001:127.0.0.1:8001` for MCP), then open http://127.0.0.1:3001 locally. Point `mcp-remote` / Claude Desktop configs at http://127.0.0.1:8001/mcp. The backend runs on Asia/Jakarta via `TZ`/`PGTZ` in `docker-compose.yml`; the daily 01:00 WIB portfolio snapshot used to stamp the previous (UTC) date and now stamps the Jakarta date, so expect a one-time one-day discontinuity in the value history at cutover.
+
+## Development
+
+**Tests.** Run `pytest` from the repo root. It defaults to a separate `monai_test` database on the same Postgres, creating and migrating it on the first run, and it refuses to run against the live `monai` database. Tests use synthetic data only. `backend/tests_live_audit/` holds read-only checks against live data, run by hand only.
+
+**CI.** GitHub Actions (`.github/workflows/backend-tests.yml`) runs the backend suite on Python 3.12 against a fresh Postgres, on every push and pull request.
+
+**Agent eval (opt-in).** Asks 12 golden questions with your configured LLM against `monai_test`. It checks each answer's tool choice, date arguments and numbers, then prints a pass/fail table. It is never part of CI.
+
+```sh
+env -u DATABASE_URL python -m backend.evals.agent_eval            # all cases
+env -u DATABASE_URL python -m backend.evals.agent_eval --case 4   # one case
+env -u DATABASE_URL python -m backend.evals.agent_eval --self-check   # parser only: no DB, no LLM
+```
+
+**Pre-push guard.** The repo is public and monai runs on real finances. `.githooks/pre-push` blocks pushes that contain planning docs, data or dump files, secret-like tokens, or IDR-sized figures. Enable it once per clone:
+
+```sh
+git config core.hooksPath .githooks
+```
 
 ## Privacy
 
