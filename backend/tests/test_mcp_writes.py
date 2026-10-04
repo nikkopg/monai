@@ -309,6 +309,17 @@ def test_propose_single_row_shape_and_canonical_names(db_session, wallets, track
     assert abs((exp - datetime.datetime.now(datetime.timezone.utc)) - timedelta(hours=48)) < timedelta(minutes=2)
 
 
+def test_propose_strips_control_and_bidi_characters(db_session, wallets, track):
+    a, b = wallets(2)
+    r = mcp_writes.propose_transactions([_row(a.name, merchant="Coffee\u202e Shop\n", notes="pa\x1bid\u200b")])
+    t = mcp_writes.propose_transfer(a.name, b.name, 10, "2026-01-10", notes="top\u2066 up\r")
+    track += [r["proposal_id"], t["proposal_id"]]
+    after = _db_row(db_session, r["proposal_id"]).payload["rows"][0]["after"]
+    assert (after["merchant"], after["notes"]) == ("Coffee Shop", "paid")
+    legs = _db_row(db_session, t["proposal_id"]).payload["rows"][0]["after"]
+    assert legs["leg_a"]["notes"] == legs["leg_b"]["notes"] == "top up"
+
+
 def test_propose_unknown_category_refused(db_session, wallets):
     w = wallets()
     n = _count(db_session)

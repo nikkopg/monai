@@ -43,7 +43,7 @@ _FLAG_WINDOW_DAYS = 3
 _MIN_DAY = date(1970, 1, 1)  # propose floor; also keeps flag-window arithmetic off date.min
 
 
-def _clean_text(value: str | None, limit: int = 80) -> str | None:
+def _clean_text(value: str | None, limit: int | None = 80) -> str | None:
     """Strip control/format characters and cap length (ledger text flows to an LLM)."""
     if value is None:
         return None
@@ -351,7 +351,9 @@ def propose_transactions(rows: list[TxnRow], replaces: str | None = None) -> dic
             names.add(acct[1])
             out.append({"before": None, "after": {
                 "date": r.date, "amount": str(amount), "account": acct[1], "category": category,
-                "merchant": r.merchant, "notes": r.notes, "currency": acct[2], "is_transfer": False,
+                # External-LLM text enters the ledger here: strip control/bidi chars (WR-03).
+                "merchant": _clean_text(r.merchant, None), "notes": _clean_text(r.notes, None),
+                "currency": acct[2], "is_transfer": False,
             }})
         if errors:
             more = f", and {len(errors) - 20} more" if len(errors) > 20 else ""
@@ -391,7 +393,7 @@ def propose_transfer(
         errors += [e for e in (_date_error(date, today), _text_error("notes", notes)) if e]
         if errors:
             _refuse("Nothing was proposed. " + "; ".join(errors))
-        cur = src[2]
+        cur, notes = src[2], _clean_text(notes, None)
         leg = lambda acct, amt: {"account": acct[1], "amount": str(amt), "currency": cur, "date": date, "notes": notes}
         payload = {"operation": "add_transfer",
                    "rows": [{"before": None, "after": {"leg_a": leg(src, -mag), "leg_b": leg(dst, mag)}}]}
