@@ -498,3 +498,198 @@ def test_wrappers_are_not_registered_as_agent_tools_and_have_fixed_params():
     assert params(mcp_writes.propose_transactions) == ["rows", "replaces"]
     assert params(mcp_writes.propose_transfer) == ["from_account", "to_account", "amount", "date", "notes", "replaces"]
     assert params(mcp_writes.reject_proposal) == ["proposal_id"]
+
+
+# ---------------------------------------------------------------------------
+# confirm_proposal (D-09..D-12, D-20, D-21)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _clean_cap_rows(db_available):
+    """The hourly cap counts audit rows, so no test may inherit another's failures (Pitfall 6)."""
+    from backend.db import SessionLocal
+
+    def wipe():
+        with SessionLocal() as s:
+            s.execute(text("DELETE FROM audit_log WHERE entity = 'proposal' AND operation = 'mcp_confirm_failed'"))
+            s.commit()
+
+    wipe()
+    yield
+    wipe()
+
+
+def _wrong(code):
+    return "ZZZZZZ" if code != "ZZZZZZ" else "YYYYYY"
+
+
+def _confirm(p, code):
+    return mcp_writes.confirm_proposal(str(p.id), code)
+
+
+def _fail_rows(db):
+    db.rollback()
+    return db.execute(text("SELECT after FROM audit_log WHERE entity = 'proposal' "
+                           "AND operation = 'mcp_confirm_failed'")).scalars().all()
+
+
+def _tx_count(db, acc_id):
+    db.rollback()
+    return db.execute(text("SELECT count(*) FROM transactions WHERE account_id = :a"), {"a": acc_id}).scalar()
+
+
+@pytest.mark.parametrize("raw", ["k0m1pq", "K-0M 1PQ", "kOmlpq", "KOMIPQ"])
+def test_code_normalizes_crockford_confusables(raw):
+    assert mcp_writes._normalize_code(raw) == "K0M1PQ"
+
+
+def test_code_normalize_int_and_blank():
+    assert mcp_writes._normalize_code(483920) == "483920"
+    assert [mcp_writes._normalize_code(c) for c in ("", "  ", "-")] == ["", "", ""]
+
+
+def test_code_blank_is_refused_and_not_an_attempt(db_session, wallets, mcp_proposal):
+    p = mcp_proposal(_txn_payload((wallets().name, -10, _d(0))))
+    for blank in ("", "  ", "-"):
+        with pytest.raises(ToolError, match="code is required"):
+            _confirm(p, blank)
+    assert _db_row(db_session, p.id).failed_attempts == 0 and _fail_rows(db_session) == []
+
+
+def test_confirm_unknown_and_malformed_id():
+    for bad in (str(uuid.uuid4()), "not-a-uuid"):
+        with pytest.raises(ToolError, match="No proposal with that id"):
+            mcp_writes.confirm_proposal(bad, "ABC123")
+
+
+def test_confirm_refuses_chat_and_codeless_proposals(db_session, wallets, mcp_proposal):
+    w = wallets()
+    chat = mcp_proposal(_txn_payload((w.name, -10, _d(0))), channel="chat")
+    codeless = mcp_proposal(_txn_payload((w.name, -11, _d(0))))
+    db_session.execute(text("UPDATE proposals SET code = NULL WHERE id = :i"), {"i": codeless.id})
+    db_session.commit()
+    for p in (chat, codeless):
+        with pytest.raises(ToolError, match="approve this in monai"):
+            _confirm(p, "ABC123")
+        assert _db_row(db_session, p.id).failed_attempts == 0
+    assert _fail_rows(db_session) == []
+
+
+def test_confirm_refuses_already_confirmed_and_expired(db_session, wallets, mcp_proposal):
+    w = wallets()
+    done = mcp_proposal(_txn_payload((w.name, -10, _d(0))))
+    gone = mcp_proposal(_txn_payload((w.name, -11, _d(0))))
+    code = _db_row(db_session, done.id).code
+    _confirm(done, code)
+    with pytest.raises(ToolError, match="already confirmed"):
+        _confirm(done, code)
+    db_session.execute(text("UPDATE proposals SET expires_at = now() - interval '1 hour' WHERE id = :i"), {"i": gone.id})
+    db_session.commit()
+    with pytest.raises(ToolError, match="expired"):
+        _confirm(gone, _db_row(db_session, gone.id).code)
+
+
+def test_code_wrong_counts_durably_and_audit_row_has_no_codes(db_session, wallets, mcp_proposal):
+    p = mcp_proposal(_txn_payload((wallets().name, -10, _d(0))))
+    stored = _db_row(db_session, p.id).code
+    guess = _wrong(stored)
+    with pytest.raises(ToolError, match="4 attempts left") as ei:
+        _confirm(p, guess)
+    assert stored not in str(ei.value) and guess not in str(ei.value)
+    row = _db_row(db_session, p.id)
+    assert row.failed_attempts == 1 and row.status == "pending"
+    after = _fail_rows(db_session)
+    assert after == [{"proposal_id": str(p.id), "failed_attempts": 1}]
+    blob = json.dumps(after)
+    assert stored not in blob and guess not in blob
+
+
+def test_lock_five_wrong_codes_then_correct_refused_but_approver_key_works(
+        client, approver_key, db_session, wallets, mcp_proposal):
+    w = wallets()
+    p = mcp_proposal(_txn_payload((w.name, -10, _d(0))))
+    stored = _db_row(db_session, p.id).code
+    for left in (4, 3, 2, 1):
+        with pytest.raises(ToolError, match=f"{left} attempts left"):
+            _confirm(p, _wrong(stored))
+    with pytest.raises(ToolError, match="now locked"):
+        _confirm(p, _wrong(stored))
+    with pytest.raises(ToolError, match="approve it in monai"):
+        _confirm(p, stored)
+    assert _db_row(db_session, p.id).status == "pending" and _tx_count(db_session, w.id) == 0
+    r = client.post(f"/proposals/{p.id}/approve", headers={"MONAI_APPROVER_KEY": approver_key})
+    assert r.status_code == 200 and _tx_count(db_session, w.id) == 1
+
+
+def test_confirm_messy_code_applies_and_skips_are_not_applied(client, approver_key, db_session, wallets, mcp_proposal):
+    w = wallets()
+    p = mcp_proposal(_txn_payload((w.name, -10, _d(0)), (w.name, -20, _d(1)), (w.name, -30, _d(2))))
+    r = client.patch(f"/proposals/{p.id}/rows/1", json={"skip": True}, headers={"MONAI_APPROVER_KEY": approver_key})
+    assert r.status_code == 200
+    stored = _db_row(db_session, p.id).code
+    messy = f"{stored[:3].lower()}-{stored[3:].lower()}"
+    out = _confirm(p, messy)
+    assert out == {"proposal_id": str(p.id), "status": "confirmed", "message": "Applied: added 2 transactions (1 skipped)"}
+    assert _db_row(db_session, p.id).status == "confirmed"
+    amounts = db_session.execute(text("SELECT amount FROM transactions WHERE account_id = :a ORDER BY amount"),
+                                 {"a": w.id}).scalars().all()
+    assert amounts == [Decimal("-30"), Decimal("-10")]
+
+
+def test_confirm_transfer_applies(db_session, wallets, mcp_proposal):
+    a, b = wallets(2)
+    p = mcp_proposal(_xfer_payload(a.name, b.name, 10, "2026-01-10"))
+    assert _confirm(p, _db_row(db_session, p.id).code)["message"] == "Applied: added 1 transfer"
+    assert _tx_count(db_session, a.id) == 1 and _tx_count(db_session, b.id) == 1
+
+
+def test_confirm_all_skipped_is_refused_with_fixed_text(client, approver_key, db_session, wallets, mcp_proposal):
+    from backend.proposals import ALL_SKIPPED_MSG
+    w = wallets()
+    p = mcp_proposal(_txn_payload((w.name, -10, _d(0), True)))
+    with pytest.raises(ToolError) as ei:
+        _confirm(p, _db_row(db_session, p.id).code)
+    assert str(ei.value) == ALL_SKIPPED_MSG
+    row = _db_row(db_session, p.id)
+    assert row.status == "pending" and row.failed_attempts == 0 and _tx_count(db_session, w.id) == 0
+
+
+def test_confirm_executor_failure_maps_to_fixed_text(db_session, wallets, mcp_proposal, monkeypatch):
+    import backend.main as main_mod
+    w = wallets()
+    p = mcp_proposal(_txn_payload((w.name, -10, _d(0))))
+    stored = _db_row(db_session, p.id).code
+
+    def boom(*a, **k):
+        raise RuntimeError(f"disk exploded {stored}")
+
+    monkeypatch.setattr(main_mod, "apply_add_transaction", boom)
+    with pytest.raises(ToolError) as ei:
+        _confirm(p, stored)
+    assert str(ei.value) == mcp_writes._APPLY_FAILED
+    assert stored not in str(ei.value) and "Write failed" not in str(ei.value)
+    assert _db_row(db_session, p.id).status == "pending"
+
+
+def _seed_cap(db, n=mcp_writes.HOURLY_CAP):
+    from backend.models import AuditLog
+    db.add_all([AuditLog(entity="proposal", entity_id=None, operation="mcp_confirm_failed", before=None,
+                         after={"proposal_id": str(uuid.uuid4()), "failed_attempts": 1}) for _ in range(n)])
+    db.commit()
+
+
+def test_cap_blocks_even_a_correct_code(db_session, wallets, mcp_proposal):
+    w = wallets()
+    p = mcp_proposal(_txn_payload((w.name, -10, _d(0))))
+    _seed_cap(db_session)
+    with pytest.raises(ToolError, match=r"reopen at \d{4}-\d{2}-\d{2}T\d{2}:00.*owner can approve in monai"):
+        _confirm(p, _db_row(db_session, p.id).code)
+    row = _db_row(db_session, p.id)
+    assert row.status == "pending" and row.failed_attempts == 0 and _tx_count(db_session, w.id) == 0
+
+
+def test_confirm_is_not_an_agent_tool_and_write_tools_are_exactly_four():
+    from backend import tools
+    assert "confirm_proposal" not in tools.TOOLS and "confirm_proposal" not in tools.READ_TOOL_NAMES
+    assert list(inspect.signature(mcp_writes.confirm_proposal).parameters) == ["proposal_id", "code"]
+    assert set(mcp_writes.WRITE_TOOLS) == {"propose_transactions", "propose_transfer", "confirm_proposal", "reject_proposal"}

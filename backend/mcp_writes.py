@@ -7,6 +7,7 @@ this module's helper, so anything from backend.main is imported lazily inside
 functions.
 """
 import functools
+import hmac
 import logging
 import re
 import unicodedata
@@ -22,8 +23,8 @@ from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from backend.db import get_session_sync
-from backend.models import Proposal
-from backend.proposals import transition
+from backend.models import AuditLog, Proposal
+from backend.proposals import ALL_SKIPPED_MSG, transition
 from backend.tools import _make_proposal
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,8 @@ logger = logging.getLogger(__name__)
 CAPTURE_OPS = ("add_transaction", "add_transfer")
 MAX_BATCH_ROWS = 500
 MAX_ATTEMPTS = 5
+HOURLY_CAP = 20  # failed MCP code attempts per clock hour, all proposals (D-12)
+_CAP_LOCK_KEY = 7301932  # advisory xact lock id serializing the cap check
 NEXT_STEP = "Ask the owner for the 6-character code shown in monai, then call confirm_proposal. Never guess a code."
 _GENERIC = "Could not complete this request. Nothing was changed."
 _MERCHANT_MAX = 512
@@ -412,3 +415,98 @@ def reject_proposal(proposal_id: str) -> dict:
         transition(p, "rejected")  # locked proposals may be rejected too
         db.commit()
         return {"proposal_id": str(p.id), "status": "rejected"}
+
+
+# ---------------------------------------------------------------------------
+# confirm_proposal: approval by the code shown in monai (D-09..D-12)
+# ---------------------------------------------------------------------------
+
+_NO_CODE = "A code is required. Ask the owner for the 6-character code shown in monai; never guess a code."
+_NOT_MCP = "This proposal was not created over MCP; approve this in monai."
+_LOCKED = "This proposal is locked after 5 wrong codes; the owner can approve it in monai."
+_EXPIRED = "This proposal expired; propose it again."
+_APPLY_FAILED = "monai could not apply this proposal; nothing was changed. The owner can review it in monai."
+
+
+def _normalize_code(code: str | int) -> str:
+    """Crockford-style: drop spaces/hyphens, uppercase, O->0, I and L->1 (D-09)."""
+    return re.sub(r"[\s-]", "", str(code)).upper().translate(str.maketrans("OIL", "011"))
+
+
+def _confirm_with_code(db: Session, pid: uuid.UUID, code_norm: str) -> dict:
+    """Check order per D-10; the submitted code is compared in Python, never sent to SQL."""
+    from fastapi import HTTPException
+
+    from backend.main import _execute_and_commit, _require_pending
+
+    p = db.get(Proposal, pid, with_for_update=True)
+    if p is None:
+        _refuse("No proposal with that id.")
+    if p.channel != "mcp" or not p.code:
+        _refuse(_NOT_MCP)
+    try:
+        _require_pending(p)
+    except HTTPException as e:
+        _refuse(_EXPIRED if e.status_code == 410 else f"This proposal is already {p.status}; nothing to confirm.")
+    if p.failed_attempts >= MAX_ATTEMPTS:
+        _refuse(_LOCKED)
+
+    # ponytail: one global xact lock serializes all MCP confirms and is held through a successful
+    # apply (a 500-row batch holds it for seconds); if confirms ever run concurrently, take a
+    # session-level lock and release it before the execute step.
+    db.execute(text("SELECT pg_advisory_xact_lock(CAST(:k AS bigint))"), {"k": _CAP_LOCK_KEY})
+    failed = db.execute(text(
+        "SELECT count(*) FROM audit_log WHERE entity = 'proposal' AND operation = 'mcp_confirm_failed' "
+        "AND created_at >= date_trunc('hour', now())")).scalar_one()
+    if failed >= HOURLY_CAP:
+        reopen = db.execute(text("SELECT date_trunc('hour', now()) + interval '1 hour'")).scalar_one()
+        db.rollback()
+        _refuse(f"Too many wrong codes this hour; MCP confirms reopen at {reopen.isoformat(timespec='minutes')}. "
+                "The owner can approve in monai.")
+
+    if not hmac.compare_digest(code_norm.encode("utf-8", "replace"), p.code.encode()):
+        fa = db.execute(
+            text("UPDATE proposals SET failed_attempts = failed_attempts + 1 WHERE id = :i RETURNING failed_attempts"),
+            {"i": p.id}).scalar_one()
+        db.add(AuditLog(entity="proposal", entity_id=None, operation="mcp_confirm_failed", before=None,
+                        after={"proposal_id": str(p.id), "failed_attempts": fa}))
+        db.commit()  # commit BEFORE refusing, or the counter and audit row roll back
+        _refuse("Wrong code. This proposal is now locked for MCP; the owner can approve it in monai."
+                if fa >= MAX_ATTEMPTS else
+                f"Wrong code. {MAX_ATTEMPTS - fa} attempts left. Ask the owner for the code shown in monai; never guess.")
+
+    pid_s, op, rows = str(p.id), p.operation, (p.payload or {}).get("rows") or []
+    skipped = sum(1 for r in rows if r.get("skip"))
+    try:
+        _execute_and_commit(db, p)
+    except HTTPException as e:  # D-21: map by status; detail text never reaches MCP
+        _refuse(ALL_SKIPPED_MSG if e.status_code == 422 and e.detail == ALL_SKIPPED_MSG else _APPLY_FAILED)
+    if op == "add_transfer":
+        msg = "Applied: added 1 transfer"
+    else:
+        n = len(rows) - skipped
+        msg = f"Applied: added {n} transaction{'' if n == 1 else 's'} ({skipped} skipped)"
+    return {"proposal_id": pid_s, "status": "confirmed", "message": msg}
+
+
+@_safe
+def confirm_proposal(proposal_id: str, code: str | int) -> dict:
+    """Apply an MCP proposal with the 6-character code the owner sees in monai."""
+    code_norm = _normalize_code(code)
+    if not code_norm:
+        _refuse(_NO_CODE)  # not an attempt: no DB access
+    try:
+        pid = uuid.UUID(str(proposal_id))
+    except ValueError:
+        _refuse("No proposal with that id.")
+    with get_session_sync() as db:
+        return _confirm_with_code(db, pid, code_norm)
+
+
+# Registered on FastMCP only, never in tools.TOOLS (D-02).
+WRITE_TOOLS = {
+    "propose_transactions": propose_transactions,
+    "propose_transfer": propose_transfer,
+    "confirm_proposal": confirm_proposal,
+    "reject_proposal": reject_proposal,
+}
