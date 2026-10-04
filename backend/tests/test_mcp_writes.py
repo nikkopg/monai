@@ -695,8 +695,18 @@ def test_confirm_executor_failure_maps_to_fixed_text(db_session, wallets, mcp_pr
     assert _db_row(db_session, p.id).status == "pending"
 
 
+def _clear_of_hour_boundary(margin=30):
+    """The cap counts date_trunc('hour', now()); if the clock is about to cross :00, wait
+    until it has, so seeded rows and the confirms under test share one clock hour (WR-05)."""
+    import time
+    left = 3600 - time.time() % 3600
+    if left < margin:
+        time.sleep(left + 1)
+
+
 def _seed_cap(db, n=mcp_writes.HOURLY_CAP):
     from backend.models import AuditLog
+    _clear_of_hour_boundary()
     db.add_all([AuditLog(entity="proposal", entity_id=None, operation="mcp_confirm_failed", before=None,
                          after={"proposal_id": str(uuid.uuid4()), "failed_attempts": 1}) for _ in range(n)])
     db.commit()
@@ -759,6 +769,7 @@ def test_cap_parallel_guesses_never_overshoot(db_session, mcp_proposal):
     props = [mcp_proposal({"operation": "add_transaction", "rows": []}) for _ in range(10)]
     ids = [str(p.id) for p in props]
     codes = {str(p.id): _db_row(db_session, p.id).code for p in props}
+    _clear_of_hour_boundary()
 
     def guess(n):
         pid = ids[n % len(ids)]
