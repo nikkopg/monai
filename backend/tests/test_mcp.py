@@ -26,6 +26,10 @@ import pytest
 from backend.tools import READ_TOOL_NAMES, TOOLS
 
 _TOOL_SNAPSHOT = Path(__file__).with_name("agent_tool_surface.json")
+_MCP_SNAPSHOT = Path(__file__).with_name("mcp_tool_surface.json")
+
+MCP_WRITE_NAMES = {"propose_transactions", "propose_transfer", "confirm_proposal", "reject_proposal"}
+_FORBIDDEN_PARAMS = {"channel", "db", "token", "session"}
 
 _MCP_HEADERS = {
     "Content-Type": "application/json",
@@ -103,15 +107,15 @@ def test_mcp_endpoint_mounted(client, api_key):
 
 
 def test_mcp_read_parity(client, api_key):
-    """MCP-02: tools/list == the 16 TOOLS names (Phase 15 adds net_worth); a
-    tools/call result equals a direct TOOLS[name](...) dict."""
+    """MCP-02: tools/list holds the 16 read names plus the 4 curated writes
+    (Phase 32); a tools/call result equals a direct TOOLS[name](...) dict."""
     with client:
         session_headers = _mcp_session(client, api_key)
 
         listed = _tools_list(client, session_headers)
         listed_names = {t["name"] for t in listed}
-        assert listed_names == set(READ_TOOL_NAMES)
-        assert len(listed_names) == 16
+        assert set(READ_TOOL_NAMES) <= listed_names
+        assert len(listed_names) == 20
 
         mcp_result = _tools_call(client, session_headers, "spending_total", {"period": "last_month"})
         assert mcp_result["isError"] is False
@@ -208,14 +212,29 @@ def test_tool_surface_snapshot():
     )
 
 
-def test_mcp_no_write_tools(client, api_key):
-    """MCP-03: no propose_* name appears in tools/list; calling one is unknown-tool."""
+def _all_keys(node):
+    """Yield every dict key anywhere in a nested dict/list structure."""
+    if isinstance(node, dict):
+        for k, v in node.items():
+            yield k
+            yield from _all_keys(v)
+    elif isinstance(node, list):
+        for v in node:
+            yield from _all_keys(v)
+
+
+def test_mcp_surface_is_exact(client, api_key):
+    """D-01..D-03, D-23: tools/list is exactly the 16 reads plus the 4 curated
+    writes; no schema exposes channel/db/token/session; the writes are not in
+    the chat registry; a chat propose_* name is still an unknown tool."""
     with client:
         session_headers = _mcp_session(client, api_key)
-
         listed = _tools_list(client, session_headers)
-        listed_names = {t["name"] for t in listed}
-        assert not any(n.startswith("propose_") for n in listed_names)
+        assert {t["name"] for t in listed} == set(READ_TOOL_NAMES) | MCP_WRITE_NAMES
+        for t in listed:
+            bad = _FORBIDDEN_PARAMS & set(_all_keys(t["inputSchema"].get("properties", {})))
+            assert not bad, f"{t['name']} exposes {bad}"
+        assert not (MCP_WRITE_NAMES & set(TOOLS))
 
         result = _tools_call(client, session_headers, "propose_add_transaction", {})
         assert result["isError"] is True
@@ -226,7 +245,7 @@ def test_new_write_tools_registered_and_excluded(client, api_key):
     """Phase 14 CHAT-09 SC 2 & 3: the 5 new propose_* names must be present
     in TOOLS, ABSENT from READ_TOOL_NAMES, and ABSENT from the live MCP
     tools/list surface. Catches an accidental rename/removal the generic
-    count/prefix checks (test_mcp_read_parity, test_mcp_no_write_tools)
+    count/prefix checks (test_mcp_read_parity, test_mcp_surface_is_exact)
     would silently tolerate. RED until Plan 14-02 registers the tools (the
     TOOLS membership assertion fails today)."""
     new_tool_names = {
@@ -246,6 +265,44 @@ def test_new_write_tools_registered_and_excluded(client, api_key):
         listed_names = {t["name"] for t in listed}
         leaked = new_tool_names & listed_names
         assert not leaked, f"write tool(s) leaked onto the MCP tools/list surface: {leaked}"
+
+
+def test_mcp_tool_surface_snapshot(client, api_key):
+    """D-24: locks every MCP tool's name, description and inputSchema in
+    backend/tests/mcp_tool_surface.json (incl. the 'Never guess a code' wording).
+
+    Regenerate deliberately with:
+        UPDATE_MCP_SNAPSHOT=1 pytest backend/tests/test_mcp.py -k mcp_tool_surface_snapshot
+    """
+    with client:
+        listed = _tools_list(client, _mcp_session(client, api_key))
+    entries = sorted(
+        (
+            {
+                "name": t["name"],
+                "description": _norm_description(t["description"]),
+                "inputSchema": t["inputSchema"],
+            }
+            for t in listed
+        ),
+        key=lambda e: e["name"],
+    )
+    rendered = json.dumps(entries, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+
+    if os.environ.get("UPDATE_MCP_SNAPSHOT") == "1":
+        _MCP_SNAPSHOT.write_text(rendered, encoding="utf-8")
+        return
+
+    if not _MCP_SNAPSHOT.exists():
+        pytest.fail(
+            f"{_MCP_SNAPSHOT} is missing, regenerate deliberately with UPDATE_MCP_SNAPSHOT=1 "
+            "pytest backend/tests/test_mcp.py -k mcp_tool_surface_snapshot and review the diff."
+        )
+    assert rendered == _MCP_SNAPSHOT.read_text(encoding="utf-8"), (
+        "The MCP tool surface changed. Installed fastmcp=="
+        f"{importlib.metadata.version('fastmcp')}; if the change is real and reviewed, regenerate with "
+        "UPDATE_MCP_SNAPSHOT=1 pytest backend/tests/test_mcp.py -k mcp_tool_surface_snapshot."
+    )
 
 
 def test_mcp_requires_key(client, api_key):

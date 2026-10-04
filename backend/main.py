@@ -207,7 +207,8 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown(wait=False)
 
 
-# MCP server (Phase 6) — read-only, API-key-gated, co-mounted at /mcp on this
+# MCP server (Phase 6; curated writes Phase 32) — API-key-gated, its write tools
+# only create proposals that need the owner's code. Co-mounted at /mcp on this
 # same FastAPI process/port (MCP-01). path="/" here + app.mount("/mcp", ...)
 # below == endpoint is exactly /mcp, never /mcp/mcp (RESEARCH Pitfall 3).
 mcp = build_mcp()
