@@ -48,6 +48,7 @@ from fastmcp.utilities.lifespan import combine_lifespans
 from sqlalchemy import desc, func, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from backend import auth
 from backend.auth import optional_approver, require_api_key, require_approver_key, require_reject_scope
@@ -57,7 +58,7 @@ from backend.importer import _get_or_create_account, import_csv_text
 from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, Proposal, Transaction
 from backend.net_worth_history import monthly_net_worth_series
 from backend.portfolio import portfolio_summary as compose_portfolio_summary
-from backend.proposals import expire_stale, transition
+from backend.proposals import ALL_SKIPPED_MSG, expire_stale, transition
 from backend.portfolio import value_history_series
 from backend.writes import (
     apply_add_account,
@@ -103,6 +104,7 @@ from backend.schemas import (
     CategoryRenameRequest,
     CategoryUpdate,
     ConfirmRequest,
+    RowSkipRequest,
     FundedBuyCreate,
     FundedSellCreate,
     ImportResponse,
@@ -1452,8 +1454,14 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
     payload = proposal.payload
     operation = payload.get("operation", "")
     rows = payload.get("rows", [])
+    # D-20: skip is owner-set on the row (never in `after`, which hits AuditLog).
+    # The non-empty guard keeps legacy empty-rows proposals approvable.
+    if operation == "add_transaction" and rows and all(r.get("skip") for r in rows):
+        raise ValueError(ALL_SKIPPED_MSG)
 
     for row in rows:
+        if operation == "add_transaction" and row.get("skip"):
+            continue
         before = row.get("before")
         after = row.get("after")
 
@@ -1559,6 +1567,79 @@ def proposal_counts(db: Session = Depends(get_session)) -> dict[str, int]:
     return {"pending": n}
 
 
+@app.patch(
+    "/proposals/{proposal_id}/rows/{index}",
+    response_model=ProposalOut,
+    dependencies=[Depends(require_approver_key)],
+)
+def skip_proposal_row(
+    proposal_id: uuid.UUID,
+    index: int,
+    req: RowSkipRequest,
+    db: Session = Depends(get_session),
+):
+    """Mark a pending transaction-batch row skipped (or not). Approver key only.
+
+    Owner-only: MCP cannot skip. Phase 33 Inbox calls this through the proxy
+    allowlist. Skips are not carried across a replace (D-16).
+    """
+    proposal = db.get(Proposal, proposal_id, with_for_update=True)
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    _require_pending(proposal)
+    if proposal.payload.get("operation") != "add_transaction":
+        raise HTTPException(status_code=422, detail="Only transaction batches have skippable rows")
+    rows = proposal.payload.get("rows", [])
+    if not 0 <= index < len(rows):
+        raise HTTPException(status_code=422, detail="Row index out of range")
+    rows[index]["skip"] = req.skip
+    flag_modified(proposal, "payload")
+    db.commit()
+    return proposal
+
+
+def _require_pending(proposal: Proposal) -> None:
+    """Status/expiry checks shared by /confirm, /approve, the skip route and the MCP code path.
+
+    status "expired" -> 410; any other non-pending status -> 409; now >
+    expires_at -> 410 (no status write here; reads flip it lazily).
+    """
+    if proposal.status == "expired":
+        raise HTTPException(status_code=410, detail="Proposal expired — ask again to redo this")
+    if proposal.status != "pending":
+        raise HTTPException(status_code=409, detail=f"Proposal already {proposal.status}")
+    if datetime.now(timezone.utc) > proposal.expires_at:
+        raise HTTPException(status_code=410, detail="Proposal expired — ask again to redo this")
+
+
+def _execute_and_commit(db: Session, proposal: Proposal) -> Proposal:
+    """The one executor for token, approver-key and MCP-code approval (D-10).
+
+    Execute payload + audit_log rows + transition to confirmed in one commit,
+    then reset the query engine. Raises HTTPException 422/500 after rollback.
+    """
+    try:
+        _execute_proposal_payload(db, proposal)
+        transition(proposal, "confirmed")
+        db.commit()
+    except ValueError as e:
+        # IN-02: delegated apply_* helpers raise ValueError for domain errors
+        # (currency mismatch, "Holding not found", bad range) — map to 422 like
+        # every direct REST write endpoint, not a generic 500.
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
+    except IntegrityError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=f"Conflicts with an existing record: {e.orig}")
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Write failed: {e}")
+
+    from backend.query import reset_engine
+    reset_engine()
+    return proposal
+
+
 def _apply_proposal(db: Session, proposal_id: uuid.UUID, token: str | None) -> Proposal:
     """Shared lock/check/execute core for /confirm and /approve (D-16).
 
@@ -1581,35 +1662,10 @@ def _apply_proposal(db: Session, proposal_id: uuid.UUID, token: str | None) -> P
         raise HTTPException(
             status_code=403, detail="Token confirm is chat-only; approve this proposal in monai"
         )
-    if proposal.status == "expired":
-        raise HTTPException(status_code=410, detail="Proposal expired — ask again to redo this")
-    if proposal.status != "pending":
-        raise HTTPException(status_code=409, detail=f"Proposal already {proposal.status}")
-    if datetime.now(timezone.utc) > proposal.expires_at:
-        raise HTTPException(status_code=410, detail="Proposal expired — ask again to redo this")
+    _require_pending(proposal)
     if token is not None and not hmac.compare_digest(token.encode(), proposal.token.encode()):
         raise HTTPException(status_code=401, detail="Invalid confirmation token")
-
-    try:
-        _execute_proposal_payload(db, proposal)
-        transition(proposal, "confirmed")
-        db.commit()
-    except ValueError as e:
-        # IN-02: delegated apply_* helpers raise ValueError for domain errors
-        # (currency mismatch, "Holding not found", bad range) — map to 422 like
-        # every direct REST write endpoint, not a generic 500.
-        db.rollback()
-        raise HTTPException(status_code=422, detail=str(e))
-    except IntegrityError as e:
-        db.rollback()
-        raise HTTPException(status_code=422, detail=f"Conflicts with an existing record: {e.orig}")
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Write failed: {e}")
-
-    from backend.query import reset_engine
-    reset_engine()
-    return proposal
+    return _execute_and_commit(db, proposal)
 
 
 @app.post(

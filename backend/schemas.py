@@ -550,6 +550,12 @@ class ConfirmRequest(BaseModel):
     token: str
 
 
+class RowSkipRequest(BaseModel):
+    """Body for PATCH /proposals/{id}/rows/{index}."""
+
+    skip: bool
+
+
 # ---------------------------------------------------------------------------
 # Settings (UI-03, UI-04) — locked enums per app_settings design
 # ---------------------------------------------------------------------------
