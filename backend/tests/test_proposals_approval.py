@@ -153,6 +153,13 @@ def test_approver_auth_key_ok_matrix(monkeypatch):
         assert auth.approver_key_ok(v) is False
 
 
+def test_key_checks_non_ascii_is_false_not_error(monkeypatch):
+    # str compare_digest raises TypeError on non-ASCII; that used to surface as a 500.
+    auth = _set_keys(monkeypatch, "api-x", "appr-y")
+    assert auth.key_ok("api-\xe9") is False
+    assert auth.approver_key_ok("appr-\xe9") is False
+
+
 def test_approver_auth_require_dependency(monkeypatch):
     from fastapi import HTTPException
 

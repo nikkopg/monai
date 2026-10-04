@@ -58,7 +58,7 @@ Optionally add a separate approver key. It approves or rejects any pending propo
 echo "MONAI_APPROVER_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
 ```
 
-It must differ from `MONAI_API_KEY` (the backend answers 503 if they match or if it is unset). Never put it in any MCP client config: MCP clients hold `MONAI_API_KEY`, and the split is what stops a client approving its own writes.
+It must differ from `MONAI_API_KEY` (the backend answers 503 if they match or if it is unset). Never put it in any MCP client config: MCP clients hold `MONAI_API_KEY`, and the split is what keeps them from approving MCP-created proposals. `MONAI_API_KEY` still authorizes the REST write routes and chat token confirms, so treat it as a write key too.
 
 **2. (Default provider) Have Ollama running** on the host at `http://localhost:11434` with the model in `docker-compose.yml` (`gemma4:31b-cloud`). To use Claude or OpenAI instead, set `LLM_PROVIDER=claude` (+ `ANTHROPIC_API_KEY`) or `LLM_PROVIDER=openai` (+ `OPENAI_API_KEY`) — these are also switchable in the Settings page.
 

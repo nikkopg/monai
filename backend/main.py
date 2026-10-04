@@ -1587,7 +1587,7 @@ def _apply_proposal(db: Session, proposal_id: uuid.UUID, token: str | None) -> P
         raise HTTPException(status_code=409, detail=f"Proposal already {proposal.status}")
     if datetime.now(timezone.utc) > proposal.expires_at:
         raise HTTPException(status_code=410, detail="Proposal expired — ask again to redo this")
-    if token is not None and not hmac.compare_digest(token, proposal.token):
+    if token is not None and not hmac.compare_digest(token.encode(), proposal.token.encode()):
         raise HTTPException(status_code=401, detail="Invalid confirmation token")
 
     try:

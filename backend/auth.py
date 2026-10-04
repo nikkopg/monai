@@ -47,7 +47,7 @@ def key_ok(key: str | None) -> bool:
     Returns True only when _CONFIGURED_KEY is set AND key is not None AND
     hmac.compare_digest(key, _CONFIGURED_KEY) is True. Never logs the key.
     """
-    return bool(_CONFIGURED_KEY) and key is not None and hmac.compare_digest(key, _CONFIGURED_KEY)
+    return bool(_CONFIGURED_KEY) and key is not None and hmac.compare_digest(key.encode(), _CONFIGURED_KEY.encode())
 
 
 def require_api_key(api_key: str | None = Security(_API_KEY_HEADER)) -> None:
@@ -84,7 +84,7 @@ def approver_key_ok(key: str | None) -> bool:
     return (
         _approver_configured()
         and key is not None
-        and hmac.compare_digest(key, _CONFIGURED_APPROVER_KEY)
+        and hmac.compare_digest(key.encode(), _CONFIGURED_APPROVER_KEY.encode())
     )
 
 

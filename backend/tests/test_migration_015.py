@@ -130,7 +130,7 @@ def test_015_upgrade_rerun_downgrade_preserve_rows(scratch_url):
                 c.execute(_INSERT, {"tok": secrets.token_urlsafe(32), "st": st, "conf": conf})
 
         before = _counts(engine)
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, REV_015)
         with engine.connect() as c:
             assert c.execute(text("SELECT version_num FROM alembic_version")).scalar() == REV_015
         assert _counts(engine) == before
@@ -162,7 +162,7 @@ def test_015_upgrade_rerun_downgrade_preserve_rows(scratch_url):
 
         cols = _proposal_columns(engine)
         command.stamp(cfg, PRE_015)
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, REV_015)
         assert _counts(engine) == before
         assert _proposal_columns(engine) == cols
 
