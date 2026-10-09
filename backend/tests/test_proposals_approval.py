@@ -565,3 +565,30 @@ def test_code_visibility_never_in_action_responses(client, api_key, approver_key
         assert "code" not in r.json() and CODE not in r.text
     r = client.post(f"/proposals/{c}/confirm", json={"token": tok}, headers=_api(api_key))
     assert r.status_code == 403 and CODE not in r.text
+
+
+# ---------------------------------------------------------------------------
+# QA-01: transition() stays the only writer of proposal status (D-09)
+# ---------------------------------------------------------------------------
+
+def test_transition_is_the_only_status_writer_and_allows_superseded():
+    import re
+    from pathlib import Path
+
+    from backend.proposals import transition
+
+    p = _fake()
+    transition(p, "superseded")
+    assert p.status == "superseded"
+
+    assign = re.compile(r"\.status\s*=(?!=)")
+    set_sql = re.compile(r"SET\s+status\b", re.I)
+    assigns, sqls = [], []
+    for f in Path(__file__).resolve().parent.parent.glob("*.py"):
+        for n, line in enumerate(f.read_text().splitlines(), 1):
+            if assign.search(line):
+                assigns.append((f.name, line.strip()))
+            if set_sql.search(line):
+                sqls.append((f.name, n))
+    assert assigns == [("proposals.py", "proposal.status = new_status")]
+    assert [f for f, _ in sqls] == ["proposals.py"]
