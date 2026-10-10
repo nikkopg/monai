@@ -7,6 +7,7 @@ import { useParams } from "next/navigation";
 import { tokens, card, btn, btnDark } from "../../styles";
 import DepositCashModal from "../DepositCashModal";
 import HoldingModal from "../HoldingModal";
+import { extractDetail } from "../../lib/api";
 import type { PlatformOption } from "../page";
 
 // ---------------------------------------------------------------------------
@@ -46,7 +47,11 @@ type PortfolioEvent = {
   event_type: string;
   quantity: number;
   price: number;
+  transaction_id: number | null;
+  cash_amount: number | null;
 };
+
+const EDITABLE_SIDES = ["buy", "sell", "dividend"];
 
 const fmtPlain = (n: number) =>
   new Intl.NumberFormat("en-US").format(Math.round(n));
@@ -121,6 +126,7 @@ export default function PlatformDetailPage() {
   const [tab, setTab] = useState<Tab>("pnl");
   const [showDeposit, setShowDeposit] = useState(false);
   const [showLogEvent, setShowLogEvent] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<PortfolioEvent | null>(null);
   // Per-invocation sequence token (CR-01): one flag per request, never one
   // shared boolean. A stale load() (older platformId, or an in-flight load
   // superseded by an onSaved refetch) fails isStale() and never touches state.
@@ -129,6 +135,16 @@ export default function PlatformDetailPage() {
   // silent: skip the full-page "Loading platform…" swap (WR-07) — used by the
   // post-write onSaved refetch so a successful save doesn't blank the page and
   // unmount the modal mid-flight.
+  async function deleteEvent(e: PortfolioEvent) {
+    const msg =
+      `Delete this ${e.event_type} of ${e.ticker} on ${e.date}?` +
+      (e.transaction_id != null ? " The linked cash transaction will also be deleted." : "");
+    if (!window.confirm(msg)) return;
+    const r = await fetch(`/api/portfolio-events/${e.id}`, { method: "DELETE" });
+    if (r.ok) load({ silent: true });
+    else window.alert("Couldn't delete event: " + (await extractDetail(r)));
+  }
+
   async function load(opts?: { silent?: boolean }) {
     const seq = ++loadSeq.current;
     const isStale = () => seq !== loadSeq.current;
@@ -494,6 +510,7 @@ export default function PlatformDetailPage() {
                   <span style={{ flex: 1 }}>Side</span>
                   <span style={{ flex: 1, textAlign: "right" }}>Qty</span>
                   <span style={{ flex: 1.2, textAlign: "right" }}>Price</span>
+                  <span style={{ flex: 1.2, textAlign: "right" }} />
                 </div>
                 {events.map((e) => (
                   <div key={e.id} style={tableRow}>
@@ -556,6 +573,35 @@ export default function PlatformDetailPage() {
                     >
                       {fmtPlain(e.price)}
                     </span>
+                    <span
+                      style={{
+                        flex: 1.2,
+                        display: "flex",
+                        justifyContent: "flex-end",
+                        gap: 10,
+                      }}
+                    >
+                      {EDITABLE_SIDES.includes(e.event_type) && (
+                        <>
+                          <button
+                            type="button"
+                            style={rowAction}
+                            aria-label={`Edit ${e.event_type} of ${e.ticker} on ${e.date}`}
+                            onClick={() => setEditingEvent(e)}
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            style={{ ...rowAction, color: tokens.color.terracotta }}
+                            aria-label={`Delete ${e.event_type} of ${e.ticker} on ${e.date}`}
+                            onClick={() => deleteEvent(e)}
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
+                    </span>
                   </div>
                 ))}
               </>
@@ -567,6 +613,22 @@ export default function PlatformDetailPage() {
               platformId={Number(platformId)}
               platformName={detail.platform_name}
               onClose={() => setShowDeposit(false)}
+              onSaved={() => load({ silent: true })}
+            />
+          )}
+          {editingEvent && (
+            <HoldingModal
+              platforms={
+                platformOptions.length > 0
+                  ? platformOptions
+                  : [{ id: Number(platformId), name: detail.platform_name }]
+              }
+              defaultPlatformId={Number(platformId)}
+              editEvent={{
+                ...editingEvent,
+                event_type: editingEvent.event_type as "buy" | "sell" | "dividend",
+              }}
+              onClose={() => setEditingEvent(null)}
               onSaved={() => load({ silent: true })}
             />
           )}
@@ -591,6 +653,14 @@ export default function PlatformDetailPage() {
   );
 }
 
+const rowAction: React.CSSProperties = {
+  background: "transparent",
+  border: "none",
+  padding: 0,
+  fontSize: 12,
+  cursor: "pointer",
+  color: tokens.color.muted3,
+};
 const statCard: React.CSSProperties = {
   background: tokens.color.card,
   border: `1px solid ${tokens.color.border}`,
