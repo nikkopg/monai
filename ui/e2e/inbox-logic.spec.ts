@@ -14,6 +14,7 @@ import {
   fmtRowDate,
   fmtSigned,
   fmtUnsigned,
+  fmtMoney,
   hhmm,
   badgeText,
   navInboxLabel,
@@ -280,6 +281,13 @@ test.describe("format", () => {
     expect(fmtSigned("250000.00")).toBe("+250,000");
     expect(fmtSigned("abc")).toBe("abc");
     expect(fmtUnsigned("-50000.00")).toBe("50,000");
+  });
+  test("money keeps non-IDR decimals and drops the sign", () => {
+    expect(fmtMoney("-500000.00", "IDR")).toBe("500,000");
+    expect(fmtMoney("-1234.56", "USD")).toBe("1,234.56");
+    expect(fmtMoney("-1234.5", "USD")).toBe("1,234.50");
+    expect(fmtMoney("-0.00012345", "BTC")).toBe("0.00012345");
+    expect(fmtMoney("abc", "USD")).toBe("abc");
   });
 });
 

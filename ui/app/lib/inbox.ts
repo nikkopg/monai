@@ -221,6 +221,20 @@ export function fmtUnsigned(value: unknown): string {
   return Number.isFinite(n) ? fmtPlain(Math.abs(n)) : String(value);
 }
 
+/**
+ * Unsigned amount next to an explicit currency, never rounded away: IDR has no
+ * sub-unit so whole amounts print bare; other currencies keep 2+ decimals
+ * ("1,234.56 USD"), so the approval line matches the applied amount (WR-08).
+ */
+export function fmtMoney(value: unknown, currency: unknown): string {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return String(value);
+  return new Intl.NumberFormat("en-US", {
+    minimumFractionDigits: currency === "IDR" ? 0 : 2,
+    maximumFractionDigits: 8,
+  }).format(Math.abs(n));
+}
+
 const hhmmFmt = new Intl.DateTimeFormat("en-GB", {
   hour: "2-digit",
   minute: "2-digit",

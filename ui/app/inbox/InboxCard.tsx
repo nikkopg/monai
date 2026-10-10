@@ -20,6 +20,7 @@ import {
   cardTitle,
   duplicateChipText,
   fmtAbsolute,
+  fmtMoney,
   fmtRowDate,
   fmtSigned,
   fmtUnsigned,
@@ -560,7 +561,8 @@ export default function InboxCard({
         ) : op === "add_investment_transfer" ? (
           <>
             <div style={{ fontSize: 14, color: c.ink }}>
-              Move {fmtUnsigned(investTransfer?.cash_leg?.amount)} {text(investTransfer?.cash_leg?.currency)} from{" "}
+              Move {fmtMoney(investTransfer?.cash_leg?.amount, investTransfer?.cash_leg?.currency)}{" "}
+              {text(investTransfer?.cash_leg?.currency)} from{" "}
               {text(investTransfer?.cash_leg?.account)} to platform #{text(investTransfer?.event?.platform_id)} on{" "}
               {fmtRowDate(investTransfer?.cash_leg?.date)}
             </div>

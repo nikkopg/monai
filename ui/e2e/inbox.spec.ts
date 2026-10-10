@@ -368,6 +368,18 @@ test.describe("card rows", () => {
     await expect(card).not.toContainText("[object Object]");
   });
 
+  test("a non-IDR investment transfer keeps its decimals (WR-08)", async ({ page }) => {
+    const usd = investmentTransferProposal();
+    const after = usd.payload.rows[0].after as { cash_leg: Record<string, unknown> };
+    after.cash_leg.amount = "-1234.56";
+    after.cash_leg.currency = "USD";
+    await mockInbox(page, { list: [usd] });
+    await openInbox(page);
+    const card = art(page, "Move cash to investments");
+    await expect(card.getByText("Move 1,234.56 USD from Account A")).toBeVisible();
+    await expect(card).not.toContainText("1,235");
+  });
+
   test("an unknown row shape falls back to key: value lines", async ({ page }) => {
     await mockInbox(page, {
       list: [
