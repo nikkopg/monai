@@ -358,6 +358,8 @@ async def test_error_event_has_no_raw_exception_text(monkeypatch, caplog):
     assert "QUESTION-MARKER" not in blob
     warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert any("Err429" in r.getMessage() for r in warnings)
+    # IN-04: one failure, one log line (the event branch and `await handler` both see it).
+    assert sum(r.getMessage().startswith("chat run failed") for r in warnings) == 1
     assert not any("QUESTION-MARKER" in r.getMessage() for r in warnings)
 
 

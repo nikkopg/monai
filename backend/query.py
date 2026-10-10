@@ -517,8 +517,8 @@ async def agent_stream(
             except WorkflowCancelledByUser:
                 pass
             except Exception as e:
-                _log_failure(e)
-                if not terminal:
+                if not terminal:  # a WorkflowFailedEvent already logged it (IN-04)
+                    _log_failure(e)
                     emit_error(classify_error(e))
         except Exception as e:
             _log_failure(e)
