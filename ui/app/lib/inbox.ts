@@ -24,6 +24,8 @@ export type ProposalRow = {
   from_name?: string;
   into_name?: string;
   affected_count?: number;
+  account_id?: number;
+  target_balance?: string;
   duplicates?: DuplicateFlag[];
   skip?: boolean;
 };

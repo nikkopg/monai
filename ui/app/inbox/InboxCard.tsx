@@ -349,6 +349,9 @@ export default function InboxCard({
   const transfer = rows[0]?.after as
     | { leg_a?: Record<string, unknown>; leg_b?: Record<string, unknown> }
     | undefined;
+  const investTransfer = rows[0]?.after as
+    | { cash_leg?: Record<string, unknown>; event?: Record<string, unknown> }
+    | undefined;
   const flagsOf = (r: ProposalRow | undefined) => r?.duplicates ?? [];
 
   return (
@@ -539,6 +542,23 @@ export default function InboxCard({
             {flagsOf(rows[0]).length > 0 && (
               <div style={{ marginTop: 8 }}>
                 <DuplicateFlags flags={flagsOf(rows[0])} selfId={id} onPageIds={onPageIds} />
+              </div>
+            )}
+          </>
+        ) : op === "add_balance_adjustment" ? (
+          <div style={{ fontSize: 14, color: c.ink }}>
+            Set account #{text(rows[0]?.account_id)} balance to {fmtSigned(rows[0]?.target_balance)}
+          </div>
+        ) : op === "add_investment_transfer" ? (
+          <>
+            <div style={{ fontSize: 14, color: c.ink }}>
+              Move {fmtUnsigned(investTransfer?.cash_leg?.amount)} {text(investTransfer?.cash_leg?.currency)} from{" "}
+              {text(investTransfer?.cash_leg?.account)} to platform #{text(investTransfer?.event?.platform_id)} on{" "}
+              {fmtRowDate(investTransfer?.cash_leg?.date)}
+            </div>
+            {text(investTransfer?.cash_leg?.notes) !== "" && (
+              <div style={{ fontSize: 12, color: c.muted3, marginTop: 4 }}>
+                {text(investTransfer?.cash_leg?.notes)}
               </div>
             )}
           </>
