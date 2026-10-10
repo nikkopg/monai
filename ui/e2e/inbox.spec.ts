@@ -1049,6 +1049,32 @@ test.describe("poll", () => {
     await page.waitForTimeout(300);
     expect(inbox.sent("POST", "/approve")).toHaveLength(1);
   });
+
+  test("a poll sent before a skip finished never reverts the skip (WR-02)", async ({ page }) => {
+    const two = proposal({
+      id: ids.c,
+      payload: {
+        operation: "add_transaction",
+        rows: [txRow(), txRow({ after: { merchant: "Toko Contoh" } })],
+      },
+    });
+    const inbox = await openFrozen(page, { list: [two] });
+    const card = byId(page, ids.c);
+    const stale: InboxProposal[] = JSON.parse(JSON.stringify(inbox.list));
+    const release = inbox.hold("list");
+    const h = inbox.hits.list;
+    await page.clock.runFor(10_000);
+    await expect.poll(() => inbox.hits.list).toBe(h + 1); // the poll is out, held by the mock
+
+    await card.getByRole("button", { name: "Skip row 1: Kopi Contoh, -35,000" }).click();
+    await expect(approveBtn(card)).toHaveAccessibleName("Approve: Add 1 transaction, 1 skipped");
+
+    inbox.list = stale; // the held poll answers with the pre-skip payload
+    release();
+    await settled(page);
+    await expect(approveBtn(card)).toHaveAccessibleName("Approve: Add 1 transaction, 1 skipped");
+    await expect(card.getByRole("button", { name: "Include row 1: Kopi Contoh, -35,000" })).toBeVisible();
+  });
 });
 
 test.describe("offline", () => {

@@ -34,6 +34,8 @@ export default function InboxPage() {
   const [cards, setCards] = useState<HeldCard[] | null>(null);
   const cardsRef = useRef<HeldCard[] | null>(null);
   const busyRef = useRef<Set<string>>(new Set());
+  // performance.now() when each card's last action finished (WR-02).
+  const touchedRef = useRef<Map<string, number>>(new Map());
   const offsetRef = useRef(0);
   const lastLive = useRef<number | null>(null);
   const publishedOffline = useRef(false);
@@ -53,13 +55,20 @@ export default function InboxPage() {
     intervalMs: 10_000,
     headers: INBOX_SURFACE_HEADER,
     parse: (json) => (Array.isArray(json) ? (json as InboxProposal[]) : null),
-    onData: (list, dateHeader) => {
+    onData: (list, dateHeader, startedAt) => {
       const now = Date.now();
+      // A poll sent before an action on a card finished carries that card's
+      // pre-action state; hold the card like a busy one (WR-02).
+      const hold = new Set(busyRef.current);
+      touchedRef.current.forEach((t, id) => {
+        if (t >= startedAt) hold.add(id);
+        else touchedRef.current.delete(id);
+      });
       const off = serverOffset(dateHeader, now);
       offsetRef.current = off;
       setOffset(off);
       setTick(now);
-      const r = mergePoll(cardsRef.current ?? [], list, busyRef.current, now + off);
+      const r = mergePoll(cardsRef.current ?? [], list, hold, now + off);
       commit(r.cards);
       const n = liveCount(r.cards);
       const first = lastLive.current === null;
@@ -146,7 +155,10 @@ export default function InboxPage() {
     commit((cardsRef.current ?? []).map((h) => (h.proposal.id === id ? f(h) : h)));
   const onBusy = (id: string, busy: boolean) => {
     if (busy) busyRef.current.add(id);
-    else busyRef.current.delete(id);
+    else {
+      busyRef.current.delete(id);
+      touchedRef.current.set(id, performance.now());
+    }
   };
   const onSettle = (id: string, phase: CardPhase) =>
     patch(id, (h) => ({ ...h, phase, settledAt: Date.now() }));

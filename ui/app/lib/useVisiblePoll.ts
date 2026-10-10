@@ -23,7 +23,8 @@ export type VisiblePollOptions<T> = {
   intervalMs: number;
   /** Return null to treat the response as a failed poll. */
   parse: (json: unknown) => T | null;
-  onData: (data: T, dateHeader: string | null) => void;
+  /** startedAt is performance.now() when the request was sent. */
+  onData: (data: T, dateHeader: string | null, startedAt: number) => void;
   headers?: Record<string, string>;
   timeoutMs?: number;
   maxIntervalMs?: number;
@@ -78,6 +79,7 @@ export function useVisiblePoll<T>(opts: VisiblePollOptions<T>): {
       const { timeoutMs = 8_000 } = optsRef.current;
       const ctrl = new AbortController();
       controller = ctrl;
+      const startedAt = performance.now();
       let timedOut = false;
       const timeout = setTimeout(() => {
         timedOut = true;
@@ -94,7 +96,7 @@ export function useVisiblePoll<T>(opts: VisiblePollOptions<T>): {
         if (res.ok) {
           const parsed = optsRef.current.parse(await res.json());
           if (parsed !== null && mounted) {
-            optsRef.current.onData(parsed, res.headers.get("date"));
+            optsRef.current.onData(parsed, res.headers.get("date"), startedAt);
             ok = true;
           }
         }
