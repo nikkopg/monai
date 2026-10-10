@@ -1050,3 +1050,276 @@ test.describe("offline", () => {
     await expect(live(page)).toHaveText("Back online.");
   });
 });
+
+// ===========================================================================
+// Plan 05 Task 2 — keyboard, structure (axe substitute, D-07), narrow layout,
+// chat card (QA-02 chat half)
+// ===========================================================================
+
+// UI-SPEC tokens as computed-style strings (ui/app/styles.ts).
+const RGB = {
+  green: "rgb(47, 111, 79)",
+  muted3: "rgb(111, 104, 87)",
+  ink: "rgb(35, 32, 27)",
+  tintNeutral: "rgb(238, 241, 236)",
+  white: "rgb(255, 255, 255)",
+  chatDim: "rgb(164, 156, 140)",
+};
+const css = (loc: ReturnType<Page["locator"]>, prop: string) =>
+  loc.evaluate((el, p) => getComputedStyle(el).getPropertyValue(p), prop);
+
+test.describe("keyboard", () => {
+  const twoRows = () =>
+    proposal({
+      id: ids.c,
+      payload: { operation: "add_transaction", rows: [txRow(), txRow({ after: { merchant: "Toko Contoh" } })] },
+    });
+
+  test("tab order, focus ring, Space toggles a skip, Enter approves", async ({ page }) => {
+    const inbox = await mockInbox(page, { list: [twoRows()] });
+    await openInbox(page);
+    const card = byId(page, ids.c);
+    const copy = card.getByRole("button", { name: "Copy confirm code" });
+    const skip1 = card.getByRole("button", { name: /^Skip row 1:/ });
+    const skip2 = card.getByRole("button", { name: /^Skip row 2:/ });
+    const approve = approveBtn(card);
+    const reject = rejectBtn(card);
+
+    await copy.focus();
+    await expect(copy).toBeFocused();
+    for (const next of [skip1, skip2, approve, reject]) {
+      await page.keyboard.press("Tab");
+      await expect(next).toBeFocused();
+      if (next === skip1) {
+        expect(await css(next, "outline-width")).toBe("2px");
+        expect(await css(next, "outline-style")).toBe("solid");
+        expect(await css(next, "outline-color")).toBe(RGB.green);
+        expect(await css(next, "outline-offset")).toBe("2px");
+      }
+    }
+    for (const prev of [approve, skip2, skip1]) {
+      await page.keyboard.press("Shift+Tab");
+      await expect(prev).toBeFocused();
+    }
+
+    await page.keyboard.press("Space");
+    await expect.poll(() => inbox.sent("PATCH", "/rows/0").length).toBe(1);
+    const include1 = card.getByRole("button", { name: /^Include row 1:/ });
+    await expect(include1).toBeFocused();
+
+    await page.keyboard.press("Tab"); // Skip row 2
+    await page.keyboard.press("Tab"); // Approve
+    await expect(approve).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect.poll(() => inbox.sent("POST", "/approve").length).toBe(1);
+    await expect(statusOf(page, ids.c)).toBeFocused();
+    await expect(live(page)).toHaveText("Proposal approved: Add 1 transaction, 1 skipped");
+  });
+
+  test("no single-key shortcut approves or rejects", async ({ page }) => {
+    const inbox = await mockInbox(page, { list: [twoRows()] });
+    await openInbox(page);
+    await expect(byId(page, ids.c)).toBeVisible();
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    for (const key of ["a", "r", "Enter"]) await page.keyboard.press(key);
+    await page.waitForTimeout(300);
+    expect(inbox.sent("POST", "/approve")).toHaveLength(0);
+    expect(inbox.sent("POST", "/reject")).toHaveLength(0);
+  });
+});
+
+test.describe("a11y structure", () => {
+  const LIVE = '[role="status"][aria-live="polite"][aria-atomic="true"]';
+
+  test("one persistent polite atomic live region, from the loading state on", async ({ page }) => {
+    const inbox = await mockInbox(page, { listMode: "hang" });
+    await openInbox(page);
+    await expect(page.getByRole("status").filter({ hasText: "Loading your inbox…" })).toBeVisible();
+    await expect(page.locator(LIVE)).toHaveCount(1);
+    inbox.listMode = "ok";
+    inbox.list = [oneRow()];
+    await page.reload(); // the hung request is still in flight; start over with data
+    await expect(byId(page, ids.c)).toBeVisible();
+    await expect(page.locator(LIVE)).toHaveCount(1);
+  });
+
+  test("headings, list, article names, table", async ({ page }) => {
+    await mockInbox(page, {
+      list: [batch3(), other(), chatTx({ id: ids.d, created_at: iso(NOW - 20 * MIN) }), transferProposal({ id: ids.e, created_at: iso(NOW - 30 * MIN) })],
+    });
+    await openInbox(page);
+    await expect(page.locator("article")).toHaveCount(4);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Inbox");
+
+    const shape = await page.evaluate(() => {
+      const arts = Array.from(document.querySelectorAll("article"));
+      const lists = new Set(arts.map((a) => a.closest("ul")));
+      return {
+        allInLi: arts.every((a) => a.parentElement?.tagName === "LI"),
+        lists: lists.size,
+        listIsUl: arts.every((a) => a.closest("ul")?.tagName === "UL"),
+      };
+    });
+    expect(shape).toEqual({ allInLi: true, lists: 1, listIsUl: true });
+
+    const titles = await page.locator("article h2").allTextContents();
+    expect(titles).toHaveLength(4);
+    const articles = page.locator("article");
+    for (let k = 0; k < titles.length; k++) {
+      await expect(articles.nth(k)).toHaveAccessibleName(titles[k]);
+    }
+
+    const table = byId(page, ids.a).locator("table");
+    await expect(table.locator("caption")).toHaveText("Rows in this proposal");
+    await expect(table.locator('th[scope="col"]')).toHaveCount(7);
+  });
+
+  test("UI-SPEC token colours; no opacity fade on an expired card; skipped is a word", async ({
+    page,
+  }) => {
+    await mockInbox(page, {
+      list: [
+        proposal({ id: ids.a }),
+        proposal({
+          id: ids.b,
+          created_at: iso(NOW - 5 * MIN),
+          payload: { operation: "add_transaction", rows: [txRow({ skip: true }), txRow()] },
+        }),
+      ],
+      respond: { approve: { status: 410, detail: "Gone" } },
+    });
+    await openInbox(page);
+    const card = byId(page, ids.a);
+    await expect(card).toBeVisible();
+
+    expect(await css(card.getByText(/^Proposed /), "color")).toBe(RGB.muted3);
+    const chip = card.getByText("Claude", { exact: true });
+    expect(await css(chip, "color")).toBe(RGB.muted3);
+    expect(await css(chip, "background-color")).toBe(RGB.tintNeutral);
+    expect(await css(statusOf(page, ids.a), "color")).toBe(RGB.ink);
+    const approve = approveBtn(card);
+    expect(await css(approve, "background-color")).toBe(RGB.green);
+    expect(await css(approve, "color")).toBe(RGB.white);
+
+    await expect(byId(page, ids.b).getByText("Skipped", { exact: true })).toBeVisible();
+
+    await approve.click(); // answered 410: the card settles as expired
+    await expect(statusOf(page, ids.a)).toHaveText("Expired · ask again to redo this");
+    const opacities = await card.evaluate((el) => [
+      getComputedStyle(el).opacity,
+      ...Array.from(el.querySelectorAll("*")).map((n) => getComputedStyle(n).opacity),
+    ]);
+    expect(new Set(opacities)).toEqual(new Set(["1"]));
+  });
+});
+
+test.describe("narrow", () => {
+  test("below 900 px the table stacks per row", async ({ page }) => {
+    await page.setViewportSize({ width: 800, height: 900 });
+    await mockInbox(page, { list: [batch3()] });
+    await openInbox(page);
+    const card = byId(page, ids.a);
+    await expect(card).toBeVisible();
+
+    const thead = card.locator("thead");
+    await expect(thead.locator("th")).toHaveCount(7);
+    const box = await thead.boundingBox();
+    expect(box === null || box.height <= 1).toBe(true);
+
+    const row = card.locator(".inbox-row").first();
+    expect(await css(row, "display")).toBe("grid");
+    const amount = await row.locator(".inbox-c-amount").boundingBox();
+    const skip = await row.getByRole("button", { name: /^Skip row 1:/ }).boundingBox();
+    expect(amount && skip).toBeTruthy();
+    expect((skip as { y: number }).y).toBeGreaterThanOrEqual(
+      (amount as { y: number; height: number }).y + (amount as { height: number }).height - 1
+    );
+
+    const footer = await card.locator(".inbox-footer").boundingBox();
+    const approve = await approveBtn(card).boundingBox();
+    expect((approve as { width: number }).width).toBeGreaterThanOrEqual(
+      0.9 * (footer as { width: number }).width
+    );
+  });
+});
+
+test.describe("chat card", () => {
+  const TOKEN = "tok-synthetic";
+  const pid = ids.h;
+
+  async function chatSetup(page: Page) {
+    const inbox = await mockInbox(page, { list: [] }); // counts + catch-all; nothing else is unmocked
+    const answer = {
+      type: "answer",
+      text: "I can add that.",
+      proposals: [{ id: pid, token: TOKEN }],
+      trace: [
+        {
+          tool: "propose_add_transaction",
+          args: {},
+          result: {
+            proposal_id: pid,
+            proposal_token: TOKEN,
+            payload: {
+              operation: "add_transaction",
+              rows: [
+                {
+                  before: null,
+                  after: {
+                    date: "2026-10-07",
+                    amount: "-35000.00",
+                    account: "Account A",
+                    merchant: "Kopi Contoh",
+                    category: null,
+                    notes: null,
+                    currency: "IDR",
+                    is_transfer: false,
+                  },
+                },
+              ],
+            },
+          },
+        },
+      ],
+    };
+    await page.route(/\/api\/query-stream$/, (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body:
+          `data: ${JSON.stringify({ type: "step", msg: "thinking…" })}\n\n` +
+          `data: ${JSON.stringify(answer)}\n\n` +
+          "data: [DONE]\n\n",
+      })
+    );
+    const posts: { path: string; body: unknown }[] = [];
+    await page.route(/\/api\/proposals\/[0-9a-f-]{36}\/(confirm|reject)$/, (route) => {
+      const req = route.request();
+      posts.push({ path: new URL(req.url()).pathname, body: req.postDataJSON() });
+      return route.fulfill({ json: { id: pid, status: req.url().endsWith("/confirm") ? "confirmed" : "rejected" } });
+    });
+    await page.goto("/chat");
+    await page.getByPlaceholder("Ask anything about your finances…").fill("Add a synthetic coffee");
+    await page.getByPlaceholder("Ask anything about your finances…").press("Enter");
+    await expect(page.getByText("Proposed propose add transaction")).toBeVisible();
+    return { inbox, posts };
+  }
+
+  test("still shows the shared diff in the chat colour and approves with its token", async ({ page }) => {
+    const { posts } = await chatSetup(page);
+    await expect(page.getByText("Kopi Contoh", { exact: true })).toBeVisible();
+    expect(await css(page.getByText("merchant:", { exact: true }), "color")).toBe(RGB.chatDim);
+
+    await page.getByRole("button", { name: "Approve", exact: true }).click();
+    await expect(page.getByText("Applied successfully.")).toBeVisible();
+    expect(posts).toEqual([{ path: `/api/proposals/${pid}/confirm`, body: { token: "tok-synthetic" } }]);
+  });
+
+  test("Reject still says nothing changed", async ({ page }) => {
+    const { posts } = await chatSetup(page);
+    await page.getByRole("button", { name: "Reject", exact: true }).click();
+    await expect(page.getByText("Rejected — no changes made.")).toBeVisible();
+    expect(posts.map((p) => p.path)).toEqual([`/api/proposals/${pid}/reject`]);
+  });
+});
