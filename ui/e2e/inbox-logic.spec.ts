@@ -124,6 +124,11 @@ test.describe("forward headers", () => {
     const h = buildForwardHeaders(incoming(), "api-synthetic", SERVER, "POST", `proposals/${U}/confirm`, "");
     expect(h.has("MONAI_APPROVER_KEY")).toBe(false);
   });
+  test("the query-stream cancel path never receives the approver key", () => {
+    const h = buildForwardHeaders(incoming(), "api-synthetic", SERVER, "POST", `query-stream/${U}/cancel`, "");
+    expect(h.has("MONAI_APPROVER_KEY")).toBe(false);
+    expect(h.get("MONAI_API_KEY")).toBe("api-synthetic");
+  });
   const withHeaders = (extra: Record<string, string>) => {
     const h = incoming();
     for (const [k, v] of Object.entries(extra)) h.set(k, v);
