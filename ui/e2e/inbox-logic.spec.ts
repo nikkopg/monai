@@ -51,7 +51,6 @@ const UPPER = U.toUpperCase();
 
 test.describe("allowlist", () => {
   const allowed: [string, string, string][] = [
-    ["GET", "proposals", ""],
     ["GET", "proposals", "?status=pending"],
     ["POST", `proposals/${U}/approve`, ""],
     ["POST", `proposals/${U}/reject`, ""],
@@ -67,6 +66,7 @@ test.describe("allowlist", () => {
   }
 
   const denied: [string, string, string][] = [
+    ["GET", "proposals", ""],
     ["GET", "proposals/counts", ""],
     ["POST", `proposals/${U}/confirm`, ""],
     ["GET", "proposals", "?status=expired"],

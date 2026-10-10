@@ -15,7 +15,7 @@
 const UUID = "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}";
 
 const RULES: { method: string; path: RegExp; search: RegExp }[] = [
-  { method: "GET", path: /^proposals$/, search: /^(\?status=pending)?$/ },
+  { method: "GET", path: /^proposals$/, search: /^\?status=pending$/ },
   { method: "POST", path: new RegExp(`^proposals/${UUID}/approve$`), search: /^$/ },
   { method: "POST", path: new RegExp(`^proposals/${UUID}/reject$`), search: /^$/ },
   { method: "PATCH", path: new RegExp(`^proposals/${UUID}/rows/\\d{1,6}$`), search: /^$/ },
