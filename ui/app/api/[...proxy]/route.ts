@@ -71,16 +71,24 @@ async function forwardRequest(
     body = await req.arrayBuffer();
   }
 
-  const upstream = await fetch(targetUrl, {
-    method,
-    headers,
-    body: body !== null ? body : undefined,
-    // Do not follow redirects — pass them through to the client
-    redirect: "manual",
-    // A browser abort reaches the backend as a disconnect and triggers its
-    // cleanup. Best effort; the cancel route is the deterministic Stop (D-12).
-    signal: req.signal,
-  });
+  let upstream: Response;
+  try {
+    upstream = await fetch(targetUrl, {
+      method,
+      headers,
+      body: body !== null ? body : undefined,
+      // Do not follow redirects — pass them through to the client
+      redirect: "manual",
+      // A browser abort reaches the backend as a disconnect and triggers its
+      // cleanup. Best effort; the cancel route is the deterministic Stop (D-12).
+      signal: req.signal,
+    });
+  } catch {
+    // A browser abort (Stop) nobody is waiting for; anything else is a backend
+    // that cannot be reached, which the chat page maps to its connection copy.
+    if (req.signal.aborted) return new NextResponse(null, { status: 499 });
+    return NextResponse.json({ detail: "backend unreachable" }, { status: 502 });
+  }
 
   // SSE passthrough — pass ReadableStream directly without calling arrayBuffer().
   // Calling arrayBuffer() on a stream consumes it and blocks SSE delivery until

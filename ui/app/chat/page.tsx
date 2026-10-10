@@ -414,9 +414,14 @@ export default function ChatPage() {
               ? "conflict"
               : resp.status === 401 || resp.status === 403 || resp.status === 503
               ? "unauthorized"
+              : resp.status === 502 || resp.status === 504
+              ? "connection"
               : "unknown",
           model: null,
           idleSeconds: null,
+          // The proxy answers 502 when the backend is unreachable: a transport
+          // failure, so the "connection to monai failed" copy applies.
+          transport: resp.status === 502 || resp.status === 504,
         });
         return;
       }

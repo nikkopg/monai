@@ -200,6 +200,16 @@ test.describe("chat stream reliability (REL-01/02/03/05/06/09)", () => {
     );
   });
 
+  test("a 502 from the proxy renders the connection block with the transport copy", async ({ page }) => {
+    await askWithBody(page, "", 502);
+    const alert = alertBox(page);
+    await expect(alert).toContainText("monai can't reach the model");
+    await expect(alert).toContainText(
+      "The connection to monai failed. Check that the server is running, then retry."
+    );
+    await expect(page.getByText("RAW-DETAIL-MUST-NOT-RENDER")).toHaveCount(0);
+  });
+
   test("a stream that closes without a terminal event is stream_ended", async ({ page }) => {
     await askWithBody(page, sse(stepEvt, "[DONE]"));
     await expect(alertBox(page)).toContainText("The answer stopped early");
