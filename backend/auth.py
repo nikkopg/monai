@@ -15,7 +15,9 @@ Env vars:
 
 Usage:
   Attach to write routes via dependencies=[Depends(require_api_key)].
-  Read-only routes and POST /query-stream intentionally omit this dependency (D-06).
+  Read-only GET routes stay public (D-06). POST /query-stream and its cancel
+  route require the key, as does every later chat, thread and upload route
+  (standing rule REL-08). The Next proxy injects the key server-side.
 """
 
 import hmac

@@ -6,7 +6,7 @@ Tests:
   (b) POST /transactions with wrong key → 401
   (c) POST /transactions with correct key → not 401 (422 from body validation, proves key accepted)
   (d) GET /accounts without key → 200 (public)
-  (e) POST /query-stream without key → not 401 (public; agent stream stubbed)
+  (e) POST /query-stream requires the key (401 without/wrong, 503 unconfigured; agent stream stubbed)
   (h) POST /transactions with empty _CONFIGURED_KEY → 503 JSON error (fail-closed misconfiguration)
 
 Note on test (c): We POST with an incomplete body to trigger 422 from body validation rather
@@ -83,19 +83,22 @@ def test_get_accounts_public_no_key(client):
 
 
 # ---------------------------------------------------------------------------
-# (e) POST /query-stream without key → not 401 (public, D-06)
+# (e) POST /query-stream requires the key (REL-08, D-18)
 # ---------------------------------------------------------------------------
 
 
-def test_post_query_stream_public_no_key(client, api_key, monkeypatch):
-    """
-    POST /query-stream is a read-only operation and MUST remain public (D-06).
-    No key header → must not return 401.
-    We use api_key fixture only to ensure _CONFIGURED_KEY is non-empty (fail-closed guard);
-    the request deliberately omits the header to verify /query-stream has no auth gate.
+def test_post_query_stream_requires_key(client, api_key, monkeypatch):
+    """The chat stream is no longer a public LLM/DB endpoint (D-18).
+
     agent_stream is stubbed so no LLM or network is touched.
     """
-    async def _stub_stream(question):
+    import backend.auth as auth_mod
+    import backend.query as query_mod
+
+    monkeypatch.setattr(query_mod, "_ACTIVE", {})
+    monkeypatch.setattr(query_mod, "_LAST", {})
+
+    async def _stub_stream(question, **kw):
         yield "data: " + json.dumps({
             "type": "answer",
             "text": "stub answer",
@@ -107,12 +110,39 @@ def test_post_query_stream_public_no_key(client, api_key, monkeypatch):
         yield "data: [DONE]\n\n"
 
     monkeypatch.setattr("backend.query.agent_stream", _stub_stream)
+    body = {"question": "health check"}
 
-    resp = client.post("/query-stream", json={"question": "health check"})
+    assert client.post("/query-stream", json=body).status_code == 401
+    assert client.post(
+        "/query-stream", json=body, headers={"MONAI_API_KEY": "wrong"}
+    ).status_code == 401
+
+    resp = client.post("/query-stream", json=body, headers={"MONAI_API_KEY": api_key})
     assert resp.status_code == 200
-    assert resp.status_code != 401
+    assert '"type": "run"' in resp.text
     assert "stub answer" in resp.text
     assert "[DONE]" in resp.text
+
+    monkeypatch.setattr(auth_mod, "_CONFIGURED_KEY", "")
+    assert client.post(
+        "/query-stream", json=body, headers={"MONAI_API_KEY": api_key}
+    ).status_code == 503
+
+
+def test_cancel_requires_key(client, api_key, monkeypatch):
+    import uuid
+
+    import backend.query as query_mod
+
+    monkeypatch.setattr(query_mod, "_ACTIVE", {})
+    monkeypatch.setattr(query_mod, "_LAST", {})
+    url = f"/query-stream/{uuid.uuid4()}/cancel"
+
+    assert client.post(url).status_code == 401
+    assert client.post(url, headers={"MONAI_API_KEY": api_key}).status_code == 404
+    assert client.post(
+        "/query-stream/not-a-uuid/cancel", headers={"MONAI_API_KEY": api_key}
+    ).status_code == 422
 
 
 # ---------------------------------------------------------------------------

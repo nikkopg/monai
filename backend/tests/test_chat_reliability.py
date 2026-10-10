@@ -769,3 +769,102 @@ def test_reject_run_proposals_scope():
     assert _audit_count() == before
     # D-08a: a second call still reports every rejected id.
     assert sorted(q.reject_run_proposals(run)) == sorted([a, b])
+
+
+# ---------------------------------------------------------------------------
+# Plan 02: HTTP routes (409, cancel). Runs carry no handler/task: the session
+# TestClient gives each request its own loop, so mid-run behaviour is tested
+# at the query level above.
+# ---------------------------------------------------------------------------
+
+
+def _cancel(client, api_key, run):
+    return client.post(
+        f"/query-stream/{run.id}/cancel", headers={"MONAI_API_KEY": api_key}
+    )
+
+
+def test_second_run_returns_409(client, api_key, monkeypatch):
+    import backend.query as q
+
+    called = []
+
+    async def _stub(question, **kw):
+        called.append(question)
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(q, "agent_stream", _stub)
+    occupying = q.start_run(q.CHAT_KEY)
+
+    resp = client.post(
+        "/query-stream", json={"question": "q"}, headers={"MONAI_API_KEY": api_key}
+    )
+
+    assert resp.status_code == 409
+    assert resp.json() == {"detail": "A run is already in progress for this conversation"}
+    assert called == []
+    assert q._ACTIVE[q.CHAT_KEY] is occupying
+
+
+def test_cancel_route_rejects_pending(client, api_key):
+    import backend.query as q
+
+    run = q.start_run(q.CHAT_KEY)
+    a, _ = _seed_proposal()
+    b, _ = _seed_proposal()
+    c, _ = _seed_proposal(channel="mcp")
+    run.proposal_ids.append(a)
+    before = _audit_count()
+
+    resp = _cancel(client, api_key, run)
+
+    assert resp.status_code == 200
+    assert sorted(resp.json()["rejected"]) == sorted([a, b])
+    assert _status_of(c) == "pending"
+    assert _audit_count() == before
+
+
+def test_cancel_unknown_run_404(client, api_key):
+    import uuid
+
+    resp = client.post(
+        f"/query-stream/{uuid.uuid4()}/cancel", headers={"MONAI_API_KEY": api_key}
+    )
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "Run not found"}
+
+
+def test_cancel_after_completion_still_rejects(client, api_key):
+    import backend.query as q
+
+    run = q.start_run(q.CHAT_KEY)
+    a, _ = _seed_proposal()
+    run.proposal_ids.append(a)
+    q.release_run(run)  # now the last-finished run
+
+    resp = _cancel(client, api_key, run)
+
+    assert resp.status_code == 200
+    assert a in resp.json()["rejected"]
+    assert _status_of(a) == "rejected"
+
+
+def test_cancel_returns_rejected_ids_even_if_disconnect_cleanup_ran(client, api_key):
+    import backend.query as q
+
+    run = q.start_run(q.CHAT_KEY)
+    a, _ = _seed_proposal()
+    run.proposal_ids.append(a)
+    q.reject_run_proposals(run)  # the disconnect cleanup got there first
+
+    assert a in _cancel(client, api_key, run).json()["rejected"]
+
+
+def test_cancel_route_unknown_after_next_run(client, api_key):
+    import backend.query as q
+
+    first = q.start_run(q.CHAT_KEY)
+    q.release_run(first)
+    assert q.start_run(q.CHAT_KEY) is not None  # clears the last-finished slot
+
+    assert _cancel(client, api_key, first).status_code == 404

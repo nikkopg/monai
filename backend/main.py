@@ -25,7 +25,8 @@ Endpoints:
     POST /categories/rename     rename a category (single-row, D-11) (requires API key)
     POST /categories/merge      merge one category into another (requires API key)
     POST /import                multipart CSV upload (Wallet export)
-    POST /query-stream          streaming SSE agent response
+    POST /query-stream          streaming SSE agent response; one run per conversation, 409 if busy (requires API key)
+    POST /query-stream/{run_id}/cancel  stop a run and reject its pending chat proposals (requires API key)
     GET  /proposals             list pending proposals, lazy expiry first (public)
     GET  /proposals/counts      {"pending": N} after lazy expiry (public)
     POST /proposals/{id}/confirm  apply a pending chat proposal by token (requires API key)
@@ -1432,15 +1433,42 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(get_ses
     return ImportResponse(parsed=parsed, inserted=inserted, skipped=skipped, currency=currency)
 
 
-@app.post("/query-stream")
+@app.post("/query-stream", dependencies=[Depends(require_api_key)])
 async def query_stream(req: QueryRequest):
-    """Stream agent reasoning as SSE events (CHAT-01, D-08)."""
-    from backend.query import agent_stream
+    """Stream agent reasoning as SSE events (CHAT-01, D-08).
+
+    One run per conversation: a second request while one is active is 409
+    before any streaming starts (D-16). The key is required (D-18, REL-08).
+    """
+    from backend import query
+    run = query.start_run(query.CHAT_KEY)
+    if run is None:
+        raise HTTPException(
+            status_code=409, detail="A run is already in progress for this conversation"
+        )
     return StreamingResponse(
-        agent_stream(req.question),
+        query.run_stream(run, req.question),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+@app.post("/query-stream/{run_id}/cancel", dependencies=[Depends(require_api_key)])
+async def cancel_query_stream(run_id: uuid.UUID):
+    """Stop a run and reject its still-pending chat proposals (D-08, D-09, D-11).
+
+    Works for the active run or the last-finished one (a Stop that lands just
+    after the answer still rejects). Only chat-channel pending proposals are
+    rejected, with no audit row, exactly like POST /proposals/{id}/reject. The
+    key is MONAI_API_KEY only: rejecting chat proposals is already within that
+    key's authority, so this adds none. The approver allowlist is deliberately
+    untouched. Unknown or superseded run id is 404.
+    """
+    from backend import query
+    run = query.find_run(str(run_id))
+    if run is None:
+        raise HTTPException(404, "Run not found")
+    return {"rejected": await query.stop_run(run)}
 
 
 # ---------------------------------------------------------------------------
