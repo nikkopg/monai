@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 
 import { tokens, input, btn, btnGhost } from "../styles";
 import ProposalDiff from "../components/ProposalDiff";
+import type { DiffRow } from "../components/ProposalDiff";
+import { hhmm } from "../lib/inbox";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -15,26 +17,37 @@ type TraceStep = {
   result: Record<string, unknown>;
 };
 
-type Proposal = {
+// Shape of one entry in the SSE answer event's proposals[] (server contract).
+type ServerProposal = {
   id: string;
   token: string;
-  operation: string;
-  payload: {
-    operation: string;
-    rows: Array<{
-      id?: number;
-      before?: Record<string, unknown>;
-      after?: Record<string, unknown>;
-      old_name?: string;
-      new_name?: string;
-      from_name?: string;
-      into_name?: string;
-      affected_count?: number;
-    }>;
-  };
-  // client-side expiry: computed as Date.now() + 15 min when answer event arrives
-  expiresAt: Date;
+  operation?: string | null;
+  payload?: { operation: string; rows: DiffRow[] } | null;
+  expires_at?: string | null;
 };
+
+type Proposal = {
+  id: string;
+  token: string | null;
+  operation: string | null;
+  payload: { operation: string; rows: DiffRow[] } | null;
+  expiresAt: Date | null;
+  rejectedByStop?: boolean;
+};
+
+function toProposal(p: ServerProposal): Proposal {
+  const ms =
+    typeof p.expires_at === "string" && p.expires_at !== ""
+      ? Date.parse(p.expires_at)
+      : NaN;
+  return {
+    id: p.id,
+    token: p.token,
+    operation: p.operation ?? null,
+    payload: p.payload ?? null,
+    expiresAt: Number.isNaN(ms) ? null : new Date(ms),
+  };
+}
 
 // ---------------------------------------------------------------------------
 // ProposalCard — inline card with before→after diff + Approve/Reject + expiry
@@ -63,30 +76,39 @@ function ProposalCard({
     return () => clearInterval(id);
   }, []);
 
-  const expired = now > proposal.expiresAt;
-  const disabled = busy || status !== "pending" || expired;
-  const minsLeft = Math.max(
-    0,
-    Math.round((proposal.expiresAt.getTime() - now.getTime()) / 60000)
-  );
+  const expiresAt = proposal.expiresAt;
+  const expired = expiresAt !== null && now > expiresAt;
+  const rows = proposal.payload?.rows ?? [];
+  const unapprovableReason: string | null =
+    rows.length === 0
+      ? "Nothing to review: this proposal has no details, so it can't be approved. Reject it and ask again."
+      : expiresAt === null
+      ? "No expiry came with this proposal, so it can't be approved. Reject it and ask again."
+      : null;
+  const effectiveStatus = proposal.rejectedByStop ? "rejected" : status;
+  const noticeId = `unapprovable-${proposal.id}`;
+  const rejectDisabled = busy || effectiveStatus !== "pending" || expired;
+  const approveDisabled =
+    rejectDisabled || unapprovableReason !== null || !proposal.token;
+  const remMs = expiresAt ? expiresAt.getTime() - now.getTime() : 0;
 
   const cardStyle: React.CSSProperties = {
     background: tokens.color.card,
     border: `1px solid ${
-      status === "applied"
+      effectiveStatus === "applied"
         ? tokens.color.green
-        : status === "rejected"
+        : effectiveStatus === "rejected"
         ? tokens.color.border2
         : "#cfe0d6"
     }`,
     borderLeft: `3px solid ${
-      status === "rejected" ? tokens.color.terracotta : tokens.color.green
+      effectiveStatus === "rejected" ? tokens.color.terracotta : tokens.color.green
     }`,
     borderRadius: 14,
     padding: "18px 20px",
     marginTop: 16,
     marginBottom: 26,
-    opacity: expired && status === "pending" ? 0.6 : 1,
+    opacity: expired && effectiveStatus === "pending" ? 0.6 : 1,
   };
 
   async function handleApprove() {
@@ -137,7 +159,11 @@ function ProposalCard({
     }
   }
 
-  const dim = { color: tokens.color.muted2 };
+  const small: React.CSSProperties = {
+    color: tokens.color.muted3,
+    fontSize: 14,
+    lineHeight: 1.5,
+  };
 
   return (
     <div style={cardStyle}>
@@ -151,24 +177,31 @@ function ProposalCard({
           marginBottom: 10,
         }}
       >
-        Proposed {proposal.operation.replace(/_/g, " ")}
+        Proposed {(proposal.operation ?? "write").replace(/_/g, " ")}
       </div>
 
-      <ProposalDiff rows={proposal.payload.rows} />
+      {rows.length > 0 && <ProposalDiff rows={rows} />}
 
-      {expired && status === "pending" && (
-        <div style={{ ...dim, fontSize: 12, marginTop: 10 }}>
+      {effectiveStatus === "pending" && unapprovableReason && (
+        <div id={noticeId} style={{ ...small, marginTop: 8 }}>
+          {unapprovableReason}
+        </div>
+      )}
+      {expired && effectiveStatus === "pending" && (
+        <div style={{ ...small, marginTop: 10 }}>
           Expired — ask again to redo this
         </div>
       )}
-      {status === "applied" && (
-        <div style={{ color: tokens.color.green, fontSize: 13, marginTop: 10 }}>
+      {effectiveStatus === "applied" && (
+        <div style={{ color: tokens.color.green, fontSize: 14, marginTop: 10 }}>
           Applied successfully.
         </div>
       )}
-      {status === "rejected" && (
-        <div style={{ ...dim, fontSize: 13, marginTop: 10 }}>
-          Rejected — no changes made.
+      {effectiveStatus === "rejected" && (
+        <div style={{ ...small, marginTop: 10 }}>
+          {proposal.rejectedByStop
+            ? "Rejected — the run was stopped. No changes made."
+            : "Rejected — no changes made."}
         </div>
       )}
       {error && (
@@ -179,40 +212,42 @@ function ProposalCard({
         </div>
       )}
 
-      {status === "pending" && (
+      {effectiveStatus === "pending" && (
         <div
           style={{ display: "flex", gap: 10, marginTop: 16, alignItems: "center" }}
         >
           <button
             style={{
               ...btn,
-              opacity: disabled ? 0.5 : 1,
-              cursor: disabled ? "not-allowed" : "pointer",
+              opacity: approveDisabled ? 0.5 : 1,
+              cursor: approveDisabled ? "not-allowed" : "pointer",
             }}
             onClick={handleApprove}
-            disabled={disabled}
+            disabled={approveDisabled}
+            aria-describedby={unapprovableReason ? noticeId : undefined}
           >
             {busy ? "…" : "Approve"}
           </button>
           <button
             style={{
               ...btnGhost,
-              cursor: disabled ? "not-allowed" : "pointer",
+              cursor: rejectDisabled ? "not-allowed" : "pointer",
             }}
             onClick={handleReject}
-            disabled={disabled}
+            disabled={rejectDisabled}
           >
             {busy ? "…" : "Reject"}
           </button>
-          {!expired && (
+          {!expired && expiresAt && (
             <span
               style={{
                 marginLeft: "auto",
                 fontSize: 12,
-                color: tokens.color.muted2,
+                color: tokens.color.muted3,
               }}
             >
-              expires in {minsLeft} min
+              expires {hhmm(expiresAt.getTime())} · in{" "}
+              {remMs < 60000 ? "under 1" : Math.floor(remMs / 60000)} min
             </span>
           )}
         </div>
@@ -294,7 +329,7 @@ export default function ChatPage() {
             step?: TraceStep;
             text?: string;
             trace?: TraceStep[];
-            proposals?: { id: string; token: string }[];
+            proposals?: ServerProposal[];
           };
           try {
             msg = JSON.parse(dataLine);
@@ -309,27 +344,7 @@ export default function ChatPage() {
           } else if (msg.type === "answer") {
             setAnswer(msg.text ?? "");
             if (msg.trace) setTrace(msg.trace);
-            // Build Proposal[] from SSE answer event; client-side expiry is
-            // cosmetic — server enforces authoritatively on confirm (D-09/D-10).
-            const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-            const answerTrace = msg.trace;
-            setProposals(
-              (msg.proposals ?? []).map((p) => {
-                const step = answerTrace?.find(
-                  (s) => s.result?.proposal_id === p.id
-                );
-                return {
-                  id: p.id,
-                  token: p.token,
-                  operation: step?.tool ?? "write",
-                  payload: (step?.result?.payload as Proposal["payload"]) ?? {
-                    operation: "write",
-                    rows: [],
-                  },
-                  expiresAt,
-                };
-              })
-            );
+            setProposals((msg.proposals ?? []).map(toProposal));
           }
         }
       }
