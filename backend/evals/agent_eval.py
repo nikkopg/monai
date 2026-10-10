@@ -3,15 +3,17 @@ Opt-in golden-question eval for the production agent loop.
 
 What this is: a standalone script, NOT a pytest test and NOT collected by
 default pytest or CI (backend/evals/ sits outside pyproject.toml's
-testpaths). It sends ~12 scripted questions through backend.query.agent_stream
+testpaths). It sends ~14 scripted questions through backend.query.agent_stream
 — the real, production agent loop — driven by whatever real LLM is
 configured via LLM_PROVIDER / the matching model env var. It runs only
 against monai_test, never the live monai database; a module-top guard
 refuses to proceed otherwise, before any backend import.
 
-It seeds its own synthetic ZZEval rows (one account, a parent+child category
-pair, four transactions) before running, and removes every ZZEval row and
-every pending proposal it created afterwards, in a `finally` block that
+It seeds its own synthetic ZZEval rows (one account, three categories, the
+four case rows, a recurring series with a transfer decoy and a
+portfolio-linked decoy, one platform and their portfolio events) before
+running, and removes every ZZEval row and every pending proposal it created
+afterwards, in a `finally` block that
 also runs on Ctrl-C. It never approves a proposal.
 
 Usage:
@@ -21,7 +23,7 @@ Usage:
     --self-check   run the answer-number parser's asserts only. No DB, no LLM.
     --seed-check   run the DB guard, head check, seed, probes and teardown.
                    No LLM.
-    --case N       run only case N (repeatable). Default: run all 12 cases.
+    --case N       run only case N (repeatable). Default: run all 14 cases.
 
 Exit code 0 means every selected case passed (or, for --self-check /
 --seed-check, that check passed). Exit code 1 otherwise.
@@ -387,6 +389,13 @@ ACCOUNT = "ZZEval Wallet"
 PARENT = "ZZEval Hobbies"
 CHILD = "ZZEval Pottery"
 UNKNOWN = "Yachts"
+RECUR_CAT = "ZZEval Subscriptions"
+RECUR_MERCHANT = "ZZEval Streaming"
+TRANSFER_DECOY = "ZZEval Transfer Out"
+LINKED_DECOY = "ZZEval Broker Topup"
+EVAL_PLATFORM = "ZZEval Platform"
+EVAL_TICKER = "ZZEVAL"
+_EVAL_CATS = [PARENT, CHILD, RECUR_CAT]
 
 
 def _seed_rows(today: datetime.date) -> list[tuple[datetime.date, int, str]]:
@@ -405,6 +414,23 @@ def _seed_rows(today: datetime.date) -> list[tuple[datetime.date, int, str]]:
         (last_month_start + datetime.timedelta(days=9), -127000, "ZZEval Kiln Rental"),
         (datetime.date(2024, 3, 14), -91000, "ZZEval Studio Fee"),
     ]
+
+
+def _recurring_seed_rows(
+    today: datetime.date,
+) -> list[tuple[datetime.date, int, str, bool, bool]]:
+    """(date, amount, merchant, is_transfer, linked) for three monthly-cadence
+    series of 5 rows each, at today - 30*k days. RECUR_MERCHANT is the
+    largest amount so leftover monai_test groups cannot push it out of the
+    default top-20 (sorted by monthly cost). The two decoys must NOT be
+    detected: one by is_transfer, one only by its portfolio_events link."""
+    rows: list[tuple[datetime.date, int, str, bool, bool]] = []
+    for k in range(5):
+        d = today - datetime.timedelta(days=30 * k)
+        rows.append((d, -249000, RECUR_MERCHANT, False, False))
+        rows.append((d, -88000, TRANSFER_DECOY, True, False))
+        rows.append((d, -212000, LINKED_DECOY, False, True))
+    return rows
 
 
 def _seeded_sum_in(period_name: str) -> float:
@@ -489,13 +515,22 @@ def _purge(proposal_ids: list[str]) -> None:
     from backend.db import engine
 
     with engine.begin() as c:
+        # Events first: they reference platforms and eval transactions.
+        c.execute(
+            sa_text("DELETE FROM portfolio_events WHERE ticker = :tick"),
+            {"tick": EVAL_TICKER},
+        )
         c.execute(
             sa_text("DELETE FROM transactions WHERE " + _EVAL_TXN_WHERE),
-            {"acct": ACCOUNT, "cats": [PARENT, CHILD]},
+            {"acct": ACCOUNT, "cats": _EVAL_CATS},
+        )
+        c.execute(
+            sa_text("DELETE FROM platforms WHERE name = :name"), {"name": EVAL_PLATFORM}
         )
         # Child before parent — FK order.
         c.execute(sa_text("DELETE FROM categories WHERE name = :name"), {"name": CHILD})
         c.execute(sa_text("DELETE FROM categories WHERE name = :name"), {"name": PARENT})
+        c.execute(sa_text("DELETE FROM categories WHERE name = :name"), {"name": RECUR_CAT})
         c.execute(sa_text("DELETE FROM accounts WHERE name = :name"), {"name": ACCOUNT})
         # Exact ids only (pending, or flipped to expired by a lazy-expiry read).
         # A SIGKILL'd run's proposals are not swept
@@ -551,6 +586,40 @@ def _seed() -> None:
                 ),
                 {"d": d, "amt": amount, "cat": CHILD, "cid": child_id, "m": merchant, "aid": account_id},
             )
+        recur_id = c.execute(
+            sa_text(
+                "INSERT INTO categories (name, parent_id, kind, is_system) "
+                "VALUES (:name, NULL, 'expense', false) RETURNING id"
+            ),
+            {"name": RECUR_CAT},
+        ).scalar()
+        platform_id = c.execute(
+            sa_text(
+                "INSERT INTO platforms (name, kind) VALUES (:n, 'test') "
+                "ON CONFLICT (name) DO UPDATE SET kind = 'test' RETURNING id"
+            ),
+            {"n": EVAL_PLATFORM},
+        ).scalar()
+        for d, amount, merchant, is_transfer, linked in _recurring_seed_rows(datetime.date.today()):
+            txn_id = c.execute(
+                sa_text(
+                    "INSERT INTO transactions "
+                    "(date, amount, currency, category, category_id, merchant, account_id, is_transfer) "
+                    "VALUES (:d, :amt, 'IDR', :cat, :cid, :m, :aid, :tr) RETURNING id"
+                ),
+                {"d": d, "amt": amount, "cat": RECUR_CAT, "cid": recur_id, "m": merchant,
+                 "aid": account_id, "tr": is_transfer},
+            ).scalar()
+            if linked:
+                # Raw SQL: no holdings recompute runs (recompute-clobbers hazard).
+                c.execute(
+                    sa_text(
+                        "INSERT INTO portfolio_events "
+                        "(date, ticker, event_type, quantity, price, platform_id, transaction_id) "
+                        "VALUES (:d, :tick, 'buy', 1, 100000, :pid, :tid)"
+                    ),
+                    {"d": d, "tick": EVAL_TICKER, "pid": platform_id, "tid": txn_id},
+                )
 
 
 def _leftovers(proposal_ids: list[str]) -> int:
@@ -564,24 +633,30 @@ def _leftovers(proposal_ids: list[str]) -> int:
                 "(SELECT count(*) FROM accounts WHERE name = :acct) + "
                 "(SELECT count(*) FROM categories WHERE name = ANY(:cats)) + "
                 "(SELECT count(*) FROM transactions WHERE " + _EVAL_TXN_WHERE + ") + "
+                "(SELECT count(*) FROM portfolio_events WHERE ticker = :tick) + "
+                "(SELECT count(*) FROM platforms WHERE name = :plat) + "
                 "(SELECT count(*) FROM proposals WHERE status IN ('pending', 'expired') AND "
                 "id = ANY(CAST(:ids AS uuid[])))"
             ),
-            {"acct": ACCOUNT, "cats": [PARENT, CHILD], "ids": [pid for pid in proposal_ids if pid]},
+            {"acct": ACCOUNT, "cats": _EVAL_CATS, "tick": EVAL_TICKER, "plat": EVAL_PLATFORM,
+             "ids": [pid for pid in proposal_ids if pid]},
         ).scalar()
     return int(n or 0)
 
 
 # ---------------------------------------------------------------------------
 # Probes — no LLM. Prove the subtree, case-insensitive,
-# unknown-category and period data paths the 12 cases rely on.
+# unknown-category and period data paths the 14 cases rely on.
 # ---------------------------------------------------------------------------
 
-_PROBE_COUNT = 7
+_PROBE_COUNT = 9
 
 
 def _run_probes() -> list[str]:
-    from backend.tools import spending_in_category, find_transactions, spending_total, net_worth_tool
+    from backend.tools import (
+        spending_in_category, find_transactions, spending_total, net_worth_tool,
+        recurring_charges, compare_periods,
+    )
 
     failures: list[str] = []
 
@@ -631,6 +706,42 @@ def _run_probes() -> list[str]:
     if bad["passed"] or not good["passed"]:
         failures.append(f"P7: case-5 check cross-step passed={bad['passed']}, honest passed={good['passed']}")
 
+    # P8: recurring_charges finds the seeded monthly series, neither decoy, and
+    # case 13's check accepts the honest step and rejects a decoy-tainted one.
+    rc = recurring_charges()
+    labels = [str(g.get("label", "")).lower() for g in rc.get("groups", [])]
+    mine = [g for g in rc.get("groups", []) if str(g.get("label", "")).lower() == RECUR_MERCHANT.lower()]
+    if not (mine and mine[0].get("cadence") == "monthly" and mine[0].get("status") == "active"
+            and TRANSFER_DECOY.lower() not in labels and LINKED_DECOY.lower() not in labels):
+        failures.append(f"P8: recurring_charges() labels={labels!r}, match={mine!r}")
+    case13 = next(c for c in CASES if c["id"] == 13)
+    honest13 = {"tool": "recurring_charges", "args": {}, "result": rc}
+    tainted = {**rc, "groups": [*rc.get("groups", []), {"label": LINKED_DECOY}]}
+    bad13 = {"tool": "recurring_charges", "args": {}, "result": tainted}
+    if not case13["step_args"](honest13) or case13["step_args"](bad13):
+        failures.append(
+            f"P8: case-13 check honest={case13['step_args'](honest13)}, "
+            f"decoy-tainted={case13['step_args'](bad13)}"
+        )
+
+    # P9: compare_periods totals agree with spending_total, and case 14's check
+    # is order-insensitive but rejects the wrong pair.
+    cp = compare_periods("last_month", "this_month")
+    if "error" in cp:
+        failures.append(f"P9: compare_periods error: {cp!r}")
+    else:
+        sp = cp["totals"]["spending"]
+        if sp["current"] != spending_total("this_month")["total"] or sp["base"] != spending_total("last_month")["total"]:
+            failures.append(f"P9: compare_periods totals {sp!r} != spending_total")
+    case14 = next(c for c in CASES if c["id"] == 14)
+    ok_args = [{"period_a": "last_month", "period_b": "this_month"},
+               {"period_a": "this_month", "period_b": "last_month"}]
+    bad_args = {"period_a": "last_month", "period_b": "last_month"}
+    got = [case14["step_args"]({"tool": "compare_periods", "args": a, "result": cp}) for a in ok_args]
+    got_bad = case14["step_args"]({"tool": "compare_periods", "args": bad_args, "result": cp})
+    if not all(got) or got_bad:
+        failures.append(f"P9: case-14 check ok={got}, wrong-pair={got_bad}")
+
     return failures
 
 
@@ -657,7 +768,7 @@ def _do_seed_check() -> int:
 
 
 # ---------------------------------------------------------------------------
-# The 12 golden cases.
+# The 14 golden cases.
 # ---------------------------------------------------------------------------
 
 
@@ -673,6 +784,39 @@ def _resolved_args(step: dict):
         return _period_range(args.get("period", "all_time"), args.get("start_date"), args.get("end_date"))
     except (ValueError, TypeError):
         return (None, "PARSE-ERROR")
+
+
+def _resolved_pair(step: dict):
+    """Two-sided resolver for compare_periods: the set of resolved ranges for
+    the a_/b_ sides (order-insensitive, D-11), or None if either side fails."""
+    args = step.get("args") or {}
+    try:
+        return {
+            _period_range(args.get("period_a", "all_time"), args.get("a_start_date"), args.get("a_end_date")),
+            _period_range(args.get("period_b", "all_time"), args.get("b_start_date"), args.get("b_end_date")),
+        }
+    except (ValueError, TypeError):
+        return None
+
+
+def _recurring_step(step: dict) -> bool:
+    r = step.get("result")
+    if not isinstance(r, dict):
+        return False
+    labels = [str(g.get("label", "")).lower() for g in r.get("groups") or []]
+    return (
+        RECUR_MERCHANT.lower() in labels
+        and TRANSFER_DECOY.lower() not in labels
+        and LINKED_DECOY.lower() not in labels
+    )
+
+
+def _compare_step(step: dict) -> bool:
+    r = step.get("result")
+    return (
+        isinstance(r, dict) and "error" not in r
+        and _resolved_pair(step) == {_period_range("last_month"), _period_range("this_month")}
+    )
 
 
 def _steps_for(trace: list, tool_names: list[str]) -> list[dict]:
@@ -819,6 +963,18 @@ CASES: list[dict] = [
         "tools": ["propose_add_transaction"], "args": _args_two_proposals,
         "args_desc": "exactly 2 propose_add_transaction steps, amounts {25000, 60000}, 2 proposals",
         "answer": "numbers", "needs_number": False,
+    },
+    {
+        "id": 13, "question": "What are my recurring charges?",
+        "tools": ["recurring_charges"], "step_args": _recurring_step,
+        "args_desc": "a recurring_charges step whose groups include ZZEval Streaming and neither decoy",
+        "answer": "numbers", "needs_number": True,
+    },
+    {
+        "id": 14, "question": "Compare my spending last month against this month",
+        "tools": ["compare_periods"], "step_args": _compare_step,
+        "args_desc": "a compare_periods step whose two resolved ranges == {last_month, this_month} (either order), no error",
+        "answer": "numbers", "needs_number": True,
     },
 ]
 
@@ -989,7 +1145,7 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         type=int,
         default=None,
-        help="run only this case id (repeatable). Default: run all 12 cases.",
+        help="run only this case id (repeatable). Default: run all 14 cases.",
     )
     args = parser.parse_args(argv)
 
