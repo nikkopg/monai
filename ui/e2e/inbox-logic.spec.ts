@@ -1,5 +1,9 @@
 import { test, expect } from "@playwright/test";
-import { approverHeaderAllowed, buildForwardHeaders } from "../app/lib/approverAllowlist";
+import {
+  approverHeaderAllowed,
+  buildForwardHeaders,
+  INBOX_SURFACE_HEADER,
+} from "../app/lib/approverAllowlist";
 import {
   approveLabel,
   cardTitle,
@@ -102,6 +106,7 @@ test.describe("forward headers", () => {
       MONAI_APPROVER_KEY: FORGED,
       MONAI_API_KEY: "client-api-synthetic",
       accept: "application/json",
+      ...INBOX_SURFACE_HEADER,
     });
   const approve = ["POST", `proposals/${U}/approve`, ""] as const;
 
@@ -141,6 +146,12 @@ test.describe("forward headers", () => {
     const noHost = incoming();
     noHost.delete("host");
     expect(buildForwardHeaders(noHost, "api-synthetic", SERVER, ...approve).has("MONAI_APPROVER_KEY")).toBe(false);
+  });
+  test("an allowlisted request without the Inbox marker (chat Reject) never gets the key", () => {
+    const h = incoming();
+    h.delete("X-Monai-Surface");
+    expect(buildForwardHeaders(h, "api-synthetic", SERVER, "POST", `proposals/${U}/reject`, "").has("MONAI_APPROVER_KEY")).toBe(false);
+    expect(attached({ "X-Monai-Surface": "chat" })).toBeNull();
   });
   test("API key is always the server's, host is dropped, other headers pass through", () => {
     const h = buildForwardHeaders(incoming(), "api-synthetic", "", "GET", "transactions", "");

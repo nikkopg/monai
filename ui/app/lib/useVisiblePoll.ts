@@ -24,6 +24,7 @@ export type VisiblePollOptions<T> = {
   /** Return null to treat the response as a failed poll. */
   parse: (json: unknown) => T | null;
   onData: (data: T, dateHeader: string | null) => void;
+  headers?: Record<string, string>;
   timeoutMs?: number;
   maxIntervalMs?: number;
 };
@@ -85,7 +86,11 @@ export function useVisiblePoll<T>(opts: VisiblePollOptions<T>): {
 
       let ok = false;
       try {
-        const res = await fetch(url, { signal: ctrl.signal, cache: "no-store" });
+        const res = await fetch(url, {
+          signal: ctrl.signal,
+          cache: "no-store",
+          headers: optsRef.current.headers,
+        });
         if (res.ok) {
           const parsed = optsRef.current.parse(await res.json());
           if (parsed !== null && mounted) {

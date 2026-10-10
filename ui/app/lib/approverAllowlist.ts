@@ -59,11 +59,21 @@ export function isLocalSameOrigin(incoming: Headers): boolean {
 }
 
 /**
+ * Marker the Inbox sends on its own list/approve/reject/skip calls. Not a
+ * secret (the allowlist and the same-origin check still apply); it only stops
+ * the chat card's Reject, which hits an allowlisted path, from picking up
+ * approver scope (WR-03).
+ */
+export const INBOX_SURFACE_HEADER = { "X-Monai-Surface": "inbox" } as const;
+
+const fromInbox = (incoming: Headers) => incoming.get("x-monai-surface") === "inbox";
+
+/**
  * The headers the proxy forwards upstream. Pure so the strip-then-inject order
  * is unit-tested: the API key is always set, the incoming Host is dropped, any
  * client-supplied approver header is deleted BEFORE the server's key is set, and
- * the key is attached only when it is non-empty, the request is a local
- * same-origin one, and it is allowlisted.
+ * the key is attached only when it is non-empty, the Inbox sent the request,
+ * the request is a local same-origin one, and it is allowlisted.
  */
 export function buildForwardHeaders(
   incoming: Headers,
@@ -79,7 +89,12 @@ export function buildForwardHeaders(
   headers.delete("host");
   // A client-supplied approver header is never forwarded (D-03, T-33-01).
   headers.delete("MONAI_APPROVER_KEY");
-  if (approverKey && isLocalSameOrigin(incoming) && approverHeaderAllowed(method, path, search)) {
+  if (
+    approverKey &&
+    fromInbox(incoming) &&
+    isLocalSameOrigin(incoming) &&
+    approverHeaderAllowed(method, path, search)
+  ) {
     headers.set("MONAI_APPROVER_KEY", approverKey);
   }
   return headers;

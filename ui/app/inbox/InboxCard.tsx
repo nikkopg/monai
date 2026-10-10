@@ -11,6 +11,7 @@
 import { useEffect, useRef, useState } from "react";
 import ProposalDiff from "../components/ProposalDiff";
 import { extractDetail } from "../lib/api";
+import { INBOX_SURFACE_HEADER } from "../lib/approverAllowlist";
 import {
   ALL_SKIPPED_MSG,
   NETWORK_FAIL_MSG,
@@ -225,7 +226,10 @@ export default function InboxCard({
   async function approve() {
     if (blocked || allSkipped) return;
     await act("approve", async () => {
-      const r = await fetch(`/api/proposals/${id}/approve`, { method: "POST" });
+      const r = await fetch(`/api/proposals/${id}/approve`, {
+        method: "POST",
+        headers: INBOX_SURFACE_HEADER,
+      });
       if (!r.ok) return fail(r);
       focusStatus.current = true;
       onSettle(id, "approved");
@@ -241,7 +245,10 @@ export default function InboxCard({
     }
     setConfirmDiscard(false);
     await act("reject", async () => {
-      const r = await fetch(`/api/proposals/${id}/reject`, { method: "POST" });
+      const r = await fetch(`/api/proposals/${id}/reject`, {
+        method: "POST",
+        headers: INBOX_SURFACE_HEADER,
+      });
       if (!r.ok) return fail(r);
       focusStatus.current = true;
       onSettle(id, "rejected");
@@ -255,7 +262,7 @@ export default function InboxCard({
     await act(i, async () => {
       const r = await fetch(`/api/proposals/${id}/rows/${i}`, {
         method: "PATCH",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...INBOX_SURFACE_HEADER },
         body: JSON.stringify({ skip: next }),
       });
       if (!r.ok) return fail(r);

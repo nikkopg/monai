@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import InboxCard from "./InboxCard";
 import { useVisiblePoll } from "../lib/useVisiblePoll";
+import { INBOX_SURFACE_HEADER } from "../lib/approverAllowlist";
 import {
   APPROVER_KEY_PAGE_MSG,
   hhmm,
@@ -50,6 +51,7 @@ export default function InboxPage() {
   const poll = useVisiblePoll<InboxProposal[]>({
     url: "/api/proposals?status=pending",
     intervalMs: 10_000,
+    headers: INBOX_SURFACE_HEADER,
     parse: (json) => (Array.isArray(json) ? (json as InboxProposal[]) : null),
     onData: (list, dateHeader) => {
       const now = Date.now();

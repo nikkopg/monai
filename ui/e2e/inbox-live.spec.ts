@@ -4,6 +4,7 @@
 // the exact launch and run commands are in README.md ("UI tests"). Skipped
 // unless E2E_LIVE=1. Synthetic values only; every row it creates is removed.
 import { expect, test, type APIRequestContext } from "@playwright/test";
+import { INBOX_SURFACE_HEADER } from "../app/lib/approverAllowlist";
 
 test.skip(!process.env.E2E_LIVE, "live Inbox spec runs only with E2E_LIVE=1");
 test.describe.configure({ mode: "serial" });
@@ -146,7 +147,7 @@ test.describe("proxy", () => {
   };
 
   test("allowlisted list returns the MCP code; the MCP result never does", async ({ request }) => {
-    const p = await mine(request, "/api/proposals?status=pending");
+    const p = await mine(request, "/api/proposals?status=pending", { ...INBOX_SURFACE_HEADER });
     expect(p?.code).toMatch(/^[0-9A-HJKMNP-TV-Z]{6}$/);
     code = p!.code!;
     expect(mcpResultText).not.toContain(code);
@@ -156,9 +157,18 @@ test.describe("proxy", () => {
     const plain = await mine(request, "/api/proposals?status=pending&x=1");
     expect(plain).toBeTruthy();
     expect(plain!.code).toBeUndefined();
-    const forged = await mine(request, "/api/proposals?status=pending&x=1", { MONAI_APPROVER_KEY: APPROVER_KEY });
+    const forged = await mine(request, "/api/proposals?status=pending&x=1", {
+      ...INBOX_SURFACE_HEADER,
+      MONAI_APPROVER_KEY: APPROVER_KEY,
+    });
     expect(forged).toBeTruthy();
     expect(forged!.code).toBeUndefined();
+  });
+
+  test("allowlisted list without the Inbox marker gets no code (chat keeps API-key scope)", async ({ request }) => {
+    const p = await mine(request, "/api/proposals?status=pending");
+    expect(p).toBeTruthy();
+    expect(p!.code).toBeUndefined();
   });
 });
 
