@@ -107,7 +107,7 @@ def test_mcp_endpoint_mounted(client, api_key):
 
 
 def test_mcp_read_parity(client, api_key):
-    """MCP-02: tools/list holds the 16 read names plus the 4 curated writes
+    """MCP-02: tools/list holds the 18 read names plus the 4 curated writes
     (Phase 32); a tools/call result equals a direct TOOLS[name](...) dict."""
     with client:
         session_headers = _mcp_session(client, api_key)
@@ -115,7 +115,7 @@ def test_mcp_read_parity(client, api_key):
         listed = _tools_list(client, session_headers)
         listed_names = {t["name"] for t in listed}
         assert set(READ_TOOL_NAMES) <= listed_names
-        assert len(listed_names) == 20
+        assert len(listed_names) == 22
 
         mcp_result = _tools_call(client, session_headers, "spending_total", {"period": "last_month"})
         assert mcp_result["isError"] is False
@@ -126,7 +126,7 @@ def test_mcp_read_parity(client, api_key):
 
 
 def test_agent_read_tools_count(api_key):
-    """MCP-02/D-02: backend/query.py builds a read-tool list of length 16
+    """MCP-02/D-02: backend/query.py builds a read-tool list of length 18
     (parity with TOOLS; Phase 15 adds net_worth). AGENT-02/D-12: agent tool
     names must equal set(TOOLS) with no duplicates (len(agent.tools) ==
     len(TOOLS)) — the MCP half (tools/list == READ_TOOL_NAMES) is asserted
@@ -139,7 +139,9 @@ def test_agent_read_tools_count(api_key):
     agent = workflow.agents["Agent"]
     all_tool_names = [t.metadata.name for t in agent.tools]
     read_tool_names = [n for n in all_tool_names if not n.startswith("propose_")]
-    assert len(read_tool_names) == 16
+    assert len(read_tool_names) == 18
+    new_reads = {"recurring_charges", "compare_periods"}
+    assert new_reads <= set(READ_TOOL_NAMES) and new_reads <= set(read_tool_names)
     assert set(read_tool_names) == set(READ_TOOL_NAMES)
     assert {t.metadata.name for t in agent.tools} == set(TOOLS)
     assert len(agent.tools) == len(TOOLS)
@@ -224,7 +226,7 @@ def _all_keys(node):
 
 
 def test_mcp_surface_is_exact(client, api_key):
-    """D-01..D-03, D-23: tools/list is exactly the 16 reads plus the 4 curated
+    """D-01..D-03, D-23: tools/list is exactly the 18 reads plus the 4 curated
     writes; no schema exposes channel/db/token/session; the writes are not in
     the chat registry; a chat propose_* name is still an unknown tool."""
     with client:

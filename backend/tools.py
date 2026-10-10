@@ -991,10 +991,12 @@ TOOLS = {
     "monthly_trend": monthly_trend,
     "account_balances": account_balances,
     "net_worth": net_worth_tool,
+    "recurring_charges": recurring_charges,
+    "compare_periods": compare_periods,
 }
 
 # Snapshot of the read-only tool names, captured BEFORE the write tools are
-# merged into TOOLS below. TOOLS itself becomes 32 entries (16 read + 16 propose_* write)
+# merged into TOOLS below. TOOLS itself becomes 34 entries (18 read + 16 propose_* write)
 # once this module finishes loading, so any read-only surface (e.g. the MCP
 # server, D-03/MCP-03) must key off this frozenset, never off TOOLS directly.
 READ_TOOL_NAMES: frozenset[str] = frozenset(TOOLS)

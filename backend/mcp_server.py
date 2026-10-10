@@ -1,7 +1,7 @@
 """
 MCP server — API-key-gated external tool surface (MCP-01..MCP-04, MCPW-01..03).
 
-Registers the 16 read callables in backend.tools.READ_TOOL_NAMES (MCP-02) plus
+Registers the 18 read callables in backend.tools.READ_TOOL_NAMES (MCP-02) plus
 four curated write wrappers from backend.mcp_writes (Phase 32), all with
 hand-authored external-LLM-facing descriptions (D-05). The write wrappers are
 registered here only and never in tools.TOOLS, so the chat agent surface is
@@ -103,6 +103,23 @@ MCP_DESCRIPTIONS: dict[str, str] = {
         "counted exactly once. Returns total, liquid_total, investment_total, "
         "liquid_accounts, investment_groups, accounts_covered, accounts_total."
     ),
+    "recurring_charges": (
+        "Likely recurring expense charges (subscriptions, bills, rent) detected from past "
+        "transactions. Each result has a cadence (weekly/monthly/quarterly/yearly), typical amount, "
+        "estimated monthly cost, last date, active/lapsed status with the next expected date, a "
+        "high/medium/low confidence label and up to 12 evidence rows. Transfers, investment accounts, "
+        "investment-linked rows and system categories are excluded. Takes no period: only months "
+        "(lookback, 3-60, default 24) and limit (1-50, default 20). Results are detected, not confirmed."
+    ),
+    "compare_periods": (
+        "Two periods side by side: spending, income and net totals plus top-level category spending, "
+        "each with delta and percentage computed in code. The earlier period is the base and the later "
+        "one current, whatever the argument order; pct is null when the base is zero. other_delta covers "
+        "the categories not shown plus uncategorised and system rows. comparable=false flags unequal or "
+        "in-progress periods, with per-day spending. all_time and open-ended custom ranges are refused. "
+        "period_a and period_b each follow these rules; custom dates go in a_start_date/a_end_date and "
+        "b_start_date/b_end_date. " + _PERIOD_HELP
+    ),
     "propose_transactions": (
         "Propose transactions for the owner to approve; nothing is written until approved. "
         'Single row: rows=[{"date": "2026-01-15", "amount": -45000, "account": "Main Checking", '
@@ -133,7 +150,7 @@ MCP_DESCRIPTIONS: dict[str, str] = {
 
 
 def build_mcp() -> FastMCP:
-    """Build the FastMCP instance: 16 reads plus 4 curated writes.
+    """Build the FastMCP instance: 18 reads plus 4 curated writes.
 
     Reads come from backend.tools.READ_TOOL_NAMES (the pre-mutation snapshot,
     never TOOLS directly, since TOOLS also holds the chat propose_* tools by

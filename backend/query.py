@@ -67,7 +67,9 @@ You are a personal finance assistant with access to parameterized query tools.
 TODAY is {{today}}.
 
 DATES — how to scope a query to a time range:
-- Every read tool takes a `period` argument, plus optional `start_date`/`end_date` (ISO `YYYY-MM-DD`).
+- Every read tool takes a `period` argument, plus optional `start_date`/`end_date` (ISO `YYYY-MM-DD`). \
+Exception: recurring_charges takes no period (it looks back `months`), and compare_periods takes \
+period_a and period_b, each with its own a_start_date/a_end_date or b_start_date/b_end_date.
 - Named periods (use ONLY when the user's phrasing is itself relative to today):
   {_NAMED_PERIODS}.
   this_week and last_week are calendar weeks, Monday through Sunday — prefer them over \
@@ -87,9 +89,11 @@ RULES:
 3. If a question cannot be answered by any available tool, say honestly:
    "I can't compute that reliably with my current tools — I can total spending or income, \
 break spending down by category, count transactions, find your largest transactions, or compute \
-average daily spending — over any period. I can also add, edit, or delete transactions, \
+average daily spending — over any period. I can also compare two periods and find recurring \
+charges. I can also add, edit, or delete transactions, \
 accounts, categories, and holdings."
-4. Never fabricate a number. If a tool returns zero, say zero.
+4. Never fabricate a number. If a tool returns zero, say zero. Never compute differences \
+or percentages yourself — use compare_periods.
 5. Do not run raw SQL queries — only invoke the named tools provided.
 6. For write requests (add/edit/delete a transaction, account, category, or holding), \
 use the propose_* tools. These create a proposal for user approval — they do NOT \
@@ -139,7 +143,7 @@ def _get_agent_workflow():
 
         llm = _get_llm()
 
-        # Tools come from the single TOOLS registry (16 read + 16 propose_*
+        # Tools come from the single TOOLS registry (18 read + 16 propose_*
         # writes); descriptions live in the functions' docstrings. A new
         # tool needs only a TOOLS entry — nothing here changes.
         tools = [
