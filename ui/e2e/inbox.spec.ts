@@ -19,6 +19,7 @@ import {
   proposal,
   transferProposal,
   txRow,
+  type InboxMock,
   type Responder,
 } from "./inbox-fixtures";
 
@@ -797,5 +798,255 @@ test.describe("states", () => {
     await mockInbox(page, { list: [oneRow()], dateHeader: new Date(NOW + 2 * 3_600_000).toUTCString() });
     await openInbox(page);
     await expect(statusOf(page, ids.c)).toHaveText("Waiting for you · expires in 45 h");
+  });
+});
+
+// ===========================================================================
+// Plan 05 Task 1 — poll hygiene and offline under a controlled clock (D-06)
+//
+// The page clock is installed, then paused once data is on screen. openFrozen
+// then lets exactly one successful poll land inside the paused clock, so every
+// later schedule is exact and the specs can step to "1 ms before" and "exactly
+// at" a due time. A page-side log records each list request (start/settle on
+// the page clock); request counts are never asserted absolutely (StrictMode).
+// ===========================================================================
+
+type PollRec = { start: number; end: number | null };
+const BANNER = "inbox-offline-banner";
+const banner = (page: Page) => page.locator(`#${BANNER}`);
+
+async function pollLog(page: Page) {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __polls: { start: number; end: number | null }[] };
+    w.__polls = [];
+    const real = window.fetch.bind(window);
+    window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const p = real(input, init);
+      if (url.includes("/api/proposals?status=pending")) {
+        const rec: { start: number; end: number | null } = { start: Date.now(), end: null };
+        w.__polls.push(rec);
+        const done = () => {
+          rec.end = Date.now();
+        };
+        p.then(done, done);
+      }
+      return p;
+    };
+  });
+}
+
+const polls = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __polls: PollRec[] }).__polls);
+const lastPoll = async (page: Page) => {
+  const l = await polls(page);
+  return { n: l.length, rec: l[l.length - 1] };
+};
+const clockNow = (page: Page) => page.evaluate(() => Date.now());
+const runTo = async (page: Page, target: number) =>
+  page.clock.runFor(Math.max(0, target - (await clockNow(page))));
+
+/** The latest request has settled (a real-time pause lets the body read and state updates finish). */
+async function settled(page: Page) {
+  await expect.poll(async () => (await lastPoll(page)).rec?.end ?? null).not.toBeNull();
+  await page.waitForTimeout(150);
+}
+
+async function openFrozen(page: Page, init: Partial<InboxMock>) {
+  const inbox = await mockInbox(page, init);
+  await pollLog(page);
+  await page.clock.install({ time: NOW });
+  await page.goto("/inbox");
+  await expect(page.locator("article").first()).toBeVisible();
+  await freeze(page);
+  const base = inbox.hits.list;
+  await page.clock.runFor(10_000);
+  await expect.poll(() => inbox.hits.list).toBe(base + 1);
+  await settled(page);
+  return inbox;
+}
+
+/** 1 ms before the due time nothing is requested; exactly at it, one request starts. */
+async function nextPoll(page: Page, delay: number) {
+  const before = await lastPoll(page);
+  const due = (before.rec.end as number) + delay;
+  await runTo(page, due - 1);
+  expect((await polls(page)).length, `no request before ${delay} ms`).toBe(before.n);
+  await runTo(page, due);
+  const after = await polls(page);
+  expect(after.length, `one request at ${delay} ms`).toBe(before.n + 1);
+  expect(after[before.n].start).toBe(due);
+  return after[before.n];
+}
+
+const setVisibility = (page: Page, state: "hidden" | "visible") =>
+  page.evaluate((s) => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => s });
+    document.dispatchEvent(new Event("visibilitychange"));
+  }, state);
+
+test.describe("poll", () => {
+  test("one request in flight; an 8 s timeout is a failure", async ({ page }) => {
+    const inbox = await openFrozen(page, { list: [oneRow()] });
+    const h0 = inbox.hits.list;
+    inbox.listMode = "hang";
+    const first = await nextPoll(page, 10_000);
+    await expect.poll(() => inbox.hits.list).toBe(h0 + 1);
+    const n = (await polls(page)).length;
+
+    // Still pending 1 ms short of the timeout: a trigger while pending is a no-op, nothing failed.
+    await runTo(page, first.start + 7_999);
+    await page.evaluate(() => window.dispatchEvent(new Event("online")));
+    expect((await polls(page)).length).toBe(n);
+    expect((await lastPoll(page)).rec.end).toBeNull();
+    await expect(banner(page)).toHaveCount(0);
+
+    await runTo(page, first.start + 8_000);
+    await settled(page);
+    expect((await lastPoll(page)).rec.end).toBe(first.start + 8_000);
+    await expect(banner(page)).toHaveCount(0); // one failure is not offline
+
+    // Backoff 20 s from the failure, then a second timeout flips to offline.
+    const second = await nextPoll(page, 20_000);
+    await runTo(page, second.start + 8_000);
+    await settled(page);
+    await expect(banner(page)).toBeVisible();
+  });
+
+  test("backoff 10, 20, 40, 60, 60 s, then success resets to 10 s", async ({ page }) => {
+    const inbox = await openFrozen(page, { list: [oneRow()] });
+    inbox.listMode = "abort";
+    for (const delay of [10_000, 20_000, 40_000, 60_000, 60_000]) {
+      await nextPoll(page, delay);
+      await settled(page);
+    }
+    await expect(banner(page)).toBeVisible();
+    inbox.listMode = "ok";
+    await nextPoll(page, 60_000);
+    await settled(page);
+    await expect(banner(page)).toHaveCount(0);
+    await nextPoll(page, 10_000);
+  });
+
+  test("nothing polls after leaving /inbox", async ({ page }) => {
+    const inbox = await openFrozen(page, { list: [oneRow()] });
+    await page.getByRole("link", { name: "Records", exact: true }).click();
+    // Next's client navigation does not complete on a paused clock: let time flow, then stop it again.
+    await page.clock.resume();
+    await expect(page).toHaveURL(/\/records$/, { timeout: 30_000 });
+    await freeze(page);
+    await page.waitForTimeout(300);
+    const server = inbox.hits.list;
+    const client = (await polls(page)).length;
+    await page.clock.runFor(60_000);
+    await page.waitForTimeout(300);
+    expect(inbox.hits.list).toBe(server);
+    expect((await polls(page)).length).toBe(client);
+  });
+
+  test("paused while hidden, exactly one request on return", async ({ page }) => {
+    const inbox = await openFrozen(page, { list: [oneRow()] });
+    await setVisibility(page, "hidden");
+    expect(await page.evaluate(() => document.visibilityState)).toBe("hidden");
+    const n = (await polls(page)).length;
+    const h = inbox.hits.list;
+    await page.clock.runFor(60_000);
+    await page.waitForTimeout(300);
+    expect((await polls(page)).length).toBe(n);
+    expect(inbox.hits.list).toBe(h);
+
+    await setVisibility(page, "visible"); // no clock advance
+    expect(await page.evaluate(() => document.visibilityState)).toBe("visible");
+    expect((await polls(page)).length).toBe(n + 1);
+    await expect.poll(() => inbox.hits.list).toBe(h + 1);
+    await settled(page);
+    await nextPoll(page, 10_000); // the interval resumes
+  });
+
+  test("a poll never overwrites a card with an in-flight approve; mutations are not polled", async ({
+    page,
+  }) => {
+    const inbox = await openFrozen(page, { list: [oneRow()] });
+    const card = byId(page, ids.c);
+    const release = inbox.hold("approve");
+    await approveBtn(card).click();
+    await expect(statusOf(page, ids.c)).toHaveText("Applying…");
+    inbox.list = [
+      oneRow({
+        payload: { operation: "add_transaction", rows: [txRow({ after: { merchant: "Kopi Baru" } })] },
+      }),
+    ];
+    await nextPoll(page, 10_000);
+    await settled(page);
+    await expect(card.getByText("Kopi Contoh", { exact: true })).toBeVisible();
+    await expect(card.getByText("Kopi Baru")).toHaveCount(0);
+    await expect(statusOf(page, ids.c)).toHaveText("Applying…");
+
+    release();
+    await expect(statusOf(page, ids.c)).toHaveText(/^✓ Approved · /);
+    await page.clock.runFor(60_000);
+    await page.waitForTimeout(300);
+    expect(inbox.sent("POST", "/approve")).toHaveLength(1);
+  });
+});
+
+test.describe("offline", () => {
+  const two = () =>
+    proposal({
+      id: ids.c,
+      payload: {
+        operation: "add_transaction",
+        rows: [txRow(), txRow({ after: { merchant: "Toko Contoh" } })],
+      },
+    });
+  const bannerText = (at: number) => `Can't reach monai · retrying (last update ${hhmm(at)})`;
+
+  test("two failed polls gate the card; the next success clears it", async ({ page }) => {
+    const inbox = await openFrozen(page, { list: [two()] });
+    const lastOk = (await lastPoll(page)).rec.end as number;
+    inbox.listMode = "abort";
+    await nextPoll(page, 10_000);
+    await settled(page);
+    await expect(banner(page)).toHaveCount(0);
+    await nextPoll(page, 20_000);
+    await settled(page);
+
+    await expect(banner(page)).toHaveText(bannerText(lastOk));
+    const card = byId(page, ids.c);
+    const skips = card.getByRole("button", { name: /^Skip row/ });
+    await expect(skips).toHaveCount(2);
+    const gated = [approveBtn(card), rejectBtn(card), ...(await skips.all())];
+    for (const b of gated) {
+      await expect(b).toHaveAttribute("aria-disabled", "true");
+      await expect(b).toHaveAttribute("aria-describedby", "inbox-offline-banner");
+    }
+    await approveBtn(card).click({ force: true });
+    await page.waitForTimeout(300);
+    expect(inbox.sent("POST", "/approve")).toHaveLength(0);
+    await expect(
+      page.getByRole("link", { name: "Inbox, pending count unavailable", exact: true })
+    ).toBeVisible();
+    await expect(page.locator(".nav-badge")).toHaveText("—");
+    await expect(live(page)).toHaveText("Can't reach monai. Retrying.");
+
+    inbox.listMode = "ok";
+    await nextPoll(page, 40_000);
+    await settled(page);
+    await expect(banner(page)).toHaveCount(0);
+    await expect(approveBtn(card)).not.toHaveAttribute("aria-disabled", "true");
+    await expect(live(page)).toHaveText("Back online.");
+    await expect(page.getByRole("link", { name: "Inbox, 1 pending", exact: true })).toBeVisible();
+  });
+
+  test("the window offline and online events", async ({ page, context }) => {
+    const inbox = await openFrozen(page, { list: [two()] });
+    const lastOk = (await lastPoll(page)).rec.end as number;
+    await context.setOffline(true);
+    await expect(banner(page)).toHaveText(bannerText(lastOk));
+    const h = inbox.hits.list;
+    await context.setOffline(false);
+    await expect.poll(() => inbox.hits.list).toBe(h + 1);
+    await expect(banner(page)).toHaveCount(0);
+    await expect(live(page)).toHaveText("Back online.");
   });
 });
