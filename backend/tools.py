@@ -18,7 +18,9 @@ main.py applies the write atomically when the user approves.
 """
 
 import datetime
+import re
 import secrets
+import statistics
 import uuid
 from datetime import timezone, timedelta
 from decimal import Decimal
@@ -795,6 +797,138 @@ def compare_periods(
     return {"tool": "compare_periods", "base": base, "current": current,
             "totals": totals, "comparable": comparable,
             "categories": rows, "other_delta": other_delta}
+
+
+# --------------------------------------------------------------------------
+# recurring_charges (QRY-01): deterministic detector over one fetched row set.
+# --------------------------------------------------------------------------
+
+# (name, low_days, high_days, nominal_days, min_occurrences). Known ceilings:
+# a 4-weekly (28d) charge reads as monthly; biweekly (14d) matches no band.
+_CADENCES = (
+    ("weekly", 5, 9, 7.0, 3),
+    ("monthly", 28, 33, 30.44, 3),
+    ("quarterly", 85, 97, 91.31, 3),
+    ("yearly", 350, 380, 365.25, 2),
+)
+
+
+def _norm_text_key(text_: str | None) -> str | None:
+    """Lower-case, collapse whitespace, drop trailing ref-code tokens (any token
+    with a digit or no letter/digit). A lone token is never stripped (7-eleven)."""
+    toks = (text_ or "").lower().split()
+    while len(toks) > 1 and (re.search(r"\d", toks[-1]) or not re.search(r"[^\W_]", toks[-1])):
+        toks.pop()
+    return " ".join(toks) or None
+
+
+def _cluster_amounts(rows) -> list[list]:
+    """Sort rows by |amount| and start a new cluster when the next amount is
+    more than 5% from the current cluster's median (keeps boundary pairs together)."""
+    clusters: list[list] = []
+    for r in sorted(rows, key=lambda r: abs(float(r[2]))):
+        a = abs(float(r[2]))
+        if clusters:
+            med = statistics.median(abs(float(x[2])) for x in clusters[-1])
+            if abs(a - med) <= 0.05 * med:
+                clusters[-1].append(r)
+                continue
+        clusters.append([r])
+    return clusters
+
+
+def _day(d) -> datetime.date:
+    return d.date() if isinstance(d, datetime.datetime) else d
+
+
+# Discretion (35-CONTEXT): key text = merchant else notes in ONE namespace,
+# normalised by _norm_text_key. "Tight" = every interval inside the chosen
+# cadence band. "spread_ok" = (max - min) <= 5% of the median amount. A text
+# group is rejected when >25% of its occurrences sit outside median +-25%;
+# otherwise any such outlier demotes it to low (a variable-amount frequent
+# merchant is never "high").
+def _build_group(key_type: str, grp: list, today: datetime.date) -> dict | None:
+    grp = sorted(grp, key=lambda r: (_day(r[1]), r[0]))
+    days: dict = {}
+    for r in grp:
+        days[_day(r[1])] = days.get(_day(r[1]), 0.0) + abs(float(r[2]))
+    occ = sorted(days.items())
+    n = len(occ)
+    if n < 2:
+        return None
+    intervals = [(b[0] - a[0]).days for a, b in zip(occ, occ[1:])]
+    mi = statistics.median(intervals)
+    band = next((c for c in _CADENCES if c[1] <= mi <= c[2]), None)
+    if band is None or n < band[4]:
+        return None
+    name, lo, hi, nominal = band[0], band[1], band[2], band[3]
+    tight = all(lo <= i <= hi for i in intervals)
+
+    amts = [a for _, a in occ]
+    typical, mn, mx = statistics.median(amts), min(amts), max(amts)
+    spread_ok = (mx - mn) <= 0.05 * typical
+    outliers = sum(1 for a in amts if abs(a - typical) > 0.25 * typical)
+    text_key = key_type == "text"
+    if text_key and outliers / n > 0.25:
+        return None
+
+    if name == "yearly":
+        conf = "low"
+    elif text_key and outliers:
+        conf = "low"
+    elif text_key and n >= 4 and tight and spread_ok:
+        conf = "high"
+    elif text_key:
+        conf = "medium"
+    elif n >= 4 and tight:
+        conf = "medium"
+    else:
+        conf = "low"
+
+    last = occ[-1][0]
+    active = (today - last).days <= 1.5 * nominal
+    newest = grp[-1]
+    if text_key:
+        label = str(newest[4] if _norm_text_key(newest[4]) else newest[5]).strip()[:80]
+    else:
+        label = f"{newest[7] or 'category ' + str(newest[6])} \u00b7 ~{typical:,.0f}"
+    g = {
+        "label": label, "key_type": key_type, "category": newest[7],
+        "cadence": name, "median_interval_days": float(mi),
+        "typical_amount": round(typical, 2), "amount_min": round(mn, 2),
+        "amount_max": round(mx, 2),
+        "est_monthly": round(typical * 30.44 / nominal, 2),
+        "occurrences": n, "first_date": occ[0][0].isoformat(),
+        "last_date": last.isoformat(), "status": "active" if active else "lapsed",
+        "confidence": conf,
+        "evidence": [
+            {"id": int(r[0]), "date": _day(r[1]).isoformat(), "amount": float(r[2]),
+             "account_id": r[3]}
+            for r in reversed(grp[-12:])
+        ],
+    }
+    if active:
+        g["next_expected"] = (last + timedelta(days=round(mi))).isoformat()
+    return g
+
+
+def _recurring_groups(rows, today: datetime.date) -> list[dict]:
+    """rows: (id, date, amount, account_id, merchant, notes, category_id, category_name).
+    Returns detected groups, active first then est_monthly descending."""
+    buckets: dict = {}
+    by_cat: dict = {}
+    for r in rows:
+        k = _norm_text_key(r[4]) or _norm_text_key(r[5])
+        if k:
+            buckets.setdefault(("text", k), []).append(r)
+        elif r[6] is not None:
+            by_cat.setdefault(r[6], []).append(r)
+    for cid, rs in by_cat.items():
+        for i, cl in enumerate(_cluster_amounts(rs)):
+            buckets[("category", cid, i)] = cl
+    groups = [g for k, grp in buckets.items() if (g := _build_group(k[0], grp, today))]
+    groups.sort(key=lambda g: (g["status"] != "active", -g["est_monthly"], g["label"]))
+    return groups
 
 
 # Registry: name -> callable (read tools)
