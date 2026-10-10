@@ -263,3 +263,112 @@ export function skipAriaLabel(index: number, row: ProposalRow): string {
 export function isLocked(p: Pick<InboxProposal, "channel" | "failed_attempts">): boolean {
   return p.channel === "mcp" && p.failed_attempts >= 5;
 }
+
+// ---------------------------------------------------------------------------
+// State helpers
+// ---------------------------------------------------------------------------
+
+const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+export const isUuid = (s: unknown): s is string => typeof s === "string" && UUID_RE.test(s);
+
+/** A finite non-negative integer: the only shape trusted as a pending count. */
+export const isPendingCount = (x: unknown): x is number =>
+  typeof x === "number" && Number.isInteger(x) && x >= 0;
+
+/** Reads `{pending: n}` from /proposals/counts; null means "treat the poll as failed". */
+export function parsePendingCount(json: unknown): number | null {
+  if (typeof json !== "object" || json === null || Array.isArray(json)) return null;
+  const p = (json as { pending?: unknown }).pending;
+  return isPendingCount(p) ? p : null;
+}
+
+/** Server clock minus local clock in ms, from a `Date` response header; 0 when unusable. */
+export function serverOffset(dateHeader: string | null, localNowMs: number): number {
+  if (!dateHeader) return 0;
+  const t = Date.parse(dateHeader);
+  return Number.isNaN(t) ? 0 : t - localNowMs;
+}
+
+/**
+ * Copy only the boolean `skip` flag from a PATCH response onto the held rows.
+ * The response carries no `duplicates`, so replacing rows would drop the chips.
+ */
+export function mergeSkip(held: ProposalRow[], resp: ProposalRow[]): ProposalRow[] {
+  return held.map((row, i) => {
+    const skip = resp[i]?.skip;
+    return typeof skip === "boolean" ? { ...row, skip } : row;
+  });
+}
+
+const createdOf = (c: HeldCard) => {
+  const t = Date.parse(c.proposal.created_at);
+  return Number.isNaN(t) ? 0 : t;
+};
+
+/**
+ * Merge a poll result into the held cards: never replace a card with an
+ * in-flight action, keep settled cards in their slot, and settle a live card
+ * that disappeared with no local explanation (decided elsewhere, or expired).
+ */
+export function mergePoll(
+  held: HeldCard[],
+  server: InboxProposal[],
+  busy: ReadonlySet<string>,
+  nowMs: number
+): { cards: HeldCard[]; expired: number; vanished: number } {
+  const byId = new Map(server.map((p) => [p.id, p]));
+  const heldIds = new Set(held.map((c) => c.proposal.id));
+  let expired = 0;
+  let vanished = 0;
+  const cards: HeldCard[] = held.map((c) => {
+    if (busy.has(c.proposal.id) || c.phase !== "live") return c;
+    const fresh = byId.get(c.proposal.id);
+    if (fresh) return { proposal: fresh, phase: "live" };
+    if (nowMs < Date.parse(c.proposal.expires_at)) {
+      vanished++;
+      return { ...c, phase: "vanished", settledAt: nowMs };
+    }
+    expired++;
+    return { ...c, phase: "expired", settledAt: nowMs };
+  });
+  for (const p of server) {
+    if (!heldIds.has(p.id)) cards.push({ proposal: p, phase: "live" });
+  }
+  cards.sort((a, b) => createdOf(b) - createdOf(a) || (a.proposal.id < b.proposal.id ? -1 : 1));
+  return { cards, expired, vanished };
+}
+
+export const liveCount = (cards: HeldCard[]) => cards.filter((c) => c.phase === "live").length;
+
+const ELSEWHERE: Record<string, CardPhase> = {
+  confirmed: "approvedElsewhere",
+  rejected: "rejectedElsewhere",
+  superseded: "superseded",
+  expired: "expired",
+};
+
+/** Map an Approve/Reject/Skip HTTP failure (or success) to what the card should do. */
+export function mapActionResponse(status: number, detail: string): ActionOutcome {
+  if (status >= 200 && status < 300) return { kind: "ok" };
+  if (status === 401 || status === 403 || status === 503) {
+    return { kind: "error", message: APPROVER_KEY_ACTION_MSG };
+  }
+  if (status === 404) {
+    return { kind: "phase", phase: "vanished", message: "This proposal no longer exists." };
+  }
+  if (status === 409) {
+    const m = /^Proposal already (confirmed|rejected|superseded|expired)/.exec(detail);
+    if (m) return { kind: "phase", phase: ELSEWHERE[m[1]] };
+    return { kind: "error", message: `Couldn't apply: ${LEDGER_CHANGED_MSG}` };
+  }
+  if (status === 410) return { kind: "phase", phase: "expired" };
+  return { kind: "error", message: `Couldn't apply: ${detail}` };
+}
+
+/** Rows shown on a card: all when short or expanded, else the first five plus every flagged row. */
+export function visibleRowIndices(rows: ProposalRow[], expanded: boolean): number[] {
+  const all = rows.map((_, i) => i);
+  if (rows.length <= 8 || expanded) return all;
+  return all.filter((i) => i < 5 || (rows[i].duplicates?.length ?? 0) > 0);
+}

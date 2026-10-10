@@ -18,8 +18,24 @@ import {
   proposalFlagText,
   skipAriaLabel,
   isLocked,
+  isUuid,
+  isPendingCount,
+  parsePendingCount,
+  serverOffset,
+  mergeSkip,
+  mergePoll,
+  liveCount,
+  mapActionResponse,
+  visibleRowIndices,
+  APPROVER_KEY_ACTION_MSG,
+  LEDGER_CHANGED_MSG,
+  ALL_SKIPPED_MSG,
   type ProposalRow,
+  type InboxProposal,
+  type HeldCard,
+  type DuplicateFlag,
 } from "../app/lib/inbox";
+import { tokens } from "../app/styles";
 
 // ---------------------------------------------------------------------------
 // Phase 33 Plan 01 — non-browser logic spec (D-05): pure modules only, no page
@@ -251,5 +267,194 @@ test.describe("flags", () => {
     }).format(new Date(BASE));
     expect(hhmm(BASE)).toBe(expected);
     expect(hhmm(BASE)).toMatch(/^\d{2}:\d{2}$/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Merge, mapping, windowing, guards, contrast (Task 3)
+// ---------------------------------------------------------------------------
+
+const prop = (id: string, createdMs: number, expiresMs = BASE + 40 * HOUR): InboxProposal => ({
+  id,
+  operation: "add_transaction",
+  payload: { rows: rowsOf(2) },
+  status: "pending",
+  expires_at: new Date(expiresMs).toISOString(),
+  created_at: new Date(createdMs).toISOString(),
+  confirmed_at: null,
+  channel: "mcp",
+  supersedes_id: null,
+  failed_attempts: 0,
+});
+const live = (p: InboxProposal): HeldCard => ({ proposal: p, phase: "live" });
+const noBusy: ReadonlySet<string> = new Set();
+
+test.describe("skip merge", () => {
+  test("copies only skip and keeps held duplicates", () => {
+    const dup: DuplicateFlag = { kind: "proposal", id: U, row: 0 };
+    const held: ProposalRow[] = [{ after: { merchant: "A" }, duplicates: [dup] }, { after: { merchant: "B" } }];
+    const resp: ProposalRow[] = [{ after: { merchant: "CHANGED" }, skip: true }];
+    const out = mergeSkip(held, resp);
+    expect(out[0].skip).toBe(true);
+    expect(out[0].duplicates).toEqual([dup]);
+    expect(out[0].after).toEqual({ merchant: "A" });
+    expect(out[1]).toBe(held[1]);
+  });
+});
+
+test.describe("poll merge", () => {
+  const a = prop("a", BASE - 3 * HOUR);
+  const b = prop("b", BASE - 2 * HOUR);
+  const c = prop("c", BASE - 1 * HOUR);
+
+  test("new server proposals appear live, newest first", () => {
+    const out = mergePoll([], [a, b, c], noBusy, BASE);
+    expect(out.cards.map((x) => x.proposal.id)).toEqual(["c", "b", "a"]);
+    expect(out.cards.every((x) => x.phase === "live")).toBe(true);
+    expect(liveCount(out.cards)).toBe(3);
+  });
+  test("a live card takes the fresh server proposal", () => {
+    const fresh = { ...a, payload: { rows: rowsOf(3) } };
+    const out = mergePoll([live(a)], [fresh], noBusy, BASE);
+    expect(out.cards[0].proposal).toBe(fresh);
+  });
+  test("busy cards and settled cards are untouched", () => {
+    const held: HeldCard[] = [live(a), { proposal: b, phase: "approved", settledAt: BASE }];
+    const out = mergePoll(held, [{ ...a, failed_attempts: 2 }, { ...b, failed_attempts: 2 }], new Set(["a"]), BASE);
+    expect(out.cards.find((x) => x.proposal.id === "a")).toBe(held[0]);
+    expect(out.cards.find((x) => x.proposal.id === "b")).toBe(held[1]);
+    const gone = mergePoll(held, [], new Set(["a"]), BASE);
+    expect(gone.cards).toHaveLength(2);
+    expect(gone.vanished + gone.expired).toBe(0);
+  });
+  test("a live card missing from the server vanishes before expiry, expires after", () => {
+    const early = mergePoll([live(a)], [], noBusy, BASE);
+    expect(early.cards[0].phase).toBe("vanished");
+    expect(early.vanished).toBe(1);
+    expect(early.expired).toBe(0);
+    const late = mergePoll([live(a)], [], noBusy, BASE + 41 * HOUR);
+    expect(late.cards[0].phase).toBe("expired");
+    expect(late.expired).toBe(1);
+    expect(late.vanished).toBe(0);
+  });
+  test("ties break by id ascending", () => {
+    const x = prop("x", BASE);
+    const y = prop("y", BASE);
+    expect(mergePoll([], [y, x], noBusy, BASE).cards.map((k) => k.proposal.id)).toEqual(["x", "y"]);
+  });
+});
+
+test.describe("action mapping", () => {
+  test("success", () => {
+    expect(mapActionResponse(200, "")).toEqual({ kind: "ok" });
+    expect(mapActionResponse(201, "")).toEqual({ kind: "ok" });
+  });
+  test("approver-key statuses", () => {
+    for (const s of [401, 403, 503]) {
+      expect(mapActionResponse(s, "whatever")).toEqual({ kind: "error", message: APPROVER_KEY_ACTION_MSG });
+    }
+    expect(APPROVER_KEY_ACTION_MSG).toBe(
+      "Approvals aren't set up — the web server is missing a valid approver key."
+    );
+  });
+  test("404, 409, 410", () => {
+    expect(mapActionResponse(404, "x")).toEqual({
+      kind: "phase",
+      phase: "vanished",
+      message: "This proposal no longer exists.",
+    });
+    expect(mapActionResponse(409, "Proposal already confirmed")).toEqual({ kind: "phase", phase: "approvedElsewhere" });
+    expect(mapActionResponse(409, "Proposal already rejected")).toEqual({ kind: "phase", phase: "rejectedElsewhere" });
+    expect(mapActionResponse(409, "Proposal already superseded")).toEqual({ kind: "phase", phase: "superseded" });
+    expect(mapActionResponse(409, "Proposal already expired")).toEqual({ kind: "phase", phase: "expired" });
+    expect(mapActionResponse(409, "something else")).toEqual({
+      kind: "error",
+      message: "Couldn't apply: " + LEDGER_CHANGED_MSG,
+    });
+    expect(mapActionResponse(410, "gone")).toEqual({ kind: "phase", phase: "expired" });
+  });
+  test("422 and 500 carry the server detail", () => {
+    expect(mapActionResponse(422, ALL_SKIPPED_MSG)).toEqual({
+      kind: "error",
+      message: "Couldn't apply: Every row is skipped — reject this proposal instead",
+    });
+    expect(mapActionResponse(500, "boom")).toEqual({ kind: "error", message: "Couldn't apply: boom" });
+  });
+});
+
+test.describe("windowing", () => {
+  const mk = (n: number, flagged: number[] = []): ProposalRow[] =>
+    rowsOf(n).map((r, i) =>
+      flagged.includes(i) ? { ...r, duplicates: [{ kind: "proposal", id: U, row: 0 } as DuplicateFlag] } : r
+    );
+  test("short or expanded shows everything", () => {
+    expect(visibleRowIndices(mk(8), false)).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(visibleRowIndices(mk(12), true)).toHaveLength(12);
+  });
+  test("long collapsed shows first five plus flagged rows", () => {
+    expect(visibleRowIndices(mk(12, [9]), false)).toEqual([0, 1, 2, 3, 4, 9]);
+    expect(visibleRowIndices(mk(12, [1, 10]), false)).toEqual([0, 1, 2, 3, 4, 10]);
+  });
+});
+
+test.describe("guards", () => {
+  test("isUuid", () => {
+    expect(isUuid(U)).toBe(true);
+    expect(isUuid(UPPER)).toBe(true);
+    expect(isUuid("abc")).toBe(false);
+    expect(isUuid("")).toBe(false);
+    expect(isUuid(U + "x")).toBe(false);
+  });
+  test("pending count", () => {
+    expect(isPendingCount(0)).toBe(true);
+    expect(isPendingCount(7)).toBe(true);
+    for (const bad of [-1, 1.5, NaN, "3", null]) expect(isPendingCount(bad)).toBe(false);
+    expect(parsePendingCount({ pending: 4 })).toBe(4);
+    expect(parsePendingCount({ pending: "4" })).toBeNull();
+    expect(parsePendingCount([])).toBeNull();
+    expect(parsePendingCount(null)).toBeNull();
+  });
+  test("serverOffset", () => {
+    expect(serverOffset("Fri, 09 Oct 2026 06:00:00 GMT", BASE)).toBe(2 * HOUR);
+    expect(serverOffset(null, BASE)).toBe(0);
+    expect(serverOffset("not a date", BASE)).toBe(0);
+  });
+});
+
+test.describe("contrast", () => {
+  // WCAG relative luminance; test-only (axe substitute, D-07).
+  const full = (hex: string) =>
+    hex.length === 4 ? "#" + [1, 2, 3].map((i) => hex[i] + hex[i]).join("") : hex;
+  const lum = (hex: string) => {
+    const h = full(hex);
+    const [r, g, b] = [1, 3, 5]
+      .map((i) => parseInt(h.slice(i, i + 2), 16) / 255)
+      .map((v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4));
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const ratio = (a: string, b: string) => {
+    const [x, y] = [lum(a), lum(b)].sort((p, q) => q - p);
+    return (x + 0.05) / (y + 0.05);
+  };
+  const c = tokens.color;
+  const text: [string, string, string][] = [
+    ["ink", c.ink, c.card], ["ink", c.ink, c.panel], ["ink", c.ink, c.tintWarm], ["ink", c.ink, c.tintNeutral],
+    ["muted3", c.muted3, c.card], ["muted3", c.muted3, c.panel], ["muted3", c.muted3, c.inputBg],
+    ["muted3", c.muted3, c.tintNeutral], ["muted3", c.muted3, c.sidebar],
+    ["green", c.green, c.card], ["green", c.green, c.panel],
+    ["#fff", "#fff", c.green], ["#fff", "#fff", c.terracotta],
+    ["terracotta", c.terracotta, c.card], ["terracotta", c.terracotta, c.panel],
+  ];
+  for (const [name, fg, bg] of text) {
+    test(`${name} ${fg} on ${bg} >= 4.5`, () => {
+      expect(ratio(fg, bg)).toBeGreaterThanOrEqual(4.5);
+    });
+  }
+  test("green focus ring >= 3 on panel and card", () => {
+    expect(ratio(c.green, c.panel)).toBeGreaterThanOrEqual(3);
+    expect(ratio(c.green, c.card)).toBeGreaterThanOrEqual(3);
+  });
+  test("terracotta on tintWarm fails (why the UI-SPEC bans it)", () => {
+    expect(ratio(c.terracotta, c.tintWarm)).toBeLessThan(4.5);
   });
 });
