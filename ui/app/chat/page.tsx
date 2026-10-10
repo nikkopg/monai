@@ -507,9 +507,12 @@ export default function ChatPage() {
         fail({ code: "connection", model: null, idleSeconds: null, transport: true });
       }
     } finally {
-      abortRef.current = null;
-      busyRef.current = false;
-      if (!stoppedRef.current) setAsking(false); // stop() clears it otherwise
+      // Only the invocation that still owns the shared refs may clear them.
+      if (abortRef.current === ac) {
+        abortRef.current = null;
+        busyRef.current = false;
+        if (!stoppedRef.current) setAsking(false); // stop() clears it otherwise
+      }
     }
   }
 
