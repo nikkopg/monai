@@ -1389,33 +1389,37 @@ test.describe("chat card", () => {
     const answer = {
       type: "answer",
       text: "I can add that.",
-      proposals: [{ id: pid, token: TOKEN }],
+      proposals: [
+        {
+          id: pid,
+          token: TOKEN,
+          operation: "add_transaction",
+          expires_at: new Date(Date.now() + 15 * MIN).toISOString(),
+          payload: {
+            operation: "add_transaction",
+            rows: [
+              {
+                before: null,
+                after: {
+                  date: "2026-10-07",
+                  amount: "-35000.00",
+                  account: "Account A",
+                  merchant: "Kopi Contoh",
+                  category: null,
+                  notes: null,
+                  currency: "IDR",
+                  is_transfer: false,
+                },
+              },
+            ],
+          },
+        },
+      ],
       trace: [
         {
           tool: "propose_add_transaction",
           args: {},
-          result: {
-            proposal_id: pid,
-            proposal_token: TOKEN,
-            payload: {
-              operation: "add_transaction",
-              rows: [
-                {
-                  before: null,
-                  after: {
-                    date: "2026-10-07",
-                    amount: "-35000.00",
-                    account: "Account A",
-                    merchant: "Kopi Contoh",
-                    category: null,
-                    notes: null,
-                    currency: "IDR",
-                    is_transfer: false,
-                  },
-                },
-              ],
-            },
-          },
+          result: { proposal_id: pid, proposal_token: TOKEN },
         },
       ],
     };
@@ -1438,7 +1442,7 @@ test.describe("chat card", () => {
     await page.goto("/chat");
     await page.getByPlaceholder("Ask anything about your finances…").fill("Add a synthetic coffee");
     await page.getByPlaceholder("Ask anything about your finances…").press("Enter");
-    await expect(page.getByText("Proposed propose add transaction")).toBeVisible();
+    await expect(page.getByText("Proposed add transaction")).toBeVisible();
     return { inbox, posts };
   }
 
