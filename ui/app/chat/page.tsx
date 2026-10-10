@@ -308,6 +308,9 @@ const ERROR_COPY: Record<string, { title: string; body: string }> = {
   },
 };
 
+// Upper bound on the Stop cancel request (WR-02).
+const CANCEL_TIMEOUT_MS = 10_000;
+
 const TRANSPORT_BODY =
   "The connection to monai failed. Check that the server is running, then retry.";
 
@@ -514,11 +517,18 @@ export default function ChatPage() {
     setStopping(true);
 
     const runId = runIdRef.current;
+    // Bounded: a hung DB behind the cancel route must not pin "Stopping…" for ever.
+    const cancelAc = new AbortController();
+    const cancelTimer = setTimeout(() => cancelAc.abort(), CANCEL_TIMEOUT_MS);
     const cancel: Promise<string[]> = runId
-      ? fetch(`/api/query-stream/${runId}/cancel`, { method: "POST" })
+      ? fetch(`/api/query-stream/${runId}/cancel`, {
+          method: "POST",
+          signal: cancelAc.signal,
+        })
           .then((r) => (r.ok ? r.json() : { rejected: [] }))
           .then((d) => (Array.isArray(d.rejected) ? (d.rejected as string[]) : []))
           .catch(() => [])
+          .finally(() => clearTimeout(cancelTimer))
       : Promise.resolve([]);
     abortRef.current?.abort();
     const rejected = await cancel;

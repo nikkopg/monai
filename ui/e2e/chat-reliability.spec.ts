@@ -336,6 +336,41 @@ test.describe("chat stream reliability (REL-01/02/03/05/06/09)", () => {
     expect(cancelPath).toBe(`/api/query-stream/${RUN}/cancel`);
   });
 
+  test("Stop gives up on a hung cancel request instead of sticking on Stopping…", async ({ page }) => {
+    await page.addInitScript(
+      ({ RUN }) => {
+        const real = window.fetch.bind(window);
+        const enc = new TextEncoder();
+        window.fetch = (url: RequestInfo | URL, init?: RequestInit) => {
+          if (!String(url).endsWith("/api/query-stream")) return real(url, init);
+          const stream = new ReadableStream({
+            start(c) {
+              c.enqueue(enc.encode(`data: ${JSON.stringify({ type: "run", run_id: RUN })}\n\n`));
+              c.enqueue(enc.encode(`data: ${JSON.stringify({ type: "step", msg: "working…" })}\n\n`));
+              init?.signal?.addEventListener("abort", () => c.close());
+            },
+          });
+          return Promise.resolve(
+            new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } })
+          );
+        };
+      },
+      { RUN }
+    );
+    // The cancel route never answers; only the client-side timeout can end the stop.
+    await page.route(/\/api\/query-stream\/[^/]+\/cancel$/, () => {});
+    await page.clock.install();
+    await page.goto("/chat");
+    await input(page).fill(QUESTION);
+    await input(page).press("Enter");
+    await expect(page.getByText("working…")).toBeVisible();
+    await page.getByRole("button", { name: "Stop" }).click();
+    await expect(page.getByRole("button", { name: "Stopping…" })).toBeDisabled();
+    await page.clock.fastForward(11_000);
+    await expect(page.getByText(/^Stopped\. No answer was kept\./)).toBeVisible();
+    await expect(page.getByRole("button", { name: "Ask", exact: true })).toBeVisible();
+  });
+
   test("model label shows the server model with the provider as title", async ({ page }) => {
     await askWithBody(
       page,
