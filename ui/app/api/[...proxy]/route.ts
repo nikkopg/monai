@@ -9,7 +9,8 @@
  * and attached ONLY to the four allowlisted shapes (inbox list, approve,
  * reject, row skip; see lib/approverAllowlist.ts). Any client-supplied copy is
  * stripped from every incoming request first, and the header is omitted when
- * the key is unset (fail closed: the backend answers 401/403/503).
+ * the key is unset (fail closed: the backend answers 401/403/503) or when the
+ * request is not a same-origin one to a loopback Host (CSRF / DNS rebinding).
  *
  * IMPORTANT: Never expose the key via a NEXT_PUBLIC_ prefixed env var — that
  * prefix bakes the value into the browser bundle. This file must remain a

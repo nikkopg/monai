@@ -117,6 +117,31 @@ test.describe("forward headers", () => {
     const h = buildForwardHeaders(incoming(), "api-synthetic", SERVER, "POST", `proposals/${U}/confirm`, "");
     expect(h.has("MONAI_APPROVER_KEY")).toBe(false);
   });
+  const withHeaders = (extra: Record<string, string>) => {
+    const h = incoming();
+    for (const [k, v] of Object.entries(extra)) h.set(k, v);
+    return h;
+  };
+  const attached = (extra: Record<string, string>) =>
+    buildForwardHeaders(withHeaders(extra), "api-synthetic", SERVER, ...approve).get("MONAI_APPROVER_KEY");
+
+  test("same-origin browser requests on a loopback host get the key", () => {
+    expect(attached({ "sec-fetch-site": "same-origin", origin: "http://127.0.0.1:3001" })).toBe(SERVER);
+    expect(attached({ host: "localhost:3001", "sec-fetch-site": "same-origin", origin: "http://localhost:3001" })).toBe(SERVER);
+    expect(attached({ host: "[::1]:3001", "sec-fetch-site": "same-origin" })).toBe(SERVER);
+    expect(attached({ "sec-fetch-site": "none" })).toBe(SERVER);
+  });
+  test("cross-site, same-site, rebinding and foreign-origin requests never get the key", () => {
+    expect(attached({ "sec-fetch-site": "cross-site" })).toBeNull();
+    expect(attached({ "sec-fetch-site": "same-site" })).toBeNull();
+    expect(attached({ host: "rebind.example:3001", "sec-fetch-site": "same-origin" })).toBeNull();
+    expect(attached({ host: "127.0.0.1.rebind.example" })).toBeNull();
+    expect(attached({ origin: "http://evil.example" })).toBeNull();
+    expect(attached({ origin: "null" })).toBeNull();
+    const noHost = incoming();
+    noHost.delete("host");
+    expect(buildForwardHeaders(noHost, "api-synthetic", SERVER, ...approve).has("MONAI_APPROVER_KEY")).toBe(false);
+  });
   test("API key is always the server's, host is dropped, other headers pass through", () => {
     const h = buildForwardHeaders(incoming(), "api-synthetic", "", "GET", "transactions", "");
     expect(h.get("MONAI_API_KEY")).toBe("api-synthetic");

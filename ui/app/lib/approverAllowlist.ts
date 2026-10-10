@@ -27,11 +27,43 @@ export function approverHeaderAllowed(method: string, path: string, search: stri
   return RULES.some((r) => r.method === m && r.path.test(path) && r.search.test(search));
 }
 
+// The app is served on loopback only (README "listen on 127.0.0.1"; SSH tunnels
+// keep the 127.0.0.1 Host). Any other Host means DNS rebinding or a foreign proxy.
+const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+const hostnameOf = (origin: string): string | null => {
+  try {
+    return new URL(origin).hostname.toLowerCase();
+  } catch {
+    return null; // includes the opaque "null" origin
+  }
+};
+
+/**
+ * True for a same-origin browser request (or a non-browser client) to a
+ * loopback Host. Blocks DNS rebinding (the browser sends the attacker's Host)
+ * and cross-site form posts (Sec-Fetch-Site cross-site/same-site, or a foreign
+ * Origin from browsers without Fetch Metadata).
+ */
+export function isLocalSameOrigin(incoming: Headers): boolean {
+  const host = (incoming.get("host") ?? "").replace(/:\d+$/, "").toLowerCase();
+  if (!LOCAL_HOSTS.has(host)) return false;
+  const site = incoming.get("sec-fetch-site");
+  if (site !== null && site !== "same-origin" && site !== "none") return false;
+  const origin = incoming.get("origin");
+  if (origin !== null) {
+    const o = hostnameOf(origin);
+    if (o === null || !LOCAL_HOSTS.has(o)) return false;
+  }
+  return true;
+}
+
 /**
  * The headers the proxy forwards upstream. Pure so the strip-then-inject order
  * is unit-tested: the API key is always set, the incoming Host is dropped, any
  * client-supplied approver header is deleted BEFORE the server's key is set, and
- * the key is attached only when it is non-empty and the request is allowlisted.
+ * the key is attached only when it is non-empty, the request is a local
+ * same-origin one, and it is allowlisted.
  */
 export function buildForwardHeaders(
   incoming: Headers,
@@ -47,7 +79,7 @@ export function buildForwardHeaders(
   headers.delete("host");
   // A client-supplied approver header is never forwarded (D-03, T-33-01).
   headers.delete("MONAI_APPROVER_KEY");
-  if (approverKey && approverHeaderAllowed(method, path, search)) {
+  if (approverKey && isLocalSameOrigin(incoming) && approverHeaderAllowed(method, path, search)) {
     headers.set("MONAI_APPROVER_KEY", approverKey);
   }
   return headers;
