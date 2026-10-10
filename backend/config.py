@@ -25,7 +25,8 @@ DATABASE_URL = os.getenv(
     "postgresql+psycopg://monai:monai@localhost:5434/monai",
 )
 
-CHAT_IDLE_TIMEOUT_SECONDS = int(os.getenv("CHAT_IDLE_TIMEOUT_SECONDS", "120"))
+# float so "90.5" parses; floored at 1 s so 0 or a negative cannot end every run at once.
+CHAT_IDLE_TIMEOUT_SECONDS = max(1.0, float(os.getenv("CHAT_IDLE_TIMEOUT_SECONDS", "120")))
 
 
 def configure_llm(overrides: dict | None = None) -> None:
