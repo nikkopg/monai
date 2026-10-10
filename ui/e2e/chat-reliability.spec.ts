@@ -381,6 +381,44 @@ test.describe("chat stream reliability (REL-01/02/03/05/06/09)", () => {
     await expect(page.getByRole("button", { name: "Ask", exact: true })).toBeVisible();
   });
 
+  test("Stop after a terminal event clears the answer", async ({ page }) => {
+    await page.addInitScript(
+      ({ RUN }) => {
+        const real = window.fetch.bind(window);
+        const enc = new TextEncoder();
+        window.fetch = (url: RequestInfo | URL, init?: RequestInit) => {
+          if (!String(url).endsWith("/api/query-stream")) return real(url, init);
+          const stream = new ReadableStream({
+            start(c) {
+              const send = (o: unknown) =>
+                c.enqueue(enc.encode(`data: ${JSON.stringify(o)}\n\n`));
+              send({ type: "run", run_id: RUN });
+              // The answer lands but [DONE] never does, so Stop is still on screen.
+              send({ type: "answer", text: "TERMINAL-ANSWER-SYNTHETIC", proposals: [], model: "example-model:7b", provider: "ollama" });
+              init?.signal?.addEventListener("abort", () => c.close());
+            },
+          });
+          return Promise.resolve(
+            new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } })
+          );
+        };
+      },
+      { RUN }
+    );
+    await page.route(/\/api\/query-stream\/[^/]+\/cancel$/, (route) =>
+      route.fulfill({ json: { rejected: [] } })
+    );
+    await page.goto("/chat");
+    await input(page).fill(QUESTION);
+    await input(page).press("Enter");
+    await expect(page.getByText("TERMINAL-ANSWER-SYNTHETIC")).toBeVisible();
+    await page.getByRole("button", { name: "Stop" }).click();
+    await expect(page.getByText(/^Stopped\. No answer was kept\./)).toBeVisible();
+    await expect(page.getByText("TERMINAL-ANSWER-SYNTHETIC")).toHaveCount(0);
+    await expect(page.getByText("example-model:7b", { exact: true })).toHaveCount(0);
+    await expect(alertBox(page)).toHaveCount(0);
+  });
+
   test("model label shows the server model with the provider as title", async ({ page }) => {
     await askWithBody(
       page,

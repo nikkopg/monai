@@ -568,6 +568,11 @@ export default function ChatPage() {
       });
     setProposals(cards);
     setStopRejected(rejected.length > 0);
+    // A terminal event may have landed just before Stop; Stop wins (UI-SPEC §3).
+    setAnswered(false);
+    setAnswer("");
+    setModel(null);
+    setError(null);
     setStopped(true);
     setStopping(false);
     setAsking(false);
