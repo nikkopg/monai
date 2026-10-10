@@ -607,3 +607,165 @@ async def test_idle_timeout_defaults_to_config(monkeypatch):
     errs = _of_type(_payloads(await _collect(agent_stream("q", ping_interval=5))), "error")
 
     assert [e["code"] for e in errs] == ["idle_timeout"]
+
+
+# ---------------------------------------------------------------------------
+# Plan 02: run registry, Stop, disconnect cleanup, bulk reject (D-08..D-16)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_registry():
+    import backend.query as query_mod
+
+    query_mod._ACTIVE.clear()
+    query_mod._LAST.clear()
+    yield
+    query_mod._ACTIVE.clear()
+    query_mod._LAST.clear()
+
+
+def _status_of(pid: str) -> str:
+    from backend.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        return db.execute(
+            text("SELECT status FROM proposals WHERE id = :i"), {"i": pid}
+        ).scalar_one()
+    finally:
+        db.close()
+
+
+def _audit_count() -> int:
+    from backend.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        return db.execute(text("SELECT count(*) FROM audit_log")).scalar_one()
+    finally:
+        db.close()
+
+
+async def test_run_stream_first_event_is_run(monkeypatch):
+    from backend.query import CHAT_KEY, run_stream, start_run
+
+    _install_stub_workflow(monkeypatch, StubLLM(mode="ok"))
+    run = start_run(CHAT_KEY)
+
+    lines = await _collect(run_stream(run, "synthetic question"))
+    payloads = _payloads(lines)
+
+    assert payloads[0] == {"type": "run", "run_id": run.id}
+    assert len(_of_type(payloads, "answer")) == 1
+    assert lines[-1] == "data: [DONE]\n\n"
+
+
+def test_start_run_refuses_second_active_run():
+    from backend.query import CHAT_KEY, start_run
+
+    first = start_run(CHAT_KEY)
+    assert first is not None
+    assert start_run(CHAT_KEY) is None
+
+
+def test_unstarted_run_is_not_a_permanent_conflict():
+    import datetime as dt
+
+    from backend.query import CHAT_KEY, start_run
+
+    stale = start_run(CHAT_KEY)
+    stale.started_at -= dt.timedelta(seconds=11)  # generator never started
+
+    fresh = start_run(CHAT_KEY)
+    assert fresh is not None and fresh is not stale
+
+
+@pytest.mark.parametrize("exit_path", ["answer", "error", "cancel", "disconnect"])
+async def test_registry_released_on_every_exit(monkeypatch, exit_path):
+    import anyio
+
+    import backend.query as q
+
+    mode = {"answer": "ok", "error": "429"}.get(exit_path, "hang")
+    _install_stub_workflow(monkeypatch, StubLLM(mode=mode))
+    run = q.start_run(q.CHAT_KEY)
+
+    if exit_path in ("answer", "error"):
+        await _collect(q.run_stream(run, "q"))
+    elif exit_path == "cancel":
+        n = 0
+        async for _ in q.run_stream(run, "q"):
+            n += 1
+            if n == 2:  # run event + first step: the workflow is live
+                await q.stop_run(run)
+    else:
+        async def consume():
+            async for _ in q.run_stream(run, "q"):
+                if run.handler is not None and run.task is not None:
+                    tg.cancel_scope.cancel()
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(consume)
+
+    assert q.CHAT_KEY not in q._ACTIVE
+    assert q._LAST[q.CHAT_KEY] is run
+    assert q.start_run(q.CHAT_KEY) is not None
+
+
+async def test_cancel_mid_run_ends_workflow(monkeypatch):
+    import backend.query as q
+
+    _install_stub_workflow(monkeypatch, StubLLM(mode="hang"))
+    run = q.start_run(q.CHAT_KEY)
+    lines: list[str] = []
+    async for line in q.run_stream(run, "q"):
+        lines.append(line)
+        if len(lines) == 2:
+            await q.stop_run(run)
+
+    payloads = _payloads(lines)
+    assert _of_type(payloads, "answer") == []
+    assert lines[-1] == "data: [DONE]\n\n"
+    assert run.handler.is_done()
+
+
+async def test_disconnect_cleanup_survives_anyio_cancel(monkeypatch):
+    import anyio
+
+    import backend.query as q
+
+    _install_stub_workflow(monkeypatch, StubLLM(mode="hang"))
+    run = q.start_run(q.CHAT_KEY)
+    pid, _ = _seed_proposal()
+    run.proposal_ids.append(pid)
+
+    async def consume():
+        async for _ in q.run_stream(run, "q"):
+            if run.handler is not None:
+                tg.cancel_scope.cancel()
+
+    async with anyio.create_task_group() as tg:
+        tg.start_soon(consume)
+
+    assert _status_of(pid) == "rejected"
+    assert run.handler.is_done()
+    assert q.CHAT_KEY not in q._ACTIVE
+
+
+def test_reject_run_proposals_scope():
+    import backend.query as q
+
+    run = q.start_run(q.CHAT_KEY)
+    a, _ = _seed_proposal()
+    b, _ = _seed_proposal()  # not recorded: caught by the created-since-start sweep
+    c, _ = _seed_proposal(channel="mcp")
+    run.proposal_ids.append(a)
+    before = _audit_count()
+
+    assert sorted(q.reject_run_proposals(run)) == sorted([a, b])
+    assert _status_of(a) == _status_of(b) == "rejected"
+    assert _status_of(c) == "pending"
+    assert _audit_count() == before
+    # D-08a: a second call still reports every rejected id.
+    assert sorted(q.reject_run_proposals(run)) == sorted([a, b])

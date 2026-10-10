@@ -17,6 +17,11 @@ Public surface:
                                            feeds one queue; this generator only
                                            serializes it. Every failure is a
                                            typed `error` event, never an answer.
+  run_stream(run, question)             — async generator for POST /query-stream: a
+                                           `run` event, then agent_stream, with
+                                           shielded cleanup on every exit
+  start_run(key) / find_run(id)         — one-run-per-conversation registry (CHAT_KEY)
+  stop_run(run) -> list[str]            — halt the run, reject its pending chat proposals
   classify_error(exc) -> str            — duck-typed provider failure -> code
   Run                                   — dataclass: one in-flight chat run
   reset_engine() -> None                — clears _llm, _agent_workflow and its
@@ -215,7 +220,7 @@ def _llm_label(workflow) -> tuple[str | None, str | None]:
 
 
 # ---------------------------------------------------------------------------
-# Run — one in-flight chat run (the registry that holds it lands in Plan 02)
+# Run — one in-flight chat run (the registry that holds it follows below)
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -544,6 +549,127 @@ async def agent_stream(
         # every plain await here would re-raise CancelledError. Shield (D-12a).
         with anyio.CancelScope(shield=True):
             await _halt(handler, producer)
+
+
+# ---------------------------------------------------------------------------
+# Run registry — one run per conversation (D-16), Stop and disconnect cleanup
+# ---------------------------------------------------------------------------
+
+CHAT_KEY = "chat"  # Phase 36 re-keys this to the thread id; nothing else changes
+
+# ponytail: in-process registry, valid only because uvicorn runs a single
+# worker (entrypoint.sh). Upgrade to a DB or Redis lock if that ever changes.
+_ACTIVE: dict[str, Run] = {}
+_LAST: dict[str, Run] = {}  # last-finished run per key, kept until the next starts (D-11)
+
+# A run whose response generator never started must not 409 forever.
+_UNSTARTED_GRACE_SECONDS = 10.0
+
+
+def start_run(key: str) -> Run | None:
+    """Register a new run for `key`; None when one is already active (D-16)."""
+    current = _ACTIVE.get(key)
+    if current is not None:
+        age = (datetime.datetime.now(datetime.timezone.utc) - current.started_at).total_seconds()
+        if current.streaming or age <= _UNSTARTED_GRACE_SECONDS:
+            return None
+    run = Run(key=key)
+    _ACTIVE[key] = run
+    _LAST.pop(key, None)
+    return run
+
+
+def find_run(run_id: str) -> Run | None:
+    """The active or last-finished run with this id, else None."""
+    for registry in (_ACTIVE, _LAST):
+        for run in registry.values():
+            if run.id == run_id:
+                return run
+    return None
+
+
+def release_run(run: Run) -> None:
+    """Free the slot; the identity check never clobbers a replacement run."""
+    if _ACTIVE.get(run.key) is run:
+        del _ACTIVE[run.key]
+        _LAST[run.key] = run
+
+
+def reject_run_proposals(run: Run) -> list[str]:
+    """Reject the run's still-pending CHAT proposals; return every rejected id.
+
+    Mirrors POST /proposals/{id}/reject: SELECT ... FOR UPDATE, chat channel
+    only, transition, commit, no audit row (D-08). The created-since-start
+    sweep also catches a propose tool that finished in its executor thread
+    after the cancel (D-08a); that is safe because there is one run per
+    conversation. MCP-channel rows are never touched. Already-rejected rows are
+    reported too, so a cancel racing a disconnect cleanup still answers with
+    the full set (Pitfall 2).
+    """
+    from sqlalchemy import and_, or_, select
+
+    from backend.db import get_session_sync
+    from backend.models import Proposal
+    from backend.proposals import transition
+
+    ids = []
+    for pid in run.proposal_ids:
+        try:
+            ids.append(uuid.UUID(pid))
+        except ValueError:
+            continue
+    with get_session_sync() as db:
+        rows = db.execute(
+            select(Proposal)
+            .where(or_(
+                Proposal.id.in_(ids),
+                and_(Proposal.channel == "chat", Proposal.created_at >= run.started_at),
+            ))
+            .with_for_update()
+        ).scalars().all()
+        for p in rows:
+            if p.channel == "chat" and p.status == "pending":
+                transition(p, "rejected")
+        db.commit()
+        return [str(p.id) for p in rows if p.channel == "chat" and p.status == "rejected"]
+
+
+async def stop_run(run: Run) -> list[str]:
+    """Halt the workflow, then reject the run's pending chat proposals."""
+    await _halt(run.handler, run.task)
+    return await asyncio.to_thread(reject_run_proposals, run)
+
+
+async def finish_run(run: Run) -> None:
+    """Terminal cleanup for a run's stream; always frees the slot.
+
+    A stream that never delivered its terminal event (a disconnect) halts the
+    workflow and rejects the proposals whose token never reached a client (D-12).
+    """
+    try:
+        if not run.completed:
+            await _halt(run.handler, run.task)
+            try:
+                await asyncio.to_thread(reject_run_proposals, run)
+            except Exception as e:
+                logger.warning("reject_run_proposals failed: %s: %s", type(e).__name__, e)
+    finally:
+        release_run(run)
+
+
+async def run_stream(run: Run, question: str):
+    """SSE stream of one registered run: a `run` event first, then agent_stream."""
+    run.streaming = True
+    try:
+        yield _sse({"type": "run", "run_id": run.id})
+        async for chunk in agent_stream(question, run=run):
+            yield chunk
+        run.completed = True
+    finally:
+        # Starlette cancels this generator on disconnect at the anyio level; a
+        # plain await here would re-raise CancelledError and leak the slot (D-12a).
+        with anyio.CancelScope(shield=True):
+            await finish_run(run)
 
 
 # ---------------------------------------------------------------------------
