@@ -315,6 +315,23 @@ test.describe("card rows", () => {
     await expect(card.getByRole("button", { name: "Approve: Add 1 transfer" })).toBeVisible();
   });
 
+  test("undated transfer lines say the approval date, not a dash (IN-05)", async ({ page }) => {
+    const xfer = transferProposal();
+    (xfer.payload.rows[0].after as { leg_a: Record<string, unknown> }).leg_a.date = null;
+    const invest = investmentTransferProposal();
+    (invest.payload.rows[0].after as { cash_leg: Record<string, unknown> }).cash_leg.date = null;
+    await mockInbox(page, { list: [xfer, invest] });
+    await openInbox(page);
+    await expect(
+      art(page, "Add 1 transfer").getByText("Transfer 50,000 from Account A to Account B on the approval date")
+    ).toBeVisible();
+    await expect(
+      art(page, "Move cash to investments").getByText(
+        "Move 500,000 IDR from Account A to platform #2 on the approval date"
+      )
+    ).toBeVisible();
+  });
+
   test("edit proposal renders the shared before-to-after diff", async ({ page }) => {
     await mockInbox(page, { list: [editProposal()] });
     await openInbox(page);

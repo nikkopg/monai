@@ -59,6 +59,8 @@ type Props = {
 
 const c = tokens.color;
 const text = (v: unknown): string => (v === null || v === undefined ? "" : String(v));
+// No date means the backend stamps the day it applies the proposal (IN-05).
+const onDate = (v: unknown): string => (v ? fmtRowDate(v) : "the approval date");
 
 const smallBtn: React.CSSProperties = {
   ...btnGhost,
@@ -546,7 +548,7 @@ export default function InboxCard({
           <>
             <div style={{ fontSize: 14, color: c.ink }}>
               Transfer {fmtUnsigned(transfer?.leg_a?.amount)} from {text(transfer?.leg_a?.account)} to{" "}
-              {text(transfer?.leg_b?.account)} on {fmtRowDate(transfer?.leg_a?.date)}
+              {text(transfer?.leg_b?.account)} on {onDate(transfer?.leg_a?.date)}
             </div>
             {flagsOf(rows[0]).length > 0 && (
               <div style={{ marginTop: 8 }}>
@@ -564,7 +566,7 @@ export default function InboxCard({
               Move {fmtMoney(investTransfer?.cash_leg?.amount, investTransfer?.cash_leg?.currency)}{" "}
               {text(investTransfer?.cash_leg?.currency)} from{" "}
               {text(investTransfer?.cash_leg?.account)} to platform #{text(investTransfer?.event?.platform_id)} on{" "}
-              {fmtRowDate(investTransfer?.cash_leg?.date)}
+              {onDate(investTransfer?.cash_leg?.date)}
             </div>
             {text(investTransfer?.cash_leg?.notes) !== "" && (
               <div style={{ fontSize: 12, color: c.muted3, marginTop: 4 }}>
