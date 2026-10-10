@@ -87,11 +87,11 @@ The db, API and UI all listen on `127.0.0.1` only — nothing is reachable from 
 
 **Tests.** Run `pytest` from the repo root. It defaults to a separate `monai_test` database on the same Postgres, creating and migrating it on the first run, and it refuses to run against the live `monai` database. Tests use synthetic data only. `backend/tests_live_audit/` holds read-only checks against live data, run by hand only.
 
-**UI tests.** `cd ui && CI=1 npm run e2e` runs the Playwright suite on port 3099 against mocked APIs. The Inbox live spec `e2e/inbox-live.spec.ts` is opt-in and writes real rows, so it needs a scratch backend on `monai_test` with synthetic, different API and approver keys. It refuses ports 8001 and 3001. Start the scratch backend, then run the spec with the same values in `E2E_*` and in `MONAI_API`, `MONAI_API_KEY`, `MONAI_APPROVER_KEY`:
+**UI tests.** `cd ui && CI=1 npm run e2e` runs the Playwright suite on port 3099 against mocked APIs. The Inbox live spec `e2e/inbox-live.spec.ts` is opt-in and writes real rows, so it needs a scratch backend on `monai_test` with synthetic, different API and approver keys. It refuses ports 8001 and 3001 but cannot see which database the backend uses, so it also requires `E2E_SCRATCH_DB_CONFIRMED=monai_test`: set it only after checking the backend's `DATABASE_URL` ends in `/monai_test`. Start the scratch backend, then run the spec with the same values in `E2E_*` and in `MONAI_API`, `MONAI_API_KEY`, `MONAI_APPROVER_KEY`:
 
 ```sh
 DATABASE_URL=postgresql+psycopg://monai:monai@127.0.0.1:5434/monai_test MONAI_API_KEY=e2e-api-key-synthetic-0001 MONAI_APPROVER_KEY=e2e-approver-key-synthetic-0002 TZ=Asia/Jakarta PGTZ=Asia/Jakarta .venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8011
-cd ui && CI=1 E2E_LIVE=1 E2E_BACKEND=http://127.0.0.1:8011 E2E_API_KEY=e2e-api-key-synthetic-0001 E2E_APPROVER_KEY=e2e-approver-key-synthetic-0002 MONAI_API=http://127.0.0.1:8011 MONAI_API_KEY=e2e-api-key-synthetic-0001 MONAI_APPROVER_KEY=e2e-approver-key-synthetic-0002 npx playwright test e2e/inbox-live.spec.ts
+cd ui && CI=1 E2E_LIVE=1 E2E_SCRATCH_DB_CONFIRMED=monai_test E2E_BACKEND=http://127.0.0.1:8011 E2E_API_KEY=e2e-api-key-synthetic-0001 E2E_APPROVER_KEY=e2e-approver-key-synthetic-0002 MONAI_API=http://127.0.0.1:8011 MONAI_API_KEY=e2e-api-key-synthetic-0001 MONAI_APPROVER_KEY=e2e-approver-key-synthetic-0002 npx playwright test e2e/inbox-live.spec.ts
 ```
 
 **CI.** GitHub Actions (`.github/workflows/backend-tests.yml`) runs the backend suite on Python 3.12 against a fresh Postgres, on every push and pull request.

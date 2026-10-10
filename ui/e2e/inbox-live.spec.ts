@@ -1,8 +1,11 @@
 // Opt-in live Inbox spec: QA-02 (MCP half) plus the approver-key proxy checks
 // (D-03). It writes real rows, so it needs a SCRATCH backend on the `monai_test`
-// database (never the owner's `monai` database) and refuses to run otherwise;
-// the exact launch and run commands are in README.md ("UI tests"). Skipped
-// unless E2E_LIVE=1. Synthetic values only; every row it creates is removed.
+// database (never the owner's `monai` database). The spec cannot see which
+// database the backend uses: it refuses the live :8001 / :3001 ports and
+// requires E2E_SCRATCH_DB_CONFIRMED=monai_test as the operator's explicit
+// confirmation, nothing more. The exact launch and run commands are in
+// README.md ("UI tests"). Skipped unless E2E_LIVE=1. Synthetic values only;
+// every row it creates is removed.
 import { expect, test, type APIRequestContext } from "@playwright/test";
 import { INBOX_SURFACE_HEADER } from "../app/lib/approverAllowlist";
 
@@ -69,6 +72,11 @@ test.beforeAll(async ({ request }) => {
   APPROVER_KEY = process.env.E2E_APPROVER_KEY ?? "";
   if (!BACKEND || !API_KEY || !APPROVER_KEY) {
     throw new Error("E2E_BACKEND, E2E_API_KEY and E2E_APPROVER_KEY must all be set");
+  }
+  if (process.env.E2E_SCRATCH_DB_CONFIRMED !== "monai_test") {
+    throw new Error(
+      "Set E2E_SCRATCH_DB_CONFIRMED=monai_test only after checking E2E_BACKEND runs on the monai_test database"
+    );
   }
   if (BACKEND.includes(":8001") || BACKEND.includes(":3001")) {
     throw new Error("E2E_BACKEND must be a scratch backend on monai_test, never the live :8001 / :3001 stack");
