@@ -341,6 +341,18 @@ test.describe("card rows", () => {
     await expect(card).not.toContainText("[object Object]");
   });
 
+  test("positive balance target has no plus sign (absolute, not a delta)", async ({ page }) => {
+    const payload = {
+      operation: "add_balance_adjustment",
+      rows: [{ account_id: 3, target_balance: "5000000.0" }],
+    };
+    await mockInbox(page, { list: [balanceAdjustmentProposal({ payload })] });
+    await openInbox(page);
+    const card = art(page, "Adjust balance");
+    await expect(card.getByText("Set account #3 balance to 5,000,000")).toBeVisible();
+    await expect(card).not.toContainText("+5,000,000");
+  });
+
   test("investment transfer line with notes, never an object dump", async ({ page }) => {
     await mockInbox(page, { list: [investmentTransferProposal()] });
     await openInbox(page);

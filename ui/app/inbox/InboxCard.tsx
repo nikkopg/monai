@@ -18,6 +18,7 @@ import {
   approvedFooter,
   cardTitle,
   duplicateChipText,
+  fmtAbsolute,
   fmtRowDate,
   fmtSigned,
   fmtUnsigned,
@@ -547,7 +548,7 @@ export default function InboxCard({
           </>
         ) : op === "add_balance_adjustment" ? (
           <div style={{ fontSize: 14, color: c.ink }}>
-            Set account #{text(rows[0]?.account_id)} balance to {fmtSigned(rows[0]?.target_balance)}
+            Set account #{text(rows[0]?.account_id)} balance to {fmtAbsolute(rows[0]?.target_balance)}
           </div>
         ) : op === "add_investment_transfer" ? (
           <>

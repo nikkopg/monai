@@ -209,6 +209,12 @@ export function fmtSigned(value: unknown): string {
   return Number.isFinite(n) ? signedFmt.format(Math.round(n)) : String(value);
 }
 
+/** An absolute amount, minus kept, no "+": "-250,000" / "5,000,000"; the raw value when not numeric. */
+export function fmtAbsolute(value: unknown): string {
+  const n = Number(value);
+  return Number.isFinite(n) ? fmtPlain(n) : String(value);
+}
+
 /** "50,000" (sign dropped); the raw value when not numeric. */
 export function fmtUnsigned(value: unknown): string {
   const n = Number(value);
