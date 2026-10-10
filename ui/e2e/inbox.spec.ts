@@ -9,7 +9,6 @@ import {
   type InboxProposal,
 } from "../app/lib/inbox";
 import {
-  HOUR,
   MIN,
   NOW,
   chatTx,
@@ -20,6 +19,7 @@ import {
   proposal,
   transferProposal,
   txRow,
+  type Responder,
 } from "./inbox-fixtures";
 
 // ---------------------------------------------------------------------------
@@ -423,5 +423,379 @@ test.describe("locked", () => {
     await expect(approve).not.toHaveAttribute("aria-disabled", "true");
     await approve.click();
     await expect.poll(() => inbox.sent("POST", "/approve").length).toBe(1);
+  });
+});
+
+// ===========================================================================
+// Task 2 — actions, label recompute, discard, State Matrix
+// ===========================================================================
+
+/** Collects every value the live region ever held (a later poll may overwrite the last one). */
+async function liveLog(page: Page) {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __live: string[] };
+    w.__live = [];
+    new MutationObserver(() => {
+      const t = document.querySelector('[aria-live="polite"]')?.textContent ?? "";
+      if (t && w.__live[w.__live.length - 1] !== t) w.__live.push(t);
+    }).observe(document, { subtree: true, childList: true, characterData: true });
+  });
+}
+const heard = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __live: string[] }).__live);
+
+/** After a `clock.install`, stop time once data is on screen so later runFor steps are exact. */
+async function freeze(page: Page) {
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 100);
+}
+
+const byId = (page: Page, id: string) => page.locator(`#proposal-${id}`);
+
+/** Three plain rows on Account A (no duplicate flags). */
+const plain3 = (o: Partial<InboxProposal> = {}) =>
+  proposal({
+    payload: {
+      operation: "add_transaction",
+      rows: [
+        txRow(),
+        txRow({ after: { merchant: "Toko Contoh", amount: "-120000.00" } }),
+        txRow({ after: { merchant: "Gaji Contoh", amount: "250000.00" } }),
+      ],
+    },
+    ...o,
+  });
+
+test.describe("approve label", () => {
+  test("skip and include recompute the Approve label", async ({ page }) => {
+    const inbox = await mockInbox(page, { list: [batch3()] });
+    await openInbox(page);
+    const card = byId(page, ids.a);
+    await expect(approveBtn(card)).toHaveAccessibleName("Approve: Add 3 transactions");
+
+    await card.getByRole("button", { name: "Skip row 2: Toko Contoh, -120,000" }).click();
+    await expect(approveBtn(card)).toHaveAccessibleName("Approve: Add 2 transactions, 1 skipped");
+    const sent = inbox.sent("PATCH", "/rows/1");
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body).toEqual({ skip: true });
+    expect(new URL(sent[0].url).pathname).toBe(`/api/proposals/${ids.a}/rows/1`);
+
+    const row = card.locator(".inbox-row").nth(1);
+    await expect(row.getByText("Skipped", { exact: true })).toBeVisible();
+    await expect
+      .poll(() =>
+        row.getByText("Toko Contoh", { exact: true }).evaluate((el) => getComputedStyle(el).textDecorationLine)
+      )
+      .toContain("line-through");
+    const include = card.getByRole("button", { name: "Include row 2: Toko Contoh, -120,000" });
+    await expect(include).toBeFocused();
+    await expect(live(page)).toHaveText("Row 2 skipped. Approve will add 2 transactions, 1 skipped");
+
+    await include.click();
+    await expect(approveBtn(card)).toHaveAccessibleName("Approve: Add 3 transactions");
+    await expect(live(page)).toHaveText("Row 2 included. Approve will add 3 transactions");
+  });
+
+  test("singular wording", async ({ page }) => {
+    await mockInbox(page, {
+      list: [proposal({ payload: { operation: "add_transaction", rows: [txRow(), txRow()] } })],
+    });
+    await openInbox(page);
+    const card = byId(page, ids.a);
+    await card.getByRole("button", { name: "Skip row 1: Kopi Contoh, -35,000" }).click();
+    await expect(approveBtn(card)).toHaveAccessibleName("Approve: Add 1 transaction, 1 skipped");
+  });
+
+  test("all rows skipped blocks Approve", async ({ page }) => {
+    const inbox = await mockInbox(page, { list: [oneRow()] });
+    await openInbox(page);
+    const card = byId(page, ids.c);
+    await card.getByRole("button", { name: "Skip row 1: Kopi Contoh, -35,000" }).click();
+    const approve = approveBtn(card);
+    await expect(approve).toContainText("Nothing left to add");
+    await expect(approve).toHaveAttribute("aria-disabled", "true");
+    await expect(approve).toHaveAttribute("aria-describedby", `inbox-allskipped-${ids.c}`);
+    await expect(page.locator(`#inbox-allskipped-${ids.c}`)).toContainText(ALL_SKIPPED_MSG);
+    await expect(live(page)).toHaveText(`Row 1 skipped. ${ALL_SKIPPED_MSG}`);
+    await approve.click({ force: true });
+    await page.waitForTimeout(300);
+    expect(inbox.sent("POST", "/approve")).toHaveLength(0);
+  });
+
+  test("a server 422 is shown verbatim", async ({ page }) => {
+    await mockInbox(page, {
+      list: [oneRow()],
+      respond: { approve: { status: 422, detail: ALL_SKIPPED_MSG } },
+    });
+    await openInbox(page);
+    const card = byId(page, ids.c);
+    await approveBtn(card).click();
+    await expect(card.getByRole("alert")).toContainText(ALL_SKIPPED_MSG);
+  });
+});
+
+test.describe("skip merge", () => {
+  test("a skip keeps the duplicate chip although the PATCH response has none", async ({ page }) => {
+    await mockInbox(page, { list: [batch3(), other()] });
+    await openInbox(page);
+    const card = byId(page, ids.a);
+    await expect(card.getByText("Possible duplicate", { exact: true })).toHaveCount(2);
+    await card.getByRole("button", { name: "Skip row 2: Toko Contoh, -120,000" }).click();
+    await expect(card.getByRole("button", { name: "Include row 2: Toko Contoh, -120,000" })).toBeVisible();
+    await expect(card.getByText("Possible duplicate", { exact: true })).toHaveCount(2);
+    await expect(
+      card.getByText("Matches an existing record: 6 Oct 2026, -120,000, Toko Contoh")
+    ).toBeVisible();
+  });
+});
+
+test.describe("approve", () => {
+  test("applies, settles, focuses the status and announces", async ({ page }) => {
+    const inbox = await mockInbox(page, { list: [plain3(), other()] });
+    await openInbox(page);
+    const card = byId(page, ids.a);
+    await expect(page.getByText(/2 waiting\./)).toBeVisible();
+    const release = inbox.hold("approve");
+    await approveBtn(card).click();
+    await expect(statusOf(page, ids.a)).toHaveText("Applying…");
+    await expect(approveBtn(card)).toContainText("…");
+    await expect(rejectBtn(card)).toHaveAttribute("aria-disabled", "true");
+    release();
+    await expect(statusOf(page, ids.a)).toHaveText("✓ Approved · " + hhmm(NOW));
+    await expect(card.getByText("3 added", { exact: true })).toBeVisible();
+    await expect(statusOf(page, ids.a)).toBeFocused();
+    await expect(live(page)).toHaveText("Proposal approved: Add 3 transactions");
+    await expect(page.getByText(/1 waiting\./)).toBeVisible();
+    const sent = inbox.sent("POST", "/approve");
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body).toBeNull();
+    expect(new URL(sent[0].url).pathname).toBe(`/api/proposals/${ids.a}/approve`);
+  });
+
+  test("a skipped row is reported in the footer and announcement", async ({ page }) => {
+    await mockInbox(page, { list: [plain3()] });
+    await openInbox(page);
+    const card = byId(page, ids.a);
+    await card.getByRole("button", { name: "Skip row 2: Toko Contoh, -120,000" }).click();
+    await expect(approveBtn(card)).toHaveAccessibleName("Approve: Add 2 transactions, 1 skipped");
+    await approveBtn(card).click();
+    await expect(card.getByText("2 added, 1 skipped", { exact: true })).toBeVisible();
+    await expect(live(page)).toHaveText("Proposal approved: Add 2 transactions, 1 skipped");
+  });
+});
+
+test.describe("reject", () => {
+  test("rejects at once when nothing is skipped", async ({ page }) => {
+    const inbox = await mockInbox(page, { list: [oneRow()] });
+    await openInbox(page);
+    const card = byId(page, ids.c);
+    await rejectBtn(card).click();
+    await expect(statusOf(page, ids.c)).toHaveText("Rejected · nothing changed");
+    await expect(statusOf(page, ids.c)).toBeFocused();
+    await expect(live(page)).toHaveText("Proposal rejected. Nothing changed.");
+    const sent = inbox.sent("POST", "/reject");
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body).toBeNull();
+  });
+});
+
+test.describe("discard", () => {
+  const skippedCard = () =>
+    proposal({
+      payload: {
+        operation: "add_transaction",
+        rows: [txRow({ skip: true }), txRow({ after: { merchant: "Toko Contoh" } })],
+      },
+    });
+
+  test("two-step discard when rows are skipped", async ({ page }) => {
+    const inbox = await mockInbox(page, { list: [skippedCard()] });
+    await openInbox(page);
+    const card = byId(page, ids.a);
+    await rejectBtn(card).click();
+    await expect(card.getByText("Discard this proposal and your skip choices on 1 row?")).toBeVisible();
+    await expect(card.getByRole("button", { name: "Keep it" })).toBeFocused();
+    expect(inbox.sent("POST", "/reject")).toHaveLength(0);
+
+    await page.keyboard.press("Escape");
+    await expect(card.getByRole("button", { name: "Keep it" })).toHaveCount(0);
+    await expect(rejectBtn(card)).toBeFocused();
+    expect(inbox.sent("POST", "/reject")).toHaveLength(0);
+
+    await rejectBtn(card).click();
+    await card.getByRole("button", { name: "Discard proposal" }).click();
+    await expect(statusOf(page, ids.a)).toHaveText("Rejected · nothing changed");
+    expect(inbox.sent("POST", "/reject")).toHaveLength(1);
+  });
+});
+
+test.describe("states", () => {
+  test("loading", async ({ page }) => {
+    await mockInbox(page, { listMode: "hang" });
+    await openInbox(page);
+    await expect(page.getByRole("status").filter({ hasText: "Loading your inbox…" })).toBeVisible();
+  });
+
+  test("empty", async ({ page }) => {
+    await mockInbox(page, { list: [] });
+    await openInbox(page);
+    await expect(page.getByRole("heading", { name: "All caught up." })).toBeVisible();
+    await expect(
+      page.getByText("Proposals from Claude and chat land here. Nothing is waiting for you.")
+    ).toBeVisible();
+    await expect(live(page)).toHaveText("Inbox is empty");
+  });
+
+  test("error with Try again", async ({ page }) => {
+    const inbox = await mockInbox(page, { listMode: 500 });
+    await openInbox(page);
+    const alert = page
+      .getByRole("alert")
+      .filter({ hasText: "Couldn't load your inbox — check the backend is running and try again." });
+    await expect(alert).toBeVisible();
+    inbox.listMode = "ok";
+    inbox.list = [oneRow()];
+    await page.getByRole("button", { name: "Try again" }).click();
+    await expect(byId(page, ids.c)).toBeVisible();
+    await expect(alert).toHaveCount(0);
+  });
+
+  test("D-02 page-level approver-key alert for an MCP card without a code", async ({ page }) => {
+    await mockInbox(page, { list: [proposal({ code: undefined })] });
+    await openInbox(page);
+    await expect(
+      page.getByRole("alert").filter({ hasText: APPROVER_KEY_PAGE_MSG })
+    ).toBeVisible();
+    await expect(byId(page, ids.a)).toBeVisible();
+    await expect(page.getByRole("code")).toHaveCount(0);
+  });
+
+  test("D-02 no page alert for a chat-only list", async ({ page }) => {
+    await mockInbox(page, { list: [chatTx()] });
+    await openInbox(page);
+    await expect(byId(page, ids.a)).toBeVisible();
+    await expect(page.getByRole("alert").filter({ hasText: "Approvals aren't set up" })).toHaveCount(0);
+  });
+
+  const keyCases: [string, "approve" | "reject", Responder][] = [
+    ["approve 401", "approve", { status: 401 }],
+    ["approve 503", "approve", { status: 503 }],
+    ["reject 403", "reject", { status: 403 }],
+  ];
+  for (const [name, action, resp] of keyCases) {
+    test(`D-02 card-level approver-key line: ${name}`, async ({ page }) => {
+      await mockInbox(page, { list: [oneRow()], respond: { [action]: resp } });
+      await openInbox(page);
+      const card = byId(page, ids.c);
+      await (action === "approve" ? approveBtn(card) : rejectBtn(card)).click();
+      await expect(card.getByRole("alert")).toHaveText(APPROVER_KEY_ACTION_MSG);
+      await expect(statusOf(page, ids.c)).toContainText("Waiting for you");
+      await expect(approveBtn(card)).not.toHaveAttribute("aria-disabled", "true");
+    });
+  }
+
+  const settleCases: [string, Responder, string, string?][] = [
+    ["404", { status: 404, detail: "Proposal not found" }, "Decided elsewhere", "This proposal no longer exists."],
+    ["409 confirmed", { status: 409, detail: "Proposal already confirmed" }, "✓ Approved elsewhere"],
+    ["409 rejected", { status: 409, detail: "Proposal already rejected" }, "Rejected elsewhere · nothing changed"],
+    ["409 expired", { status: 409, detail: "Proposal already expired" }, "Expired · ask again to redo this"],
+    ["410", { status: 410, detail: "Gone" }, "Expired · ask again to redo this"],
+  ];
+  for (const [name, resp, status, alert] of settleCases) {
+    test(`approve answered ${name}`, async ({ page }) => {
+      await mockInbox(page, { list: [oneRow()], respond: { approve: resp } });
+      await openInbox(page);
+      const card = byId(page, ids.c);
+      await approveBtn(card).click();
+      await expect(statusOf(page, ids.c)).toHaveText(status);
+      await expect(approveBtn(card)).toHaveCount(0);
+      if (alert) await expect(card.getByRole("alert")).toHaveText(alert);
+    });
+  }
+
+  test("approve answered 409 superseded links to the newer card", async ({ page }) => {
+    await mockInbox(page, {
+      list: [
+        proposal({ id: ids.a, created_at: iso(NOW - 10 * MIN) }),
+        proposal({
+          id: ids.b,
+          supersedes_id: ids.a,
+          created_at: iso(NOW - 1 * MIN),
+          payload: { operation: "add_transaction", rows: [txRow({ after: { account: "Account B" } })] },
+        }),
+      ],
+      respond: { approve: { status: 409, detail: "Proposal already superseded" } },
+    });
+    await openInbox(page);
+    const card = byId(page, ids.a);
+    await approveBtn(card).click();
+    await expect(statusOf(page, ids.a)).toContainText("Replaced by a newer version");
+    await expect(statusOf(page, ids.a).getByRole("link", { name: "Go to the new one" })).toHaveAttribute(
+      "href",
+      `#proposal-${ids.b}`
+    );
+  });
+
+  const errorCases: [string, Responder, string][] = [
+    ["409 with any other detail", { status: 409, detail: "stale" }, `Couldn't apply: ${LEDGER_CHANGED_MSG}`],
+    ["422 verbatim", { status: 422, detail: "Amount must not be zero" }, "Couldn't apply: Amount must not be zero"],
+    ["a network failure", { status: 0, abort: true }, `Couldn't apply: ${NETWORK_FAIL_MSG}`],
+  ];
+  for (const [name, resp, alert] of errorCases) {
+    test(`approve answered ${name} stays waiting`, async ({ page }) => {
+      await mockInbox(page, { list: [oneRow()], respond: { approve: resp } });
+      await openInbox(page);
+      const card = byId(page, ids.c);
+      await approveBtn(card).click();
+      await expect(card.getByRole("alert")).toHaveText(alert);
+      await expect(statusOf(page, ids.c)).toContainText("Waiting for you");
+      await expect(approveBtn(card)).not.toHaveAttribute("aria-disabled", "true");
+      await expect(approveBtn(card)).toContainText("Add 1 transaction");
+    });
+  }
+
+  test("a card past its expiry settles as expired on the 30 s tick", async ({ page }) => {
+    await liveLog(page);
+    await mockInbox(page, { list: [oneRow({ expires_at: iso(NOW + 90_000) })] });
+    await page.clock.install({ time: NOW });
+    await page.goto("/inbox");
+    const card = byId(page, ids.c);
+    await expect(card).toBeVisible();
+    await freeze(page);
+    await page.clock.runFor(120_000);
+    await expect(statusOf(page, ids.c)).toHaveText("Expired · ask again to redo this");
+    await expect(approveBtn(card)).toHaveCount(0);
+    await expect.poll(() => heard(page)).toContain("A proposal expired");
+  });
+
+  test("a card that vanished from the server shows Decided elsewhere", async ({ page }) => {
+    await liveLog(page);
+    const inbox = await mockInbox(page, { list: [oneRow()] });
+    await page.clock.install({ time: NOW });
+    await page.goto("/inbox");
+    await expect(byId(page, ids.c)).toBeVisible();
+    await freeze(page);
+    inbox.list = [];
+    await page.clock.runFor(10_000);
+    await expect(statusOf(page, ids.c)).toHaveText("Decided elsewhere");
+    await expect.poll(() => heard(page)).toContain("A proposal was decided elsewhere");
+  });
+
+  test("a card that vanished after its expiry shows Expired instead", async ({ page }) => {
+    await liveLog(page);
+    const inbox = await mockInbox(page, { list: [oneRow({ expires_at: iso(NOW + 5_000) })] });
+    await page.clock.install({ time: NOW });
+    await page.goto("/inbox");
+    await expect(byId(page, ids.c)).toBeVisible();
+    await freeze(page);
+    inbox.list = [];
+    await page.clock.runFor(10_000);
+    await expect(statusOf(page, ids.c)).toHaveText("Expired · ask again to redo this");
+    await expect.poll(() => heard(page)).toContain("A proposal expired");
+  });
+
+  test("the server clock offset from the Date header shifts the countdown", async ({ page }) => {
+    await mockInbox(page, { list: [oneRow()], dateHeader: new Date(NOW + 2 * 3_600_000).toUTCString() });
+    await openInbox(page);
+    await expect(statusOf(page, ids.c)).toHaveText("Waiting for you · expires in 45 h");
   });
 });
