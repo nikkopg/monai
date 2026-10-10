@@ -6,10 +6,10 @@ Tests:
       a non-empty answer with a 2-entry trace (CHAT-01)
   test_agent_stream_surfaces_proposal_fields — a propose_* call's id/token
       reach the SSE answer event and never leak into the trace (T-02-07)
-  test_agent_stream_two_proposals_in_call_order,
-  test_agent_stream_error_answer_has_empty_proposals — the proposals list
-      carries one entry per propose_* call in order, and is empty on error
-      (AGENT-06, T-02-07, D-20)
+  test_agent_stream_two_proposals_in_call_order — the proposals list
+      carries one entry per propose_* call in order (AGENT-06, T-02-07, D-20)
+  test_agent_stream_failure_emits_error_event — a stream failure is a typed
+      error event with no answer and no exception text (REL-01, D-04)
   test_agent_stream_serializes_decimal_tool_results — Decimal tool-result
       fields survive JSON serialization
   test_agent_workflow_rebuilds_across_midnight — the cached workflow
@@ -88,13 +88,27 @@ async def _fake_stream_events_two_tools():
     )
 
 
+class _StubHandler:
+    """Awaitable stand-in for a WorkflowHandler: agent_stream awaits the
+    handler after the stream ends (D-01) and calls cancel_run on cleanup."""
+
+    def __init__(self, stream_events):
+        self.stream_events = stream_events
+        self.cancel_run = AsyncMock()
+
+    def __await__(self):
+        async def _noop():
+            return None
+
+        return _noop().__await__()
+
+
 def _install_mock_workflow(monkeypatch, stream_events):
     """Install a stub workflow stamped with today's date, so the D-09 date
     check keeps the stub instead of building a real agent."""
     import backend.query as query_mod
 
-    handler = MagicMock()
-    handler.stream_events = stream_events
+    handler = _StubHandler(stream_events)
 
     workflow = MagicMock()
     workflow.run = MagicMock(return_value=handler)
@@ -102,6 +116,17 @@ def _install_mock_workflow(monkeypatch, stream_events):
     monkeypatch.setattr(query_mod, "_agent_workflow", workflow)
     monkeypatch.setattr(query_mod, "_agent_workflow_date", query_mod._today())
     return workflow
+
+
+def _id_token(proposals: list[dict]) -> list[dict]:
+    """The {"id", "token"} projection of proposals[] entries."""
+    return [{"id": p["id"], "token": p["token"]} for p in proposals]
+
+
+def _assert_unhydrated(proposals: list[dict]) -> None:
+    """The mock ids are not DB rows, so the D-19 fields are present but None."""
+    for p in proposals:
+        assert p["operation"] is None and p["payload"] is None and p["expires_at"] is None
 
 
 def _stream_payloads(question: str) -> list[dict]:
@@ -222,8 +247,10 @@ def test_agent_stream_surfaces_proposal_fields(monkeypatch):
     assert answer_payload["proposal_token"] == "tok-secret-xyz", \
         f"proposal_token did not survive to answer event: {answer_payload}"
     # D-20: exactly one entry, from the same scan as the singular fields
-    assert answer_payload["proposals"] == [{"id": "prop-abc123", "token": "tok-secret-xyz"}], \
-        f"proposals should have exactly one entry: {answer_payload}"
+    assert _id_token(answer_payload["proposals"]) == [
+        {"id": "prop-abc123", "token": "tok-secret-xyz"}
+    ], f"proposals should have exactly one entry: {answer_payload}"
+    _assert_unhydrated(answer_payload["proposals"])
 
     # T-02-07: proposal_token must never appear inside the public trace results
     for step in answer_payload["trace"]:
@@ -364,10 +391,11 @@ def test_agent_stream_two_proposals_in_call_order(monkeypatch):
     assert len(answer_payloads) == 1, f"Expected exactly one answer event: {payloads}"
     answer = answer_payloads[0]
 
-    assert answer["proposals"] == [
+    assert _id_token(answer["proposals"]) == [
         {"id": "prop-1", "token": "tok-1"},
         {"id": "prop-2", "token": "tok-2"},
     ]
+    _assert_unhydrated(answer["proposals"])
     assert answer["proposal_id"] == "prop-1"
     assert answer["proposal_token"] == "tok-1"
 
@@ -385,8 +413,9 @@ def test_agent_stream_two_proposals_in_call_order(monkeypatch):
         "proposal token leaked into the answer trace"
 
 
-def test_agent_stream_error_answer_has_empty_proposals(monkeypatch):
-    """The exception path's answer event carries proposals: [] (D-16)."""
+def test_agent_stream_failure_emits_error_event(monkeypatch):
+    """A stream failure is one typed error event — no answer, and the raw
+    exception text never reaches the client (REL-01, D-04)."""
 
     def _raise_stream_events():
         raise RuntimeError("synthetic stream failure")
@@ -395,15 +424,11 @@ def test_agent_stream_error_answer_has_empty_proposals(monkeypatch):
 
     payloads = _stream_payloads("what's my net worth?")
 
-    answer_payloads = [p for p in payloads if p.get("type") == "answer"]
-    assert len(answer_payloads) == 1, f"Expected exactly one answer event: {payloads}"
-    answer = answer_payloads[0]
-
-    assert answer["proposals"] == []
-    assert answer["proposal_id"] is None
-    assert answer["proposal_token"] is None
-    assert answer["trace"] == []
-    assert "couldn't process" in answer["text"]
+    assert [p for p in payloads if p.get("type") == "answer"] == []
+    errors = [p for p in payloads if p.get("type") == "error"]
+    assert len(errors) == 1, f"Expected exactly one error event: {payloads}"
+    assert errors[0]["code"] == "unknown"
+    assert "synthetic stream failure" not in json.dumps(payloads)
 
 
 # ---------------------------------------------------------------------------

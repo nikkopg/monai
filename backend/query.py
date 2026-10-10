@@ -11,18 +11,32 @@ If no tool can answer the question, the agent says so honestly and enumerates
 what it CAN do — refusing beats a confident wrong number for a money app.
 
 Public surface:
-  agent_stream(question)                — async generator; yields SSE lines.
+  agent_stream(question, *, run=None)   — async generator; yields SSE lines.
                                            It is the only agent loop, served by
-                                           POST /query-stream.
+                                           POST /query-stream. A producer task
+                                           feeds one queue; this generator only
+                                           serializes it. Every failure is a
+                                           typed `error` event, never an answer.
+  classify_error(exc) -> str            — duck-typed provider failure -> code
+  Run                                   — dataclass: one in-flight chat run
   reset_engine() -> None                — clears _llm, _agent_workflow and its
                                            build date
 """
 
+import asyncio
 import datetime
 import json
+import logging
+import uuid
+from dataclasses import dataclass, field
+from typing import Any
+
+import anyio
 
 from backend.config import configure_llm
 from backend.tools import PERIODS
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Module-level singletons — lazy, reset-able
@@ -141,22 +155,151 @@ def _get_agent_workflow():
 
 
 # ---------------------------------------------------------------------------
+# Failure classification — one duck-typed mapping for every provider (D-03)
+# ---------------------------------------------------------------------------
+
+_TIMEOUT_NAMES = {"TimeoutException", "APITimeoutError", "WorkflowTimeoutError"}
+_CONNECTION_NAMES = {"ConnectError", "APIConnectionError", "NetworkError"}
+_PROVIDER_BY_CLASS = {"Ollama": "ollama", "Anthropic": "claude", "OpenAI": "openai"}
+
+
+def classify_error(exc: BaseException) -> str:
+    """Map a provider/workflow exception to a typed error code.
+
+    Duck-typed (status_code on the exception or its .response, plus MRO class
+    names) so no provider SDK is imported — only one is ever configured.
+    Codes: rate_limit, provider_unavailable, timeout, auth, connection,
+    unknown. Timeout is checked first: openai/anthropic APITimeoutError
+    subclasses APIConnectionError. Non-positive status codes (ollama mid-stream
+    errors carry -1) are ignored.
+    """
+    names = {c.__name__ for c in type(exc).__mro__}
+    if isinstance(exc, TimeoutError) or names & _TIMEOUT_NAMES:
+        return "timeout"
+    status = getattr(exc, "status_code", None)
+    if not isinstance(status, int):
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    if isinstance(status, int) and status > 0:
+        if status == 429:
+            return "rate_limit"
+        if status in (401, 403):
+            return "auth"
+        if status >= 500:
+            return "provider_unavailable"
+    if isinstance(exc, ConnectionError) or names & _CONNECTION_NAMES:
+        return "connection"
+    return "unknown"
+
+
+def _llm_label(workflow) -> tuple[str | None, str | None]:
+    """(model, provider) of the LLM instance that runs this workflow (D-21).
+
+    Read from the instance, never from env or app_settings, so the label is
+    what actually answered. The provider is not an attribute of the LLM, so it
+    is mapped from the class name (D-21a).
+    """
+    agents = getattr(workflow, "agents", None)
+    if not isinstance(agents, dict) or not agents:
+        return None, None
+    llm = getattr(next(iter(agents.values())), "llm", None)
+    model = getattr(llm, "model", None)
+    model = model if isinstance(model, str) else None
+    provider = next(
+        (_PROVIDER_BY_CLASS[c.__name__] for c in type(llm).__mro__
+         if c.__name__ in _PROVIDER_BY_CLASS),
+        None,
+    )
+    return model, provider
+
+
+# ---------------------------------------------------------------------------
+# Run — one in-flight chat run (the registry that holds it lands in Plan 02)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Run:
+    """State of one chat run. agent_stream records proposal ids and exposes
+    its workflow handler and producer task so Stop/disconnect can halt it."""
+
+    key: str = "chat"
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    started_at: datetime.datetime = field(
+        default_factory=lambda: datetime.datetime.now(datetime.timezone.utc)
+    )
+    proposal_ids: list[str] = field(default_factory=list)
+    handler: Any = None
+    task: asyncio.Task | None = None
+    streaming: bool = False
+    completed: bool = False
+
+
+async def _halt(handler, task) -> None:
+    """Idempotent workflow stop: cancel the producer task, then the workflow.
+
+    Cancelling only the consumer orphans the workflow, so cancel_run is always
+    called. It is documented never to raise and is a no-op after completion.
+    """
+    if task is not None and not task.done():
+        task.cancel()
+    if handler is not None:
+        try:
+            await handler.cancel_run()
+        except Exception as e:  # cancel_run never raises; belt and braces
+            logger.warning("cancel_run failed: %s: %s", type(e).__name__, e)
+
+
+# ---------------------------------------------------------------------------
 # Proposal extraction from tool trace
 # ---------------------------------------------------------------------------
 
 def _extract_proposals(tool_trace: list) -> list[dict]:
-    """Return one {"id", "token"} entry per propose_* call, in call order.
+    """Return one entry per propose_* call, in call order.
 
     A single pass over tool_trace: any step whose result dict carries both
-    proposal_id and proposal_token contributes one entry. Tokens surface only
-    in the SSE answer event to the originating chat session — they are never
-    emitted in a tool_result event or the public trace (T-02-07).
+    proposal_id and proposal_token contributes {"id", "token"}. Each entry is
+    then hydrated with operation, payload and expires_at (ISO 8601) from its
+    DB row in ONE short SELECT (D-19) — the DB is authoritative. Those are
+    None when there is no row (or the lookup fails: a DB hiccup must never
+    hide the answer; the UI then shows its cannot-approve notice). Tokens
+    surface only in the terminal answer/error event to the originating chat
+    session — never in a tool_result event or the public trace (T-02-07).
     """
     proposals = []
     for step in tool_trace:
         result = step.get("result")
         if isinstance(result, dict) and "proposal_id" in result and "proposal_token" in result:
-            proposals.append({"id": result["proposal_id"], "token": result["proposal_token"]})
+            proposals.append({
+                "id": result["proposal_id"], "token": result["proposal_token"],
+                "operation": None, "payload": None, "expires_at": None,
+            })
+    if not proposals:
+        return proposals
+
+    by_uuid: dict[uuid.UUID, list[dict]] = {}
+    for p in proposals:
+        try:
+            by_uuid.setdefault(uuid.UUID(str(p["id"])), []).append(p)
+        except ValueError:
+            continue  # not a row id (test mocks use arbitrary strings)
+    if not by_uuid:
+        return proposals
+    try:
+        from sqlalchemy import select
+
+        from backend.db import get_session_sync
+        from backend.models import Proposal
+
+        with get_session_sync() as db:
+            rows = db.execute(
+                select(Proposal).where(Proposal.id.in_(list(by_uuid)))
+            ).scalars().all()
+            for row in rows:
+                for p in by_uuid[row.id]:
+                    p["operation"] = row.operation
+                    p["payload"] = row.payload
+                    p["expires_at"] = row.expires_at.isoformat()
+    except Exception as e:
+        logger.warning("proposal hydration failed: %s: %s", type(e).__name__, e)
     return proposals
 
 
@@ -164,111 +307,210 @@ def _extract_proposals(tool_trace: list) -> list[dict]:
 # Async streaming generator — yields SSE-formatted lines
 # ---------------------------------------------------------------------------
 
-async def agent_stream(question: str):
+_DONE = "data: [DONE]\n\n"
+
+
+def _sse(payload: dict) -> str:
+    # default=str: tool results (e.g. net_worth's holdings) carry raw Decimals.
+    return f"data: {json.dumps(payload, default=str)}\n\n"
+
+
+def _error_event(code, model, provider, proposals, idle_seconds=None) -> str:
+    """SSE error line. Carries only a typed code — never exception text or the
+    question (D-04). `proposals` and `idle_seconds` are omitted when empty."""
+    payload: dict = {"type": "error", "code": code, "model": model, "provider": provider}
+    if idle_seconds is not None:
+        payload["idle_seconds"] = idle_seconds
+    if proposals:
+        payload["proposals"] = proposals
+    return _sse(payload)
+
+
+def _log_failure(exc: BaseException) -> None:
+    # Class and message only — never the question (D-04).
+    logger.warning("chat run failed: %s: %s", type(exc).__name__, exc)
+
+
+async def agent_stream(question: str, *, run: Run | None = None):
     """
     Async generator that drives the agent workflow and yields SSE lines.
+
+    A producer task consumes the workflow's events into one asyncio.Queue and
+    this generator only serializes the queue (D-13). `run`, when given, gets
+    the workflow handler, the producer task and each proposal id as it
+    arrives (D-10).
 
     Event types emitted:
       data: {"type": "step", "msg": "thinking…"}
       data: {"type": "tool_result", "step": {"tool": ..., "args": ..., "result": ...}}
-      data: {"type": "answer", "text": ..., "trace": [...], "proposals": [{"id": ..., "token": ...}, ...], "proposal_id": ..., "proposal_token": ...}
+      data: {"type": "answer", "text": ..., "trace": [...], "model": ..., "provider": ...,
+             "proposals": [{"id", "token", "operation", "payload", "expires_at"}, ...],
+             "proposal_id": ..., "proposal_token": ...}
         (proposal_id/proposal_token mirror proposals[0]; None when there are none)
+      data: {"type": "error", "code": ..., "model": ..., "provider": ...,
+             "idle_seconds"?: ..., "proposals"?: [...]}
+        (code: rate_limit | provider_unavailable | timeout | idle_timeout |
+         auth | connection | empty | unknown)
       data: [DONE]
+    There is no server retry and no provider fallback (D-07).
     """
     from llama_index.core.agent.workflow.workflow_events import AgentInput, ToolCallResult
-    from llama_index.core.workflow import StopEvent
+    from workflows.errors import WorkflowCancelledByUser
+    from workflows.events import (
+        IdleReleasedEvent,
+        StopEvent,
+        WorkflowCancelledEvent,
+        WorkflowFailedEvent,
+        WorkflowTimedOutEvent,
+    )
 
+    model = provider = None
     try:
         workflow = _get_agent_workflow()
+        model, provider = _llm_label(workflow)
         handler = workflow.run(user_msg=question, max_iterations=10)
-        tool_trace: list = []
-
-        async for event in handler.stream_events():
-            if isinstance(event, AgentInput):
-                yield f"data: {json.dumps({'type': 'step', 'msg': 'thinking…'})}\n\n"
-
-            elif isinstance(event, ToolCallResult):
-                # Prefer the untouched dict LlamaIndex's FunctionTool.call() sets on
-                # ToolOutput.raw_output — event.tool_output.content is a Python-repr
-                # STRING of that dict, so json.loads(content) always raises and would
-                # silently drop proposal_id/proposal_token on every write-tool call.
-                raw_output = getattr(event.tool_output, "raw_output", None)
-                if isinstance(raw_output, dict):
-                    result_dict = raw_output
-                else:
-                    content = event.tool_output.content
-                    try:
-                        result_dict = json.loads(content)
-                    except Exception:
-                        result_dict = {"raw": content}
-
-                # T-02-07: strip proposal_token out of the trace-visible result dict
-                # so it never appears in the persisted/collapsible tool-call log.
-                # It will be surfaced as a dedicated top-level field in the answer event.
-                trace_result = {k: v for k, v in result_dict.items()
-                                if k != "proposal_token"} if isinstance(result_dict, dict) \
-                    else result_dict
-
-                step = {
-                    "tool": event.tool_name,
-                    "args": event.tool_kwargs,
-                    "result": trace_result,
-                }
-                # Keep the full result_dict (with token) in tool_trace so
-                # _extract_proposals can read the tokens.
-                tool_trace.append({
-                    "tool": event.tool_name,
-                    "args": event.tool_kwargs,
-                    "result": result_dict,  # full dict — used for token extraction only
-                    "_trace_result": trace_result,  # token-stripped — used in answer trace
-                })
-                # default=str: some tool results (e.g. net_worth's holdings) carry
-                # raw Decimal fields that json.dumps can't serialize natively.
-                yield f"data: {json.dumps({'type': 'tool_result', 'step': step}, default=str)}\n\n"
-
-            elif isinstance(event, StopEvent):
-                # StopEvent.result is AgentOutput; str(AgentOutput) = response.content
-                final = event.result
-                answer_text = str(final) if final is not None else ""
-                # One scan for every proposal of the turn, in call order. The
-                # token surfaces ONLY here — to the originating chat session
-                # via the SSE answer event (T-02-07, single-use 15-min TTL).
-                proposals = _extract_proposals(tool_trace)
-                # Build the public trace using token-stripped results (T-02-07)
-                public_trace = [
-                    {
-                        "tool": s["tool"],
-                        "args": s["args"],
-                        "result": s.get("_trace_result", s["result"]),
-                    }
-                    for s in tool_trace
-                ]
-                # Singular fields mirror proposals[0] for compatibility (accepted
-                # AGENT-06 scope) — from the same scan, not a second extraction.
-                first = proposals[0] if proposals else None
-                payload = {
-                    "type": "answer",
-                    "text": answer_text,
-                    "trace": public_trace,
-                    "proposals": proposals,
-                    "proposal_id": first["id"] if first else None,
-                    "proposal_token": first["token"] if first else None,
-                }
-                yield f"data: {json.dumps(payload, default=str)}\n\n"
-
-        yield "data: [DONE]\n\n"
-
     except Exception as e:
-        error_payload = {
-            "type": "answer",
-            "text": f"I couldn't process that question reliably ({e}). Try rephrasing.",
-            "trace": [],
-            "proposals": [],
-            "proposal_id": None,
-            "proposal_token": None,
-        }
-        yield f"data: {json.dumps(error_payload)}\n\n"
-        yield "data: [DONE]\n\n"
+        _log_failure(e)
+        yield _error_event(classify_error(e), model, provider, None)
+        yield _DONE
+        return
+
+    queue: asyncio.Queue = asyncio.Queue()
+    tool_trace: list = []
+    terminal = False  # a terminal event (answer / error / cancel) was handled
+
+    def emit_error(code: str) -> None:
+        nonlocal terminal
+        terminal = True
+        queue.put_nowait(_error_event(code, model, provider, _extract_proposals(tool_trace)))
+
+    async def produce() -> None:
+        nonlocal terminal
+        try:
+            async for event in handler.stream_events():
+                if isinstance(event, AgentInput):
+                    queue.put_nowait(_sse({"type": "step", "msg": "thinking…"}))
+
+                elif isinstance(event, ToolCallResult):
+                    # Prefer the untouched dict LlamaIndex's FunctionTool.call() sets on
+                    # ToolOutput.raw_output — event.tool_output.content is a Python-repr
+                    # STRING of that dict, so json.loads(content) always raises and would
+                    # silently drop proposal_id/proposal_token on every write-tool call.
+                    raw_output = getattr(event.tool_output, "raw_output", None)
+                    if isinstance(raw_output, dict):
+                        result_dict = raw_output
+                    else:
+                        content = event.tool_output.content
+                        try:
+                            result_dict = json.loads(content)
+                        except Exception:
+                            result_dict = {"raw": content}
+
+                    # T-02-07: strip proposal_token out of the trace-visible result dict
+                    # so it never appears in the persisted/collapsible tool-call log.
+                    # It will be surfaced as a dedicated top-level field in the answer event.
+                    trace_result = {k: v for k, v in result_dict.items()
+                                    if k != "proposal_token"} if isinstance(result_dict, dict) \
+                        else result_dict
+
+                    step = {
+                        "tool": event.tool_name,
+                        "args": event.tool_kwargs,
+                        "result": trace_result,
+                    }
+                    # Keep the full result_dict (with token) in tool_trace so
+                    # _extract_proposals can read the tokens.
+                    tool_trace.append({
+                        "tool": event.tool_name,
+                        "args": event.tool_kwargs,
+                        "result": result_dict,  # full dict — used for token extraction only
+                        "_trace_result": trace_result,  # token-stripped — used in answer trace
+                    })
+                    # D-10: record the id as the result arrives, before any answer.
+                    if run is not None and isinstance(result_dict, dict) \
+                            and result_dict.get("proposal_id"):
+                        run.proposal_ids.append(str(result_dict["proposal_id"]))
+                    queue.put_nowait(_sse({"type": "tool_result", "step": step}))
+
+                # Terminal dispatch (D-01a): Failed, TimedOut, Cancelled and
+                # IdleReleased all SUBCLASS StopEvent, so they must be tested
+                # before the plain StopEvent or a failure reads as an answer.
+                elif isinstance(event, WorkflowFailedEvent):
+                    _log_failure(event.exception)
+                    emit_error(classify_error(event.exception))
+
+                elif isinstance(event, WorkflowTimedOutEvent):
+                    emit_error("timeout")
+
+                elif isinstance(event, (WorkflowCancelledEvent, IdleReleasedEvent)):
+                    terminal = True  # a cancel: no answer, no error
+
+                elif isinstance(event, StopEvent):
+                    # StopEvent.result is AgentOutput; str(AgentOutput) = response.content
+                    final = event.result
+                    answer_text = str(final) if final is not None else ""
+                    if answer_text.strip() == "" and not tool_trace:
+                        emit_error("empty")  # D-06
+                        continue
+                    terminal = True
+                    # One scan for every proposal of the turn, in call order. The
+                    # token surfaces ONLY here — to the originating chat session
+                    # via the SSE answer event (T-02-07, single-use 15-min TTL).
+                    proposals = _extract_proposals(tool_trace)
+                    # Build the public trace using token-stripped results (T-02-07)
+                    public_trace = [
+                        {
+                            "tool": s["tool"],
+                            "args": s["args"],
+                            "result": s.get("_trace_result", s["result"]),
+                        }
+                        for s in tool_trace
+                    ]
+                    # Singular fields mirror proposals[0] for compatibility (accepted
+                    # AGENT-06 scope) — from the same scan, not a second extraction.
+                    first = proposals[0] if proposals else None
+                    queue.put_nowait(_sse({
+                        "type": "answer",
+                        "text": answer_text,
+                        "trace": public_trace,
+                        "model": model,
+                        "provider": provider,
+                        "proposals": proposals,
+                        "proposal_id": first["id"] if first else None,
+                        "proposal_token": first["token"] if first else None,
+                    }))
+
+            # The stream can swallow a failure; awaiting the handler re-raises it (D-01).
+            try:
+                await handler
+            except WorkflowCancelledByUser:
+                pass
+            except Exception as e:
+                _log_failure(e)
+                if not terminal:
+                    emit_error(classify_error(e))
+        except Exception as e:
+            _log_failure(e)
+            if not terminal:
+                emit_error(classify_error(e))
+        finally:
+            queue.put_nowait(None)
+
+    producer = asyncio.create_task(produce())
+    if run is not None:
+        run.handler, run.task = handler, producer
+    try:
+        while True:
+            item = await queue.get()
+            if item is None:
+                break
+            yield item
+        yield _DONE
+    finally:
+        # Starlette cancels this generator on disconnect at the anyio level, so
+        # every plain await here would re-raise CancelledError. Shield (D-12a).
+        with anyio.CancelScope(shield=True):
+            await _halt(handler, producer)
 
 
 # ---------------------------------------------------------------------------

@@ -291,3 +291,234 @@ async def test_provider_429_emits_error_not_answer(monkeypatch):
     assert errors[0]["code"] == "rate_limit"
     assert errors[0]["model"] == "example-model:7b"
     assert lines[-1] == "data: [DONE]\n\n"
+
+
+# ---------------------------------------------------------------------------
+# D-03: the classifier (synthetic exception shapes, no network)
+# ---------------------------------------------------------------------------
+
+
+def _exc(name="Err", bases=(Exception,), **attrs):
+    return type(name, bases, attrs)("x")
+
+
+def _classify_cases():
+    import httpx
+    from types import SimpleNamespace
+
+    from llama_index.core.workflow import WorkflowTimeoutError
+
+    conn_base = type("APIConnectionError", (Exception,), {})
+    api_timeout = type("APITimeoutError", (conn_base,), {})
+    resp_429 = _exc("HTTPErr")
+    resp_429.response = SimpleNamespace(status_code=429)
+    return [
+        (_exc(status_code=429), "rate_limit"),
+        (_exc(status_code=500), "provider_unavailable"),
+        (_exc(status_code=503), "provider_unavailable"),
+        (_exc(status_code=529), "provider_unavailable"),
+        (_exc(status_code=401), "auth"),
+        (_exc(status_code=403), "auth"),
+        (resp_429, "rate_limit"),
+        (TimeoutError(), "timeout"),
+        (httpx.ReadTimeout("x"), "timeout"),
+        (api_timeout("x"), "timeout"),  # not shadowed by its connection base
+        (WorkflowTimeoutError("x"), "timeout"),
+        (ConnectionError(), "connection"),
+        (httpx.ConnectError("x"), "connection"),
+        (conn_base("x"), "connection"),
+        (_exc("ResponseError", status_code=-1), "unknown"),
+        (_exc(status_code=404), "unknown"),
+        (ValueError(), "unknown"),
+    ]
+
+
+@pytest.mark.parametrize("exc,code", _classify_cases())
+def test_classify_error_shapes(exc, code):
+    from backend.query import classify_error
+
+    assert classify_error(exc) == code
+
+
+# ---------------------------------------------------------------------------
+# D-04: no raw exception text or question in any SSE line
+# ---------------------------------------------------------------------------
+
+
+async def test_error_event_has_no_raw_exception_text(monkeypatch, caplog):
+    from backend.query import agent_stream
+
+    caplog.set_level(logging.WARNING)
+    _install_stub_workflow(monkeypatch, StubLLM(mode="429"))
+
+    lines = await _collect(agent_stream("QUESTION-MARKER synthetic"))
+
+    blob = "".join(lines)
+    assert "SECRET-sk-synthetic" not in blob
+    assert "QUESTION-MARKER" not in blob
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("Err429" in r.getMessage() for r in warnings)
+    assert not any("QUESTION-MARKER" in r.getMessage() for r in warnings)
+
+
+# ---------------------------------------------------------------------------
+# D-05 / D-19 / REL-07: proposals hydrated from the DB row
+# ---------------------------------------------------------------------------
+
+
+def _token_of(pid: str) -> str:
+    from backend.db import SessionLocal
+    from backend.models import Proposal
+
+    db = SessionLocal()
+    try:
+        return db.get(Proposal, pid).token
+    finally:
+        db.close()
+
+
+async def test_error_after_proposal_carries_proposals(monkeypatch):
+    from backend.query import agent_stream
+
+    _install_stub_workflow(monkeypatch, StubLLM(mode="tool_then_429"))
+
+    payloads = _payloads(await _collect(agent_stream("synthetic question")))
+
+    assert _of_type(payloads, "answer") == []
+    err = _of_type(payloads, "error")[0]
+    assert err["code"] == "rate_limit"
+    entry = err["proposals"][0]
+    pid = str(_SEEDED[0])
+    assert entry["id"] == pid
+    assert entry["token"] == _token_of(pid)  # D-05a
+    assert entry["operation"] == "add_transaction"
+    assert entry["payload"]["rows"] == _DEFAULT_ROWS
+    datetime.datetime.fromisoformat(entry["expires_at"])
+
+
+async def test_answer_proposals_carry_payload_and_expiry(monkeypatch):
+    from backend.query import agent_stream
+
+    _install_stub_workflow(monkeypatch, StubLLM(mode="tool", final_text="Done"))
+
+    payloads = _payloads(await _collect(agent_stream("synthetic question")))
+
+    answer = _of_type(payloads, "answer")[0]
+    entry = answer["proposals"][0]
+    pid = str(_SEEDED[0])
+    token = _token_of(pid)
+    assert entry["id"] == pid and entry["token"] == token
+    assert entry["operation"] == "add_transaction"
+    assert entry["payload"]["rows"] == _DEFAULT_ROWS
+    datetime.datetime.fromisoformat(entry["expires_at"])
+    # T-02-07: the token is in the terminal answer only
+    assert token not in json.dumps(_of_type(payloads, "tool_result"))
+    assert token not in json.dumps(answer["trace"])
+    assert _of_type(payloads, "tool_result")[0]["step"]["result"]["proposal_id"] == pid
+
+
+# ---------------------------------------------------------------------------
+# D-06: the empty rule
+# ---------------------------------------------------------------------------
+
+
+async def test_empty_answer_without_trace_is_error(monkeypatch):
+    from backend.query import agent_stream
+
+    _install_stub_workflow(monkeypatch, StubLLM(mode="empty"))
+
+    payloads = _payloads(await _collect(agent_stream("synthetic question")))
+
+    assert _of_type(payloads, "answer") == []
+    assert [e["code"] for e in _of_type(payloads, "error")] == ["empty"]
+
+
+async def test_blank_text_with_tool_steps_is_answer(monkeypatch):
+    from backend.query import agent_stream
+
+    _install_stub_workflow(monkeypatch, StubLLM(mode="tool", final_text=""))
+
+    payloads = _payloads(await _collect(agent_stream("synthetic question")))
+
+    assert _of_type(payloads, "error") == []
+    answer = _of_type(payloads, "answer")[0]
+    assert answer["text"] == "" and len(answer["trace"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# D-01a / D-15: terminal StopEvent subclasses are not answers
+# ---------------------------------------------------------------------------
+
+
+async def test_whole_run_timeout_maps_to_timeout(monkeypatch):
+    from backend.query import agent_stream
+
+    _install_stub_workflow(monkeypatch, StubLLM(mode="hang"), timeout=0.5)
+
+    lines = await _collect(agent_stream("synthetic question"))
+    payloads = _payloads(lines)
+
+    assert _of_type(payloads, "answer") == []
+    assert [e["code"] for e in _of_type(payloads, "error")] == ["timeout"]
+    assert lines[-1] == "data: [DONE]\n\n"
+
+
+async def test_cancelled_workflow_emits_no_answer(monkeypatch):
+    from backend.query import Run, agent_stream
+
+    _install_stub_workflow(monkeypatch, StubLLM(mode="hang"))
+    run = Run()
+    lines: list[str] = []
+    async for line in agent_stream("synthetic question", run=run):
+        lines.append(line)
+        if len(lines) == 1:
+            await run.handler.cancel_run()
+    await asyncio.sleep(0)
+
+    payloads = _payloads(lines)
+    assert _of_type(payloads, "answer") == [] and _of_type(payloads, "error") == []
+    assert lines[-1] == "data: [DONE]\n\n"
+    assert run.task.done()
+
+
+# ---------------------------------------------------------------------------
+# D-10: the run records proposal ids as results arrive
+# ---------------------------------------------------------------------------
+
+
+async def test_run_records_proposal_ids(monkeypatch):
+    from backend.query import Run, agent_stream
+
+    _install_stub_workflow(monkeypatch, StubLLM(mode="tool", final_text="Done"))
+    run = Run()
+
+    await _collect(agent_stream("synthetic question", run=run))
+
+    assert run.proposal_ids == [str(_SEEDED[0])]
+
+
+# ---------------------------------------------------------------------------
+# REL-09 / D-21: model + provider come from the LLM instance that ran
+# ---------------------------------------------------------------------------
+
+
+async def test_events_carry_model_and_provider(monkeypatch):
+    from backend.query import agent_stream
+
+    _install_stub_workflow(monkeypatch, StubLLM(mode="ok"))
+    answer = _of_type(_payloads(await _collect(agent_stream("q"))), "answer")[0]
+    assert answer["model"] == "example-model:7b"
+    assert "provider" in answer and answer["provider"] is None  # StubLLM is no provider class
+
+
+def test_llm_label_maps_class_to_provider():
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from backend.query import _llm_label
+
+    for cls_name, provider in (("Ollama", "ollama"), ("Anthropic", "claude"), ("OpenAI", "openai")):
+        llm = type(cls_name, (), {"model": "example-model:7b"})()
+        wf = SimpleNamespace(agents={"Agent": SimpleNamespace(llm=llm)})
+        assert _llm_label(wf) == ("example-model:7b", provider)
+    assert _llm_label(MagicMock()) == (None, None)
