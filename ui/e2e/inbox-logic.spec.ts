@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { approverHeaderAllowed } from "../app/lib/approverAllowlist";
+import { approverHeaderAllowed, buildForwardHeaders } from "../app/lib/approverAllowlist";
 import {
   approveLabel,
   cardTitle,
@@ -79,12 +79,50 @@ test.describe("allowlist", () => {
     ["HEAD", "proposals", ""],
     ["POST", `PROPOSALS/${U}/approve`, ""],
     ["GET", "transactions", ""],
+    ["POST", `proposals/${U}/approve\n`, ""],
+    ["POST", `proposals/${U}/approve%0a`, ""],
+    ["POST", `proposals%2F${U}%2Fapprove`, ""],
+    ["POST", `proposals/${U}/approve%2e`, ""],
+    ["POST", `proposals/%2e%2e/proposals/${U}/approve`, ""],
+    ["PATCH", `proposals/${U}/rows/\uFF11`, ""],
   ];
   for (const [m, p, s] of denied) {
-    test(`denies ${m} ${p}${s}`.replace(U, "<uuid>"), () => {
+    test(`denies ${JSON.stringify(m + " " + p + s).replace(U, "<uuid>")}`, () => {
       expect(approverHeaderAllowed(m, p, s)).toBe(false);
     });
   }
+});
+
+test.describe("forward headers", () => {
+  const FORGED = "forged-approver-synthetic";
+  const SERVER = "server-approver-synthetic";
+  const incoming = () =>
+    new Headers({
+      host: "127.0.0.1:3001",
+      MONAI_APPROVER_KEY: FORGED,
+      MONAI_API_KEY: "client-api-synthetic",
+      accept: "application/json",
+    });
+  const approve = ["POST", `proposals/${U}/approve`, ""] as const;
+
+  test("forged header on an allowlisted path with the server key unset reaches the backend as absent", () => {
+    const h = buildForwardHeaders(incoming(), "api-synthetic", "", ...approve);
+    expect(h.has("MONAI_APPROVER_KEY")).toBe(false);
+  });
+  test("forged header on an allowlisted path is replaced by the server key, never concatenated", () => {
+    const h = buildForwardHeaders(incoming(), "api-synthetic", SERVER, ...approve);
+    expect(h.get("MONAI_APPROVER_KEY")).toBe(SERVER);
+  });
+  test("forged header on a denied path is stripped", () => {
+    const h = buildForwardHeaders(incoming(), "api-synthetic", SERVER, "POST", `proposals/${U}/confirm`, "");
+    expect(h.has("MONAI_APPROVER_KEY")).toBe(false);
+  });
+  test("API key is always the server's, host is dropped, other headers pass through", () => {
+    const h = buildForwardHeaders(incoming(), "api-synthetic", "", "GET", "transactions", "");
+    expect(h.get("MONAI_API_KEY")).toBe("api-synthetic");
+    expect(h.has("host")).toBe(false);
+    expect(h.get("accept")).toBe("application/json");
+  });
 });
 
 // ---------------------------------------------------------------------------

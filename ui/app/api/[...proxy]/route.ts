@@ -25,7 +25,7 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { approverHeaderAllowed } from "../../lib/approverAllowlist";
+import { buildForwardHeaders } from "../../lib/approverAllowlist";
 
 const BACKEND = process.env.MONAI_API || "http://127.0.0.1:8001";
 const API_KEY = process.env.MONAI_API_KEY || "";
@@ -52,18 +52,17 @@ async function forwardRequest(
 
   const method = req.method.toUpperCase();
 
-  // Copy incoming request headers and inject the API key
-  const headers = new Headers(req.headers);
-  headers.set("MONAI_API_KEY", API_KEY);
-  // Remove the host header so the backend sees its own host, not the Next.js host
-  headers.delete("host");
-  // A client-supplied approver header is never forwarded (D-03, T-33-01).
-  headers.delete("MONAI_APPROVER_KEY");
-  // Read per request (not a module const) so dev hot reload never sees a stale value.
-  const approver = process.env.MONAI_APPROVER_KEY || "";
-  if (approver && approverHeaderAllowed(method, path, search)) {
-    headers.set("MONAI_APPROVER_KEY", approver);
-  }
+  // Inject the API key; strip any client approver header, then attach the
+  // server's only on allowlisted shapes. The approver key is read per request
+  // (not a module const) so dev hot reload never sees a stale value.
+  const headers = buildForwardHeaders(
+    req.headers,
+    API_KEY,
+    process.env.MONAI_APPROVER_KEY || "",
+    method,
+    path,
+    search
+  );
 
   // Read body for methods that carry one (not GET/HEAD)
   let body: ArrayBuffer | null = null;
