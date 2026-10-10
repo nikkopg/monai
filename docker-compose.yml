@@ -38,8 +38,8 @@ services:
       MONAI_API_KEY: ${MONAI_API_KEY:?MONAI_API_KEY must be set - add it to .env}
       # Optional second secret that approves or rejects any proposal. Must differ from
       # MONAI_API_KEY; never put it in any MCP client config. Empty means the approver
-      # routes answer 503 (fail-closed). The frontend deliberately does not receive it
-      # (Phase 33 adds proxy injection on an allowlist).
+      # routes answer 503 (fail-closed). The frontend also receives it, for the
+      # allowlisted proxy injection used by the Inbox.
       MONAI_APPROVER_KEY: ${MONAI_APPROVER_KEY:-}
     depends_on:
       db:
@@ -57,6 +57,10 @@ services:
       # the backend and injects MONAI_API_KEY server-side (key never in the JS bundle).
       MONAI_API: http://127.0.0.1:8001
       MONAI_API_KEY: ${MONAI_API_KEY:?MONAI_API_KEY must be set - add it to .env}
+      # Optional. Read server-side only by the Next proxy, which attaches it to the
+      # Inbox list, approve, reject and row-skip requests and nothing else; it is never
+      # exposed to the browser. Empty means Inbox actions answer with the approver-key message.
+      MONAI_APPROVER_KEY: ${MONAI_APPROVER_KEY:-}
     depends_on:
       - backend
     restart: unless-stopped
