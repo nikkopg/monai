@@ -3,6 +3,8 @@
 // since v1.1, extracted unchanged so chat and the Inbox share it.
 // `dimColor` defaults to the chat colour so chat output is identical; the Inbox
 // passes muted3 because the UI-SPEC bans the lighter tone for new text.
+// Primitive-valued output is unchanged; object values render as JSON text and
+// an unknown row shape falls back to key: value lines (never an empty body).
 // ---------------------------------------------------------------------------
 
 import { tokens } from "../styles";
@@ -17,6 +19,11 @@ export type DiffRow = {
   into_name?: string;
   affected_count?: number;
 };
+
+// null stays "null" (as String(null)); objects/arrays render as JSON, never "[object Object]".
+function show(v: unknown): string {
+  return v !== null && typeof v === "object" ? JSON.stringify(v) : String(v);
+}
 
 export function ProposalDiff({
   rows,
@@ -76,7 +83,7 @@ export function ProposalDiff({
               {Object.entries(row.after).map(([k, v]) => (
                 <div key={k}>
                   <span style={dim}>{k}: </span>
-                  <span style={add}>{String(v ?? "—")}</span>
+                  <span style={add}>{show(v ?? "—")}</span>
                 </div>
               ))}
             </div>
@@ -88,7 +95,7 @@ export function ProposalDiff({
               {Object.entries(row.before).map(([k, v]) => (
                 <div key={k}>
                   <span style={dim}>{k}: </span>
-                  <span style={del}>{String(v ?? "—")}</span>
+                  <span style={del}>{show(v ?? "—")}</span>
                 </div>
               ))}
             </div>
@@ -96,7 +103,7 @@ export function ProposalDiff({
         }
         if (row.before && row.after) {
           const changedKeys = Object.keys(row.after).filter(
-            (k) => String(row.after![k]) !== String(row.before![k])
+            (k) => show(row.after![k]) !== show(row.before![k])
           );
           if (changedKeys.length === 0) {
             return (
@@ -110,15 +117,35 @@ export function ProposalDiff({
               {changedKeys.map((k) => (
                 <div key={k}>
                   <span style={dim}>{k}: </span>
-                  <span style={del}>{String(row.before![k] ?? "—")}</span>
+                  <span style={del}>{show(row.before![k] ?? "—")}</span>
                   {" → "}
-                  <span style={add}>{String(row.after![k] ?? "—")}</span>
+                  <span style={add}>{show(row.after![k] ?? "—")}</span>
                 </div>
               ))}
             </div>
           );
         }
-        return null;
+        // Unknown shape: show the row's own fields (minus Inbox read annotations).
+        const fields = Object.entries(row).filter(
+          ([k]) => k !== "duplicates" && k !== "skip"
+        );
+        if (fields.length === 0) {
+          return (
+            <div key={i} style={{ ...dim, fontSize: 12 }}>
+              (no row details)
+            </div>
+          );
+        }
+        return (
+          <div key={i} style={{ padding: "6px 0", borderTop: rowBorder(i) }}>
+            {fields.map(([k, v]) => (
+              <div key={k}>
+                <span style={dim}>{k}: </span>
+                <span>{show(v ?? "—")}</span>
+              </div>
+            ))}
+          </div>
+        );
       })}
       {remainder > 0 && (
         <div style={{ ...dim, fontSize: 12, marginTop: 6 }}>
