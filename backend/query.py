@@ -631,6 +631,7 @@ def reject_run_proposals(run: Run) -> list[str]:
                 Proposal.id.in_(ids),
                 and_(Proposal.channel == "chat", Proposal.created_at >= run.started_at),
             ))
+            .order_by(Proposal.id)  # fixed lock order: Stop and disconnect cannot deadlock
             .with_for_update()
         ).scalars().all()
         for p in rows:
