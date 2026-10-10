@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { tokens, input, btn, btnGhost } from "../styles";
+import ProposalDiff from "../components/ProposalDiff";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -136,112 +137,7 @@ function ProposalCard({
     }
   }
 
-  const del = { color: tokens.color.terracotta };
-  const add = { color: tokens.color.green };
   const dim = { color: tokens.color.muted2 };
-  const rowBorder = (i: number) =>
-    i > 0 ? `1px solid ${tokens.color.borderInner}` : undefined;
-
-  // Render before→after diff rows (D-02)
-  function renderDiff() {
-    const { rows } = proposal.payload;
-    if (!rows || rows.length === 0) return null;
-
-    const batchSummary =
-      rows.length > 1 ? (
-        <div style={{ fontSize: 12, ...dim, marginBottom: 10 }}>
-          {rows.length} rows affected
-        </div>
-      ) : null;
-
-    const displayRows = rows.slice(0, 5);
-    const remainder = rows.length - displayRows.length;
-
-    return (
-      <div style={{ fontSize: 14 }}>
-        {batchSummary}
-        {displayRows.map((row, i) => {
-          if (row.old_name !== undefined) {
-            return (
-              <div key={i} style={{ padding: "6px 0", borderTop: rowBorder(i) }}>
-                <span style={{ ...del, textDecoration: "line-through" }}>
-                  {row.old_name}
-                </span>
-                {" → "}
-                <span style={{ ...add, fontWeight: 600 }}>{row.new_name}</span>
-                {row.affected_count !== undefined && (
-                  <span style={dim}> ({row.affected_count} tx)</span>
-                )}
-              </div>
-            );
-          }
-          if (row.from_name !== undefined) {
-            return (
-              <div key={i} style={{ padding: "6px 0" }}>
-                merge <span style={del}>{row.from_name}</span>
-                {" → "}
-                <span style={{ ...add, fontWeight: 600 }}>{row.into_name}</span>
-              </div>
-            );
-          }
-          if (!row.before && row.after) {
-            return (
-              <div key={i} style={{ padding: "6px 0", borderTop: rowBorder(i) }}>
-                {Object.entries(row.after).map(([k, v]) => (
-                  <div key={k}>
-                    <span style={dim}>{k}: </span>
-                    <span style={add}>{String(v ?? "—")}</span>
-                  </div>
-                ))}
-              </div>
-            );
-          }
-          if (row.before && !row.after) {
-            return (
-              <div key={i} style={{ padding: "6px 0", borderTop: rowBorder(i) }}>
-                {Object.entries(row.before).map(([k, v]) => (
-                  <div key={k}>
-                    <span style={dim}>{k}: </span>
-                    <span style={del}>{String(v ?? "—")}</span>
-                  </div>
-                ))}
-              </div>
-            );
-          }
-          if (row.before && row.after) {
-            const changedKeys = Object.keys(row.after).filter(
-              (k) => String(row.after![k]) !== String(row.before![k])
-            );
-            if (changedKeys.length === 0) {
-              return (
-                <div key={i} style={{ ...dim, fontSize: 12 }}>
-                  (no field changes detected)
-                </div>
-              );
-            }
-            return (
-              <div key={i} style={{ padding: "6px 0", borderTop: rowBorder(i) }}>
-                {changedKeys.map((k) => (
-                  <div key={k}>
-                    <span style={dim}>{k}: </span>
-                    <span style={del}>{String(row.before![k] ?? "—")}</span>
-                    {" → "}
-                    <span style={add}>{String(row.after![k] ?? "—")}</span>
-                  </div>
-                ))}
-              </div>
-            );
-          }
-          return null;
-        })}
-        {remainder > 0 && (
-          <div style={{ ...dim, fontSize: 12, marginTop: 6 }}>
-            + {remainder} more row{remainder > 1 ? "s" : ""}
-          </div>
-        )}
-      </div>
-    );
-  }
 
   return (
     <div style={cardStyle}>
@@ -258,7 +154,7 @@ function ProposalCard({
         Proposed {proposal.operation.replace(/_/g, " ")}
       </div>
 
-      {renderDiff()}
+      <ProposalDiff rows={proposal.payload.rows} />
 
       {expired && status === "pending" && (
         <div style={{ ...dim, fontSize: 12, marginTop: 10 }}>

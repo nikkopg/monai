@@ -1,0 +1,569 @@
+[
+  {
+    "description": "Per-account current balance (all-time) plus period_net (scoped to an already-resolved [period_start, period_end) window). Transfers excluded from both sums. Accounts with no transactions appear with 0/0.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "period_end": {
+          "default": null,
+          "title": "Period End"
+        },
+        "period_start": {
+          "default": null,
+          "title": "Period Start"
+        }
+      },
+      "type": "object"
+    },
+    "name": "account_balances"
+  },
+  {
+    "description": "Average spending per day over a period. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "end_date": {
+          "default": null,
+          "title": "End Date"
+        },
+        "period": {
+          "default": "this_month",
+          "title": "Period"
+        },
+        "start_date": {
+          "default": null,
+          "title": "Start Date"
+        }
+      },
+      "type": "object"
+    },
+    "name": "average_daily_spending"
+  },
+  {
+    "description": "Apply a pending proposal this MCP client created, using the 6-character code the owner reads in monai. Never guess a code. Send the code as a string. Wrong codes count: 5 wrong codes lock the proposal for MCP, and an hourly limit stops MCP confirms. The owner can always approve in monai.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ]
+        },
+        "proposal_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_id",
+        "code"
+      ],
+      "type": "object"
+    },
+    "name": "confirm_proposal"
+  },
+  {
+    "description": "Search/filter accounts by name substring; returns ids, names, types, and currencies.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "default": 10,
+          "type": "integer"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "name": "find_accounts"
+  },
+  {
+    "description": "Search/filter investment platforms by name substring; returns ids, names, and kinds.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "default": 10,
+          "type": "integer"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "type": "object"
+    },
+    "name": "find_platforms"
+  },
+  {
+    "description": "Search/filter individual transactions by merchant, category, period, and kind (all | expense | income); returns ids, dates, amounts, categories, merchants, and account ids. Rows are ordered most-recent-first. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "end_date": {
+          "default": null,
+          "title": "End Date"
+        },
+        "kind": {
+          "default": "all",
+          "title": "Kind"
+        },
+        "limit": {
+          "default": 10,
+          "title": "Limit"
+        },
+        "merchant": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "period": {
+          "default": "all_time",
+          "title": "Period"
+        },
+        "start_date": {
+          "default": null,
+          "title": "Start Date"
+        }
+      },
+      "type": "object"
+    },
+    "name": "find_transactions"
+  },
+  {
+    "description": "Total money received (income only, transfers excluded) over a period. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "end_date": {
+          "default": null,
+          "title": "End Date"
+        },
+        "period": {
+          "default": "all_time",
+          "title": "Period"
+        },
+        "start_date": {
+          "default": null,
+          "title": "Start Date"
+        }
+      },
+      "type": "object"
+    },
+    "name": "income_total"
+  },
+  {
+    "description": "Largest individual transactions by magnitude over a period. kind: expense | income. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "end_date": {
+          "default": null,
+          "title": "End Date"
+        },
+        "kind": {
+          "default": "expense",
+          "title": "Kind"
+        },
+        "limit": {
+          "default": 5,
+          "title": "Limit"
+        },
+        "period": {
+          "default": "all_time",
+          "title": "Period"
+        },
+        "start_date": {
+          "default": null,
+          "title": "Start Date"
+        }
+      },
+      "type": "object"
+    },
+    "name": "largest_transactions"
+  },
+  {
+    "description": "The full category tree: top-level groups with nested children (id, name, kind, icon, effective color). Helps map a vague term to a real category or group name.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "name": "list_categories"
+  },
+  {
+    "description": "Month-over-month income/expense/net for the last N months (months clamped to a minimum of 6; a rolling window, not a calendar-year bound). Transfers excluded.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "months": {
+          "default": 6,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "name": "monthly_trend"
+  },
+  {
+    "description": "Net cash flow (income minus expenses, transfers excluded) over a period. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "end_date": {
+          "default": null,
+          "title": "End Date"
+        },
+        "period": {
+          "default": "all_time",
+          "title": "Period"
+        },
+        "start_date": {
+          "default": null,
+          "title": "Start Date"
+        }
+      },
+      "type": "object"
+    },
+    "name": "net_total"
+  },
+  {
+    "description": "Single trustworthy net worth = liquid accounts + investment platforms, each counted exactly once. Returns total, liquid_total, investment_total, liquid_accounts, investment_groups, accounts_covered, accounts_total.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "name": "net_worth"
+  },
+  {
+    "description": "Propose transactions for the owner to approve; nothing is written until approved. Single row: rows=[{\"date\": \"2026-01-15\", \"amount\": -45000, \"account\": \"Main Checking\", \"merchant\": \"Coffee Shop\"}]. Up to 500 rows (for example every line read from a statement) go in one call as one batch. amount is signed (negative = expense, positive = income); account must be an existing liquid account (call find_accounts); category, if given, must be an existing category (call list_categories); dates are YYYY-MM-DD, not in the future. Rows that look like an existing transaction or another pending row (same account and amount within 3 days) are returned in duplicates for the owner to review and are still proposed. To fix a pending proposal call again with replaces=<proposal_id>. Ask the owner for the 6-character code shown in monai, then call confirm_proposal. Never guess a code.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "replaces": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rows": {
+          "items": {
+            "additionalProperties": false,
+            "description": "One proposed transaction row; no currency or is_transfer (D-04).",
+            "properties": {
+              "account": {
+                "description": "Existing liquid account name (see find_accounts)",
+                "type": "string"
+              },
+              "amount": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ],
+                "description": "Signed: negative = expense, positive = income"
+              },
+              "category": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "date": {
+                "description": "YYYY-MM-DD, not in the future",
+                "type": "string"
+              },
+              "merchant": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              },
+              "notes": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null
+              }
+            },
+            "required": [
+              "date",
+              "amount",
+              "account"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "rows"
+      ],
+      "type": "object"
+    },
+    "name": "propose_transactions"
+  },
+  {
+    "description": "Propose one transfer between two existing liquid accounts in the same currency (two ledger rows); nothing is written until approved. amount is a positive magnitude: the source is debited and the destination credited. date is YYYY-MM-DD, not in the future. replaces=<proposal_id> fixes a pending one. Ask the owner for the 6-character code shown in monai, then call confirm_proposal. Never guess a code.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            }
+          ]
+        },
+        "date": {
+          "type": "string"
+        },
+        "from_account": {
+          "type": "string"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "replaces": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "to_account": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "from_account",
+        "to_account",
+        "amount",
+        "date"
+      ],
+      "type": "object"
+    },
+    "name": "propose_transfer"
+  },
+  {
+    "description": "Discard a pending proposal this MCP client created; needs no code. Proposals from other channels must be rejected in monai.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "proposal_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "proposal_id"
+      ],
+      "type": "object"
+    },
+    "name": "reject_proposal"
+  },
+  {
+    "description": "Compare category spending before vs. after the earliest 'buy' event for a given ticker in portfolio_events, using equal-length before/after windows. Returns a structured error if no buy event exists for the ticker, or if the purchase date is today/future (no 'after' window yet).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "type": "string"
+        },
+        "ticker": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "ticker",
+        "category"
+      ],
+      "type": "object"
+    },
+    "name": "spending_before_after_purchase"
+  },
+  {
+    "description": "Top spending categories (expenses only) over a period, rolled up to top-level category groups — each group's total includes all its descendant subcategories; per-subcategory breakdown under 'children'. Transfers and system categories excluded. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "end_date": {
+          "default": null,
+          "title": "End Date"
+        },
+        "limit": {
+          "default": 5,
+          "title": "Limit"
+        },
+        "period": {
+          "default": "all_time",
+          "title": "Period"
+        },
+        "start_date": {
+          "default": null,
+          "title": "Start Date"
+        }
+      },
+      "type": "object"
+    },
+    "name": "spending_by_category"
+  },
+  {
+    "description": "Total spent in one category INCLUDING all of its descendant subcategories — a parent/group name sums its entire subtree (case-insensitive name match). period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "category": {
+          "type": "string"
+        },
+        "end_date": {
+          "default": null,
+          "title": "End Date"
+        },
+        "period": {
+          "default": "all_time",
+          "title": "Period"
+        },
+        "start_date": {
+          "default": null,
+          "title": "Start Date"
+        }
+      },
+      "required": [
+        "category"
+      ],
+      "type": "object"
+    },
+    "name": "spending_in_category"
+  },
+  {
+    "description": "Total money spent (expenses only, transfers excluded) over a period. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "end_date": {
+          "default": null,
+          "title": "End Date"
+        },
+        "period": {
+          "default": "all_time",
+          "title": "Period"
+        },
+        "start_date": {
+          "default": null,
+          "title": "Start Date"
+        }
+      },
+      "type": "object"
+    },
+    "name": "spending_total"
+  },
+  {
+    "description": "Count transactions over a period. kind: all | expense | income. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "end_date": {
+          "default": null,
+          "title": "End Date"
+        },
+        "kind": {
+          "default": "all",
+          "title": "Kind"
+        },
+        "period": {
+          "default": "all_time",
+          "title": "Period"
+        },
+        "start_date": {
+          "default": null,
+          "title": "Start Date"
+        }
+      },
+      "type": "object"
+    },
+    "name": "transaction_count"
+  }
+]

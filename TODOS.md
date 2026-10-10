@@ -15,6 +15,19 @@ The open-work list. `ARCHITECTURE.md` holds *decisions*; this holds *open work*.
 **Effort:** M
 **Priority:** P2
 **Depends on:** isolated test database, one card per proposal (both shipped v1.4)
+**Scheduled:** folded into the Capture Inbox plan (`docs/designs/capture-inbox.md`, eng review D11) and extended to cover Inbox approve. A statement batch and an MCP capture must each land in Records.
+
+### Discord notification forwarding
+
+**What:** Forward bank and e-wallet push notifications from an Android phone (Tasker/MacroDroid or an open-source forwarder) to the Capture Inbox Discord bot, so each payment becomes an uncleared capture seconds after it happens.
+
+**Why:** It's the zero-typing version of capture. The weekly statement shrinks to a reconciliation diff.
+
+**Context:** Cut from the Capture Inbox plan as stretch slice 5 (eng review D1). Notification text formats change without warning, so every parsed row must stay uncleared until a statement clears it. Start from `backend/discord_bot.py` once the bot exists.
+
+**Effort:** L
+**Priority:** P3
+**Depends on:** Capture Inbox slice 2 (Discord bot)
 
 ### Recurring-charge / subscription detection (QRY-01)
 
@@ -110,10 +123,35 @@ The open-work list. `ARCHITECTURE.md` holds *decisions*; this holds *open work*.
 
 **Why:** Nothing in the repo dumps the database today — the Postgres data volume is the only copy of the financial history.
 
-**Context:** No script or CI job exists for this yet; a cron job or a scheduled container command both work.
+**Context:** No script or CI job exists for this yet; a cron job or a scheduled container command both work. This now gates the Capture Inbox Wallet cutover (slice 4, eng review D3). Once Wallet is retired, no other copy of new transactions exists, so cutover waits until this ships and one restore has been verified.
 
 **Effort:** S
 **Priority:** P1
+**Depends on:** None
+**Blocks:** Capture Inbox slice 4 (Wallet cutover)
+
+### Proxy hardening: session before key injection
+
+**What:** Require a per-browser UI session (e.g. a signed httpOnly cookie set by a local login or a one-time pairing link) before the Next.js proxy injects `MONAI_API_KEY` or `MONAI_APPROVER_KEY`.
+
+**Why:** The proxy adds keys to every request with no caller check, so any local process that can reach `127.0.0.1:3001` gets full write and approve. That includes a shell-capable AI agent, which can bypass the Capture Inbox MCP confirm-code gate.
+
+**Context:** Start at `ui/app/api/[...proxy]/route.ts` (`headers.set("MONAI_API_KEY", API_KEY)`). Binding to 127.0.0.1 stays the outer control. Recorded by the Capture Inbox eng review (D13).
+
+**Effort:** M
+**Priority:** P2
+**Depends on:** `MONAI_APPROVER_KEY` (Capture Inbox slice 1)
+
+### DESIGN.md for the paper system
+
+**What:** Run /design-consultation to write a DESIGN.md that captures the paper tokens in `ui/app/styles.ts` plus standing rules: the component map, status shown in words with no colored stripes, and the batch/check vocabulary.
+
+**Why:** The design system lives only as code and in a local-only mockup, so every design review re-derives it, and decisions like the Capture Inbox's 10A/11A/12A live inside a single plan.
+
+**Context:** Recorded by the Capture Inbox design review (13A). Start from `ui/app/styles.ts` and `docs/designs/capture-inbox.md` "Design decisions". A consultation can also revisit whether the cream/serif/terracotta look still fits.
+
+**Effort:** S
+**Priority:** P3
 **Depends on:** None
 
 ### Hardware note in README

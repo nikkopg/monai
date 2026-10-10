@@ -514,6 +514,8 @@ class ProposalOut(BaseModel):
     NOTE: the `token` field is DELIBERATELY EXCLUDED — it is never returned
     in GET /proposals or any list/read path (T-02-07). The token is surfaced
     only in the agent_stream SSE answer event to the originating chat session.
+    `code` is deliberately excluded too; only ProposalApproverOut carries it
+    (D-19, D-25).
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -525,12 +527,33 @@ class ProposalOut(BaseModel):
     expires_at: datetime
     created_at: datetime
     confirmed_at: datetime | None
+    channel: str
+    status_changed_at: datetime
+    supersedes_id: _uuid.UUID | None
+    failed_attempts: int
+
+
+class ProposalApproverOut(ProposalOut):
+    """ProposalOut plus the stored confirm `code`.
+
+    Returned only by GET /proposals, only for channel mcp rows, and only when
+    the request carries a valid MONAI_APPROVER_KEY (D-19, D-20). Never a
+    response_model of confirm, approve or reject (D-25).
+    """
+
+    code: str | None
 
 
 class ConfirmRequest(BaseModel):
     """Body for POST /proposals/{id}/confirm."""
 
     token: str
+
+
+class RowSkipRequest(BaseModel):
+    """Body for PATCH /proposals/{id}/rows/{index}."""
+
+    skip: bool
 
 
 # ---------------------------------------------------------------------------

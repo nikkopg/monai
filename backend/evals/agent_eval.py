@@ -497,11 +497,12 @@ def _purge(proposal_ids: list[str]) -> None:
         c.execute(sa_text("DELETE FROM categories WHERE name = :name"), {"name": CHILD})
         c.execute(sa_text("DELETE FROM categories WHERE name = :name"), {"name": PARENT})
         c.execute(sa_text("DELETE FROM accounts WHERE name = :name"), {"name": ACCOUNT})
-        # Exact ids only. A SIGKILL'd run's pending proposals are not swept
+        # Exact ids only (pending, or flipped to expired by a lazy-expiry read).
+        # A SIGKILL'd run's proposals are not swept
         # by the next run; they are inert (never confirmed) test-DB rows.
         c.execute(
             sa_text(
-                "DELETE FROM proposals WHERE status = 'pending' AND "
+                "DELETE FROM proposals WHERE status IN ('pending', 'expired') AND "
                 "id = ANY(CAST(:ids AS uuid[]))"
             ),
             {"ids": [pid for pid in proposal_ids if pid]},
@@ -563,7 +564,7 @@ def _leftovers(proposal_ids: list[str]) -> int:
                 "(SELECT count(*) FROM accounts WHERE name = :acct) + "
                 "(SELECT count(*) FROM categories WHERE name = ANY(:cats)) + "
                 "(SELECT count(*) FROM transactions WHERE " + _EVAL_TXN_WHERE + ") + "
-                "(SELECT count(*) FROM proposals WHERE status = 'pending' AND "
+                "(SELECT count(*) FROM proposals WHERE status IN ('pending', 'expired') AND "
                 "id = ANY(CAST(:ids AS uuid[])))"
             ),
             {"acct": ACCOUNT, "cats": [PARENT, CHILD], "ids": [pid for pid in proposal_ids if pid]},

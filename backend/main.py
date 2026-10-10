@@ -26,13 +26,16 @@ Endpoints:
     POST /categories/merge      merge one category into another (requires API key)
     POST /import                multipart CSV upload (Wallet export)
     POST /query-stream          streaming SSE agent response
-    GET  /proposals             list pending proposals (public)
-    POST /proposals/{id}/confirm  apply a pending proposal (requires API key)
-    POST /proposals/{id}/reject   reject a pending proposal (requires API key)
+    GET  /proposals             list pending proposals, lazy expiry first (public)
+    GET  /proposals/counts      {"pending": N} after lazy expiry (public)
+    POST /proposals/{id}/confirm  apply a pending chat proposal by token (requires API key)
+    POST /proposals/{id}/approve  apply any pending proposal, any channel (requires MONAI_APPROVER_KEY)
+    POST /proposals/{id}/reject   reject a pending proposal (API key: chat only; MONAI_APPROVER_KEY: any channel)
     GET  /settings              effective settings, keys masked (public)
     PUT  /settings              partial-update settings (requires API key)
 """
 
+import copy
 import hmac
 import logging
 import uuid
@@ -46,15 +49,18 @@ from fastmcp.utilities.lifespan import combine_lifespans
 from sqlalchemy import desc, func, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from backend import auth
-from backend.auth import require_api_key
+from backend.auth import optional_approver, require_api_key, require_approver_key, require_reject_scope
 from backend.mcp_server import build_mcp
 from backend.db import get_session, get_session_sync
 from backend.importer import _get_or_create_account, import_csv_text
+from backend.mcp_writes import duplicate_flags
 from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, Proposal, Transaction
 from backend.net_worth_history import monthly_net_worth_series
 from backend.portfolio import portfolio_summary as compose_portfolio_summary
+from backend.proposals import ALL_SKIPPED_MSG, expire_stale, transition
 from backend.portfolio import value_history_series
 from backend.writes import (
     apply_add_account,
@@ -100,6 +106,7 @@ from backend.schemas import (
     CategoryRenameRequest,
     CategoryUpdate,
     ConfirmRequest,
+    RowSkipRequest,
     FundedBuyCreate,
     FundedSellCreate,
     ImportResponse,
@@ -116,6 +123,7 @@ from backend.schemas import (
     PortfolioEventOut,
     PortfolioSummary,
     PriceOverrideRequest,
+    ProposalApproverOut,
     ProposalOut,
     QueryRequest,
     SettingsOut,
@@ -199,7 +207,8 @@ async def lifespan(app: FastAPI):
         scheduler.shutdown(wait=False)
 
 
-# MCP server (Phase 6) — read-only, API-key-gated, co-mounted at /mcp on this
+# MCP server (Phase 6; curated writes Phase 32) — API-key-gated, its write tools
+# only create proposals that need the owner's code. Co-mounted at /mcp on this
 # same FastAPI process/port (MCP-01). path="/" here + app.mount("/mcp", ...)
 # below == endpoint is exactly /mcp, never /mcp/mcp (RESEARCH Pitfall 3).
 mcp = build_mcp()
@@ -1448,8 +1457,14 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
     payload = proposal.payload
     operation = payload.get("operation", "")
     rows = payload.get("rows", [])
+    # D-20: skip is owner-set on the row (never in `after`, which hits AuditLog).
+    # The non-empty guard keeps legacy empty-rows proposals approvable.
+    if operation == "add_transaction" and rows and all(r.get("skip") for r in rows):
+        raise ValueError(ALL_SKIPPED_MSG)
 
     for row in rows:
+        if operation == "add_transaction" and row.get("skip"):
+            continue
         before = row.get("before")
         after = row.get("after")
 
@@ -1519,49 +1534,108 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
 # Proposal endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/proposals", response_model=list[ProposalOut])
-def list_proposals(status: str = "pending", db: Session = Depends(get_session)):
-    """List proposals by status. Public endpoint — token is never serialized."""
-    return db.query(Proposal).filter(Proposal.status == status).order_by(
-        desc(Proposal.created_at)
-    ).all()
-
-
-@app.post(
-    "/proposals/{proposal_id}/confirm",
-    response_model=ProposalOut,
-    dependencies=[Depends(require_api_key)],
-)
-def confirm_proposal(
-    proposal_id: uuid.UUID,
-    req: ConfirmRequest,
+@app.get("/proposals")
+def list_proposals(
+    status: str = "pending",
+    is_approver: bool = Depends(optional_approver),
     db: Session = Depends(get_session),
 ):
-    """Apply a pending proposal atomically. Requires API key + valid token.
+    """List proposals by status. Public endpoint (D-20, auth deferred).
 
-    Check order (Pitfall 3 — prevents replay):
-      1. Load by id with SELECT ... FOR UPDATE (WRITE-02) → 404 if missing;
-         a concurrent confirm or reject waits on this lock, then sees the
-         committed status
-      2. status == "pending" → 409 if not pending
-      3. expires_at > now() → 410 if expired
-      4. hmac.compare_digest(token) → 401 if wrong
-      5. Execute payload + write audit_log rows + mark confirmed (single commit)
+    Lazy expiry runs first (D-11), so a proposal past expires_at never reads as
+    pending. The token is never serialized; `code` appears only on channel mcp
+    rows and only when the request carries a valid approver key. No
+    response_model: it cannot vary per request, so each item serializes its own
+    model's fields.
+
+    Pending add_transaction/add_transfer payload rows each carry an additive
+    `duplicates` list (advisory flags, computed on read, Phase 33 renders them);
+    it lives on a deep copy and is never written to the stored payload.
+    """
+    expire_stale(db)
+    rows = db.query(Proposal).filter(Proposal.status == status).order_by(
+        desc(Proposal.created_at)
+    ).all()
+    items = [
+        ProposalApproverOut.model_validate(p)
+        if is_approver and p.channel == "mcp"
+        else ProposalOut.model_validate(p)
+        for p in rows
+    ]
+    if status == "pending":
+        flags = duplicate_flags(db, rows)
+        for item in items:
+            if item.id in flags:
+                item.payload = copy.deepcopy(item.payload)
+                for row, row_flags in zip(item.payload.get("rows") or [], flags[item.id]):
+                    row["duplicates"] = row_flags
+    return items
+
+
+# Must stay above any GET route with a path parameter under /proposals so the
+# literal path wins (D-21).
+@app.get("/proposals/counts")
+def proposal_counts(db: Session = Depends(get_session)) -> dict[str, int]:
+    """Pending proposal count for the sidebar badge, after lazy expiry. Public."""
+    expire_stale(db)
+    n = db.query(func.count(Proposal.id)).filter(Proposal.status == "pending").scalar()
+    return {"pending": n}
+
+
+@app.patch(
+    "/proposals/{proposal_id}/rows/{index}",
+    response_model=ProposalOut,
+    dependencies=[Depends(require_approver_key)],
+)
+def skip_proposal_row(
+    proposal_id: uuid.UUID,
+    index: int,
+    req: RowSkipRequest,
+    db: Session = Depends(get_session),
+):
+    """Mark a pending transaction-batch row skipped (or not). Approver key only.
+
+    Owner-only: MCP cannot skip. Phase 33 Inbox calls this through the proxy
+    allowlist. Skips are not carried across a replace (D-16).
     """
     proposal = db.get(Proposal, proposal_id, with_for_update=True)
     if proposal is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
+    _require_pending(proposal)
+    if proposal.payload.get("operation") != "add_transaction":
+        raise HTTPException(status_code=422, detail="Only transaction batches have skippable rows")
+    rows = proposal.payload.get("rows", [])
+    if not 0 <= index < len(rows):
+        raise HTTPException(status_code=422, detail="Row index out of range")
+    rows[index]["skip"] = req.skip
+    flag_modified(proposal, "payload")
+    db.commit()
+    return proposal
+
+
+def _require_pending(proposal: Proposal) -> None:
+    """Status/expiry checks shared by /confirm, /approve, the skip route and the MCP code path.
+
+    status "expired" -> 410; any other non-pending status -> 409; now >
+    expires_at -> 410 (no status write here; reads flip it lazily).
+    """
+    if proposal.status == "expired":
+        raise HTTPException(status_code=410, detail="Proposal expired — ask again to redo this")
     if proposal.status != "pending":
         raise HTTPException(status_code=409, detail=f"Proposal already {proposal.status}")
     if datetime.now(timezone.utc) > proposal.expires_at:
         raise HTTPException(status_code=410, detail="Proposal expired — ask again to redo this")
-    if not hmac.compare_digest(req.token, proposal.token):
-        raise HTTPException(status_code=401, detail="Invalid confirmation token")
 
+
+def _execute_and_commit(db: Session, proposal: Proposal) -> Proposal:
+    """The one executor for token, approver-key and MCP-code approval (D-10).
+
+    Execute payload + audit_log rows + transition to confirmed in one commit,
+    then reset the query engine. Raises HTTPException 422/500 after rollback.
+    """
     try:
         _execute_proposal_payload(db, proposal)
-        proposal.status = "confirmed"
-        proposal.confirmed_at = datetime.now(timezone.utc)
+        transition(proposal, "confirmed")
         db.commit()
     except ValueError as e:
         # IN-02: delegated apply_* helpers raise ValueError for domain errors
@@ -1581,24 +1655,88 @@ def confirm_proposal(
     return proposal
 
 
-@app.post(
-    "/proposals/{proposal_id}/reject",
-    response_model=ProposalOut,
-    dependencies=[Depends(require_api_key)],
-)
-def reject_proposal(
-    proposal_id: uuid.UUID,
-    db: Session = Depends(get_session),
-):
-    """Reject a pending proposal. No target mutation; no audit row.
-    Requires API key. The row is loaded with SELECT ... FOR UPDATE (WRITE-02),
-    so a concurrent confirm or reject waits here, then sees the committed status.
+def _apply_proposal(db: Session, proposal_id: uuid.UUID, token: str | None) -> Proposal:
+    """Shared lock/check/execute core for /confirm and /approve (D-16).
+
+    Check order (D-13, Pitfall 3 — prevents replay):
+      1. Load by id with SELECT ... FOR UPDATE (WRITE-02) -> 404 if missing;
+         a concurrent confirm/approve/reject waits on this lock, then sees the
+         committed status
+      2. token path only: channel != "chat" -> 403 (never token-confirmable)
+      3. status "expired" -> 410; any other non-pending status -> 409
+      4. now > expires_at -> 410 (no status write here; reads flip it lazily)
+      5. token path only: hmac.compare_digest(token) -> 401 if wrong
+      6. Execute payload + audit_log rows + transition to confirmed (one commit)
+
+    `token is None` is the approver path: it skips the channel and token checks.
     """
     proposal = db.get(Proposal, proposal_id, with_for_update=True)
     if proposal is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
+    if token is not None and proposal.channel != "chat":
+        raise HTTPException(
+            status_code=403, detail="Token confirm is chat-only; approve this proposal in monai"
+        )
+    _require_pending(proposal)
+    if token is not None and not hmac.compare_digest(token.encode(), proposal.token.encode()):
+        raise HTTPException(status_code=401, detail="Invalid confirmation token")
+    return _execute_and_commit(db, proposal)
+
+
+@app.post(
+    "/proposals/{proposal_id}/confirm",
+    response_model=ProposalOut,
+    dependencies=[Depends(require_api_key)],
+)
+def confirm_proposal(
+    proposal_id: uuid.UUID,
+    req: ConfirmRequest,
+    db: Session = Depends(get_session),
+):
+    """Apply a pending chat proposal by token. Requires API key + valid token.
+
+    Check order (D-13): API key 401 -> 404 -> channel != chat 403 ->
+    status 409 (expired 410) -> expiry 410 -> token 401 -> execute. A non-chat
+    proposal is never token-confirmable; use /approve with the approver key.
+    """
+    return _apply_proposal(db, proposal_id, req.token)
+
+
+@app.post(
+    "/proposals/{proposal_id}/approve",
+    response_model=ProposalOut,
+    dependencies=[Depends(require_approver_key)],
+)
+def approve_proposal(proposal_id: uuid.UUID, db: Session = Depends(get_session)):
+    """Apply a pending proposal of any channel. Approver key only, no token
+    (APPR-01, D-16); same lock/check/execute core as /confirm."""
+    return _apply_proposal(db, proposal_id, None)
+
+
+@app.post("/proposals/{proposal_id}/reject", response_model=ProposalOut)
+def reject_proposal(
+    proposal_id: uuid.UUID,
+    scope: str = Depends(require_reject_scope),
+    db: Session = Depends(get_session),
+):
+    """Reject a pending proposal. No target mutation; no audit row.
+
+    Key scopes (D-17): MONAI_API_KEY rejects chat proposals only (403 for any
+    other channel); MONAI_APPROVER_KEY rejects any channel. A wrong approver
+    header is 401 even with a valid API key. The row is loaded with
+    SELECT ... FOR UPDATE (WRITE-02), so a concurrent confirm or reject waits
+    here, then sees the committed status. An expired status is 409
+    "Proposal already expired"; a pending row past expires_at still rejects (D-24).
+    """
+    proposal = db.get(Proposal, proposal_id, with_for_update=True)
+    if proposal is None:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    if scope == "chat" and proposal.channel != "chat":
+        raise HTTPException(
+            status_code=403, detail="Rejecting a non-chat proposal requires the approver key"
+        )
     if proposal.status != "pending":
         raise HTTPException(status_code=409, detail=f"Proposal already {proposal.status}")
-    proposal.status = "rejected"
+    transition(proposal, "rejected")
     db.commit()
     return proposal

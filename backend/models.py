@@ -184,7 +184,8 @@ class Proposal(Base):
 
     The UUID `id` may appear in logs/URLs safely; the `token` column holds
     the actual high-entropy confirm secret (D-11). Tokens are single-use
-    and operation-scoped (enforced in Phase 2).
+    and operation-scoped (enforced in Phase 2). `channel`, `supersedes_id`,
+    `code`, `failed_attempts` and `status_changed_at` come from migration 015.
     """
 
     __tablename__ = "proposals"
@@ -207,6 +208,21 @@ class Proposal(Base):
     )
     confirmed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+    channel: Mapped[str] = mapped_column(
+        String(16), server_default="chat", nullable=False
+    )
+    supersedes_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("proposals.id"), nullable=True
+    )
+    # Stored MCP confirm code (X1); serialized only to approver-key callers.
+    code: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    failed_attempts: Mapped[int] = mapped_column(
+        Integer, server_default="0", nullable=False
+    )
+    # Every status change goes through backend/proposals.transition().
+    status_changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
     )
 
 
