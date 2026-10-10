@@ -702,6 +702,25 @@ def test_unstarted_run_is_not_a_permanent_conflict():
     assert fresh is not None and fresh is not stale
 
 
+async def test_replaced_run_refuses_to_stream():
+    """IN-06: a run replaced after the grace must not run or sweep the new run's rows."""
+    import datetime as dt
+
+    import backend.query as q
+
+    stale = q.start_run(q.CHAT_KEY)
+    stale.started_at -= dt.timedelta(seconds=11)
+    fresh = q.start_run(q.CHAT_KEY)
+    delivered, _ = _seed_proposal()  # the fresh run's proposal
+
+    lines = await _collect(q.run_stream(stale, "q"))
+
+    assert [p["type"] for p in _payloads(lines)] == ["error"]
+    assert lines[-1] == "data: [DONE]\n\n"
+    assert _status_of(delivered) == "pending"
+    assert q._ACTIVE[q.CHAT_KEY] is fresh
+
+
 @pytest.mark.parametrize("exit_path", ["answer", "error", "cancel", "disconnect"])
 async def test_registry_released_on_every_exit(monkeypatch, exit_path):
     import anyio

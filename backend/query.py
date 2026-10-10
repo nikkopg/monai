@@ -669,6 +669,13 @@ async def finish_run(run: Run) -> None:
 
 async def run_stream(run: Run, question: str):
     """SSE stream of one registered run: a `run` event first, then agent_stream."""
+    if _ACTIVE.get(run.key) is not run:
+        # start_run replaced this run after the unstarted grace (IN-06). Running
+        # it now would race the replacement, and its finish_run sweep would
+        # reject the replacement's proposals. Refuse, and skip cleanup entirely.
+        yield _error_event("unknown", None, None, None)
+        yield _DONE
+        return
     run.streaming = True
     try:
         yield _sse({"type": "run", "run_id": run.id})
