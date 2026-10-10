@@ -678,6 +678,96 @@ def find_accounts(name: str | None = None, limit: int = 10) -> dict:
     return {"tool": "find_accounts", "rows": rows}
 
 
+def _pct(base: float, current: float) -> float | None:
+    """Percent change from base to current, 1 decimal; None when base is 0."""
+    if base == 0:
+        return None
+    # abs() only matters for a negative net base (keeps pct's sign equal to
+    # delta's); for spending/income/category bases it is delta / base x 100.
+    return round((current - base) / abs(base) * 100, 1)
+
+
+def compare_periods(
+    period_a: str,
+    period_b: str,
+    a_start_date: str | None = None,
+    a_end_date: str | None = None,
+    b_start_date: str | None = None,
+    b_end_date: str | None = None,
+    limit: int = 10,
+) -> dict:
+    """Compare two periods side by side: spending, income and net totals, plus
+    the top spending-category changes. Use this for any compare / vs / against /
+    "change from X to Y" question instead of two spending_total calls plus your
+    own arithmetic. Never compute differences or percentages yourself.
+    The earlier period is the base and the later one is current, whatever the
+    argument order; delta = current - base. pct null means the base was 0: say
+    "new", do not invent a percentage. When comparable is false the periods
+    differ in length or one is still in progress: say so and use per_day.
+    "other" covers categories beyond limit plus uncategorised and system rows.
+    Refuses all_time and custom ranges missing a start or end date.
+    Named: period_a="last_month", period_b="this_month".
+    Custom (end dates inclusive): period_a="custom", a_start_date="2025-03-01",
+    a_end_date="2025-03-31", period_b="custom", b_start_date="2025-04-01",
+    b_end_date="2025-04-30".
+    """
+    one_day = datetime.timedelta(days=1)
+    sides = []
+    for letter, name, sd, ed in (("a", period_a, a_start_date, a_end_date),
+                                 ("b", period_b, b_start_date, b_end_date)):
+        try:
+            s, e = resolve_period(name, sd, ed)
+        except (ValueError, TypeError, AttributeError) as exc:
+            return {"tool": "compare_periods",
+                    "error": f"Could not resolve period_{letter}: {exc}"}
+        if s is None or e is None:
+            return {"tool": "compare_periods",
+                    "error": f"period_{letter} must have both a start and an end: "
+                             "all_time and open-ended custom ranges cannot be compared. "
+                             "Pass period='custom' with both dates."}
+        if e <= s:
+            return {"tool": "compare_periods",
+                    "error": f"period_{letter} ends before it starts."}
+        sides.append((s, e, letter, name))
+    # Direction is fixed by time: earlier start = base. sorted() is stable, so
+    # identical ranges keep their input order.
+    (bs, be, bl, bn), (cs, ce, cl, cn) = sorted(sides, key=lambda t: (t[0], t[1]))
+
+    today = datetime.date.today()
+    meta: list[dict] = []
+    spend: list[float] = []
+    totals_raw = {"spending": [], "income": [], "net": []}
+    for s, e, letter, name in ((bs, be, bl, bn), (cs, ce, cl, cn)):
+        last = e - one_day
+        days = (e - s).days
+        in_progress = last > today
+        days_elapsed = 0 if s > today else ((today - s).days + 1 if in_progress else days)
+        meta.append({"input": letter, "period": _period_label(name, s, e),
+                     "start": s.isoformat(), "end_inclusive": last.isoformat(),
+                     "days": days, "in_progress": in_progress,
+                     "days_elapsed": days_elapsed})
+        # Totals come from the oracle tools, so parity holds by construction.
+        sd_, ed_ = s.isoformat(), last.isoformat()
+        sp = spending_total("custom", start_date=sd_, end_date=ed_)["total"]
+        totals_raw["spending"].append(sp)
+        totals_raw["income"].append(income_total("custom", start_date=sd_, end_date=ed_)["total"])
+        totals_raw["net"].append(net_total("custom", start_date=sd_, end_date=ed_)["net"])
+        spend.append(sp)
+
+    totals = {
+        k: {"base": b, "current": c, "delta": c - b, "pct": _pct(b, c)}
+        for k, (b, c) in totals_raw.items()
+    }
+    base, current = meta
+    comparable = base["days"] == current["days"] and not (
+        base["in_progress"] or current["in_progress"])
+    if not comparable:
+        for m, sp in zip(meta, spend):
+            m["per_day"] = round(sp / m["days_elapsed"], 2) if m["days_elapsed"] > 0 else None
+    return {"tool": "compare_periods", "base": base, "current": current,
+            "totals": totals, "comparable": comparable}
+
+
 # Registry: name -> callable (read tools)
 TOOLS = {
     "spending_total": spending_total,
