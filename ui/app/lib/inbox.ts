@@ -203,20 +203,27 @@ export function fmtRowDate(value: unknown): string {
 
 const signedFmt = new Intl.NumberFormat("en-US", { signDisplay: "exceptZero" });
 
+// A missing amount must look missing, never "undefined" or a believable "0" (IN-02).
+const missing = (v: unknown) =>
+  v === null || v === undefined || (typeof v === "string" && v.trim() === "");
+
 /** "-35,000" / "+250,000"; the raw value when not numeric. */
 export function fmtSigned(value: unknown): string {
+  if (missing(value)) return "—";
   const n = Number(value);
   return Number.isFinite(n) ? signedFmt.format(Math.round(n)) : String(value);
 }
 
 /** An absolute amount, minus kept, no "+": "-250,000" / "5,000,000"; the raw value when not numeric. */
 export function fmtAbsolute(value: unknown): string {
+  if (missing(value)) return "—";
   const n = Number(value);
   return Number.isFinite(n) ? fmtPlain(n) : String(value);
 }
 
 /** "50,000" (sign dropped); the raw value when not numeric. */
 export function fmtUnsigned(value: unknown): string {
+  if (missing(value)) return "—";
   const n = Number(value);
   return Number.isFinite(n) ? fmtPlain(Math.abs(n)) : String(value);
 }
@@ -227,6 +234,7 @@ export function fmtUnsigned(value: unknown): string {
  * ("1,234.56 USD"), so the approval line matches the applied amount (WR-08).
  */
 export function fmtMoney(value: unknown, currency: unknown): string {
+  if (missing(value)) return "—";
   const n = Number(value);
   if (!Number.isFinite(n)) return String(value);
   return new Intl.NumberFormat("en-US", {

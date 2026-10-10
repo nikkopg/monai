@@ -14,6 +14,7 @@ import {
   fmtRowDate,
   fmtSigned,
   fmtUnsigned,
+  fmtAbsolute,
   fmtMoney,
   hhmm,
   badgeText,
@@ -281,6 +282,15 @@ test.describe("format", () => {
     expect(fmtSigned("250000.00")).toBe("+250,000");
     expect(fmtSigned("abc")).toBe("abc");
     expect(fmtUnsigned("-50000.00")).toBe("50,000");
+  });
+  test("missing amounts render as an em dash, never undefined or 0", () => {
+    for (const v of [null, undefined, "", "  "]) {
+      expect(fmtSigned(v)).toBe("—");
+      expect(fmtUnsigned(v)).toBe("—");
+      expect(fmtAbsolute(v)).toBe("—");
+      expect(fmtMoney(v, "IDR")).toBe("—");
+    }
+    expect(fmtSigned(0)).toBe("0");
   });
   test("money keeps non-IDR decimals and drops the sign", () => {
     expect(fmtMoney("-500000.00", "IDR")).toBe("500,000");
