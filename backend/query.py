@@ -29,6 +29,7 @@ Public surface:
 """
 
 import asyncio
+import contextlib
 import datetime
 import json
 import logging
@@ -671,8 +672,11 @@ async def run_stream(run: Run, question: str):
     run.streaming = True
     try:
         yield _sse({"type": "run", "run_id": run.id})
-        async for chunk in agent_stream(question, run=run):
-            yield chunk
+        # aclosing: closing this stream closes agent_stream now, so its shielded
+        # cleanup runs before finish_run, not whenever the finalizer gets to it.
+        async with contextlib.aclosing(agent_stream(question, run=run)) as stream:
+            async for chunk in stream:
+                yield chunk
         run.completed = True
     finally:
         # Starlette cancels this generator on disconnect at the anyio level; a
