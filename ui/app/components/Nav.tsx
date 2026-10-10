@@ -4,6 +4,13 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { tokens } from "../styles";
+import { useVisiblePoll } from "../lib/useVisiblePoll";
+import {
+  badgeText,
+  isPendingCount,
+  navInboxLabel,
+  parsePendingCount,
+} from "../lib/inbox";
 
 const SIDEBAR_COLLAPSED_KEY = "monai.sidebarCollapsed";
 
@@ -20,6 +27,7 @@ const SIDEBAR_COLLAPSED_KEY = "monai.sidebarCollapsed";
 const NAV_LINKS = [
   { href: "/cashflow", label: "Cashflow", icon: "cashflow" },
   { href: "/records", label: "Records", icon: "records" },
+  { href: "/inbox", label: "Inbox", icon: "inbox" },
   { href: "/chat", label: "Chat", icon: "chat" },
   { href: "/investments", label: "Investments", icon: "investments" },
   { href: "/settings", label: "Settings", icon: "settings" },
@@ -51,6 +59,14 @@ function Icon({ name }: { name: IconName }) {
       return (
         <svg {...common}>
           <path d="M4 6h16M4 12h10M4 18h13" />
+        </svg>
+      );
+    case "inbox":
+      return (
+        <svg {...common}>
+          <path d="M4 13l2-8h12l2 8" />
+          <path d="M4 13v6h16v-6" />
+          <path d="M4 13h5l1 2h4l1-2h5" />
         </svg>
       );
     case "chat":
@@ -108,6 +124,36 @@ const menuLabel: React.CSSProperties = {
 export default function Nav() {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  // Pending Inbox count: null until the first valid count arrives.
+  const [pending, setPending] = useState<number | null>(null);
+  const [inboxOffline, setInboxOffline] = useState(false);
+
+  const poll = useVisiblePoll<number>({
+    url: "/api/proposals/counts",
+    intervalMs: 30_000,
+    parse: parsePendingCount,
+    onData: (n) => setPending(n),
+  });
+  const offline = poll.offline || inboxOffline;
+
+  // The Inbox page pushes fresher state through window events; anything that
+  // is not a valid count is ignored (T-33-08).
+  useEffect(() => {
+    const onCount = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (isPendingCount(detail)) setPending(detail as number);
+    };
+    const onOff = () => setInboxOffline(true);
+    const onOn = () => setInboxOffline(false);
+    window.addEventListener("monai:inbox-count", onCount);
+    window.addEventListener("monai:inbox-offline", onOff);
+    window.addEventListener("monai:inbox-online", onOn);
+    return () => {
+      window.removeEventListener("monai:inbox-count", onCount);
+      window.removeEventListener("monai:inbox-offline", onOff);
+      window.removeEventListener("monai:inbox-online", onOn);
+    };
+  }, []);
 
   // Hydrate persisted collapsed state after mount (init-then-hydrate avoids
   // an SSR/hydration mismatch since localStorage isn't available server-side).
@@ -215,14 +261,18 @@ export default function Nav() {
             color: active ? tokens.color.inkText : tokens.color.muted3,
             background: active ? tokens.color.ink : "transparent",
             transition: "background .2s ease, color .2s ease",
+            ...(icon === "inbox" ? { position: "relative" as const } : {}),
           };
+          const badge = icon === "inbox" ? badgeText(pending, offline) : null;
           return (
             <Link
               key={href}
               href={href}
               className="nav-item"
               style={itemStyle}
-              aria-label={collapsed ? label : undefined}
+              aria-label={
+                icon === "inbox" ? navInboxLabel(pending, offline) : label
+              }
               title={collapsed ? label : undefined}
             >
               <span
@@ -232,6 +282,32 @@ export default function Nav() {
                 <Icon name={icon} />
               </span>
               {!collapsed && <span className="nav-label">{label}</span>}
+              {badge !== null && (
+                <span
+                  aria-hidden
+                  className="nav-badge"
+                  style={{
+                    borderRadius: tokens.radius.pill,
+                    minWidth: 20,
+                    height: 20,
+                    padding: "0 8px",
+                    fontSize: 12,
+                    fontWeight: 600,
+                    lineHeight: "20px",
+                    textAlign: "center",
+                    fontVariantNumeric: "tabular-nums",
+                    boxSizing: "border-box",
+                    background: tokens.color.tintWarm,
+                    color: tokens.color.ink,
+                    border: `1px solid ${tokens.color.border2}`,
+                    ...(collapsed
+                      ? { position: "absolute", top: 4, right: 4 }
+                      : { marginLeft: "auto" }),
+                  }}
+                >
+                  {badge}
+                </span>
+              )}
             </Link>
           );
         })}
