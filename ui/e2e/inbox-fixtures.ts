@@ -106,6 +106,52 @@ export const editProposal = (o: Partial<InboxProposal> = {}) =>
     ...o,
   });
 
+// Chat-only operations (MCP cannot propose them); shapes mirror backend/tools.py.
+export const balanceAdjustmentProposal = (o: Partial<InboxProposal> = {}) =>
+  chatTx({
+    id: ids.d,
+    operation: "add_balance_adjustment",
+    payload: {
+      operation: "add_balance_adjustment",
+      rows: [{ account_id: 3, target_balance: "-250000.0" }],
+    },
+    ...o,
+  });
+
+export const investmentTransferProposal = (o: Partial<InboxProposal> = {}) =>
+  chatTx({
+    id: ids.e,
+    operation: "add_investment_transfer",
+    payload: {
+      operation: "add_investment_transfer",
+      rows: [
+        {
+          before: null,
+          after: {
+            cash_leg: {
+              account: "Account A",
+              amount: "-500000.0",
+              currency: "IDR",
+              date: "2026-10-07",
+              notes: "Setoran contoh",
+            },
+            event: {
+              ticker: "CASH",
+              event_type: "deposit",
+              quantity: "500000.0",
+              price: "1",
+              platform_id: 2,
+              currency: "IDR",
+              date: "2026-10-07",
+              asset_type: "cash",
+            },
+          },
+        },
+      ],
+    },
+    ...o,
+  });
+
 // ---------------------------------------------------------------------------
 // Controller
 // ---------------------------------------------------------------------------

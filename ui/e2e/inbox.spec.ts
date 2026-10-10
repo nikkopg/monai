@@ -7,13 +7,16 @@ import {
   NETWORK_FAIL_MSG,
   hhmm,
   type InboxProposal,
+  type ProposalRow,
 } from "../app/lib/inbox";
 import {
   MIN,
   NOW,
+  balanceAdjustmentProposal,
   chatTx,
   editProposal,
   ids,
+  investmentTransferProposal,
   iso,
   mockInbox,
   proposal,
@@ -326,6 +329,52 @@ test.describe("card rows", () => {
     expect(await colour("Kopi Contoh")).not.toBe(await colour("Warung Contoh"));
     await expect(card.getByText("amount:")).toHaveCount(0);
     await expect(card.getByRole("button", { name: /^Skip/ })).toHaveCount(0);
+  });
+
+  test("balance adjustment line, no Skip, effect-named Approve", async ({ page }) => {
+    await mockInbox(page, { list: [balanceAdjustmentProposal()] });
+    await openInbox(page);
+    const card = art(page, "Adjust balance");
+    await expect(card.getByText("Set account #3 balance to -250,000")).toBeVisible();
+    await expect(card.getByRole("button", { name: /^Skip/ })).toHaveCount(0);
+    await expect(card.getByRole("button", { name: "Approve: Adjust balance" })).toBeVisible();
+    await expect(card).not.toContainText("[object Object]");
+  });
+
+  test("investment transfer line with notes, never an object dump", async ({ page }) => {
+    await mockInbox(page, { list: [investmentTransferProposal()] });
+    await openInbox(page);
+    const card = art(page, "Move cash to investments");
+    await expect(
+      card.getByText("Move 500,000 IDR from Account A to platform #2 on 7 Oct 2026")
+    ).toBeVisible();
+    await expect(card.getByText("Setoran contoh")).toBeVisible();
+    await expect(card.getByRole("button", { name: /^Skip/ })).toHaveCount(0);
+    await expect(
+      card.getByRole("button", { name: "Approve: Move cash to investments" })
+    ).toBeVisible();
+    await expect(card).not.toContainText("[object Object]");
+  });
+
+  test("an unknown row shape falls back to key: value lines", async ({ page }) => {
+    await mockInbox(page, {
+      list: [
+        chatTx({
+          id: ids.f,
+          operation: "add_future_thing",
+          payload: {
+            operation: "add_future_thing",
+            rows: [{ widget: "Contoh", nested: { a: 1 } } as unknown as ProposalRow],
+          },
+        }),
+      ],
+    });
+    await openInbox(page);
+    const card = art(page, "add future thing");
+    await expect(card).toContainText("widget: Contoh");
+    await expect(card).toContainText('nested: {"a":1}');
+    await expect(card).not.toContainText("[object Object]");
+    await expect(card.getByRole("button", { name: "Approve: Apply this change" })).toBeVisible();
   });
 
   test("backend text renders as text, never markup", async ({ page }) => {
