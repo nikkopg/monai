@@ -11,9 +11,11 @@ Env vars:
   OPENAI_MODEL        (default: gpt-4o-mini)
   CHAT_IDLE_TIMEOUT_SECONDS  (default: 120) — chat run with no workflow event for
                       this long is cancelled with error idle_timeout. 120, not
-                      90: Ollama's request_timeout=120 is a per-read bound, and a
-                      shorter idle limit would pre-empt the provider's own
-                      timeout code (D-14a).
+                      90, to match Ollama's per-read request_timeout=120 (D-14a).
+                      The watchdog starts slightly before the provider's read,
+                      so on a fully hung call idle_timeout still fires first and
+                      the provider's own timeout code is not reached; set this
+                      above 120 if that code matters.
 """
 
 import os
