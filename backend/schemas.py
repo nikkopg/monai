@@ -2,6 +2,7 @@
 
 import uuid as _uuid
 from datetime import date, datetime
+from datetime import date as _date  # a `date: date | None = None` field would shadow the type
 from decimal import Decimal
 from typing import Annotated, Literal
 
@@ -213,6 +214,29 @@ class PortfolioEventOut(BaseModel):
     event_type: str
     quantity: MoneyDecimal
     price: MoneyDecimal
+    # Migration 016 link to the cash-leg Transaction; cash_amount is that leg's
+    # magnitude, filled only by GET /portfolio-events.
+    transaction_id: int | None = None
+    cash_amount: MoneyDecimal | None = None
+
+
+class PortfolioEventUpdate(BaseModel):
+    """Partial-update body for a buy/sell/dividend event — None means keep.
+
+    Same validation as PortfolioEventCreate; platform_id and currency are not
+    editable. cash_amount is the new magnitude of the linked cash leg (the
+    server applies the sign from the event type) and is only valid on a
+    funded event.
+    """
+
+    ticker: str | None = Field(None, min_length=1)
+    event_type: Literal["buy", "sell", "dividend"] | None = None
+    quantity: MoneyDecimal | None = Field(None, gt=0)
+    price: MoneyDecimal | None = Field(None, gt=0)
+    date: _date | None = None
+    cash_amount: MoneyDecimal | None = Field(
+        None, gt=0, description="New magnitude of the linked cash leg; funded events only"
+    )
 
 
 # ---------------------------------------------------------------------------

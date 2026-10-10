@@ -24,6 +24,8 @@ Endpoints:
     GET  /categories/{name}/affected-count  tx count for a category + its descendants (public)
     POST /categories/rename     rename a category (single-row, D-11) (requires API key)
     POST /categories/merge      merge one category into another (requires API key)
+    PUT  /portfolio-events/{id}  edit a buy/sell/dividend event + its cash leg (requires API key)
+    DELETE /portfolio-events/{id}  delete an event + its cash leg (requires API key)
     POST /import                multipart CSV upload (Wallet export)
     POST /query-stream          streaming SSE agent response; one run per conversation, 409 if busy (requires API key)
     POST /query-stream/{run_id}/cancel  stop a run and reject its pending chat proposals (requires API key)
@@ -79,16 +81,19 @@ from backend.writes import (
     apply_delete_category,
     apply_delete_holding,
     apply_delete_platform,
+    apply_delete_portfolio_event,
     apply_delete_transaction,
     apply_delete_transaction_or_pair,
     apply_edit_account,
     apply_edit_category,
     apply_edit_holding,
     apply_edit_platform,
+    apply_edit_portfolio_event,
     apply_edit_transaction,
     apply_merge_category,
     apply_rename_category,
     apply_set_price,
+    _portfolio_event_snapshot,
     resolve_category_id,
 )
 from backend.schemas import (
@@ -122,6 +127,7 @@ from backend.schemas import (
     PlatformUpdate,
     PortfolioEventCreate,
     PortfolioEventOut,
+    PortfolioEventUpdate,
     PortfolioSummary,
     PriceOverrideRequest,
     ProposalApproverOut,
@@ -524,12 +530,57 @@ def list_portfolio_events(platform_id: int, db: Session = Depends(get_session)):
     — open read. Reuses PortfolioEventOut directly, no new DTO. Not
     registered in backend/tools.py TOOLS (D-05 — kept off the agent/MCP surface).
     """
-    return (
-        db.query(PortfolioEvent)
+    rows = (
+        db.query(PortfolioEvent, Transaction.amount)
+        .outerjoin(Transaction, Transaction.id == PortfolioEvent.transaction_id)
         .filter(PortfolioEvent.platform_id == platform_id)
         .order_by(desc(PortfolioEvent.date))
         .all()
     )
+    out = []
+    for ev, amount in rows:
+        item = PortfolioEventOut.model_validate(ev)
+        item.cash_amount = abs(amount) if amount is not None else None
+        out.append(item)
+    return out
+
+
+@app.put("/portfolio-events/{event_id}", response_model=PortfolioEventOut, dependencies=[Depends(require_api_key)])
+def update_portfolio_event(event_id: int, payload: PortfolioEventUpdate, db: Session = Depends(get_session)):
+    """Partial-update a buy/sell/dividend event; its linked cash leg and the holding follow."""
+    ev = db.get(PortfolioEvent, event_id)
+    if ev is None:
+        raise HTTPException(status_code=404, detail=f"Portfolio event {event_id} not found")
+    before = _portfolio_event_snapshot(ev)
+    after = payload.model_dump(mode="json", exclude_none=True)  # MoneyDecimal -> float, safe for AuditLog JSON
+    try:
+        apply_edit_portfolio_event(db, event_id, after, before)
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(ev)
+    from backend.query import reset_engine
+    reset_engine()
+    return ev
+
+
+@app.delete("/portfolio-events/{event_id}", dependencies=[Depends(require_api_key)])
+def delete_portfolio_event(event_id: int, db: Session = Depends(get_session)):
+    """Delete a buy/sell/dividend event (and its linked cash leg); the holding is recomputed."""
+    ev = db.get(PortfolioEvent, event_id)
+    if ev is None:
+        raise HTTPException(status_code=404, detail=f"Portfolio event {event_id} not found")
+    before = _portfolio_event_snapshot(ev)
+    try:
+        deleted_tx_id = apply_delete_portfolio_event(db, event_id, before)
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    from backend.query import reset_engine
+    reset_engine()
+    return {"status": "deleted", "id": event_id, "deleted_transaction_id": deleted_tx_id}
 
 
 @app.post("/portfolio-events/funded-buy", status_code=201, dependencies=[Depends(require_api_key)])
