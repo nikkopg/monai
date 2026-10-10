@@ -130,9 +130,14 @@ const accountOf = (r: ProposalRow): string | null => {
   return typeof a === "string" && a !== "" ? a : null;
 };
 
-/** Card heading: effect phrase (no skip clause) plus the accounts when known. */
+/**
+ * Card heading: effect phrase (no skip clause), plus "to <accounts>" for
+ * add_transaction only ("Edit 1 transaction to X" or "Record funded buy to X"
+ * would misread).
+ */
 export function cardTitle(operation: string, rows: ProposalRow[]): string {
   const base = effectPhrase(operation, rows) ?? operation.replace(/_/g, " ");
+  if (operation !== "add_transaction") return base;
   const accounts: string[] = [];
   for (const r of rows) {
     if (r.skip === true) continue;

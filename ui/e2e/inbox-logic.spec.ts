@@ -230,6 +230,11 @@ test.describe("card title", () => {
     expect(cardTitle("add_transfer", [{ after: {} }])).toBe("Add 1 transfer");
     expect(cardTitle("frobnicate_thing", [])).toBe("frobnicate thing");
   });
+  test("only add_transaction gets the account suffix", () => {
+    expect(cardTitle("edit_transaction", rowsOf(1))).toBe("Edit 1 transaction");
+    expect(cardTitle("delete_transaction", rowsOf(2))).toBe("Delete 2 transactions");
+    expect(cardTitle("add_funded_buy", rowsOf(1))).toBe("Record funded buy");
+  });
   test("approved footer", () => {
     expect(approvedFooter("add_transaction", rowsOf(12, 2))).toBe("10 added, 2 skipped");
     expect(approvedFooter("add_transaction", rowsOf(3))).toBe("3 added");
