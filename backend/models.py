@@ -293,6 +293,13 @@ class PortfolioEvent(Base):
     source_account_id: Mapped[int | None] = mapped_column(
         ForeignKey("accounts.id"), nullable=True, index=True,
     )
+    # Migration 016: links a funded buy/sell to its cash-leg Transaction
+    # (source_account_id alone cannot identify the row). Unique: one cash row
+    # backs at most one event, so deleting an event can only remove its own.
+    transaction_id: Mapped[int | None] = mapped_column(
+        ForeignKey("transactions.id", ondelete="SET NULL"),
+        nullable=True, unique=True, index=True,
+    )
 
 
 class AppSetting(Base):

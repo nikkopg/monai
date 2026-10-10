@@ -235,6 +235,7 @@ def test_post_funded_buy(client, api_key, db_session):
         ev = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
         assert ev.event_type == "buy"
         assert ev.source_account_id == acc_id
+        assert ev.transaction_id == tx.id
 
         h = db_session.query(Holding).filter(
             Holding.ticker == ticker, Holding.platform_id == plat_id
@@ -277,6 +278,7 @@ def test_post_funded_sell(client, api_key, db_session):
         ev = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
         assert ev.event_type == "sell"
         assert ev.source_account_id == acc_id
+        assert ev.transaction_id == tx.id
     finally:
         db_session.rollback()
         _cleanup_ticker(db_session, ticker)

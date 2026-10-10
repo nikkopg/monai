@@ -357,6 +357,7 @@ def apply_add_funded_buy(db: Session, after: dict) -> dict:
         "asset_type": after.get("asset_type"),
     })
     ev.source_account_id = tx.account_id
+    ev.transaction_id = tx.id  # both rows flushed by their primitives
     return {"transaction": tx, "portfolio_event": ev}
 
 
@@ -391,6 +392,7 @@ def apply_add_funded_sell(db: Session, after: dict) -> dict:
         "asset_type": after.get("asset_type"),
     })
     ev.source_account_id = tx.account_id
+    ev.transaction_id = tx.id  # both rows flushed by their primitives
     return {"transaction": tx, "portfolio_event": ev}
 
 
