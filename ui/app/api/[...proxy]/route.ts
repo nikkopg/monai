@@ -77,6 +77,9 @@ async function forwardRequest(
     body: body !== null ? body : undefined,
     // Do not follow redirects — pass them through to the client
     redirect: "manual",
+    // A browser abort reaches the backend as a disconnect and triggers its
+    // cleanup. Best effort; the cancel route is the deterministic Stop (D-12).
+    signal: req.signal,
   });
 
   // SSE passthrough — pass ReadableStream directly without calling arrayBuffer().

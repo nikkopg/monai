@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { tokens, input, btn, btnGhost } from "../styles";
+import { tokens, input, btn, btnGhost, btnDark } from "../styles";
 import ProposalDiff from "../components/ProposalDiff";
 import type { DiffRow } from "../components/ProposalDiff";
 import { hhmm } from "../lib/inbox";
@@ -257,6 +257,80 @@ function ProposalCard({
 }
 
 // ---------------------------------------------------------------------------
+// Error copy (34-UI-SPEC §2). Only these fixed strings are ever rendered for a
+// failure; response `detail` and exception text never reach the DOM (D-02).
+// ---------------------------------------------------------------------------
+
+const ERROR_COPY: Record<string, { title: string; body: string }> = {
+  rate_limit: {
+    title: "The model is rate-limited",
+    body: "The provider asked monai to slow down. Wait a few seconds, then retry. Nothing was changed.",
+  },
+  provider_unavailable: {
+    title: "The model provider is having trouble",
+    body: "The provider returned a server error. Retry in a moment. Nothing was changed.",
+  },
+  timeout: {
+    title: "The model took too long to answer",
+    body: "The provider did not respond in time. Retry, or ask a narrower question. Nothing was changed.",
+  },
+  idle_timeout: {
+    title: "The answer stalled",
+    body: "No activity, so monai ended the run. Nothing was changed.",
+  },
+  auth: {
+    title: "The model rejected monai's credentials",
+    body: "The provider key is missing or invalid. Fix the key in the server settings, then retry.",
+  },
+  connection: {
+    title: "monai can't reach the model",
+    body: "The connection to the model provider failed. If you use Ollama, check that it is running, then retry.",
+  },
+  empty: {
+    title: "The model returned no answer",
+    body: "It replied with nothing and ran no tools. Retry or rephrase the question.",
+  },
+  stream_ended: {
+    title: "The answer stopped early",
+    body: "The connection closed before the answer finished. Nothing was changed.",
+  },
+  conflict: {
+    title: "Another answer is already running",
+    body: "This conversation already has a run in progress, possibly in another tab. Wait for it to finish, then ask again.",
+  },
+  unauthorized: {
+    title: "Chat isn't authorized",
+    body: "monai has no API key configured for this page. Set the server key, reload, and ask again.",
+  },
+  unknown: {
+    title: "Something went wrong",
+    body: "monai hit an unexpected error. Nothing was changed. Retry, and if it keeps happening check the server log.",
+  },
+};
+
+const TRANSPORT_BODY =
+  "The connection to monai failed. Check that the server is running, then retry.";
+
+type ChatError = {
+  code: string;
+  model: string | null;
+  idleSeconds: number | null;
+  transport?: boolean;
+};
+
+function errorCopy(err: ChatError): { title: string; body: string } {
+  const c = ERROR_COPY[err.code] ?? ERROR_COPY.unknown;
+  if (err.transport) return { title: c.title, body: TRANSPORT_BODY };
+  if (err.code === "idle_timeout" && err.idleSeconds !== null) {
+    return {
+      title: c.title,
+      body: `No activity for ${Math.round(err.idleSeconds)} seconds, so monai ended the run. Nothing was changed.`,
+    };
+  }
+  return c;
+}
+
+// ---------------------------------------------------------------------------
 // Chat page — v1.1 "paper" redesign. Same single-turn SSE flow
 // (/api/query-stream), tool-trace, and confirm-before-write ProposalCard;
 // re-laid-out as user bubble + assistant answer block + sticky composer.
@@ -266,49 +340,92 @@ export default function ChatPage() {
   const [question, setQuestion] = useState("");
   const [askedQuestion, setAskedQuestion] = useState("");
   const [answer, setAnswer] = useState("");
+  const [answered, setAnswered] = useState(false);
   const [asking, setAsking] = useState(false);
   const [steps, setSteps] = useState<string[]>([]);
   const [trace, setTrace] = useState<TraceStep[]>([]);
   const [traceOpen, setTraceOpen] = useState(false);
   const [proposals, setProposals] = useState<Proposal[]>([]);
+  const [error, setError] = useState<ChatError | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const [stopped, setStopped] = useState(false);
+  const [stopRejected, setStopRejected] = useState(false);
+  const [model, setModel] = useState<{
+    name: string | null;
+    provider: string | null;
+  } | null>(null);
 
-  const cancelRef = useRef(false);
+  const busyRef = useRef(false); // synchronous double-submit guard
+  const abortRef = useRef<AbortController | null>(null);
+  const runIdRef = useRef<string | null>(null);
+  const stoppedRef = useRef(false);
+  const traceRef = useRef<TraceStep[]>([]);
 
   // SSE-backed sendQuestion() — POST /api/query-stream (EventSource is GET-only).
-  async function sendQuestion() {
-    const q = question.trim();
-    if (!q) return;
+  // `retry` (Ask again) keeps the restored question in the input.
+  async function sendQuestion(text?: string, retry = false) {
+    const q = (text ?? question).trim();
+    if (!q || busyRef.current) return;
+    busyRef.current = true;
 
     setAsking(true);
     setAskedQuestion(q);
-    setQuestion("");
+    if (!retry) setQuestion("");
     setAnswer("");
+    setAnswered(false);
     setSteps([]);
     setTrace([]);
     setTraceOpen(false);
     setProposals([]);
-    cancelRef.current = false;
+    setError(null);
+    setStopping(false);
+    setStopped(false);
+    setStopRejected(false);
+    setModel(null);
+    stoppedRef.current = false;
+    runIdRef.current = null;
+    traceRef.current = [];
+
+    const ac = new AbortController();
+    abortRef.current = ac;
+    let terminal = false;
+    const fail = (e: ChatError) => {
+      terminal = true;
+      setError(e);
+      setQuestion(q); // REL-01: the question is never lost
+    };
 
     try {
       const resp = await fetch("/api/query-stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: q }),
+        signal: ac.signal,
       });
 
       if (!resp.ok || !resp.body) {
-        const d = await resp.json().catch(() => ({}));
-        setAnswer(`Error: ${d.detail || resp.statusText}`);
+        // Never read or show `detail` (D-02): the status alone picks the copy.
+        fail({
+          code:
+            resp.status === 409
+              ? "conflict"
+              : resp.status === 401 || resp.status === 403 || resp.status === 503
+              ? "unauthorized"
+              : "unknown",
+          model: null,
+          idleSeconds: null,
+        });
         return;
       }
 
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
       let buf = "";
+      let done = false;
 
-      while (!cancelRef.current) {
-        const { done, value } = await reader.read();
-        if (done) break;
+      while (!done && !stoppedRef.current) {
+        const { done: eof, value } = await reader.read();
+        if (eof) break;
 
         buf += decoder.decode(value, { stream: true });
 
@@ -316,9 +433,11 @@ export default function ChatPage() {
         buf = messages.pop() ?? "";
 
         for (const message of messages) {
+          if (stoppedRef.current) break; // late events after Stop are dropped
+          if (message.startsWith(":")) continue; // keep-alive ping: invisible
           const dataLine = message.replace(/^data: /, "").trim();
           if (dataLine === "[DONE]") {
-            cancelRef.current = true;
+            done = true;
             break;
           }
           if (!dataLine) continue;
@@ -330,6 +449,11 @@ export default function ChatPage() {
             text?: string;
             trace?: TraceStep[];
             proposals?: ServerProposal[];
+            run_id?: string;
+            code?: string;
+            model?: string | null;
+            provider?: string | null;
+            idle_seconds?: number;
           };
           try {
             msg = JSON.parse(dataLine);
@@ -337,25 +461,106 @@ export default function ChatPage() {
             continue;
           }
 
-          if (msg.type === "step" && msg.msg) {
+          if (msg.type === "run" && msg.run_id) {
+            runIdRef.current = msg.run_id;
+          } else if (msg.type === "step" && msg.msg) {
             setSteps((prev) => [...prev, msg.msg!]);
           } else if (msg.type === "tool_result" && msg.step) {
-            setTrace((prev) => [...prev, msg.step!]);
+            traceRef.current = [...traceRef.current, msg.step];
+            setTrace(traceRef.current);
           } else if (msg.type === "answer") {
+            terminal = true;
+            setAnswered(true);
             setAnswer(msg.text ?? "");
-            if (msg.trace) setTrace(msg.trace);
+            if (msg.trace) {
+              traceRef.current = msg.trace;
+              setTrace(msg.trace);
+            }
+            setModel({ name: msg.model ?? null, provider: msg.provider ?? null });
+            setProposals((msg.proposals ?? []).map(toProposal));
+          } else if (msg.type === "error") {
+            fail({
+              code: msg.code ?? "unknown",
+              model: msg.model ?? null,
+              idleSeconds:
+                typeof msg.idle_seconds === "number" ? msg.idle_seconds : null,
+            });
+            // Proposals created before the failure stay actionable (D-05).
             setProposals((msg.proposals ?? []).map(toProposal));
           }
         }
       }
-    } catch (e: unknown) {
-      setAnswer(`Error: ${e instanceof Error ? e.message : "Network error"}`);
+
+      if (!terminal && !stoppedRef.current) {
+        fail({ code: "stream_ended", model: null, idleSeconds: null });
+      }
+    } catch {
+      if (!stoppedRef.current) {
+        fail({ code: "connection", model: null, idleSeconds: null, transport: true });
+      }
     } finally {
-      setAsking(false);
+      abortRef.current = null;
+      busyRef.current = false;
+      if (!stoppedRef.current) setAsking(false); // stop() clears it otherwise
     }
   }
 
+  // Stop: tell the server to cancel (deterministic) and abort the fetch.
+  // The two are not ordered (Pitfall 2); the cancel reply lists the proposals
+  // the server rejected so their cards can show rejected-by-Stop (D-08).
+  async function stop() {
+    if (stoppedRef.current) return;
+    stoppedRef.current = true;
+    setStopping(true);
+
+    const runId = runIdRef.current;
+    const cancel: Promise<string[]> = runId
+      ? fetch(`/api/query-stream/${runId}/cancel`, { method: "POST" })
+          .then((r) => (r.ok ? r.json() : { rejected: [] }))
+          .then((d) => (Array.isArray(d.rejected) ? (d.rejected as string[]) : []))
+          .catch(() => [])
+      : Promise.resolve([]);
+    abortRef.current?.abort();
+    const rejected = await cancel;
+
+    const cards: Proposal[] = traceRef.current
+      .filter(
+        (s) =>
+          typeof s.result?.proposal_id === "string" &&
+          rejected.includes(s.result.proposal_id as string)
+      )
+      .map((s) => {
+        const operation = s.tool.replace(/^propose_/, "");
+        const hasPayload = "before" in s.result || "after" in s.result;
+        return {
+          id: s.result.proposal_id as string,
+          token: null,
+          operation,
+          payload: hasPayload
+            ? {
+                operation,
+                rows: [
+                  {
+                    before: s.result.before ?? null,
+                    after: s.result.after ?? null,
+                  } as DiffRow,
+                ],
+              }
+            : null,
+          expiresAt: null,
+          rejectedByStop: true,
+        };
+      });
+    setProposals(cards);
+    setStopRejected(rejected.length > 0);
+    setStopped(true);
+    setStopping(false);
+    setAsking(false);
+    setQuestion(askedQuestion);
+  }
+
   const conversationStarted = !!askedQuestion;
+  const errCopy = error ? errorCopy(error) : null;
 
   return (
     <div
@@ -419,7 +624,7 @@ export default function ChatPage() {
           </div>
         )}
 
-        {(asking || answer) && (
+        {(asking || answered || error || stopped) && (
           <div style={{ marginBottom: 16 }}>
             <div
               style={{
@@ -432,13 +637,36 @@ export default function ChatPage() {
               <span style={{ fontFamily: tokens.font.serif, fontSize: 18 }}>
                 monai
               </span>
-              <span style={{ fontSize: 12, color: tokens.color.muted2 }}>
-                · {asking && !answer ? "thinking…" : "answered just now"}
-              </span>
+              {(asking || answered || stopped) && (
+                <span style={{ fontSize: 12, color: tokens.color.muted3 }}>
+                  ·{" "}
+                  {stopped
+                    ? "stopped"
+                    : answered
+                    ? "answered just now"
+                    : "thinking…"}
+                </span>
+              )}
+              {answered && (
+                <span
+                  title={model?.provider ?? undefined}
+                  style={{
+                    fontSize: 12,
+                    lineHeight: 1.5,
+                    color: tokens.color.muted3,
+                    background: tokens.color.tintNeutral,
+                    border: `1px solid ${tokens.color.border2}`,
+                    borderRadius: tokens.radius.pill,
+                    padding: "4px 8px",
+                  }}
+                >
+                  {model?.name ?? "model unknown"}
+                </span>
+              )}
             </div>
 
             {/* Progressive step indicator while streaming (D-08) */}
-            {asking && steps.length > 0 && !answer && (
+            {steps.length > 0 && !answered && (
               <div style={{ marginBottom: 6 }}>
                 {steps.map((s, i) => (
                   <div
@@ -459,8 +687,85 @@ export default function ChatPage() {
               </div>
             )}
 
+            {/* Typed error block (REL-01/02/06, UI-SPEC §2) */}
+            {error && errCopy && (
+              <div
+                role="alert"
+                style={{
+                  background: tokens.color.tintWarm,
+                  border: `1px solid ${tokens.color.border2}`,
+                  borderLeft: `3px solid ${tokens.color.terracotta}`,
+                  borderRadius: 14,
+                  padding: 16,
+                  marginBottom: 16,
+                }}
+              >
+                <div
+                  style={{ fontSize: 16, fontWeight: 600, color: tokens.color.ink }}
+                >
+                  {errCopy.title}
+                </div>
+                <div
+                  style={{
+                    fontSize: 14,
+                    fontWeight: 400,
+                    color: tokens.color.muted3,
+                    marginTop: 8,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {errCopy.body}
+                </div>
+                {error.model && (
+                  <div
+                    style={{
+                      fontSize: 12,
+                      color: tokens.color.muted3,
+                      marginTop: 8,
+                    }}
+                  >
+                    Model: {error.model}
+                  </div>
+                )}
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 16,
+                    flexWrap: "wrap",
+                    marginTop: 16,
+                  }}
+                >
+                  {!asking && (
+                    <button
+                      type="button"
+                      style={{ ...btnDark, minHeight: 36 }}
+                      onClick={() => sendQuestion(askedQuestion, true)}
+                    >
+                      Ask again
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Stopped run (REL-03, UI-SPEC §3) */}
+            {stopped && (
+              <div
+                role="status"
+                style={{
+                  fontSize: 14,
+                  color: tokens.color.muted3,
+                  lineHeight: 1.5,
+                  marginBottom: 14,
+                }}
+              >
+                Stopped. No answer was kept.
+                {stopRejected ? " Proposals from this run were rejected." : ""}
+              </div>
+            )}
+
             {/* Answer (D-07) */}
-            {answer && (
+            {answered && answer && (
               <div
                 style={{
                   fontSize: 16,
@@ -569,23 +874,45 @@ export default function ChatPage() {
           value={question}
           placeholder="Ask anything about your finances…"
           onChange={(e) => setQuestion(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && sendQuestion()}
+          aria-label="Ask monai a question"
+          onKeyDown={(e) => {
+            if (
+              e.key !== "Enter" ||
+              e.shiftKey ||
+              e.nativeEvent.isComposing ||
+              e.keyCode === 229
+            )
+              return;
+            e.preventDefault();
+            if (asking || busyRef.current) return; // swallowed while running
+            sendQuestion();
+          }}
         />
         <button
+          type="button"
           style={{
-            background: tokens.color.ink,
-            color: tokens.color.inkText,
-            border: "none",
+            background: asking ? tokens.color.sidebar : tokens.color.ink,
+            color: asking ? tokens.color.ink : tokens.color.inkText,
+            border: asking ? `1px solid ${tokens.color.border2}` : "none",
             borderRadius: 14,
             padding: "0 24px",
             fontSize: 15,
             fontWeight: 600,
-            cursor: asking ? "not-allowed" : "pointer",
+            cursor: stopping ? "not-allowed" : "pointer",
+            opacity: stopping ? 0.5 : 1,
           }}
-          onClick={sendQuestion}
-          disabled={asking}
+          onClick={asking ? stop : () => sendQuestion()}
+          disabled={stopping}
         >
-          {asking ? "…" : "Ask"}
+          {stopping ? (
+            "Stopping…"
+          ) : asking ? (
+            <>
+              <span aria-hidden="true">■</span> Stop
+            </>
+          ) : (
+            "Ask"
+          )}
         </button>
       </div>
     </div>
