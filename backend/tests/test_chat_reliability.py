@@ -569,6 +569,25 @@ async def test_quiet_stream_emits_ping(monkeypatch):
     assert [e["code"] for e in _of_type(_payloads(lines), "error")] == ["idle_timeout"]
 
 
+async def test_stream_ends_if_producer_dies_before_first_step(monkeypatch):
+    """IN-01: a producer cancelled before it ran posts no sentinel; the stream still ends."""
+    from backend.query import Run, agent_stream
+
+    _install_stub_workflow(monkeypatch, StubLLM(mode="hang"))
+    run = Run(key="synthetic")
+    gen = agent_stream("q", run=run, ping_interval=0.05)
+    first = asyncio.ensure_future(gen.__anext__())
+    await asyncio.sleep(0)  # the generator runs up to its first queue wait
+    assert run.task is not None and not run.task.done()
+    run.task.cancel()  # before the producer's first step
+
+    async def rest():
+        return [await first] + [line async for line in gen]
+
+    lines = await asyncio.wait_for(rest(), 2)
+    assert lines[-1] == "data: [DONE]\n\n"
+
+
 async def test_pings_do_not_reset_idle(monkeypatch):
     import time
 

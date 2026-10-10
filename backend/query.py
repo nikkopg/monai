@@ -539,6 +539,10 @@ async def agent_stream(
             try:
                 item = await asyncio.wait_for(queue.get(), ping_interval)
             except TimeoutError:
+                # A producer cancelled before its first step never runs its
+                # finally, so no sentinel comes: end on its own death (IN-01).
+                if producer.done() and queue.empty():
+                    break
                 yield ": ping\n\n"
                 continue
             if item is None:
