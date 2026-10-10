@@ -238,6 +238,7 @@ class Run:
     task: asyncio.Task | None = None
     streaming: bool = False
     completed: bool = False
+    stopped: bool = False  # Stop was requested; finish_run sweeps once more (D-08a)
 
 
 async def _halt(handler, task) -> None:
@@ -636,6 +637,7 @@ def reject_run_proposals(run: Run) -> list[str]:
 
 async def stop_run(run: Run) -> list[str]:
     """Halt the workflow, then reject the run's pending chat proposals."""
+    run.stopped = True
     await _halt(run.handler, run.task)
     return await asyncio.to_thread(reject_run_proposals, run)
 
@@ -645,9 +647,12 @@ async def finish_run(run: Run) -> None:
 
     A stream that never delivered its terminal event (a disconnect) halts the
     workflow and rejects the proposals whose token never reached a client (D-12).
+    A stopped run sweeps again even though its stream ended cleanly: a propose
+    tool still running in its executor thread when Stop swept (D-08a) has
+    committed by now, and its row would otherwise stay pending and approvable.
     """
     try:
-        if not run.completed:
+        if not run.completed or run.stopped:
             await _halt(run.handler, run.task)
             try:
                 await asyncio.to_thread(reject_run_proposals, run)

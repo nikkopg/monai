@@ -771,6 +771,33 @@ def test_reject_run_proposals_scope():
     assert sorted(q.reject_run_proposals(run)) == sorted([a, b])
 
 
+async def test_stopped_run_sweeps_again_for_late_propose():
+    """WR-01: a propose_* that commits after Stop's sweep is rejected at cleanup."""
+    import backend.query as q
+
+    run = q.start_run(q.CHAT_KEY)
+    await q.stop_run(run)  # the sweep finds nothing yet
+    late, _ = _seed_proposal()  # the tool thread commits after the sweep
+    assert _status_of(late) == "pending"
+
+    run.completed = True  # the stream ended cleanly after Stop
+    await q.finish_run(run)
+
+    assert _status_of(late) == "rejected"
+    assert q.CHAT_KEY not in q._ACTIVE
+
+
+async def test_completed_unstopped_run_does_not_sweep():
+    import backend.query as q
+
+    run = q.start_run(q.CHAT_KEY)
+    other, _ = _seed_proposal()  # delivered proposal must stay approvable
+    run.completed = True
+    await q.finish_run(run)
+
+    assert _status_of(other) == "pending"
+
+
 # ---------------------------------------------------------------------------
 # Plan 02: HTTP routes (409, cancel). Runs carry no handler/task: the session
 # TestClient gives each request its own loop, so mid-run behaviour is tested
