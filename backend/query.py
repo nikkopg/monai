@@ -149,7 +149,9 @@ def _get_agent_workflow():
             system_prompt=system_prompt,
             verbose=False,
         )
-        _agent_workflow = AgentWorkflow(agents=[agent], timeout=120.0)
+        # D-15: 300 s whole-run backstop for slow-but-alive runs; it maps to
+        # `timeout` via WorkflowTimedOutEvent. The idle watchdog is the real guard.
+        _agent_workflow = AgentWorkflow(agents=[agent], timeout=300.0)
         _agent_workflow_date = today
     return _agent_workflow
 
@@ -331,7 +333,13 @@ def _log_failure(exc: BaseException) -> None:
     logger.warning("chat run failed: %s: %s", type(exc).__name__, exc)
 
 
-async def agent_stream(question: str, *, run: Run | None = None):
+async def agent_stream(
+    question: str,
+    *,
+    run: Run | None = None,
+    idle_timeout: float | None = None,
+    ping_interval: float = 15.0,
+):
     """
     Async generator that drives the agent workflow and yields SSE lines.
 
@@ -364,6 +372,11 @@ async def agent_stream(question: str, *, run: Run | None = None):
         WorkflowTimedOutEvent,
     )
 
+    from backend import config
+
+    # Read at call time through the module so tests can monkeypatch it (D-14a).
+    idle = float(config.CHAT_IDLE_TIMEOUT_SECONDS if idle_timeout is None else idle_timeout)
+
     model = provider = None
     try:
         workflow = _get_agent_workflow()
@@ -379,106 +392,118 @@ async def agent_stream(question: str, *, run: Run | None = None):
     tool_trace: list = []
     terminal = False  # a terminal event (answer / error / cancel) was handled
 
-    def emit_error(code: str) -> None:
+    def emit_error(code: str, idle_seconds: float | None = None) -> None:
         nonlocal terminal
         terminal = True
-        queue.put_nowait(_error_event(code, model, provider, _extract_proposals(tool_trace)))
+        queue.put_nowait(_error_event(
+            code, model, provider, _extract_proposals(tool_trace), idle_seconds))
 
     async def produce() -> None:
         nonlocal terminal
         try:
-            async for event in handler.stream_events():
-                if isinstance(event, AgentInput):
-                    queue.put_nowait(_sse({"type": "step", "msg": "thinking…"}))
+            try:
+                async with asyncio.timeout(idle) as cm:
+                    async for event in handler.stream_events():
+                        # D-14: ANY workflow event (incl. streamed deltas we do
+                        # not forward) proves liveness. Pings never reach here.
+                        cm.reschedule(asyncio.get_running_loop().time() + idle)
+                        if isinstance(event, AgentInput):
+                            queue.put_nowait(_sse({"type": "step", "msg": "thinking…"}))
 
-                elif isinstance(event, ToolCallResult):
-                    # Prefer the untouched dict LlamaIndex's FunctionTool.call() sets on
-                    # ToolOutput.raw_output — event.tool_output.content is a Python-repr
-                    # STRING of that dict, so json.loads(content) always raises and would
-                    # silently drop proposal_id/proposal_token on every write-tool call.
-                    raw_output = getattr(event.tool_output, "raw_output", None)
-                    if isinstance(raw_output, dict):
-                        result_dict = raw_output
-                    else:
-                        content = event.tool_output.content
-                        try:
-                            result_dict = json.loads(content)
-                        except Exception:
-                            result_dict = {"raw": content}
+                        elif isinstance(event, ToolCallResult):
+                            # Prefer the untouched dict LlamaIndex's FunctionTool.call() sets on
+                            # ToolOutput.raw_output — event.tool_output.content is a Python-repr
+                            # STRING of that dict, so json.loads(content) always raises and would
+                            # silently drop proposal_id/proposal_token on every write-tool call.
+                            raw_output = getattr(event.tool_output, "raw_output", None)
+                            if isinstance(raw_output, dict):
+                                result_dict = raw_output
+                            else:
+                                content = event.tool_output.content
+                                try:
+                                    result_dict = json.loads(content)
+                                except Exception:
+                                    result_dict = {"raw": content}
 
-                    # T-02-07: strip proposal_token out of the trace-visible result dict
-                    # so it never appears in the persisted/collapsible tool-call log.
-                    # It will be surfaced as a dedicated top-level field in the answer event.
-                    trace_result = {k: v for k, v in result_dict.items()
-                                    if k != "proposal_token"} if isinstance(result_dict, dict) \
-                        else result_dict
+                            # T-02-07: strip proposal_token out of the trace-visible result dict
+                            # so it never appears in the persisted/collapsible tool-call log.
+                            # It will be surfaced as a dedicated top-level field in the answer event.
+                            trace_result = {k: v for k, v in result_dict.items()
+                                            if k != "proposal_token"} if isinstance(result_dict, dict) \
+                                else result_dict
 
-                    step = {
-                        "tool": event.tool_name,
-                        "args": event.tool_kwargs,
-                        "result": trace_result,
-                    }
-                    # Keep the full result_dict (with token) in tool_trace so
-                    # _extract_proposals can read the tokens.
-                    tool_trace.append({
-                        "tool": event.tool_name,
-                        "args": event.tool_kwargs,
-                        "result": result_dict,  # full dict — used for token extraction only
-                        "_trace_result": trace_result,  # token-stripped — used in answer trace
-                    })
-                    # D-10: record the id as the result arrives, before any answer.
-                    if run is not None and isinstance(result_dict, dict) \
-                            and result_dict.get("proposal_id"):
-                        run.proposal_ids.append(str(result_dict["proposal_id"]))
-                    queue.put_nowait(_sse({"type": "tool_result", "step": step}))
+                            step = {
+                                "tool": event.tool_name,
+                                "args": event.tool_kwargs,
+                                "result": trace_result,
+                            }
+                            # Keep the full result_dict (with token) in tool_trace so
+                            # _extract_proposals can read the tokens.
+                            tool_trace.append({
+                                "tool": event.tool_name,
+                                "args": event.tool_kwargs,
+                                "result": result_dict,  # full dict — used for token extraction only
+                                "_trace_result": trace_result,  # token-stripped — used in answer trace
+                            })
+                            # D-10: record the id as the result arrives, before any answer.
+                            if run is not None and isinstance(result_dict, dict) \
+                                    and result_dict.get("proposal_id"):
+                                run.proposal_ids.append(str(result_dict["proposal_id"]))
+                            queue.put_nowait(_sse({"type": "tool_result", "step": step}))
 
-                # Terminal dispatch (D-01a): Failed, TimedOut, Cancelled and
-                # IdleReleased all SUBCLASS StopEvent, so they must be tested
-                # before the plain StopEvent or a failure reads as an answer.
-                elif isinstance(event, WorkflowFailedEvent):
-                    _log_failure(event.exception)
-                    emit_error(classify_error(event.exception))
+                        # Terminal dispatch (D-01a): Failed, TimedOut, Cancelled and
+                        # IdleReleased all SUBCLASS StopEvent, so they must be tested
+                        # before the plain StopEvent or a failure reads as an answer.
+                        elif isinstance(event, WorkflowFailedEvent):
+                            _log_failure(event.exception)
+                            emit_error(classify_error(event.exception))
 
-                elif isinstance(event, WorkflowTimedOutEvent):
-                    emit_error("timeout")
+                        elif isinstance(event, WorkflowTimedOutEvent):
+                            emit_error("timeout")
 
-                elif isinstance(event, (WorkflowCancelledEvent, IdleReleasedEvent)):
-                    terminal = True  # a cancel: no answer, no error
+                        elif isinstance(event, (WorkflowCancelledEvent, IdleReleasedEvent)):
+                            terminal = True  # a cancel: no answer, no error
 
-                elif isinstance(event, StopEvent):
-                    # StopEvent.result is AgentOutput; str(AgentOutput) = response.content
-                    final = event.result
-                    answer_text = str(final) if final is not None else ""
-                    if answer_text.strip() == "" and not tool_trace:
-                        emit_error("empty")  # D-06
-                        continue
-                    terminal = True
-                    # One scan for every proposal of the turn, in call order. The
-                    # token surfaces ONLY here — to the originating chat session
-                    # via the SSE answer event (T-02-07, single-use 15-min TTL).
-                    proposals = _extract_proposals(tool_trace)
-                    # Build the public trace using token-stripped results (T-02-07)
-                    public_trace = [
-                        {
-                            "tool": s["tool"],
-                            "args": s["args"],
-                            "result": s.get("_trace_result", s["result"]),
-                        }
-                        for s in tool_trace
-                    ]
-                    # Singular fields mirror proposals[0] for compatibility (accepted
-                    # AGENT-06 scope) — from the same scan, not a second extraction.
-                    first = proposals[0] if proposals else None
-                    queue.put_nowait(_sse({
-                        "type": "answer",
-                        "text": answer_text,
-                        "trace": public_trace,
-                        "model": model,
-                        "provider": provider,
-                        "proposals": proposals,
-                        "proposal_id": first["id"] if first else None,
-                        "proposal_token": first["token"] if first else None,
-                    }))
+                        elif isinstance(event, StopEvent):
+                            # StopEvent.result is AgentOutput; str(AgentOutput) = response.content
+                            final = event.result
+                            answer_text = str(final) if final is not None else ""
+                            if answer_text.strip() == "" and not tool_trace:
+                                emit_error("empty")  # D-06
+                                continue
+                            terminal = True
+                            # One scan for every proposal of the turn, in call order. The
+                            # token surfaces ONLY here — to the originating chat session
+                            # via the SSE answer event (T-02-07, single-use 15-min TTL).
+                            proposals = _extract_proposals(tool_trace)
+                            # Build the public trace using token-stripped results (T-02-07)
+                            public_trace = [
+                                {
+                                    "tool": s["tool"],
+                                    "args": s["args"],
+                                    "result": s.get("_trace_result", s["result"]),
+                                }
+                                for s in tool_trace
+                            ]
+                            # Singular fields mirror proposals[0] for compatibility (accepted
+                            # AGENT-06 scope) — from the same scan, not a second extraction.
+                            first = proposals[0] if proposals else None
+                            queue.put_nowait(_sse({
+                                "type": "answer",
+                                "text": answer_text,
+                                "trace": public_trace,
+                                "model": model,
+                                "provider": provider,
+                                "proposals": proposals,
+                                "proposal_id": first["id"] if first else None,
+                                "proposal_token": first["token"] if first else None,
+                            }))
+            except TimeoutError as e:
+                if not cm.expired():
+                    raise  # a provider timeout, not the watchdog: classify_error maps it
+                await handler.cancel_run()
+                logger.warning("agent run idle for %ss; cancelled", idle)
+                emit_error("idle_timeout", idle_seconds=idle)
 
             # The stream can swallow a failure; awaiting the handler re-raises it (D-01).
             try:
@@ -500,8 +525,16 @@ async def agent_stream(question: str, *, run: Run | None = None):
     if run is not None:
         run.handler, run.task = handler, producer
     try:
+        # Pings live only here, so they never reset the producer's idle timer
+        # (D-13). The installed uvicorn advertises ASGI spec 2.3, so Starlette
+        # detects a disconnect without a send; on a server advertising 2.4+
+        # this ping becomes the disconnect detector (RESEARCH Findings 3 B).
         while True:
-            item = await queue.get()
+            try:
+                item = await asyncio.wait_for(queue.get(), ping_interval)
+            except TimeoutError:
+                yield ": ping\n\n"
+                continue
             if item is None:
                 break
             yield item

@@ -9,6 +9,11 @@ Env vars:
   OLLAMA_BASE_URL     (default: http://localhost:11434)
   CLAUDE_MODEL        (default: claude-haiku-4-5-20251001)
   OPENAI_MODEL        (default: gpt-4o-mini)
+  CHAT_IDLE_TIMEOUT_SECONDS  (default: 120) — chat run with no workflow event for
+                      this long is cancelled with error idle_timeout. 120, not
+                      90: Ollama's request_timeout=120 is a per-read bound, and a
+                      shorter idle limit would pre-empt the provider's own
+                      timeout code (D-14a).
 """
 
 import os
@@ -17,6 +22,8 @@ DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+psycopg://monai:monai@localhost:5434/monai",
 )
+
+CHAT_IDLE_TIMEOUT_SECONDS = int(os.getenv("CHAT_IDLE_TIMEOUT_SECONDS", "120"))
 
 
 def configure_llm(overrides: dict | None = None) -> None:

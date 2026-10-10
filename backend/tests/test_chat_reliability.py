@@ -455,7 +455,7 @@ async def test_whole_run_timeout_maps_to_timeout(monkeypatch):
 
     _install_stub_workflow(monkeypatch, StubLLM(mode="hang"), timeout=0.5)
 
-    lines = await _collect(agent_stream("synthetic question"))
+    lines = await _collect(agent_stream("synthetic question", idle_timeout=30))
     payloads = _payloads(lines)
 
     assert _of_type(payloads, "answer") == []
@@ -522,3 +522,88 @@ def test_llm_label_maps_class_to_provider():
         wf = SimpleNamespace(agents={"Agent": SimpleNamespace(llm=llm)})
         assert _llm_label(wf) == ("example-model:7b", provider)
     assert _llm_label(MagicMock()) == (None, None)
+
+
+# ---------------------------------------------------------------------------
+# D-13 / D-14 / D-14a: idle watchdog and keep-alive pings
+# ---------------------------------------------------------------------------
+
+
+async def test_idle_timeout_emits_error(monkeypatch):
+    from backend.query import Run, agent_stream
+
+    _install_stub_workflow(monkeypatch, StubLLM(mode="hang"))
+    run = Run()
+
+    lines = await _collect(agent_stream("q", run=run, idle_timeout=0.3, ping_interval=5))
+    payloads = _payloads(lines)
+
+    assert _of_type(payloads, "answer") == []
+    errs = _of_type(payloads, "error")
+    assert [e["code"] for e in errs] == ["idle_timeout"]
+    assert errs[0]["idle_seconds"] == 0.3
+    assert lines[-1] == "data: [DONE]\n\n"
+    assert run.handler.is_done()
+
+
+async def test_stream_deltas_reset_idle_timer(monkeypatch):
+    from backend.query import agent_stream
+
+    # 5 deltas 0.2 s apart (~0.8 s total) survive a 0.5 s idle limit.
+    _install_stub_workflow(monkeypatch, StubLLM(mode="drip"))
+
+    payloads = _payloads(await _collect(agent_stream("q", idle_timeout=0.5, ping_interval=5)))
+
+    assert _of_type(payloads, "error") == []
+    assert len(_of_type(payloads, "answer")) == 1
+
+
+async def test_quiet_stream_emits_ping(monkeypatch):
+    from backend.query import agent_stream
+
+    _install_stub_workflow(monkeypatch, StubLLM(mode="hang"))
+
+    lines = await _collect(agent_stream("q", idle_timeout=0.6, ping_interval=0.1))
+
+    assert lines.count(": ping\n\n") >= 2
+    assert [e["code"] for e in _of_type(_payloads(lines), "error")] == ["idle_timeout"]
+
+
+async def test_pings_do_not_reset_idle(monkeypatch):
+    import time
+
+    from backend.query import agent_stream
+
+    _install_stub_workflow(monkeypatch, StubLLM(mode="hang"))
+
+    t0 = time.monotonic()
+    lines = await _collect(agent_stream("q", idle_timeout=0.6, ping_interval=0.1))
+
+    assert time.monotonic() - t0 < 3
+    assert [e["code"] for e in _of_type(_payloads(lines), "error")] == ["idle_timeout"]
+
+
+async def test_idle_after_proposal_carries_proposals(monkeypatch):
+    from backend.query import agent_stream
+
+    _install_stub_workflow(monkeypatch, StubLLM(mode="tool_then_hang"))
+
+    payloads = _payloads(await _collect(agent_stream("q", idle_timeout=0.4, ping_interval=5)))
+
+    err = _of_type(payloads, "error")[0]
+    assert err["code"] == "idle_timeout"
+    assert err["proposals"][0]["id"] == str(_SEEDED[0])
+    assert err["proposals"][0]["token"]
+
+
+async def test_idle_timeout_defaults_to_config(monkeypatch):
+    from backend import config
+    from backend.query import agent_stream
+
+    assert config.CHAT_IDLE_TIMEOUT_SECONDS == 120  # env unset in the test env
+    monkeypatch.setattr(config, "CHAT_IDLE_TIMEOUT_SECONDS", 0.3)
+    _install_stub_workflow(monkeypatch, StubLLM(mode="hang"))
+
+    errs = _of_type(_payloads(await _collect(agent_stream("q", ping_interval=5))), "error")
+
+    assert [e["code"] for e in errs] == ["idle_timeout"]

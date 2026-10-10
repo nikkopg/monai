@@ -850,6 +850,11 @@ async def _run_case(question: str, proposal_ids: list[str]) -> dict:
                 proposal_ids.append(result["proposal_id"])
         elif payload.get("type") == "answer":
             answer = payload
+        elif payload.get("type") == "error":
+            # Typed stream error (Phase 34): a failed case, not an empty answer.
+            # Keep its proposals so the purge loop below still removes them.
+            answer = {"text": "", "trace": [], "proposals": payload.get("proposals") or [],
+                      "error": payload.get("code")}
     for p in answer.get("proposals") or []:
         if p.get("id"):
             proposal_ids.append(p["id"])
@@ -893,14 +898,15 @@ def _check_case(case: dict, result: dict) -> dict:
     if needs_number_failed:
         ok = False
 
-    passed = tool_ok and args_ok and ok
+    error = (result or {}).get("error")
+    passed = tool_ok and args_ok and ok and not error
     return {
         "id": case["id"], "question": case["question"],
         "tool_ok": tool_ok, "args_ok": args_ok, "args_na": args_na,
         "numbers_ok": ok, "numbers_na": numbers_na,
         "passed": passed, "unmatched": unmatched,
         "needs_number_failed": needs_number_failed,
-        "trace": trace, "text": answer_text,
+        "trace": trace, "text": answer_text, "error": error,
     }
 
 
@@ -948,6 +954,8 @@ def _print_detail(case: dict, r: dict) -> None:
         print("  trace: (empty)")
     for s in r["trace"]:
         print(f"  trace step: tool={s.get('tool')} args={json.dumps(s.get('args'), default=str)}")
+    if r.get("error"):
+        print(f"  stream error: {r['error']}")
     if r["unmatched"]:
         print(f"  unmatched numbers: {r['unmatched']}")
     if r["needs_number_failed"]:
