@@ -3,8 +3,10 @@
 // since v1.1, extracted unchanged so chat and the Inbox share it.
 // `dimColor` defaults to the chat colour so chat output is identical; the Inbox
 // passes muted3 because the UI-SPEC bans the lighter tone for new text.
-// Primitive-valued output is unchanged; object values render as JSON text and
-// an unknown row shape falls back to key: value lines (never an empty body).
+// Primitive-valued output is unchanged; object values render as JSON text, and
+// an unknown row shape or an empty before/after object falls back to the row's
+// own key: value lines, so a row never renders an empty body. Callers strip
+// their own read annotations first (the Inbox drops duplicates and skip).
 // ---------------------------------------------------------------------------
 
 import { tokens } from "../styles";
@@ -77,7 +79,7 @@ export function ProposalDiff({
             </div>
           );
         }
-        if (!row.before && row.after) {
+        if (!row.before && row.after && Object.keys(row.after).length > 0) {
           return (
             <div key={i} style={{ padding: "6px 0", borderTop: rowBorder(i) }}>
               {Object.entries(row.after).map(([k, v]) => (
@@ -89,7 +91,7 @@ export function ProposalDiff({
             </div>
           );
         }
-        if (row.before && !row.after) {
+        if (row.before && !row.after && Object.keys(row.before).length > 0) {
           return (
             <div key={i} style={{ padding: "6px 0", borderTop: rowBorder(i) }}>
               {Object.entries(row.before).map(([k, v]) => (
@@ -125,10 +127,8 @@ export function ProposalDiff({
             </div>
           );
         }
-        // Unknown shape: show the row's own fields (minus Inbox read annotations).
-        const fields = Object.entries(row).filter(
-          ([k]) => k !== "duplicates" && k !== "skip"
-        );
+        // Unknown shape: show the row's own fields.
+        const fields = Object.entries(row);
         if (fields.length === 0) {
           return (
             <div key={i} style={{ ...dim, fontSize: 12 }}>

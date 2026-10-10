@@ -575,7 +575,10 @@ export default function InboxCard({
             )}
           </>
         ) : (
-          <ProposalDiff rows={rows} dimColor={tokens.color.muted3} />
+          <ProposalDiff
+            rows={rows.map(({ duplicates: _d, skip: _s, ...diffRow }) => diffRow)}
+            dimColor={tokens.color.muted3}
+          />
         )}
       </div>
 

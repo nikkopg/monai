@@ -418,6 +418,26 @@ test.describe("card rows", () => {
     await expect(card.getByRole("button", { name: "Approve: Apply this change" })).toBeVisible();
   });
 
+  test("an empty after object and Inbox annotations never reach the diff (IN-06)", async ({ page }) => {
+    await mockInbox(page, {
+      list: [
+        chatTx({
+          id: ids.f,
+          operation: "add_future_thing",
+          payload: {
+            operation: "add_future_thing",
+            rows: [{ before: null, after: {}, duplicates: [], skip: false }],
+          },
+        }),
+      ],
+    });
+    await openInbox(page);
+    const card = art(page, "add future thing");
+    await expect(card).toContainText("after: {}");
+    await expect(card).not.toContainText("duplicates:");
+    await expect(card).not.toContainText("skip:");
+  });
+
   test("backend text renders as text, never markup", async ({ page }) => {
     const evil = "<img src=x onerror=alert(1)>";
     await mockInbox(page, {
