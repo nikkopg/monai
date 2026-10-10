@@ -212,3 +212,68 @@ def test_comparable_true_equal_days(seeded_compare):
 def test_result_json_serialisable(seeded_compare):
     json.dumps(compare_periods("last_month", "this_month"))
     json.dumps(_cmp(JAN, FEB))
+
+
+# --------------------------------------------------------------------------
+# Per-category top-level rollup deltas (D-13, D-13a)
+# --------------------------------------------------------------------------
+
+def _seed_rollup(seeded, month_prefix):
+    """Expected top-level spending per seeded category for one month, from the
+    seed list (alpha_sub rolls into alpha; sys, NULL and transfers excluded)."""
+    out: dict[str, float] = {}
+    for d, amt, key, is_tr in seeded["seed"]:
+        if not d.startswith(month_prefix) or amt >= 0 or is_tr or key in (None, "sys"):
+            continue
+        top = seeded["names"]["alpha" if key == "alpha_sub" else key]
+        out[top] = out.get(top, 0.0) + -amt
+    return out
+
+
+def test_category_deltas_union_zero_fill(seeded_compare):
+    r = _cmp(JAN, FEB, limit=50)
+    rows = {x["category"]: x for x in r["categories"]}
+    n = seeded_compare["names"]
+    assert {n["alpha"], n["beta"], n["gamma"]} <= set(rows)
+    assert n["alpha_sub"] not in rows and n["sys"] not in rows
+    assert rows[n["beta"]]["current"] == 0
+    assert rows[n["gamma"]]["base"] == 0 and rows[n["gamma"]]["pct"] is None
+    for x in rows.values():
+        assert set(x) == {"category", "base", "current", "delta", "pct"}
+        assert x["delta"] == pytest.approx(x["current"] - x["base"], abs=1e-6)
+
+
+def test_category_sorted_by_abs_delta_and_limit(seeded_compare):
+    r = _cmp(JAN, FEB, limit=50)
+    keys = [(-abs(x["delta"]), x["category"]) for x in r["categories"]]
+    assert keys == sorted(keys)
+    assert len(r["categories"]) <= 50
+    assert len(_cmp(JAN, FEB, limit=1)["categories"]) == 1
+    assert len(_cmp(JAN, FEB, limit=0)["categories"]) == 1
+    assert len(_cmp(JAN, FEB, limit=999)["categories"]) <= 50
+
+
+@pytest.mark.parametrize("limit", [1, 10])
+def test_category_deltas_plus_other_sum_to_total(seeded_compare, limit):
+    r = _cmp(JAN, FEB, limit=limit)
+    shown = sum(x["delta"] for x in r["categories"])
+    assert shown + r["other_delta"] == pytest.approx(
+        r["totals"]["spending"]["delta"], abs=0.01)
+    # Seed has differing NULL-category and system rows between the months.
+    assert r["other_delta"] != 0
+
+
+def test_category_rollup_to_top_level(seeded_compare):
+    r = _cmp(JAN, FEB, limit=50)
+    rows = {x["category"]: x for x in r["categories"]}
+    n = seeded_compare["names"]
+    jan = _seed_rollup(seeded_compare, "2015-01")
+    feb = _seed_rollup(seeded_compare, "2015-02")
+    assert rows[n["alpha"]]["base"] == pytest.approx(jan[n["alpha"]])
+    assert rows[n["alpha"]]["current"] == pytest.approx(feb[n["alpha"]])
+    assert n["alpha_sub"] not in rows
+
+
+def test_category_result_json_serialisable(seeded_compare):
+    json.dumps(_cmp(JAN, FEB))
+    json.dumps(compare_periods("last_month", "this_month"))

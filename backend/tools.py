@@ -687,6 +687,21 @@ def _pct(base: float, current: float) -> float | None:
     return round((current - base) / abs(base) * 100, 1)
 
 
+def _rollup_by_top(start, end) -> dict[str, float]:
+    """Spending per TOP-LEVEL category over [start, end), no row limit.
+
+    Same rollup as spending_by_category (_ROLLUP_FROM), so system trees,
+    transfers and NULL-category rows are excluded.
+    """
+    p: dict = {}
+    sql = (
+        "SELECT COALESCE(p2.name, p1.name, c.name) AS top_name, SUM(-t.amount) "
+        + _ROLLUP_FROM + _date_clause(start, end, p) + " GROUP BY 1"
+    )
+    with engine.connect() as c:
+        return {r[0]: float(r[1]) for r in c.execute(text(sql), p).fetchall()}
+
+
 def compare_periods(
     period_a: str,
     period_b: str,
@@ -764,8 +779,22 @@ def compare_periods(
     if not comparable:
         for m, sp in zip(meta, spend):
             m["per_day"] = round(sp / m["days_elapsed"], 2) if m["days_elapsed"] > 0 else None
+
+    lim = max(1, min(int(limit), 50))
+    b_cat, c_cat = _rollup_by_top(bs, be), _rollup_by_top(cs, ce)
+    rows = []
+    for name in b_cat.keys() | c_cat.keys():
+        b, c = b_cat.get(name, 0.0), c_cat.get(name, 0.0)
+        rows.append({"category": name, "base": b, "current": c,
+                     "delta": c - b, "pct": _pct(b, c)})
+    rows.sort(key=lambda r: (-abs(r["delta"]), r["category"]))
+    rows = rows[:lim]
+    # Absorbs categories beyond limit, system-tree rows and NULL-category rows
+    # (totals use the plain spending predicate; the rollup joins categories).
+    other_delta = totals["spending"]["delta"] - sum(r["delta"] for r in rows)
     return {"tool": "compare_periods", "base": base, "current": current,
-            "totals": totals, "comparable": comparable}
+            "totals": totals, "comparable": comparable,
+            "categories": rows, "other_delta": other_delta}
 
 
 # Registry: name -> callable (read tools)
