@@ -205,6 +205,25 @@ async def test_answer_proposals_carry_payload_and_expiry(monkeypatch):
     assert _of_type(payloads, "tool_result")[0]["step"]["result"]["proposal_id"] == pid
 
 
+async def test_llm_never_sees_proposal_token_but_answer_carries_it(monkeypatch):
+    """WR-03: the model's view of a propose result has no token; the answer still does."""
+    from backend.query import agent_stream
+
+    llm = StubLLM(mode="tool", final_text="Done")
+    _install_stub_workflow(monkeypatch, llm)
+
+    payloads = _payloads(await _collect(agent_stream("synthetic question")))
+
+    pid = str(_SEEDED[0])
+    token = _token_of(pid)
+    assert len(llm.seen) == 2  # the second LLM call carries the tool result
+    assert pid in json.dumps(llm.seen[1])  # the model does see the proposal id
+    assert token not in json.dumps(llm.seen)
+    answer = _of_type(payloads, "answer")[0]
+    assert answer["proposals"][0]["token"] == token
+    assert answer["proposal_token"] == token
+
+
 # ---------------------------------------------------------------------------
 # D-06: the empty rule
 # ---------------------------------------------------------------------------

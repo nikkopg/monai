@@ -31,6 +31,7 @@ Public surface:
 
 import asyncio
 import datetime
+import functools
 import json
 import logging
 import uuid
@@ -139,6 +140,27 @@ def _get_llm():
     return _llm
 
 
+def _llm_tool(name: str, fn):
+    """FunctionTool for the agent whose result never shows the LLM a proposal_token.
+
+    The model gets the full tool output back, so a token in it could be echoed
+    into answer text that is stored and re-served (WR-03). The token is dropped
+    here; agent_stream re-reads it from the proposal row for the originating
+    answer event. functools.wraps keeps name, docstring and signature, so the
+    tool schema is unchanged.
+    """
+    from llama_index.core.tools import FunctionTool
+
+    @functools.wraps(fn)
+    def hidden(*args, **kwargs):
+        out = fn(*args, **kwargs)
+        if isinstance(out, dict) and "proposal_token" in out:
+            return {k: v for k, v in out.items() if k != "proposal_token"}
+        return out
+
+    return FunctionTool.from_defaults(fn=hidden, name=name)
+
+
 def _get_agent_workflow():
     global _agent_workflow, _agent_workflow_date
     today = _today()
@@ -146,7 +168,6 @@ def _get_agent_workflow():
     # goes stale on a day with no writes (AGENT-05).
     if _agent_workflow is None or _agent_workflow_date != today:
         from llama_index.core.agent import AgentWorkflow, FunctionAgent
-        from llama_index.core.tools import FunctionTool
         from backend.tools import TOOLS
 
         llm = _get_llm()
@@ -154,10 +175,7 @@ def _get_agent_workflow():
         # Tools come from the single TOOLS registry (18 read + 16 propose_*
         # writes); descriptions live in the functions' docstrings. A new
         # tool needs only a TOOLS entry — nothing here changes.
-        tools = [
-            FunctionTool.from_defaults(fn=fn, name=name)
-            for name, fn in TOOLS.items()
-        ]
+        tools = [_llm_tool(name, fn) for name, fn in TOOLS.items()]
 
         system_prompt = _SYSTEM_PROMPT.format(today=today.isoformat())
 
@@ -286,10 +304,11 @@ async def _halt(handler, task) -> None:
 def _extract_proposals(tool_trace: list) -> list[dict]:
     """Return one entry per propose_* call, in call order.
 
-    A single pass over tool_trace: any step whose result dict carries both
-    proposal_id and proposal_token contributes {"id", "token"}. Each entry is
-    then hydrated with operation, payload and expires_at (ISO 8601) from its
-    DB row in ONE short SELECT (D-19) — the DB is authoritative. Those are
+    A single pass over tool_trace: any step whose result dict carries a
+    proposal_id contributes {"id", "token"}. The agent's tools hide the token
+    from the LLM (_llm_tool), so a missing token is filled from the DB row.
+    Each entry is hydrated with operation, payload and expires_at (ISO 8601)
+    from its DB row in ONE short SELECT (D-19) — the DB is authoritative. Those are
     None when there is no row (or the lookup fails: a DB hiccup must never
     hide the answer; the UI then shows its cannot-approve notice). Tokens
     surface only in the terminal answer/error event to the originating chat
@@ -298,9 +317,9 @@ def _extract_proposals(tool_trace: list) -> list[dict]:
     proposals = []
     for step in tool_trace:
         result = step.get("result")
-        if isinstance(result, dict) and "proposal_id" in result and "proposal_token" in result:
+        if isinstance(result, dict) and "proposal_id" in result:
             proposals.append({
-                "id": result["proposal_id"], "token": result["proposal_token"],
+                "id": result["proposal_id"], "token": result.get("proposal_token"),
                 "operation": None, "payload": None, "expires_at": None,
             })
     if not proposals:
@@ -326,6 +345,7 @@ def _extract_proposals(tool_trace: list) -> list[dict]:
             ).scalars().all()
             for row in rows:
                 for p in by_uuid[row.id]:
+                    p["token"] = p["token"] or row.token
                     p["operation"] = row.operation
                     p["payload"] = row.payload
                     p["expires_at"] = row.expires_at.isoformat()

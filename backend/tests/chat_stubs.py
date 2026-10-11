@@ -25,7 +25,6 @@ from llama_index.core.llms import (
     MockFunctionCallingLLM,
 )
 from llama_index.core.llms.llm import ToolSelection
-from llama_index.core.tools import FunctionTool
 from pydantic import Field
 from sqlalchemy import text
 
@@ -236,7 +235,7 @@ def _install_stub_workflow(monkeypatch, llm, *, timeout=30.0):
     import backend.query as query_mod
 
     agent = FunctionAgent(
-        tools=[FunctionTool.from_defaults(fn=seed_proposal, name="seed_proposal")],
+        tools=[query_mod._llm_tool("seed_proposal", seed_proposal)],
         llm=llm,
         system_prompt="synthetic",
     )
