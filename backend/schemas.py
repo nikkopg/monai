@@ -523,6 +523,60 @@ class AffectedCountResponse(BaseModel):
 
 class QueryRequest(BaseModel):
     question: str
+    thread_id: _uuid.UUID | None = None
+
+
+class ThreadTitleUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def _strip(cls, v):
+        return v.strip() if isinstance(v, str) else v
+
+
+class ThreadOut(BaseModel):
+    id: _uuid.UUID
+    title: str
+    updated_at: datetime
+
+
+class ProposalLiveOut(BaseModel):
+    id: str
+    operation: str | None = None
+    payload: dict | None = None
+    status: str
+    expires_at: datetime | None = None
+
+
+class MessagePartsOut(BaseModel):
+    steps: list[dict] = []
+    proposals: list[ProposalLiveOut] = []
+    error: dict | None = None
+    provider: dict | None = None
+
+
+class MessageOut(BaseModel):
+    id: _uuid.UUID
+    seq: int
+    role: str
+    content: str
+    status: str
+    created_at: datetime
+    parts: MessagePartsOut
+
+
+class ActiveRunOut(BaseModel):
+    run_id: str
+
+
+class ThreadDetailOut(ThreadOut):
+    """Thread with messages and live proposal status. The typed shape has no
+    token or code field, so even a stray key from the service is dropped on
+    output (T-02-07)."""
+
+    active_run: ActiveRunOut | None = None
+    messages: list[MessageOut]
 
 
 class ImportResponse(BaseModel):

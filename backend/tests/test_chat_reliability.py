@@ -623,6 +623,8 @@ def _cancel(client, api_key, run):
 
 def test_second_run_returns_409(client, api_key, monkeypatch):
     import backend.query as q
+    from backend.db import SessionLocal
+    from backend.models import Thread
 
     called = []
 
@@ -631,16 +633,27 @@ def test_second_run_returns_409(client, api_key, monkeypatch):
         yield "data: [DONE]\n\n"
 
     monkeypatch.setattr(q, "agent_stream", _stub)
-    occupying = q.start_run(q.CHAT_KEY)
+    db = SessionLocal()
+    t = Thread(title="ZZTest busy")
+    db.add(t)
+    db.commit()
+    thread_id = t.id
+    db.close()
+    try:
+        occupying = q.start_run(str(thread_id))
 
-    resp = client.post(
-        "/query-stream", json={"question": "q"}, headers={"MONAI_API_KEY": api_key}
-    )
+        resp = client.post(
+            "/query-stream",
+            json={"question": "q", "thread_id": str(thread_id)},
+            headers={"MONAI_API_KEY": api_key},
+        )
 
-    assert resp.status_code == 409
-    assert resp.json() == {"detail": "A run is already in progress for this conversation"}
-    assert called == []
-    assert q._ACTIVE[q.CHAT_KEY] is occupying
+        assert resp.status_code == 409
+        assert resp.json() == {"detail": "A run is already in progress for this conversation"}
+        assert called == []
+        assert q._ACTIVE[str(thread_id)] is occupying
+    finally:
+        q._ACTIVE.pop(str(thread_id), None)
 
 
 def test_cancel_route_rejects_pending(client, api_key):

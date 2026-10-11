@@ -27,8 +27,13 @@ Endpoints:
     PUT  /portfolio-events/{id}  edit a buy/sell/dividend event + its cash leg (requires API key)
     DELETE /portfolio-events/{id}  delete an event + its cash leg (requires API key)
     POST /import                multipart CSV upload (Wallet export)
-    POST /query-stream          streaming SSE agent response; one run per conversation, 409 if busy (requires API key)
+    POST /query-stream          streaming SSE agent response; one run per thread, optional thread_id, 409 if busy (requires API key)
     POST /query-stream/{run_id}/cancel  stop a run and reject its pending chat proposals (requires API key)
+    GET  /threads               list chat threads, newest first (requires API key)
+    GET  /threads/{id}          thread with messages and live proposal status (requires API key)
+    PATCH /threads/{id}         rename a thread (requires API key)
+    DELETE /threads/{id}        delete a thread, 409 while its run is active (requires API key)
+    GET  /threads/{id}/stream   re-attach to the active or last-finished run (requires API key)
     GET  /proposals             list pending proposals, lazy expiry first (public)
     GET  /proposals/counts      {"pending": N} after lazy expiry (public)
     POST /proposals/{id}/confirm  apply a pending chat proposal by token (requires API key)
@@ -38,6 +43,7 @@ Endpoints:
     PUT  /settings              partial-update settings (requires API key)
 """
 
+import asyncio
 import copy
 import hmac
 import logging
@@ -45,7 +51,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastmcp.utilities.lifespan import combine_lifespans
@@ -135,6 +141,9 @@ from backend.schemas import (
     QueryRequest,
     SettingsOut,
     SettingsUpdate,
+    ThreadDetailOut,
+    ThreadOut,
+    ThreadTitleUpdate,
     TransactionCreate,
     TransactionOut,
     TransactionUpdate,
@@ -1488,19 +1497,23 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(get_ses
 async def query_stream(req: QueryRequest):
     """Stream agent reasoning as SSE events (CHAT-01, D-08).
 
-    One run per conversation: a second request while one is active is 409
-    before any streaming starts (D-16). The key is required (D-18, REL-08).
+    One run per thread: no thread_id starts a new thread, an unknown id is 404,
+    a second request while the thread's run is active is 409 before any
+    streaming starts (D-05, D-16). The key is required (D-18, REL-08).
     The run is server-owned: a detached pump drives it and this response is
     only a subscriber, so a disconnect detaches and the turn runs on; only the
-    cancel route stops it (D-05, D-06).
+    cancel route stops it (D-05, D-06). The stream opens with the thread event
+    then the run event.
     """
     from backend import chat_service, query
-    run = query.start_run(query.CHAT_KEY)
+    try:
+        run = await chat_service.start_turn(req.question, req.thread_id)
+    except LookupError:
+        raise HTTPException(404, "Thread not found")
     if run is None:
         raise HTTPException(
             status_code=409, detail="A run is already in progress for this conversation"
         )
-    chat_service.launch(run, req.question)
     return StreamingResponse(
         query.run_stream(run),
         media_type="text/event-stream",
@@ -1513,17 +1526,111 @@ async def cancel_query_stream(run_id: uuid.UUID):
     """Stop a run and reject its still-pending chat proposals (D-08, D-09, D-11).
 
     Works for the active run or the last-finished one (a Stop that lands just
-    after the answer still rejects). Only chat-channel pending proposals are
-    rejected, with no audit row, exactly like POST /proposals/{id}/reject. The
-    key is MONAI_API_KEY only: rejecting chat proposals is already within that
-    key's authority, so this adds none. The approver allowlist is deliberately
-    untouched. Unknown or superseded run id is 404.
+    after the answer still rejects, and flips the persisted answer to
+    cancelled so it is never replayed, D-06a). Only chat-channel pending
+    proposals are rejected, with no audit row, exactly like
+    POST /proposals/{id}/reject. The key is MONAI_API_KEY only: rejecting chat
+    proposals is already within that key's authority, so this adds none. The
+    approver allowlist is deliberately untouched. Unknown or superseded run id
+    is 404.
     """
-    from backend import query
+    from backend import chat_service, query
     run = query.find_run(str(run_id))
     if run is None:
         raise HTTPException(404, "Run not found")
-    return {"rejected": await query.stop_run(run)}
+    rejected = await query.stop_run(run)
+    # stop_run sets `stopped` before its first await, so a message not yet
+    # persisted is written as cancelled; one already persisted is flipped here.
+    if run.assistant_message_id is not None:
+        await asyncio.to_thread(chat_service.mark_cancelled, run.assistant_message_id)
+    return {"rejected": rejected}
+
+
+def _thread_detail_sync(thread_id: uuid.UUID) -> dict | None:
+    from backend import chat_service
+    with get_session_sync() as db:
+        return chat_service.thread_detail(db, thread_id)
+
+
+def _delete_thread_sync(thread_id: uuid.UUID) -> bool:
+    from backend import chat_service
+    with get_session_sync() as db:
+        return chat_service.delete_thread(db, thread_id)
+
+
+@app.get("/threads", response_model=list[ThreadOut], dependencies=[Depends(require_api_key)])
+def list_threads(db: Session = Depends(get_session)):
+    """Threads newest first, capped at 200 (D-18). Key required even for GET."""
+    from backend import chat_service
+    return chat_service.list_threads(db)
+
+
+@app.get(
+    "/threads/{thread_id}",
+    response_model=ThreadDetailOut,
+    dependencies=[Depends(require_api_key)],
+)
+async def get_thread(thread_id: uuid.UUID):
+    """Messages in seq order with live proposal status and the active run, if any.
+
+    The response model has no token or code field (T-02-07, D-16).
+    """
+    from backend import query
+    detail = await asyncio.to_thread(_thread_detail_sync, thread_id)
+    if detail is None:
+        raise HTTPException(404, "Thread not found")
+    run = query._ACTIVE.get(str(thread_id))
+    detail["active_run"] = {"run_id": run.id} if run is not None else None
+    return detail
+
+
+@app.patch(
+    "/threads/{thread_id}",
+    response_model=ThreadOut,
+    dependencies=[Depends(require_api_key)],
+)
+def rename_thread(
+    thread_id: uuid.UUID, body: ThreadTitleUpdate, db: Session = Depends(get_session)
+):
+    from backend import chat_service
+    try:
+        out = chat_service.rename_thread(db, thread_id, body.title)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    if out is None:
+        raise HTTPException(404, "Thread not found")
+    return out
+
+
+@app.delete("/threads/{thread_id}", status_code=204, dependencies=[Depends(require_api_key)])
+async def delete_thread(thread_id: uuid.UUID):
+    """Delete a thread; messages cascade, proposals keep their rows (D-18)."""
+    from backend import query
+    if str(thread_id) in query._ACTIVE:
+        raise HTTPException(409, "A run is in progress for this thread; stop it first")
+    if not await asyncio.to_thread(_delete_thread_sync, thread_id):
+        raise HTTPException(404, "Thread not found")
+    return Response(status_code=204)
+
+
+@app.get("/threads/{thread_id}/stream", dependencies=[Depends(require_api_key)])
+async def thread_stream(thread_id: uuid.UUID):
+    """Re-attach to the thread's active or last-finished run (D-07).
+
+    Any API-key holder (including MCP clients) can call this, so replay strips
+    every proposal token (D-08). A finished run is replayed from _LAST until the
+    thread's next run. 204 when there is none.
+    """
+    from backend import query
+    key = str(thread_id)
+    run = query._ACTIVE.get(key) or query._LAST.get(key)
+    if run is None:
+        return Response(status_code=204)
+    return StreamingResponse(
+        query.subscribe(run, redact=True),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ---------------------------------------------------------------------------

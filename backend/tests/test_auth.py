@@ -119,6 +119,7 @@ def test_post_query_stream_requires_key(client, api_key, monkeypatch):
 
     resp = client.post("/query-stream", json=body, headers={"MONAI_API_KEY": api_key})
     assert resp.status_code == 200
+    assert '"type": "thread"' in resp.text
     assert '"type": "run"' in resp.text
     assert "stub answer" in resp.text
     assert "[DONE]" in resp.text
@@ -195,3 +196,37 @@ def test_empty_configured_key_returns_503(client, monkeypatch):
     )
     assert resp.status_code == 503
     assert "misconfigured" in resp.json()["detail"].lower()
+
+
+def test_thread_routes_require_key(client, api_key, monkeypatch):
+    import uuid
+
+    import backend.auth as auth_mod
+
+    tid = uuid.uuid4()
+    calls = [
+        ("get", "/threads"),
+        ("get", f"/threads/{tid}"),
+        ("patch", f"/threads/{tid}"),
+        ("delete", f"/threads/{tid}"),
+        ("get", f"/threads/{tid}/stream"),
+    ]
+    for method, url in calls:
+        kw = {"json": {"title": "ZZTest t"}} if method == "patch" else {}
+        assert getattr(client, method)(url, **kw).status_code == 401, (method, url)
+        assert getattr(client, method)(
+            url, headers={"MONAI_API_KEY": "wrong"}, **kw
+        ).status_code == 401, (method, url)
+
+    monkeypatch.setattr(auth_mod, "_CONFIGURED_KEY", "")
+    assert client.get("/threads", headers={"MONAI_API_KEY": api_key}).status_code == 503
+
+
+def test_every_thread_route_depends_on_api_key():
+    from backend.auth import require_api_key
+    from backend.main import app
+
+    routes = [r for r in app.routes if getattr(r, "path", "").startswith("/threads")]
+    assert len(routes) == 5
+    for r in routes:
+        assert require_api_key in [d.call for d in r.dependant.dependencies], r.path
