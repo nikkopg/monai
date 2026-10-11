@@ -197,6 +197,40 @@ test.describe("re-attach to a running turn (THRD-09, D-09)", () => {
     await expect(alertBox(page)).toHaveCount(0);
   });
 
+  test("a connection drop after the thread event reconciles instead of failing (WR-06)", async ({ page }) => {
+    await setup(page);
+    await page.addInitScript(
+      ({ RUN, TID }) => {
+        const real = window.fetch.bind(window);
+        const enc = new TextEncoder();
+        const evt = (e: unknown) => enc.encode(`data: ${JSON.stringify(e)}\n\n`);
+        window.fetch = (url: RequestInfo | URL, init?: RequestInit) => {
+          if (!String(url).endsWith("/api/query-stream")) return real(url, init);
+          const stream = new ReadableStream({
+            start(c) {
+              c.enqueue(evt({ type: "run", run_id: RUN }));
+              c.enqueue(evt({ type: "thread", thread_id: TID }));
+              setTimeout(() => c.error(new TypeError("network error")), 50);
+            },
+          });
+          return Promise.resolve(
+            new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } })
+          );
+        };
+      },
+      { RUN, TID }
+    );
+    await stubThread(
+      page,
+      thread([userMsg("Synthetic question"), asstMsg("Persisted synthetic answer")])
+    );
+    await page.goto("/chat");
+    await input(page).fill("Synthetic question");
+    await input(page).press("Enter");
+    await expect(page.getByText("Persisted synthetic answer")).toBeVisible();
+    await expect(alertBox(page)).toHaveCount(0);
+  });
+
   test("stream 204 refetches the thread", async ({ page }) => {
     await setup(page);
     let hits = 0;

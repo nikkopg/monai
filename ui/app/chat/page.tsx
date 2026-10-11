@@ -356,7 +356,11 @@ function ChatInner() {
     }
     if (loadedRef.current !== tid) return; // the view moved on
     if (typeof r === "string") {
-      endRun(); // keep what is on screen
+      // Keep what is on screen; a live block that never finished reads as a failure.
+      if (!terminalRef.current) {
+        failLive({ code: "connection", model: null, idleSeconds: null, transport: true });
+      }
+      endRun();
       return;
     }
     const next = mapMessages(r.messages);
@@ -391,7 +395,9 @@ function ChatInner() {
       endRun();
       return;
     }
-    if (out.kind === "error" && source === "send") {
+    // WR-06: once the thread event arrived the server owns the run, so a dropped
+    // connection reconciles (and re-attaches) instead of reporting a failure.
+    if (out.kind === "error" && source === "send" && !threadSeenRef.current) {
       failLive({ code: "connection", model: null, idleSeconds: null, transport: true });
       endRun();
       return;
