@@ -290,6 +290,7 @@ const stubList = (page: Page, list: unknown, status = 200) =>
   page.route(/\/api\/threads$/, (route) => route.fulfill({ status, json: list as object }));
 const rowsOf = (page: Page) => page.getByTestId("thread-row");
 const examples = (page: Page) => page.getByTestId("example-question");
+const options = (page: Page, title: string) => page.getByRole("button", { name: `Chat options: ${title}` });
 const ANSWER_STREAM =
   `data: ${JSON.stringify({ type: "answer", text: "Synthetic sidebar answer", proposals: [] })}\n\n` +
   "data: [DONE]\n\n";
@@ -343,14 +344,17 @@ test.describe("thread sidebar (THRD-02, D-20)", () => {
         : route.fulfill({ status: 500, json: { detail: "boom" } });
     });
     await page.goto("/chat");
-    await page.getByRole("button", { name: "Rename chat: ZZTest original" }).click();
+    await options(page, "ZZTest original").click();
+    await page.getByRole("menuitem", { name: "Rename" }).click();
     const edit = page.getByLabel("Chat title");
     await edit.fill("  ZZTest renamed  ");
     await edit.press("Enter");
     await expect(rowsOf(page).first()).toContainText("ZZTest renamed");
     expect(bodies[0]).toEqual({ title: "ZZTest renamed" });
+    await expect(options(page, "ZZTest renamed")).toBeFocused();
 
-    await page.getByRole("button", { name: "Rename chat: ZZTest renamed" }).click();
+    await options(page, "ZZTest renamed").click();
+    await page.getByRole("menuitem", { name: "Rename" }).click();
     await page.getByLabel("Chat title").fill("ZZTest again");
     await page.getByLabel("Chat title").press("Enter");
     await expect(page.getByRole("alert").filter({ hasText: "Couldn't rename this chat. Try again." })).toBeVisible();
@@ -368,8 +372,11 @@ test.describe("thread sidebar (THRD-02, D-20)", () => {
       return route.fulfill({ json: thread([userMsg("Synthetic q"), asstMsg("Synthetic a")]) });
     });
     await page.goto(`/chat?thread=${TID}`);
-    const del = page.getByRole("button", { name: "Delete chat: ZZTest delete me" });
-    await del.click();
+    const openDelete = async () => {
+      await options(page, "ZZTest delete me").click();
+      await page.getByRole("menuitem", { name: "Delete" }).click();
+    };
+    await openDelete();
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByRole("button", { name: "Delete chat" })).toBeVisible();
     await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
@@ -382,18 +389,57 @@ test.describe("thread sidebar (THRD-02, D-20)", () => {
     await expect(dialog.getByRole("button", { name: "Delete chat" })).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
+    await expect(options(page, "ZZTest delete me")).toBeFocused();
 
-    await del.click();
+    await openDelete();
     await dialog.getByRole("button", { name: "Delete chat" }).click();
     await expect(
       page.getByRole("alert").filter({ hasText: "This chat is still answering. Stop it first, then delete it." })
     ).toBeVisible();
 
-    await del.click();
+    await openDelete();
     await dialog.getByRole("button", { name: "Delete chat" }).click();
     await expect(page).toHaveURL(/\/chat$/);
     await expect(rowsOf(page)).toHaveCount(0);
     await expect(examples(page)).toHaveCount(5);
+  });
+
+  test("options menu opens, navigates by keyboard and closes", async ({ page }) => {
+    await mockInbox(page, { list: [] });
+    await stubList(page, [
+      { id: sid(1), title: "ZZTest menu a", updated_at: ago(0) },
+      { id: sid(2), title: "ZZTest menu b", updated_at: ago(0) },
+    ]);
+    await page.goto("/chat");
+    const trigger = options(page, "ZZTest menu a");
+    const items = page.getByRole("menuitem");
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await expect(items).toHaveCount(0);
+
+    await trigger.click();
+    await expect(page).toHaveURL(/\/chat$/);
+    await expect(page.locator('[data-testid="thread-row"][aria-current]')).toHaveCount(0);
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await expect(items).toHaveText(["Rename", "Delete"]);
+    await expect(items.first()).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(items.nth(1)).toBeFocused();
+    await page.keyboard.press("ArrowUp");
+    await expect(items.first()).toBeFocused();
+
+    await page.keyboard.press("Escape");
+    await expect(items).toHaveCount(0);
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await expect(trigger).toBeFocused();
+
+    await trigger.click();
+    await page.getByTestId("thread-sidebar").locator("h3").first().click();
+    await expect(items).toHaveCount(0);
+
+    await trigger.click();
+    await expect(items).toHaveCount(2);
+    await trigger.click();
+    await expect(items).toHaveCount(0);
   });
 
   test("sidebar fetch failure is non-fatal", async ({ page }) => {
@@ -463,5 +509,20 @@ test.describe("mobile drawer (D-20)", () => {
     await expect(side).toBeHidden();
     await expect(toggle).toHaveAttribute("aria-expanded", "false");
     await expect(toggle).toBeFocused();
+  });
+
+  test("Escape in a row menu closes the menu, not the drawer", async ({ page }) => {
+    await mockInbox(page, { list: [] });
+    await stubList(page, [{ id: sid(1), title: "ZZTest drawer", updated_at: ago(0) }]);
+    await page.setViewportSize({ width: 800, height: 900 });
+    await page.goto("/chat");
+    const side = page.getByTestId("thread-sidebar");
+    await page.getByTestId("threads-toggle").click();
+    await options(page, "ZZTest drawer").click();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menuitem")).toHaveCount(0);
+    await expect(side).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(side).toBeHidden();
   });
 });
