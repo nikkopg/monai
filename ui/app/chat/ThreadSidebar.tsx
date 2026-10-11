@@ -11,7 +11,8 @@ import ConfirmDialog from "../cashflow/ConfirmDialog";
 
 // ---------------------------------------------------------------------------
 // ThreadSidebar (Phase 36, THRD-02, D-18/D-20, 36-UI-SPEC section 1).
-// Recency-grouped thread list with New chat, inline rename and delete.
+// Recency-grouped thread list with New chat; rename and delete live in a
+// per-row options menu (the inline title input and ConfirmDialog are unchanged).
 // Titles are rendered as React text only. A list fetch failure is non-fatal
 // (D-19a): a status line plus "Try again", never an error banner.
 // ---------------------------------------------------------------------------
@@ -87,6 +88,8 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
   const [confirm, setConfirm] = useState<Thread | null>(null);
   const [focusRename, setFocusRename] = useState<string | null>(null);
   const [focusNew, setFocusNew] = useState(false);
+  const [menuId, setMenuId] = useState<string | null>(null);
+  const menuRef = useRef<HTMLSpanElement>(null);
   const newRef = useRef<HTMLButtonElement>(null);
   const editRef = useRef<HTMLInputElement>(null);
   const skipBlur = useRef(false);
@@ -124,10 +127,34 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
 
   useEffect(() => {
     if (focusRename) {
-      document.getElementById(`${uid}-rename-${focusRename}`)?.focus();
+      document.getElementById(`${uid}-menu-${focusRename}`)?.focus();
       setFocusRename(null);
     }
   }, [focusRename, uid]);
+
+  // Row options menu: focus the first item on open; close on outside mousedown;
+  // Escape (capture phase + stopPropagation, like ConfirmDialog) closes only the
+  // menu so the mobile drawer's own Escape listener does not also fire.
+  useEffect(() => {
+    if (menuId === null) return;
+    menuRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    const onDown = (e: MouseEvent) => {
+      if (!menuRef.current?.contains(e.target as Node)) setMenuId(null);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      setMenuId(null);
+      document.getElementById(`${uid}-menu-${menuId}`)?.focus();
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [menuId, uid]);
 
   useEffect(() => {
     if (focusNew) {
@@ -380,28 +407,111 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
                           </Link>
                         )}
                         {!editing && (
-                          <span className="thread-actions" style={{ display: "inline-flex", flexShrink: 0 }}>
+                          <span
+                            ref={menuId === t.id ? menuRef : undefined}
+                            className="thread-actions"
+                            style={{
+                              display: "inline-flex",
+                              flexShrink: 0,
+                              position: "relative",
+                              ...(menuId === t.id ? { opacity: 1 } : null),
+                            }}
+                          >
                             <button
                               type="button"
-                              id={`${uid}-rename-${t.id}`}
-                              style={textBtn}
-                              aria-label={`Rename chat: ${title}`}
-                              onClick={() => startEdit(t)}
-                            >
-                              Rename
-                            </button>
-                            <button
-                              type="button"
-                              style={textBtn}
-                              aria-label={`Delete chat: ${title}`}
-                              onClick={() => {
-                                setRowErr((e) => ({ ...e, [t.id]: "" }));
-                                onClose();
-                                setConfirm(t);
+                              id={`${uid}-menu-${t.id}`}
+                              style={{ ...textBtn, fontSize: 16, lineHeight: 1, padding: "8px 10px" }}
+                              aria-label={`Chat options: ${title}`}
+                              aria-haspopup="menu"
+                              aria-expanded={menuId === t.id}
+                              aria-controls={menuId === t.id ? `${uid}-menulist-${t.id}` : undefined}
+                              onClick={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                setMenuId(menuId === t.id ? null : t.id);
                               }}
                             >
-                              Delete
+                              <span aria-hidden="true">⋯</span>
                             </button>
+                            {menuId === t.id && (
+                              /* ponytail: absolute inside the scrolling aside, so a menu on the last row extends the scroll area; switch to a portal + fixed position if that ever clips. */
+                              <div
+                                role="menu"
+                                id={`${uid}-menulist-${t.id}`}
+                                aria-labelledby={`${uid}-menu-${t.id}`}
+                                style={{
+                                  position: "absolute",
+                                  top: "100%",
+                                  right: 0,
+                                  zIndex: 10,
+                                  minWidth: 120,
+                                  background: tokens.color.card,
+                                  border: `1px solid ${tokens.color.border2}`,
+                                  borderRadius: tokens.radius.sm,
+                                  boxShadow: tokens.shadow.card,
+                                  padding: 4,
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Tab") {
+                                    setMenuId(null);
+                                    return;
+                                  }
+                                  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+                                  e.preventDefault();
+                                  const items = Array.from(
+                                    e.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+                                  );
+                                  const i = items.indexOf(document.activeElement as HTMLElement);
+                                  const step = e.key === "ArrowDown" ? 1 : -1;
+                                  items[(i + step + items.length) % items.length]?.focus();
+                                }}
+                              >
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  tabIndex={-1}
+                                  style={{
+                                    ...textBtn,
+                                    display: "block",
+                                    width: "100%",
+                                    textAlign: "left",
+                                    fontSize: 14,
+                                    borderRadius: tokens.radius.sm,
+                                    color: tokens.color.ink,
+                                  }}
+                                  onClick={() => {
+                                    setMenuId(null);
+                                    startEdit(t);
+                                  }}
+                                >
+                                  Rename
+                                </button>
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  tabIndex={-1}
+                                  style={{
+                                    ...textBtn,
+                                    display: "block",
+                                    width: "100%",
+                                    textAlign: "left",
+                                    fontSize: 14,
+                                    borderRadius: tokens.radius.sm,
+                                    color: tokens.color.terracotta,
+                                  }}
+                                  onClick={() => {
+                                    setMenuId(null);
+                                    // Focus the still-mounted options button so ConfirmDialog records it as opener.
+                                    document.getElementById(`${uid}-menu-${t.id}`)?.focus();
+                                    setRowErr((e) => ({ ...e, [t.id]: "" }));
+                                    onClose();
+                                    setConfirm(t);
+                                  }}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            )}
                           </span>
                         )}
                       </div>
