@@ -257,6 +257,11 @@ class Run:
     wake: asyncio.Event = field(default_factory=asyncio.Event)  # swapped on every push
     done: bool = False  # the pump finished and [DONE] is the last event
     pump: asyncio.Task | None = None  # strong ref: asyncio keeps only weak ones (Pitfall 2)
+    # Set by chat_service.start_turn; None for thread-less runs (D-11).
+    thread_id: uuid.UUID | None = None
+    user_message_id: uuid.UUID | None = None
+    assistant_message_id: uuid.UUID | None = None
+    user_seq: int | None = None
 
 
 async def _halt(handler, task) -> None:

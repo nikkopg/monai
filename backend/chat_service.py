@@ -9,15 +9,27 @@ stops a run.
 
 The pump's finally runs under a cancel shield and always ends the buffer with
 [DONE] and frees the registry slot, even when the pump itself is cancelled.
+
+Threads (D-05, D-11): `start_turn` persists the user turn before the run starts
+and builds the replayed history from the stored messages. The pump persists the
+assistant turn (token-free parts) before [DONE], so a client that sees [DONE]
+can always read the finished turn back. Every DB step uses its own short
+session; none is held across the stream.
 """
 
 import asyncio
+import json
 import logging
 import uuid
 
 import anyio
+from sqlalchemy import func, select, text
 
-from backend import query, tools
+from backend import config, query, tools
+from backend.chat_history import build_history
+from backend.db import get_session_sync
+from backend.models import Message, Proposal, Thread
+from backend.proposals import expire_stale
 
 logger = logging.getLogger(__name__)
 
@@ -32,21 +44,170 @@ def launch(run: query.Run, question: str, history: list | None = None) -> None:
     run.pump = asyncio.create_task(_pump(run, question, history))
 
 
+def title_from(text_: str, limit: int = 60) -> str:
+    """First question, whitespace collapsed, cut at a word boundary (D-13)."""
+    s = " ".join(text_.split())
+    if len(s) <= limit:
+        return s
+    cut = s[:limit].rsplit(" ", 1)[0] or s[:limit]
+    return cut.rstrip(" ,.;:") + "…"
+
+
+def _begin_turn(thread_id: uuid.UUID, new: bool, question: str):
+    """Create/find the thread and store the user message; return
+    (user_message_id, seq, prior messages as dicts). One short session."""
+    with get_session_sync() as db:
+        if new:
+            db.add(Thread(id=thread_id, title=title_from(question)))
+            db.flush()
+        elif db.get(Thread, thread_id) is None:
+            raise LookupError("Thread not found")  # never an FK IntegrityError
+        prior = [
+            {
+                "role": m.role,
+                "content": m.content,
+                "status": m.status,
+                "parts": m.parts,
+                "created_at": m.created_at,
+            }
+            for m in db.execute(
+                select(Message).where(Message.thread_id == thread_id).order_by(Message.seq)
+            ).scalars()
+        ]
+        seq = (
+            db.execute(
+                select(func.max(Message.seq)).where(Message.thread_id == thread_id)
+            ).scalar()
+            or 0
+        ) + 1
+        user = Message(
+            thread_id=thread_id, seq=seq, role="user", content=question,
+            status="complete", parts={},
+        )
+        db.add(user)
+        db.flush()
+        db.execute(text("UPDATE threads SET updated_at = now() WHERE id = :t"), {"t": thread_id})
+        db.commit()
+        return user.id, seq, prior
+
+
+async def start_turn(question: str, thread_id: uuid.UUID | None = None) -> query.Run | None:
+    """Start a persisted turn; None when the thread already has a run (D-05).
+
+    Raises LookupError for an unknown thread id. Must run inside the event loop.
+    """
+    tid = thread_id or uuid.uuid4()
+    run = query.start_run(str(tid))
+    if run is None:
+        return None
+    try:
+        user_id, seq, prior = await asyncio.to_thread(
+            _begin_turn, tid, thread_id is None, question
+        )
+        # Module attribute reads so tests can monkeypatch the budget and the date.
+        history = build_history(prior, config.CHAT_HISTORY_TOKEN_BUDGET, query._today())
+        run.thread_id, run.user_message_id, run.user_seq = tid, user_id, seq
+        run.assistant_message_id = uuid.uuid4()
+        query.push(
+            run,
+            query._sse(
+                {
+                    "type": "thread",
+                    "thread_id": str(tid),
+                    "user_message_id": str(user_id),
+                    "assistant_message_id": str(run.assistant_message_id),
+                }
+            ),
+        )
+        launch(run, question, history)
+    except BaseException:
+        # Not via release_run: a never-finished run must not become _LAST.
+        if query._ACTIVE.get(run.key) is run:
+            del query._ACTIVE[run.key]
+        raise
+    return run
+
+
+def _persist_end(run: query.Run, state: dict) -> None:
+    """Store the assistant turn and back-fill proposals.message_id (D-11)."""
+    if run.thread_id is None:
+        return
+    with get_session_sync() as db:
+        status = "cancelled" if run.stopped else ("complete" if state["answered"] else "error")
+        turn = uuid.UUID(run.id)
+        ids = [uuid.UUID(i) for i in run.proposal_ids]
+        rows = db.execute(
+            select(Proposal.id, Proposal.operation)
+            .where((Proposal.turn_id == turn) | (Proposal.id.in_(ids)))
+            .order_by(Proposal.created_at, Proposal.id)
+        ).all()
+        parts: dict = {
+            "steps": state["steps"],
+            "proposals": [{"id": str(r.id), "operation": r.operation} for r in rows],
+            "provider": {"name": state["provider"], "model": state["model"]},
+        }
+        if status == "error":
+            parts["error"] = {"code": state["error"] or "unknown"}
+        parts = json.loads(json.dumps(parts, default=str))  # no Decimal reaches JSONB
+        db.add(
+            Message(
+                id=run.assistant_message_id, thread_id=run.thread_id, seq=run.user_seq + 1,
+                role="assistant", content=state["text"] if status == "complete" else "",
+                status=status, parts=parts,
+            )
+        )
+        db.flush()  # autoflush is off: the row must exist before SQL references its id
+        db.execute(text("UPDATE threads SET updated_at = now() WHERE id = :t"), {"t": run.thread_id})
+        db.execute(
+            text("UPDATE proposals SET message_id = :a WHERE turn_id = :t"),
+            {"a": run.assistant_message_id, "t": turn},
+        )
+        db.commit()
+
+
+def _observe(state: dict, chunk: str) -> None:
+    """Record what the persisted turn needs from one SSE chunk (never results)."""
+    if not chunk.startswith("data: "):
+        return
+    try:
+        p = json.loads(chunk[6:])
+    except ValueError:
+        return
+    t = p.get("type")
+    if t == "tool_result":
+        step = p.get("step") or {}
+        state["steps"].append({"tool": step.get("tool"), "args": step.get("args") or {}})
+    elif t == "answer":
+        state.update(answered=True, text=p.get("text") or "", model=p.get("model"), provider=p.get("provider"))
+    elif t == "error":
+        state.update(error=p.get("code"), model=p.get("model"), provider=p.get("provider"))
+
+
 async def _pump(run: query.Run, question: str, history: list | None) -> None:
     # create_task copied the context, so no reset is needed; tool executor
     # threads inherit the value (D-12a).
     tools.CURRENT_TURN_ID.set(uuid.UUID(run.id))
+    state: dict = {
+        "steps": [], "text": "", "answered": False, "error": None,
+        "model": None, "provider": None,
+    }
     try:
         # Attribute lookup on the module, never a from-import: tests and
         # test_auth monkeypatch backend.query.agent_stream.
         async for chunk in query.agent_stream(question, run=run, history=history):
             if chunk.startswith(":") or chunk == query._DONE:
                 continue  # pings are the subscriber's own; [DONE] is withheld to the end
+            _observe(state, chunk)
             query.push(run, chunk)
     except Exception as e:
         # Class and message only: never the question or any payload.
         logger.warning("chat pump failed: %s: %s", type(e).__name__, e)
+        state["error"] = "unknown"
         query.push(run, query._error_event("unknown", None, None, None))
     finally:
         with anyio.CancelScope(shield=True):
-            await query.finish_run(run)
+            try:
+                await asyncio.to_thread(_persist_end, run, state)
+            except Exception as e:  # a persistence failure must never keep the slot
+                logger.warning("chat persist failed: %s: %s", type(e).__name__, e)
+            await query.finish_run(run)  # sweep if stopped, [DONE], release (D-05a)

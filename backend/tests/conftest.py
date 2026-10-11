@@ -253,3 +253,25 @@ def _purge_test_platforms():
         db.rollback()  # test-DB hygiene must never fail the suite
     finally:
         db.close()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _purge_test_threads():
+    """Delete every thread after the run (messages cascade; proposals keep their
+    rows with message_id NULL). Every thread in monai_test is test-created (the
+    eval creates none, D-22a) and conftest already refuses the live DB."""
+    yield
+    try:
+        from sqlalchemy import text
+        from backend.db import SessionLocal
+
+        db = SessionLocal()
+    except Exception:
+        return
+    try:
+        db.execute(text("DELETE FROM threads"))
+        db.commit()
+    except Exception:
+        db.rollback()  # test-DB hygiene must never fail the suite
+    finally:
+        db.close()

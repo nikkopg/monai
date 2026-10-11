@@ -23,6 +23,7 @@ import asyncio
 import contextlib
 import contextvars
 import datetime
+import json
 import uuid
 
 import anyio
@@ -301,3 +302,173 @@ def test_last_is_capped():
         q.release_run(q.start_run(f"k{i}"))
 
     assert list(q._LAST) == [f"k{i}" for i in range(5, 25)]
+
+
+# ---------------------------------------------------------------------------
+# Persisted turns (plan 05): threads, messages, replayed history
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def _threads():
+    """Collect created thread ids; delete them (messages cascade) afterwards."""
+    ids: list = []
+    yield ids
+    from sqlalchemy import text
+
+    from backend.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        for t in ids:
+            db.execute(text("DELETE FROM threads WHERE id = :i"), {"i": t})
+        db.commit()
+    finally:
+        db.close()
+
+
+def _messages(tid):
+    from backend.db import SessionLocal
+    from backend.models import Message
+
+    db = SessionLocal()
+    try:
+        return list(
+            db.query(Message).filter(Message.thread_id == tid).order_by(Message.seq)
+        )
+    finally:
+        db.close()
+
+
+def _thread(tid):
+    from backend.db import SessionLocal
+    from backend.models import Thread
+
+    db = SessionLocal()
+    try:
+        return db.get(Thread, tid)
+    finally:
+        db.close()
+
+
+async def _turn(question, thread_id=None, threads=None):
+    run = await chat_service.start_turn(question, thread_id)
+    assert run is not None
+    if threads is not None and run.thread_id not in threads:
+        threads.append(run.thread_id)
+    lines = await _collect(q.run_stream(run))
+    return run, lines
+
+
+async def test_turn_persists_user_and_assistant(monkeypatch, _threads):
+    _install_stub_workflow(monkeypatch, StubLLM())
+    question = "ZZTest how much did I spend this month?"
+    run, lines = await _turn(question, threads=_threads)
+
+    first = _payloads(lines)
+    assert first[0]["type"] == "thread" and first[1]["type"] == "run"
+    assert first[0]["thread_id"] == str(run.thread_id)
+    assert lines[-1].strip() == "data: [DONE]"
+
+    t = _thread(run.thread_id)
+    assert t.title == chat_service.title_from(question)
+    user, asst = _messages(run.thread_id)
+    assert (user.seq, user.role, user.status, user.content) == (1, "user", "complete", question)
+    assert (asst.seq, asst.role, asst.status, asst.content) == (2, "assistant", "complete", "Hello")
+    assert str(asst.id) == first[0]["assistant_message_id"]
+    assert str(user.id) == first[0]["user_message_id"]
+    assert asst.parts["provider"]["model"] == "example-model:7b"
+    assert asst.parts["steps"] == []
+
+
+async def test_followup_replays_prior_pair(monkeypatch, _threads):
+    llm = StubLLM()
+    _install_stub_workflow(monkeypatch, llm)
+    run, _ = await _turn("ZZTest first question", threads=_threads)
+    before = _thread(run.thread_id).updated_at
+    await _turn("ZZTest second question", run.thread_id)
+
+    today = datetime.datetime.now().astimezone().date().isoformat()
+    seen = llm.seen[-1]
+    assert any(f"[{today}] ZZTest first question" in c for c in seen)
+    assert any("Hello" in c for c in seen)
+    assert _thread(run.thread_id).updated_at > before
+    assert len(_messages(run.thread_id)) == 4
+
+
+async def test_error_turn_persisted_and_not_replayed(monkeypatch, _threads):
+    llm = StubLLM(mode="429")
+    _install_stub_workflow(monkeypatch, llm)
+    run, _ = await _turn("ZZTest fails with 429", threads=_threads)
+    _, asst = _messages(run.thread_id)
+    assert asst.status == "error" and asst.content == ""
+    assert asst.parts["error"]["code"] == "rate_limit"
+
+    llm.mode = "ok"
+    await _turn("ZZTest next question", run.thread_id)
+    joined = " ".join(llm.seen[-1])
+    assert "ZZTest fails with 429" not in joined and "rate_limit" not in joined
+
+
+async def test_stop_persists_cancelled_and_backfills_message_id(monkeypatch, _threads):
+    _install_stub_workflow(monkeypatch, StubLLM(mode="tool_then_hang"))
+    run = await chat_service.start_turn("ZZTest stop me")
+    _threads.append(run.thread_id)
+    stream = asyncio.create_task(_collect(q.run_stream(run)))
+    while not run.proposal_ids:
+        await asyncio.sleep(0.05)
+    await q.stop_run(run)
+    await asyncio.wait_for(stream, 10)
+
+    _, asst = _messages(run.thread_id)
+    assert asst.status == "cancelled" and asst.content == ""
+    pid = asst.parts["proposals"][0]["id"]
+    assert asst.parts["proposals"] == [{"id": pid, "operation": "add_transaction"}]
+    assert _status_of(pid) == "rejected"
+    assert _turn_id_of(pid) == uuid.UUID(run.id)
+    from backend.db import SessionLocal
+    from backend.models import Proposal
+
+    db = SessionLocal()
+    try:
+        assert db.get(Proposal, uuid.UUID(pid)).message_id == asst.id
+    finally:
+        db.close()
+    assert "token" not in json.dumps(asst.parts)
+
+
+async def test_tool_turn_parts_have_no_token(monkeypatch, _threads):
+    _install_stub_workflow(monkeypatch, StubLLM(mode="tool", final_text="Done"))
+    run, lines = await _turn("ZZTest tool turn", threads=_threads)
+    answer = _of_type(_payloads(lines), "answer")[0]
+    _, asst = _messages(run.thread_id)
+    assert asst.status == "complete"
+    assert asst.parts["steps"] == [{"tool": "seed_proposal", "args": {}}]
+    assert "token" not in json.dumps(asst.parts)
+    assert answer["proposals"][0]["token"] not in json.dumps(asst.parts)
+    pid = asst.parts["proposals"][0]["id"]
+    from backend.db import SessionLocal
+    from backend.models import Proposal
+
+    db = SessionLocal()
+    try:
+        assert db.get(Proposal, uuid.UUID(pid)).message_id == asst.id
+    finally:
+        db.close()
+
+
+async def test_start_turn_busy_persists_nothing(monkeypatch, _threads):
+    _install_stub_workflow(monkeypatch, StubLLM(mode="hang"))
+    run = await chat_service.start_turn("ZZTest busy one")
+    _threads.append(run.thread_id)
+    assert await chat_service.start_turn("ZZTest busy two", run.thread_id) is None
+    assert len(_messages(run.thread_id)) == 1  # only the first user message
+    await q.stop_run(run)
+    await run.pump
+
+
+async def test_start_turn_unknown_thread():
+    tid = uuid.uuid4()
+    with pytest.raises(LookupError):
+        await chat_service.start_turn("ZZTest nowhere", tid)
+    assert str(tid) not in q._ACTIVE and str(tid) not in q._LAST

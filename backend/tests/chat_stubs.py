@@ -26,6 +26,7 @@ from llama_index.core.llms import (
 )
 from llama_index.core.llms.llm import ToolSelection
 from llama_index.core.tools import FunctionTool
+from pydantic import Field
 from sqlalchemy import text
 
 
@@ -50,6 +51,7 @@ class StubLLM(MockFunctionCallingLLM):
     final_text: str = "Hello"
     drip_count: int = 5
     drip_gap: float = 0.2
+    seen: list = Field(default_factory=list)  # chat_history contents per LLM call
 
     @property
     def metadata(self):
@@ -59,6 +61,7 @@ class StubLLM(MockFunctionCallingLLM):
         self, tools, user_msg=None, chat_history=None, **kw
     ):
         self.calls += 1
+        self.seen.append([str(m.content) for m in (chat_history or [])])
         n = self.calls
         mode = self.mode
         text_ = self.final_text
