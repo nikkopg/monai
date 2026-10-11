@@ -162,3 +162,13 @@ def test_mark_cancelled(db):
     db.expire_all()
     assert (db.get(Message, done.id).status, db.get(Message, done.id).content) == ("cancelled", "")
     assert db.get(Message, err.id).status == "error"
+
+
+def test_db_error_text_hides_bound_parameters(db):
+    """WR-04: str() of a DB error (what the pump logs) carries no bound value."""
+    from sqlalchemy.exc import DBAPIError
+
+    with pytest.raises(DBAPIError) as ei:
+        db.execute(text("SELECT 1/0, CAST(:v AS text)"), {"v": "ZZTest-private-question"})
+    assert "ZZTest-private-question" not in str(ei.value)
+    db.rollback()

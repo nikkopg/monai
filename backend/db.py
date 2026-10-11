@@ -13,7 +13,9 @@ from sqlalchemy.orm import sessionmaker
 from backend.config import DATABASE_URL
 from backend.models import Base  # noqa: F401 — keeps Base importable from db for legacy compat
 
-engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+# hide_parameters: a DBAPIError string would otherwise carry bound values (the
+# user's question and answer text) into any log line that prints it (WR-04).
+engine = create_engine(DATABASE_URL, pool_pre_ping=True, hide_parameters=True)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
