@@ -3,9 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 
 import { tokens, input, btn, btnGhost, btnDark } from "../styles";
-import ProposalDiff from "../components/ProposalDiff";
 import type { DiffRow } from "../components/ProposalDiff";
 import { hhmm } from "../lib/inbox";
+import { errorCopy, CANCEL_TIMEOUT_MS } from "./errors";
+import type { ChatError } from "./errors";
+import ProposalCard, { saveProposalToken, toProposal } from "./ProposalCard";
+import type { Proposal, ServerProposal } from "./ProposalCard";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -16,322 +19,6 @@ type TraceStep = {
   args: Record<string, unknown>;
   result: Record<string, unknown>;
 };
-
-// Shape of one entry in the SSE answer event's proposals[] (server contract).
-type ServerProposal = {
-  id: string;
-  token: string;
-  operation?: string | null;
-  payload?: { operation: string; rows: DiffRow[] } | null;
-  expires_at?: string | null;
-};
-
-type Proposal = {
-  id: string;
-  token: string | null;
-  operation: string | null;
-  payload: { operation: string; rows: DiffRow[] } | null;
-  expiresAt: Date | null;
-  rejectedByStop?: boolean;
-};
-
-function toProposal(p: ServerProposal): Proposal {
-  const ms =
-    typeof p.expires_at === "string" && p.expires_at !== ""
-      ? Date.parse(p.expires_at)
-      : NaN;
-  return {
-    id: p.id,
-    token: p.token,
-    operation: p.operation ?? null,
-    payload: p.payload ?? null,
-    expiresAt: Number.isNaN(ms) ? null : new Date(ms),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// ProposalCard — inline card with before→after diff + Approve/Reject + expiry
-// (D-01, D-02, D-03, D-10). v1.1 "paper" redesign: green-accented card.
-// ---------------------------------------------------------------------------
-
-function ProposalCard({
-  proposal,
-  onApplied,
-  onRejected,
-}: {
-  proposal: Proposal;
-  onApplied: () => void;
-  onRejected: () => void;
-}) {
-  const [status, setStatus] = useState<"pending" | "applied" | "rejected">(
-    "pending"
-  );
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [now, setNow] = useState(new Date());
-
-  // Tick every 10 s to update expiry display
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 10_000);
-    return () => clearInterval(id);
-  }, []);
-
-  const expiresAt = proposal.expiresAt;
-  const expired = expiresAt !== null && now > expiresAt;
-  const rows = proposal.payload?.rows ?? [];
-  const unapprovableReason: string | null =
-    rows.length === 0
-      ? "Nothing to review: this proposal has no details, so it can't be approved. Reject it and ask again."
-      : expiresAt === null
-      ? "No expiry came with this proposal, so it can't be approved. Reject it and ask again."
-      : null;
-  const effectiveStatus = proposal.rejectedByStop ? "rejected" : status;
-  const noticeId = `unapprovable-${proposal.id}`;
-  const rejectDisabled = busy || effectiveStatus !== "pending" || expired;
-  const approveDisabled =
-    rejectDisabled || unapprovableReason !== null || !proposal.token;
-  const remMs = expiresAt ? expiresAt.getTime() - now.getTime() : 0;
-
-  const cardStyle: React.CSSProperties = {
-    background: tokens.color.card,
-    border: `1px solid ${
-      effectiveStatus === "applied"
-        ? tokens.color.green
-        : effectiveStatus === "rejected"
-        ? tokens.color.border2
-        : "#cfe0d6"
-    }`,
-    borderLeft: `3px solid ${
-      effectiveStatus === "rejected" ? tokens.color.terracotta : tokens.color.green
-    }`,
-    borderRadius: 14,
-    padding: "18px 20px",
-    marginTop: 16,
-    marginBottom: 26,
-    opacity: expired && effectiveStatus === "pending" ? 0.6 : 1,
-  };
-
-  async function handleApprove() {
-    setBusy(true);
-    setError(null);
-    try {
-      const r = await fetch(`/api/proposals/${proposal.id}/confirm`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: proposal.token }),
-      });
-      if (r.ok) {
-        setStatus("applied");
-        onApplied();
-      } else {
-        const d = await r.json().catch(() => ({}));
-        if (r.status === 410) {
-          setError("Expired — ask again to redo this");
-        } else {
-          setError(d.detail || `Error ${r.status}`);
-        }
-      }
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Network error");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleReject() {
-    setBusy(true);
-    setError(null);
-    try {
-      const r = await fetch(`/api/proposals/${proposal.id}/reject`, {
-        method: "POST",
-      });
-      if (r.ok) {
-        setStatus("rejected");
-        onRejected();
-      } else {
-        const d = await r.json().catch(() => ({}));
-        setError(d.detail || `Error ${r.status}`);
-      }
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Network error");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const small: React.CSSProperties = {
-    color: tokens.color.muted3,
-    fontSize: 14,
-    lineHeight: 1.5,
-  };
-
-  return (
-    <div style={cardStyle}>
-      <div
-        style={{
-          fontSize: 11,
-          letterSpacing: ".1em",
-          textTransform: "uppercase",
-          color: tokens.color.green,
-          fontWeight: 700,
-          marginBottom: 10,
-        }}
-      >
-        Proposed {(proposal.operation ?? "write").replace(/_/g, " ")}
-      </div>
-
-      {rows.length > 0 && <ProposalDiff rows={rows} />}
-
-      {effectiveStatus === "pending" && unapprovableReason && (
-        <div id={noticeId} style={{ ...small, marginTop: 8 }}>
-          {unapprovableReason}
-        </div>
-      )}
-      {expired && effectiveStatus === "pending" && (
-        <div style={{ ...small, marginTop: 10 }}>
-          Expired — ask again to redo this
-        </div>
-      )}
-      {effectiveStatus === "applied" && (
-        <div style={{ color: tokens.color.green, fontSize: 14, marginTop: 10 }}>
-          Applied successfully.
-        </div>
-      )}
-      {effectiveStatus === "rejected" && (
-        <div style={{ ...small, marginTop: 10 }}>
-          {proposal.rejectedByStop
-            ? "Rejected — the run was stopped. No changes made."
-            : "Rejected — no changes made."}
-        </div>
-      )}
-      {error && (
-        <div
-          style={{ color: tokens.color.terracotta, fontSize: 12, marginTop: 8 }}
-        >
-          {error}
-        </div>
-      )}
-
-      {effectiveStatus === "pending" && (
-        <div
-          style={{ display: "flex", gap: 10, marginTop: 16, alignItems: "center" }}
-        >
-          <button
-            style={{
-              ...btn,
-              opacity: approveDisabled ? 0.5 : 1,
-              cursor: approveDisabled ? "not-allowed" : "pointer",
-            }}
-            onClick={handleApprove}
-            disabled={approveDisabled}
-            aria-describedby={unapprovableReason ? noticeId : undefined}
-          >
-            {busy ? "…" : "Approve"}
-          </button>
-          <button
-            style={{
-              ...btnGhost,
-              cursor: rejectDisabled ? "not-allowed" : "pointer",
-            }}
-            onClick={handleReject}
-            disabled={rejectDisabled}
-          >
-            {busy ? "…" : "Reject"}
-          </button>
-          {!expired && expiresAt && (
-            <span
-              style={{
-                marginLeft: "auto",
-                fontSize: 12,
-                color: tokens.color.muted3,
-              }}
-            >
-              expires {hhmm(expiresAt.getTime())} · in{" "}
-              {remMs < 60000 ? "under 1" : Math.floor(remMs / 60000)} min
-            </span>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Error copy (34-UI-SPEC §2). Only these fixed strings are ever rendered for a
-// failure; response `detail` and exception text never reach the DOM (D-02).
-// ---------------------------------------------------------------------------
-
-const ERROR_COPY: Record<string, { title: string; body: string }> = {
-  rate_limit: {
-    title: "The model is rate-limited",
-    body: "The provider asked monai to slow down. Wait a few seconds, then retry. Nothing was changed.",
-  },
-  provider_unavailable: {
-    title: "The model provider is having trouble",
-    body: "The provider returned a server error. Retry in a moment. Nothing was changed.",
-  },
-  timeout: {
-    title: "The model took too long to answer",
-    body: "The provider did not respond in time. Retry, or ask a narrower question. Nothing was changed.",
-  },
-  idle_timeout: {
-    title: "The answer stalled",
-    body: "No activity, so monai ended the run. Nothing was changed.",
-  },
-  auth: {
-    title: "The model rejected monai's credentials",
-    body: "The provider key is missing or invalid. Fix the key in the server settings, then retry.",
-  },
-  connection: {
-    title: "monai can't reach the model",
-    body: "The connection to the model provider failed. If you use Ollama, check that it is running, then retry.",
-  },
-  empty: {
-    title: "The model returned no answer",
-    body: "It replied with nothing and ran no tools. Retry or rephrase the question.",
-  },
-  stream_ended: {
-    title: "The answer stopped early",
-    body: "The connection closed before the answer finished. Nothing was changed.",
-  },
-  conflict: {
-    title: "Another answer is already running",
-    body: "This conversation already has a run in progress, possibly in another tab. Wait for it to finish, then ask again.",
-  },
-  unauthorized: {
-    title: "Chat isn't authorized",
-    body: "monai has no API key configured for this page. Set the server key, reload, and ask again.",
-  },
-  unknown: {
-    title: "Something went wrong",
-    body: "monai hit an unexpected error. Nothing was changed. Retry, and if it keeps happening check the server log.",
-  },
-};
-
-// Upper bound on the Stop cancel request (WR-02).
-const CANCEL_TIMEOUT_MS = 10_000;
-
-const TRANSPORT_BODY =
-  "The connection to monai failed. Check that the server is running, then retry.";
-
-type ChatError = {
-  code: string;
-  model: string | null;
-  idleSeconds: number | null;
-  transport?: boolean;
-};
-
-function errorCopy(err: ChatError): { title: string; body: string } {
-  const c = ERROR_COPY[err.code] ?? ERROR_COPY.unknown;
-  if (err.transport) return { title: c.title, body: TRANSPORT_BODY };
-  if (err.code === "idle_timeout" && err.idleSeconds !== null) {
-    return {
-      title: c.title,
-      body: `No activity for ${Math.round(err.idleSeconds)} seconds, so monai ended the run. Nothing was changed.`,
-    };
-  }
-  return c;
-}
 
 // ---------------------------------------------------------------------------
 // Chat page — v1.1 "paper" redesign. Same single-turn SSE flow
@@ -357,6 +44,11 @@ export default function ChatPage() {
     name: string | null;
     provider: string | null;
   } | null>(null);
+
+  // D-17: a delivered single-use token is kept for this tab only.
+  function keepTokens(ps?: ServerProposal[]) {
+    for (const p of ps ?? []) if (p.token) saveProposalToken(p.id, p.token);
+  }
 
   const busyRef = useRef(false); // synchronous double-submit guard
   const abortRef = useRef<AbortController | null>(null);
@@ -486,6 +178,7 @@ export default function ChatPage() {
             }
             setModel({ name: msg.model ?? null, provider: msg.provider ?? null });
             setProposals((msg.proposals ?? []).map(toProposal));
+            keepTokens(msg.proposals);
           } else if (msg.type === "error") {
             fail({
               code: msg.code ?? "unknown",
@@ -495,6 +188,7 @@ export default function ChatPage() {
             });
             // Proposals created before the failure stay actionable (D-05).
             setProposals((msg.proposals ?? []).map(toProposal));
+            keepTokens(msg.proposals);
           }
         }
       }
