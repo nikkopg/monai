@@ -140,6 +140,20 @@ def test_409_delete_while_running(env):
     assert client.delete(f"/threads/{tid}", headers=h).status_code == 404
 
 
+def test_delete_purges_last_run_buffer(env):
+    """WR-07: a deleted thread's finished run is no longer replayable or stoppable."""
+    client, h, created = env
+    tid = _mk(created)
+    run = q.Run(key=str(tid))
+    q.push(run, q._sse({"type": "answer", "text": "ZZTest private", "trace": [], "proposals": []}))
+    q.push(run, q._DONE)
+    run.done = True
+    q._LAST[str(tid)] = run
+    assert client.delete(f"/threads/{tid}", headers=h).status_code == 204
+    assert str(tid) not in q._LAST and q.find_run(run.id) is None
+    assert client.get(f"/threads/{tid}/stream", headers=h).status_code == 204
+
+
 def test_delete_keeps_proposal_row(env):
     client, h, created = env
     tid = _mk(created)

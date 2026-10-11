@@ -1610,6 +1610,7 @@ async def delete_thread(thread_id: uuid.UUID):
         raise HTTPException(409, "A run is in progress for this thread; stop it first")
     if not await asyncio.to_thread(_delete_thread_sync, thread_id):
         raise HTTPException(404, "Thread not found")
+    query._LAST.pop(str(thread_id), None)  # WR-07: drop the deleted thread's replay buffer
     return Response(status_code=204)
 
 
