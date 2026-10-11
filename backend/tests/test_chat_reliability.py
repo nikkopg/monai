@@ -32,244 +32,29 @@ import asyncio
 import datetime
 import json
 import logging
-import secrets
 import time
 
 import pytest
-from llama_index.core.agent.workflow import AgentWorkflow, FunctionAgent
-from llama_index.core.base.llms.types import TextBlock, ToolCallBlock
-from llama_index.core.llms import (
-    ChatMessage,
-    ChatResponse,
-    LLMMetadata,
-    MockFunctionCallingLLM,
-)
-from llama_index.core.llms.llm import ToolSelection
-from llama_index.core.tools import FunctionTool
 from sqlalchemy import text
 
-
-class Err429(Exception):
-    """Synthetic provider rate-limit error (duck-typed status_code)."""
-
-    status_code = 429
-
-
-def _resp(content: str, delta: str) -> ChatResponse:
-    return ChatResponse(
-        message=ChatMessage(role="assistant", content=content), delta=delta
-    )
-
-
-class StubLLM(MockFunctionCallingLLM):
-    """Scripted function-calling LLM. `mode` picks the behaviour."""
-
-    mode: str = "ok"
-    model: str = "example-model:7b"
-    calls: int = 0
-    final_text: str = "Hello"
-    drip_count: int = 5
-    drip_gap: float = 0.2
-
-    @property
-    def metadata(self):
-        return LLMMetadata(is_function_calling_model=True, is_chat_model=True)
-
-    async def astream_chat_with_tools(
-        self, tools, user_msg=None, chat_history=None, **kw
-    ):
-        self.calls += 1
-        n = self.calls
-        mode = self.mode
-        text_ = self.final_text
-
-        async def final():
-            if text_ == "":
-                yield _resp("", "")
-                return
-            half = max(1, len(text_) // 2)
-            yield _resp(text_[:half], text_[:half])
-            yield _resp(text_, text_[half:])
-
-        async def tool_turn():
-            yield _resp("let me check", "let me check")
-            yield ChatResponse(
-                message=ChatMessage(
-                    role="assistant",
-                    blocks=[
-                        TextBlock(text="let me check"),
-                        ToolCallBlock(
-                            tool_name="seed_proposal",
-                            tool_kwargs={},
-                            tool_call_id="c1",
-                        ),
-                    ],
-                ),
-                delta="",
-            )
-
-        async def gen():
-            if mode == "429":
-                raise Err429("rate limited SECRET-sk-synthetic")
-            if mode == "hang":
-                yield _resp("par", "par")
-                await asyncio.sleep(3600)
-            elif mode == "empty":
-                yield _resp("", "")
-            elif mode == "drip":
-                acc = ""
-                for i in range(self.drip_count):
-                    if i:
-                        await asyncio.sleep(self.drip_gap)
-                    acc += "x"
-                    yield _resp(acc, "x")
-                async for r in final():
-                    yield r
-            elif mode in ("tool", "tool_then_429", "tool_then_hang"):
-                if n == 1:
-                    async for r in tool_turn():
-                        yield r
-                elif mode == "tool_then_429":
-                    raise Err429("rate limited SECRET-sk-synthetic")
-                elif mode == "tool_then_hang":
-                    yield _resp("par", "par")
-                    await asyncio.sleep(3600)
-                else:
-                    async for r in final():
-                        yield r
-            else:
-                async for r in final():
-                    yield r
-
-        return gen()
-
-    def get_tool_calls_from_response(
-        self, response, error_on_no_tool_call=True, **kw
-    ):
-        out = []
-        for b in response.message.blocks:
-            if isinstance(b, ToolCallBlock):
-                out.append(
-                    ToolSelection(
-                        tool_id=b.tool_call_id or "c1",
-                        tool_name=b.tool_name,
-                        tool_kwargs=b.tool_kwargs
-                        if isinstance(b.tool_kwargs, dict)
-                        else {},
-                    )
-                )
-        return out
-
-
-# ---------------------------------------------------------------------------
-# Proposal seeding
-# ---------------------------------------------------------------------------
-
-_SEEDED: list = []
-
-_DEFAULT_ROWS = [
-    {
-        "before": None,
-        "after": {
-            "date": "2020-01-01",
-            "amount": "-12345.00",
-            "merchant": "Example Merchant",
-            "account": "Account A",
-        },
-    }
-]
-
-
-def _seed_proposal(*, channel="chat", rows=None) -> tuple[str, str]:
-    from backend.db import SessionLocal
-    from backend.models import Proposal
-
-    rows = _DEFAULT_ROWS if rows is None else rows
-    token = secrets.token_urlsafe(32)
-    db = SessionLocal()
-    try:
-        p = Proposal(
-            token=token,
-            operation="add_transaction",
-            payload={"operation": "add_transaction", "rows": rows},
-            status="pending",
-            channel=channel,
-            expires_at=datetime.datetime.now(datetime.timezone.utc)
-            + datetime.timedelta(minutes=15),
-        )
-        db.add(p)
-        db.commit()
-        _SEEDED.append(p.id)
-        return str(p.id), token
-    finally:
-        db.close()
+from backend.tests.chat_stubs import (
+    Err429,
+    StubLLM,
+    _DEFAULT_ROWS,
+    _SEEDED,
+    _collect,
+    _install_stub_workflow,
+    _of_type,
+    _payloads,
+    _seed_proposal,
+    purge_seeded,
+)
 
 
 @pytest.fixture(autouse=True)
 def _cleanup_seeded():
     yield
-    if not _SEEDED:
-        return
-    from backend.db import SessionLocal
-
-    db = SessionLocal()
-    try:
-        for i in _SEEDED:
-            db.execute(text("DELETE FROM proposals WHERE id = :i"), {"i": i})
-        db.commit()
-    finally:
-        db.close()
-        _SEEDED.clear()
-
-
-def seed_proposal() -> dict:
-    """Create a synthetic pending proposal."""
-    pid, token = _seed_proposal()
-    return {
-        "tool": "seed_proposal",
-        "proposal_id": pid,
-        "proposal_token": token,
-        "summary": "synthetic",
-    }
-
-
-# ---------------------------------------------------------------------------
-# Harness helpers
-# ---------------------------------------------------------------------------
-
-
-def _install_stub_workflow(monkeypatch, llm, *, timeout=30.0):
-    import backend.query as query_mod
-
-    agent = FunctionAgent(
-        tools=[FunctionTool.from_defaults(fn=seed_proposal, name="seed_proposal")],
-        llm=llm,
-        system_prompt="synthetic",
-    )
-    workflow = AgentWorkflow(agents=[agent], timeout=timeout)
-    monkeypatch.setattr(query_mod, "_agent_workflow", workflow)
-    monkeypatch.setattr(query_mod, "_agent_workflow_date", query_mod._today())
-    return workflow
-
-
-async def _collect(gen) -> list[str]:
-    return [line async for line in gen]
-
-
-def _payloads(lines: list[str]) -> list[dict]:
-    out = []
-    for line in lines:
-        if not line.startswith("data: "):
-            continue
-        raw = line[len("data: "):].strip()
-        if raw == "[DONE]":
-            continue
-        out.append(json.loads(raw))
-    return out
-
-
-def _of_type(payloads: list[dict], t: str) -> list[dict]:
-    return [p for p in payloads if p.get("type") == t]
+    purge_seeded()
 
 
 # ---------------------------------------------------------------------------
