@@ -211,3 +211,52 @@ def test_017_constraints_cascade_and_set_null(scratch_url):
         assert p == (None, turn_id)
     finally:
         engine.dispose()
+
+
+# --- model parity (conftest's monai_test, already migrated to head) ---------
+
+
+def test_models_match_017_columns():
+    from backend.db import engine
+    from backend.models import Message, Proposal, Thread
+
+    with engine.connect() as c:
+        for model in (Thread, Message, Proposal):
+            table = model.__table__.name
+            db_cols = {
+                r[0]
+                for r in c.execute(
+                    text("SELECT column_name FROM information_schema.columns WHERE table_name=:t"),
+                    {"t": table},
+                )
+            }
+            assert set(model.__table__.columns.keys()) == db_cols, table
+
+
+def test_orm_thread_delete_cascades():
+    from backend.db import SessionLocal
+    from backend.models import Message, Thread
+
+    with SessionLocal() as db:
+        thread = Thread(title="ZZ017 orm")
+        thread.messages = [
+            Message(seq=1, role="user", content="ZZ017 q"),
+            Message(seq=2, role="assistant"),
+        ]
+        db.add(thread)
+        db.commit()
+        tid = thread.id
+        try:
+            db.refresh(thread)
+            assert [m.status for m in thread.messages] == ["complete", "complete"]
+            assert thread.messages[1].parts == {}
+            db.delete(thread)
+            db.commit()
+            left = db.execute(
+                text("SELECT count(*) FROM messages WHERE thread_id=:i"), {"i": tid}
+            ).scalar()
+            assert left == 0
+        finally:
+            db.rollback()
+            db.execute(text("DELETE FROM threads WHERE id=:i"), {"i": tid})
+            db.commit()

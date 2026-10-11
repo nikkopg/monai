@@ -186,6 +186,9 @@ class Proposal(Base):
     the actual high-entropy confirm secret (D-11). Tokens are single-use
     and operation-scoped (enforced in Phase 2). `channel`, `supersedes_id`,
     `code`, `failed_attempts` and `status_changed_at` come from migration 015.
+    `turn_id` (the chat turn that created it, set from a ContextVar, D-12a) and
+    `message_id` (back-filled when the turn's assistant message is persisted)
+    come from migration 017; deleting a thread leaves the proposal row.
     """
 
     __tablename__ = "proposals"
@@ -224,6 +227,76 @@ class Proposal(Base):
     status_changed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default="now()", nullable=False
     )
+    turn_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class Thread(Base):
+    """One chat conversation (migration 017).
+
+    `summary` / `summary_upto_seq` are reserved for Phase 38 compaction and
+    unused until then. Deleting a thread cascades to its messages in the DB;
+    proposals survive (their message_id goes NULL).
+    """
+
+    __tablename__ = "threads"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    title: Mapped[str] = mapped_column(Text, server_default="", nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_upto_seq: Mapped[int] = mapped_column(
+        Integer, server_default="0", nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
+    )
+
+    messages: Mapped[list["Message"]] = relationship(
+        back_populates="thread",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="Message.seq",
+    )
+
+
+class Message(Base):
+    """One turn in a thread (migration 017): role user|assistant, status
+    complete|error|cancelled (CHECK-enforced), unique (thread_id, seq)."""
+
+    __tablename__ = "messages"
+    __table_args__ = (UniqueConstraint("thread_id", "seq", name="uq_messages_thread_seq"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("threads.id", ondelete="CASCADE"), nullable=False
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[str] = mapped_column(Text, server_default="", nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), server_default="complete", nullable=False
+    )
+    # Never holds a proposal token or a tool result (D-11), and never a Decimal:
+    # JSON round-trip before insert (AuditLog hits the same serialisation limit).
+    parts: Mapped[dict] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
+    )
+
+    thread: Mapped["Thread"] = relationship(back_populates="messages")
 
 
 class Holding(Base):
