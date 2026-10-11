@@ -114,3 +114,38 @@ def test_budget_zero_and_empty():
     msgs = [_msg("user", "q"), _msg("assistant", "a")]
     assert build_history(msgs, 0, TODAY) == []
     assert build_history([], 6000, TODAY) == []
+
+
+def _drain(gen):
+    import asyncio
+
+    async def go():
+        return [line async for line in gen]
+
+    return asyncio.run(go())
+
+
+def test_agent_stream_passes_history_only_when_given(monkeypatch):
+    from unittest.mock import MagicMock
+
+    from llama_index.core.llms import ChatMessage
+
+    import backend.query as query
+
+    wf = MagicMock()
+    wf.run.side_effect = RuntimeError("synthetic")
+    monkeypatch.setattr(query, "_agent_workflow", wf)
+    monkeypatch.setattr(query, "_agent_workflow_date", query._today())
+
+    hist = [ChatMessage(role=MessageRole.USER, content="x")]
+    _drain(query.agent_stream("q", history=hist))
+    assert wf.run.call_args.kwargs["chat_history"] is hist
+    _drain(query.agent_stream("q"))
+    assert "chat_history" not in wf.run.call_args.kwargs
+
+
+def test_system_prompt_has_history_rules():
+    from backend.query import _SYSTEM_PROMPT
+
+    for needle in ("relative to that message's date", "in this turn", "[tools used: ...]"):
+        assert needle in _SYSTEM_PROMPT

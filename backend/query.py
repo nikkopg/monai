@@ -105,6 +105,14 @@ will refuse and return an error — relay that refusal honestly: explain the dep
 and suggest the user reassign or remove those transactions first.
 9. Never add an approval or declination tool — the user acts on proposals through the \
 HTTP endpoint in the UI, not through the agent.
+10. Earlier messages in this conversation start with the date they were sent, in square \
+brackets. A relative period in an earlier message ("last month", "this week") is relative to \
+that message's date, not to TODAY.
+11. Every figure in your answer must come from a tool call made in this turn. Never repeat or \
+reuse a number from an earlier answer: call the tool again, and use compare_periods for any \
+difference between periods.
+12. Never write the date stamps or the "[tools used: ...]" lines in your answer; they are \
+context, not output.
 """.strip()
 
 
@@ -350,9 +358,14 @@ async def agent_stream(
     run: Run | None = None,
     idle_timeout: float | None = None,
     ping_interval: float = 15.0,
+    history: list | None = None,
 ):
     """
     Async generator that drives the agent workflow and yields SSE lines.
+
+    `history`: prior turns as ChatMessages built by
+    backend.chat_history.build_history; passed to the workflow as chat_history
+    only when non-empty.
 
     A producer task consumes the workflow's events into one asyncio.Queue and
     this generator only serializes the queue (D-13). `run`, when given, gets
@@ -392,7 +405,10 @@ async def agent_stream(
     try:
         workflow = _get_agent_workflow()
         model, provider = _llm_label(workflow)
-        handler = workflow.run(user_msg=question, max_iterations=10)
+        if history:
+            handler = workflow.run(user_msg=question, chat_history=history, max_iterations=10)
+        else:
+            handler = workflow.run(user_msg=question, max_iterations=10)
     except Exception as e:
         _log_failure(e)
         yield _error_event(classify_error(e), model, provider, None)
