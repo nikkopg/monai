@@ -63,6 +63,16 @@ export function useChatStream() {
   const runIdRef = useRef<string | null>(null);
   const stoppedRef = useRef(false);
   const genRef = useRef(0);
+  // WR-01: set while a Stop that beat the `run` event waits for it. The stream
+  // stays open (events still delivered) until the run id is known, so the cancel
+  // route can halt the server run, and until the `thread` event, so a new
+  // thread is not lost. A disconnect alone only detaches (D-06).
+  const holdRef = useRef<{ onRun: (id: string | null) => void } | null>(null);
+
+  function releaseHold() {
+    holdRef.current = null;
+    abortRef.current?.abort();
+  }
 
   async function open(
     url: string,
@@ -77,8 +87,12 @@ export function useChatStream() {
     const ac = new AbortController();
     abortRef.current = ac;
     const wrapped = (m: SseMessage) => {
-      if (m.type === "run" && typeof m.run_id === "string") runIdRef.current = m.run_id;
+      if (m.type === "run" && typeof m.run_id === "string") {
+        runIdRef.current = m.run_id;
+        holdRef.current?.onRun(m.run_id);
+      }
       onEvent(m);
+      if (m.type === "thread" && holdRef.current) releaseHold();
     };
     const settle = (kind: "done" | "ended" | "error"): StreamOutcome =>
       stale() ? { kind: "stale" } : stoppedRef.current ? { kind: "stopped" } : { kind };
@@ -87,13 +101,15 @@ export function useChatStream() {
       if (allowNone && resp.status === 204) return stale() ? { kind: "stale" } : { kind: "none" };
       // Never read or show `detail` (D-02): the caller maps the status alone.
       if (!resp.ok || !resp.body) return stale() ? { kind: "stale" } : { kind: "status", status: resp.status };
-      const r = await readSse(resp, wrapped, () => stoppedRef.current || stale());
+      const r = await readSse(resp, wrapped, () => (stoppedRef.current && !holdRef.current) || stale());
       return settle(r);
     } catch {
       return settle("error");
     } finally {
       // Only the invocation that still owns the shared refs may clear them.
       if (!stale()) {
+        holdRef.current?.onRun(null); // the stream ended before the run event
+        holdRef.current = null;
         abortRef.current = null;
         busyRef.current = false;
       }
@@ -129,7 +145,21 @@ export function useChatStream() {
   async function stop(): Promise<string[] | null> {
     if (stoppedRef.current) return null;
     stoppedRef.current = true;
-    const runId = runIdRef.current;
+    let runId = runIdRef.current;
+    if (!runId && abortRef.current) {
+      runId = await new Promise<string | null>((resolve) => {
+        const t = setTimeout(() => {
+          releaseHold();
+          resolve(null);
+        }, CANCEL_TIMEOUT_MS);
+        holdRef.current = {
+          onRun: (id) => {
+            clearTimeout(t);
+            resolve(id);
+          },
+        };
+      });
+    }
     // Bounded: a hung DB behind the cancel route must not pin "Stopping…" for ever.
     const cancelAc = new AbortController();
     const cancelTimer = setTimeout(() => cancelAc.abort(), CANCEL_TIMEOUT_MS);
@@ -143,7 +173,7 @@ export function useChatStream() {
           .catch(() => [])
           .finally(() => clearTimeout(cancelTimer))
       : Promise.resolve([]);
-    abortRef.current?.abort();
+    if (!holdRef.current) abortRef.current?.abort(); // else released on the `thread` event
     return cancel;
   }
 
@@ -151,6 +181,8 @@ export function useChatStream() {
   // the run keeps going on the server.
   function detach() {
     genRef.current++;
+    holdRef.current?.onRun(null);
+    holdRef.current = null;
     abortRef.current?.abort();
     abortRef.current = null;
     busyRef.current = false;

@@ -386,6 +386,44 @@ test.describe("chat stream reliability (REL-01/02/03/05/06/09)", () => {
     await expect(page.getByRole("button", { name: "Ask", exact: true })).toBeVisible();
   });
 
+  test("Stop before the run event still cancels the server run (WR-01)", async ({ page }) => {
+    await page.addInitScript(
+      ({ RUN }) => {
+        const real = window.fetch.bind(window);
+        const enc = new TextEncoder();
+        const evt = (e: unknown) => enc.encode(`data: ${JSON.stringify(e)}\n\n`);
+        window.fetch = (url: RequestInfo | URL, init?: RequestInit) => {
+          if (!String(url).endsWith("/api/query-stream")) return real(url, init);
+          const stream = new ReadableStream({
+            start(c) {
+              // The test releases the first events only after Stop was clicked.
+              (window as unknown as { __emit: () => void }).__emit = () => {
+                c.enqueue(evt({ type: "run", run_id: RUN }));
+                c.enqueue(evt({ type: "thread", thread_id: "00000000-0000-4000-8000-0000000000c3" }));
+              };
+              init?.signal?.addEventListener("abort", () => c.close());
+            },
+          });
+          return Promise.resolve(
+            new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } })
+          );
+        };
+      },
+      { RUN }
+    );
+    await page.route(/\/api\/query-stream\/[^/]+\/cancel$/, (route) =>
+      route.fulfill({ json: { rejected: [] } })
+    );
+    await page.goto("/chat");
+    await input(page).fill(QUESTION);
+    await input(page).press("Enter");
+    await page.getByRole("button", { name: "Stop" }).click();
+    const cancel = page.waitForRequest(new RegExp(`/api/query-stream/${RUN}/cancel$`));
+    await page.evaluate(() => (window as unknown as { __emit: () => void }).__emit());
+    await cancel;
+    await expect(page.getByText(/^Stopped\. No answer was kept\./)).toBeVisible();
+  });
+
   test("Stop after a terminal event clears the answer", async ({ page }) => {
     await page.addInitScript(
       ({ RUN }) => {
