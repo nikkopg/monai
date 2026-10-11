@@ -23,7 +23,7 @@ import logging
 import uuid
 
 import anyio
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select, text, update
 
 from backend import config, query, tools
 from backend.chat_history import build_history
@@ -211,3 +211,109 @@ async def _pump(run: query.Run, question: str, history: list | None) -> None:
             except Exception as e:  # a persistence failure must never keep the slot
                 logger.warning("chat persist failed: %s: %s", type(e).__name__, e)
             await query.finish_run(run)  # sweep if stopped, [DONE], release (D-05a)
+
+
+# ---------------------------------------------------------------------------
+# Thread data helpers (the routes in 36-06 call these)
+# ---------------------------------------------------------------------------
+
+
+def _thread_row(t: Thread) -> dict:
+    return {"id": t.id, "title": t.title, "updated_at": t.updated_at}
+
+
+def list_threads(db, limit: int = 200) -> list[dict]:
+    rows = db.execute(select(Thread).order_by(Thread.updated_at.desc()).limit(limit)).scalars()
+    return [_thread_row(t) for t in rows]
+
+
+def thread_detail(db, thread_id: uuid.UUID) -> dict | None:
+    """Thread with its messages; each referenced proposal joined live (D-16).
+
+    Proposal entries are built field by field: the row also holds `token` and
+    `code`, which must never leave the server here (T-02-07).
+    """
+    expire_stale(db)  # lazy expiry so a stale pending card reads expired
+    t = db.get(Thread, thread_id)
+    if t is None:
+        return None
+    msgs = list(
+        db.execute(
+            select(Message).where(Message.thread_id == thread_id).order_by(Message.seq)
+        ).scalars()
+    )
+    wanted: set[uuid.UUID] = set()
+    for m in msgs:
+        for p in (m.parts or {}).get("proposals", []):
+            try:
+                wanted.add(uuid.UUID(p["id"]))
+            except (ValueError, KeyError, TypeError):
+                pass
+    live = {
+        r.id: r
+        for r in (
+            db.execute(select(Proposal).where(Proposal.id.in_(wanted))).scalars() if wanted else []
+        )
+    }
+    out = []
+    for m in msgs:
+        parts = dict(m.parts or {})
+        entries = []
+        for p in parts.get("proposals", []):
+            try:
+                row = live.get(uuid.UUID(p["id"]))
+            except (ValueError, TypeError):
+                row = None
+            if row is None:
+                entries.append(
+                    {"id": p.get("id"), "operation": p.get("operation"), "payload": None,
+                     "status": "missing", "expires_at": None}
+                )
+            else:
+                entries.append(
+                    {"id": str(row.id), "operation": row.operation, "payload": row.payload,
+                     "status": row.status, "expires_at": row.expires_at}
+                )
+        parts["proposals"] = entries
+        out.append(
+            {"id": m.id, "seq": m.seq, "role": m.role, "content": m.content,
+             "status": m.status, "created_at": m.created_at, "parts": parts}
+        )
+    return {**_thread_row(t), "messages": out}
+
+
+def rename_thread(db, thread_id: uuid.UUID, title: str) -> dict | None:
+    title = title.strip()
+    if not 1 <= len(title) <= 200:
+        raise ValueError("Title must be 1-200 characters")
+    t = db.get(Thread, thread_id)
+    if t is None:
+        return None
+    t.title = title  # no updated_at bump: only persisted messages do (D-13)
+    db.commit()
+    return _thread_row(t)
+
+
+def delete_thread(db, thread_id: uuid.UUID) -> bool:
+    """Messages cascade in the DB; proposals keep their rows (message_id NULL).
+    The 'run active' 409 check stays in the route."""
+    t = db.get(Thread, thread_id)
+    if t is None:
+        return False
+    db.delete(t)
+    db.commit()
+    return True
+
+
+def mark_cancelled(message_id: uuid.UUID) -> bool:
+    """A Stop that lands after the answer was persisted (within the 34 D-11
+    retention) flips the stored turn so it is never replayed (D-06a)."""
+    with get_session_sync() as db:
+        # Dict form: the proposals status-write grep guard is about proposals only.
+        n = db.execute(
+            update(Message)
+            .where(Message.id == message_id, Message.status == "complete")
+            .values({"status": "cancelled", "content": ""})
+        ).rowcount
+        db.commit()
+        return bool(n)
