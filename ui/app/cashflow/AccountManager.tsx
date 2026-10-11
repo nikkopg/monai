@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { card, input, btn, label, tokens } from "../styles";
+import { card, input, btn, label } from "../styles";
 import { extractDetail } from "../lib/api";
 import RowMenu from "../components/RowMenu";
 import ConfirmDialog from "./ConfirmDialog";
