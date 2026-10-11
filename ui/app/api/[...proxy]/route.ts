@@ -16,9 +16,10 @@
  * prefix bakes the value into the browser bundle. This file must remain a
  * server component (no "use client" directive).
  *
- * SSE passthrough: /query-stream bypasses arrayBuffer() buffering and
- * passes upstream.body (ReadableStream) directly to NextResponse. All
- * other routes use the original buffer path (Pitfall 2 — RESEARCH.md).
+ * SSE passthrough: /query-stream and threads/<uuid>/stream bypass
+ * arrayBuffer() buffering and pass upstream.body (ReadableStream) directly to
+ * NextResponse. All other routes use the buffer path (Pitfall 2 — RESEARCH.md);
+ * a 204/205/304 gets a null body there, since NextResponse throws otherwise.
  */
 
 // Force dynamic rendering — prevents Next.js from statically optimising the
@@ -27,6 +28,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { buildForwardHeaders } from "../../lib/approverAllowlist";
+import { isNullBodyStatus, isStreamPath } from "../../lib/proxyStream";
 
 const BACKEND = process.env.MONAI_API || "http://127.0.0.1:8001";
 const API_KEY = process.env.MONAI_API_KEY || "";
@@ -49,7 +51,7 @@ async function forwardRequest(
   // Determine if this is the SSE streaming endpoint BEFORE reading body or
   // touching arrayBuffer — the isStream flag gates which response path we take.
   // Must be computed here so we can pass upstream.body through without consuming it.
-  const isStream = path === "query-stream";
+  const isStream = isStreamPath(path);
 
   const method = req.method.toUpperCase();
 
@@ -79,8 +81,8 @@ async function forwardRequest(
       body: body !== null ? body : undefined,
       // Do not follow redirects — pass them through to the client
       redirect: "manual",
-      // A browser abort reaches the backend as a disconnect and triggers its
-      // cleanup. Best effort; the cancel route is the deterministic Stop (D-12).
+      // A browser abort ends only this request's subscriber; the backend keeps
+      // the run going (36 D-06). The cancel route is the only Stop (D-12).
       signal: req.signal,
     });
   } catch {
@@ -101,7 +103,9 @@ async function forwardRequest(
   }
 
   // Non-streaming: original buffer path (all other routes unchanged)
-  const responseBody = await upstream.arrayBuffer();
+  const responseBody = isNullBodyStatus(upstream.status)
+    ? null
+    : await upstream.arrayBuffer();
   const responseHeaders = new Headers(upstream.headers);
 
   return new NextResponse(responseBody, {
