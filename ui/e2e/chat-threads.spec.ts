@@ -373,6 +373,13 @@ test.describe("thread sidebar (THRD-02, D-20)", () => {
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByRole("button", { name: "Delete chat" })).toBeVisible();
     await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+    // WR-09: Tab wraps inside the dialog in both directions.
+    await page.keyboard.press("Tab");
+    await expect(dialog.getByRole("button", { name: "Delete chat" })).toBeFocused();
+    await page.keyboard.press("Tab");
+    await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(dialog.getByRole("button", { name: "Delete chat" })).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
 
