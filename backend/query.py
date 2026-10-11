@@ -625,12 +625,14 @@ def reject_run_proposals(run: Run) -> list[str]:
     """Reject the run's still-pending CHAT proposals; return every rejected id.
 
     Mirrors POST /proposals/{id}/reject: SELECT ... FOR UPDATE, chat channel
-    only, transition, commit, no audit row (D-08). The created-since-start
-    sweep also catches a propose tool that finished in its executor thread
-    after the cancel (D-08a); that is safe because there is one run per
-    conversation. MCP-channel rows are never touched. Already-rejected rows are
-    reported too, so a cancel racing a disconnect cleanup still answers with
-    the full set (Pitfall 2).
+    only, transition, commit, no audit row (D-08). Rows are matched by
+    recorded id or by turn id (the run id, stamped by tools.CURRENT_TURN_ID, so
+    it also catches a propose tool that finished in its executor thread after
+    the cancel, D-08a). The created-since-start sweep is only a fallback for
+    legacy rows without a turn id: runs are per thread, so an unrestricted
+    sweep would reject another thread's proposals (Pitfall 7). MCP-channel rows
+    are never touched. Already-rejected rows are reported too, so a cancel
+    racing an earlier sweep still answers with the full set (Pitfall 2).
     """
     from sqlalchemy import and_, or_, select
 
@@ -649,7 +651,12 @@ def reject_run_proposals(run: Run) -> list[str]:
             select(Proposal)
             .where(or_(
                 Proposal.id.in_(ids),
-                and_(Proposal.channel == "chat", Proposal.created_at >= run.started_at),
+                Proposal.turn_id == uuid.UUID(run.id),
+                and_(
+                    Proposal.turn_id.is_(None),
+                    Proposal.channel == "chat",
+                    Proposal.created_at >= run.started_at,
+                ),
             ))
             .order_by(Proposal.id)  # fixed lock order: Stop and disconnect cannot deadlock
             .with_for_update()

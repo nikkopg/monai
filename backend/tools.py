@@ -17,6 +17,7 @@ mutate target tables (transactions, accounts, holdings). The confirm endpoint in
 main.py applies the write atomically when the user approves.
 """
 
+import contextvars
 import datetime
 import re
 import secrets
@@ -1014,6 +1015,15 @@ def _new_code() -> str:
     return "".join(secrets.choice(_CROCKFORD) for _ in range(6))
 
 
+# Turn id of the chat run currently driving the agent. The chat pump sets it
+# per turn; asyncio.create_task and LlamaIndex's FunctionTool executor
+# (copy_context + run_in_executor) carry it into tool threads, so no tool
+# gains a parameter and the LLM / MCP tool schemas are unchanged (D-12a).
+CURRENT_TURN_ID: contextvars.ContextVar[uuid.UUID | None] = contextvars.ContextVar(
+    "current_turn_id", default=None
+)
+
+
 def _make_proposal(
     operation: str,
     payload: dict,
@@ -1031,7 +1041,9 @@ def _make_proposal(
     ValueError before any insert.
 
     mcp proposals also get a 6-character confirm code, stored plaintext (shown
-    only to approver-key readers); chat proposals keep code NULL. Callers on the
+    only to approver-key readers); chat proposals keep code NULL. Chat proposals
+    are stamped with `turn_id` from CURRENT_TURN_ID (NULL when unset; mcp rows
+    never carry one) so Stop can reject exactly one turn's rows. Callers on the
     MCP path must discard the returned token. With `db=` the row is added and
     flushed in the caller's transaction and NOT committed (used by MCP replace).
     """
@@ -1051,6 +1063,7 @@ def _make_proposal(
             expires_at=expires_at,
             code=_new_code() if channel == "mcp" else None,
             supersedes_id=supersedes_id,
+            turn_id=CURRENT_TURN_ID.get() if channel == "chat" else None,
         )
 
     if db is not None:
