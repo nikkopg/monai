@@ -114,7 +114,10 @@ test.describe("platform CRUD parity (PLAT-02)", () => {
       .filter({ hasText: "Platforms" })
       .locator("tbody tr")
       .first();
-    await binanceRow.getByText("Edit", { exact: true }).click();
+    await page
+      .getByRole("button", { name: "Platform options: Binance", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
     await binanceRow.locator("input").first().fill("Binance Global");
     await binanceRow.getByPlaceholder("e.g. brokerage, crypto app").fill("exchange");
     await binanceRow
@@ -156,10 +159,10 @@ test.describe("platform CRUD parity (PLAT-02)", () => {
     });
 
     await page.goto("/investments");
-    const binanceRow = page
-      .locator("tr", { hasText: "Binance" })
-      .filter({ hasText: "Delete" });
-    await binanceRow.getByText("Delete", { exact: true }).click();
+    await page
+      .getByRole("button", { name: "Platform options: Binance", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
     await expect(
       page.getByText("Delete this platform? This can't be undone.")
     ).toBeVisible();

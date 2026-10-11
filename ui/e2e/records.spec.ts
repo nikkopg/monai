@@ -239,9 +239,9 @@ test.describe("Multi-select + bulk actions (REC-03)", () => {
     await row.locator('input[type="checkbox"]').check();
 
     await expect(page.getByText("1 selected", { exact: true })).toBeVisible();
-    // Row-level Edit/Delete actions are <span role="button">; bulk-bar
-    // actions are real <button> elements — scope by tag to disambiguate
-    // (matches the cashflow-crud.spec.ts idiom).
+    // Row-level Edit/Delete now sit behind each row's ⋯ menu (menuitems exist
+    // only while it is open), so the only real "Delete" <button> on the page is
+    // the bulk bar's.
     await expect(page.locator("button").filter({ hasText: "Recategorize" })).toBeVisible();
     await expect(page.locator("button").filter({ hasText: "Delete" }).first()).toBeVisible();
     await expect(page.getByText("Cancel selection", { exact: true })).toBeVisible();
@@ -322,5 +322,36 @@ test.describe('Pagination — "Load 100 more" (REC-01)', () => {
     await mockRecords(page);
     await page.goto("/records");
     await expect(page.getByRole("button", { name: "Load 100 more" })).toHaveCount(0);
+  });
+});
+
+test.describe("Row options menu (quick 261011-mgj)", () => {
+  test("row options menu opens Edit and Delete", async ({ page }) => {
+    await mockRecords(page);
+    await page.goto("/records");
+    const tx = transactionsFixture().find((t) => t.id === 301)!;
+    const opts = page.getByRole("button", {
+      name: `Record options: ${tx.merchant} on ${tx.date.slice(0, 10)}`,
+      exact: true,
+    });
+
+    await opts.click();
+    await expect(page.getByRole("menuitem")).toHaveText(["Edit", "Delete"]);
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    await expect(page.getByText("Edit transaction", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(page.getByText("Edit transaction", { exact: true })).toBeHidden();
+
+    await opts.click();
+    await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
+    await expect(
+      page.getByText("Delete this transaction? This can't be undone.")
+    ).toBeVisible();
+    // Never confirmed: cancel with Escape and check focus returns to the row's ⋯.
+    await page.keyboard.press("Escape");
+    await expect(
+      page.getByText("Delete this transaction? This can't be undone.")
+    ).toBeHidden();
+    await expect(opts).toBeFocused();
   });
 });
