@@ -106,7 +106,8 @@ MCP_DESCRIPTIONS: dict[str, str] = {
     "recurring_charges": (
         "Likely recurring expense charges (subscriptions, bills, rent) detected from past "
         "transactions. Each result has a cadence (weekly/monthly/quarterly/yearly), typical amount, "
-        "estimated monthly cost, last date, active/lapsed status with the next expected date, a "
+        "estimated monthly cost, last date, active/lapsed status with the next expected date (overdue=true "
+        "means that date has passed), a "
         "high/medium/low confidence label and up to 12 evidence rows. Transfers, investment accounts, "
         "investment-linked rows and system categories are excluded. Takes no period: only months "
         "(lookback, 3-60, default 24) and limit (1-50, default 20). Results are detected, not confirmed."

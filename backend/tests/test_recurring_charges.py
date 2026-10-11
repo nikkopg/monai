@@ -130,6 +130,16 @@ def test_status_active_has_next_expected():
     g = _one(_series([30] * 4, 50000, end_gap=10))
     assert g["status"] == "active"
     assert datetime.date.fromisoformat(g["next_expected"]) > datetime.date.fromisoformat(g["last_date"])
+    assert g["overdue"] is False
+
+
+def test_status_active_overdue_flags_past_next_expected():
+    # Monthly, last seen 40 days ago: still active (<= 1.5 x 30.44) but the
+    # expected date has passed (WR-02).
+    g = _one(_series([30] * 4, 50000, end_gap=40))
+    assert g["status"] == "active"
+    assert datetime.date.fromisoformat(g["next_expected"]) < TODAY
+    assert g["overdue"] is True
 
 
 def test_status_ordering_active_first_then_monthly_cost():
