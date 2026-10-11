@@ -1576,10 +1576,12 @@ async def get_thread(thread_id: uuid.UUID):
     The response model has no token or code field (T-02-07, D-16).
     """
     from backend import query
+    # WR-08: registry first. A run that finished before this read has already
+    # persisted (persist precedes release), so the detail read below includes it.
+    run = query._ACTIVE.get(str(thread_id))
     detail = await asyncio.to_thread(_thread_detail_sync, thread_id)
     if detail is None:
         raise HTTPException(404, "Thread not found")
-    run = query._ACTIVE.get(str(thread_id))
     detail["active_run"] = {"run_id": run.id} if run is not None else None
     return detail
 

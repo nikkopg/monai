@@ -119,6 +119,23 @@ def test_get_thread_active_run(env):
     assert client.get(f"/threads/{tid}", headers=h).json()["active_run"] == {"run_id": run.id}
 
 
+def test_get_thread_reads_active_run_before_detail(env, monkeypatch):
+    """WR-08: a run that ends while the detail loads is still reported as active."""
+    import backend.main as main
+
+    client, h, created = env
+    tid = _mk(created)
+    run = q.start_run(str(tid))
+    real = main._thread_detail_sync
+
+    def finishing(thread_id):
+        q.release_run(run)  # the pump finishes while the detail is being read
+        return real(thread_id)
+
+    monkeypatch.setattr(main, "_thread_detail_sync", finishing)
+    assert client.get(f"/threads/{tid}", headers=h).json()["active_run"] == {"run_id": run.id}
+
+
 def test_patch_thread(env):
     client, h, created = env
     tid = _mk(created)
