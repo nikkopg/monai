@@ -8,6 +8,7 @@ import { tokens, card, btn, btnDark } from "../../styles";
 import DepositCashModal from "../DepositCashModal";
 import HoldingModal from "../HoldingModal";
 import { extractDetail } from "../../lib/api";
+import RowMenu from "../../components/RowMenu";
 import type { PlatformOption } from "../page";
 
 // ---------------------------------------------------------------------------
@@ -582,24 +583,13 @@ export default function PlatformDetailPage() {
                       }}
                     >
                       {EDITABLE_SIDES.includes(e.event_type) && (
-                        <>
-                          <button
-                            type="button"
-                            style={rowAction}
-                            aria-label={`Edit ${e.event_type} of ${e.ticker} on ${e.date}`}
-                            onClick={() => setEditingEvent(e)}
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            style={{ ...rowAction, color: tokens.color.terracotta }}
-                            aria-label={`Delete ${e.event_type} of ${e.ticker} on ${e.date}`}
-                            onClick={() => deleteEvent(e)}
-                          >
-                            Delete
-                          </button>
-                        </>
+                        <RowMenu
+                          label={`Event options: ${e.event_type} of ${e.ticker} on ${e.date}`}
+                          items={[
+                            { label: "Edit", onSelect: () => setEditingEvent(e) },
+                            { label: "Delete", destructive: true, onSelect: () => deleteEvent(e) },
+                          ]}
+                        />
                       )}
                     </span>
                   </div>
@@ -653,14 +643,6 @@ export default function PlatformDetailPage() {
   );
 }
 
-const rowAction: React.CSSProperties = {
-  background: "transparent",
-  border: "none",
-  padding: 0,
-  fontSize: 12,
-  cursor: "pointer",
-  color: tokens.color.muted3,
-};
 const statCard: React.CSSProperties = {
   background: tokens.color.card,
   border: `1px solid ${tokens.color.border}`,

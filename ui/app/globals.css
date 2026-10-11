@@ -138,6 +138,16 @@
   }
 }
 
+/* Category-row options reveal; replaces CategoryManager's old JS hover state
+   and also shows on keyboard focus. RowMenu's inline opacity wins while open. */
+.cat-row .cat-actions {
+  opacity: 0;
+}
+.cat-row:hover .cat-actions,
+.cat-row:focus-within .cat-actions {
+  opacity: 1;
+}
+
 .threads-toggle {
   display: none;
 }

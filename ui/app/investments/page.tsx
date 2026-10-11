@@ -9,6 +9,7 @@ import { extractDetail } from "../lib/api";
 import HoldingModal from "./HoldingModal";
 import HoldingOverrideModal from "./HoldingOverrideModal";
 import PriceOverrideDialog from "./PriceOverrideDialog";
+import RowMenu from "../components/RowMenu";
 import StalenessBadge from "./StalenessBadge";
 import ValueHistoryChart, { type HistoryPoint } from "./ValueHistoryChart";
 import AllocationPieChart, { type AllocationSlice } from "./AllocationPieChart";
@@ -745,55 +746,46 @@ export default function InvestmentsPage() {
                                 fontSize: 12,
                               }}
                             >
-                              <button
-                                type="button"
-                                onClick={() => setPriceHolding(h)}
-                                style={rowAction}
-                              >
-                                Set price
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setEditingHolding(h);
-                                  setOverrideOpen(true);
-                                }}
-                                style={rowAction}
-                              >
-                                Edit
-                              </button>
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  if (
-                                    !confirm(
-                                      `Delete holding ${h.ticker}? Holdings with buy/sell history can't be deleted — record a sell to close them instead.`
-                                    )
-                                  )
-                                    return;
-                                  setDeleteError(null);
-                                  try {
-                                    const r = await fetch(`/api/holdings/${h.id}`, {
-                                      method: "DELETE",
-                                    });
-                                    if (r.ok) load();
-                                    else
-                                      setDeleteError(
-                                        `Couldn't delete ${h.ticker}: ${await extractDetail(r)}`
-                                      );
-                                  } catch (e) {
-                                    setDeleteError(
-                                      `Couldn't delete ${h.ticker}: ${e instanceof Error ? e.message : "Network error"}`
-                                    );
-                                  }
-                                }}
-                                style={{
-                                  ...rowAction,
-                                  color: tokens.color.terracotta,
-                                }}
-                              >
-                                Delete
-                              </button>
+                              <RowMenu
+                                label={`Holding options: ${h.ticker}`}
+                                items={[
+                                  { label: "Set price", onSelect: () => setPriceHolding(h) },
+                                  {
+                                    label: "Edit",
+                                    onSelect: () => {
+                                      setEditingHolding(h);
+                                      setOverrideOpen(true);
+                                    },
+                                  },
+                                  {
+                                    label: "Delete",
+                                    destructive: true,
+                                    onSelect: async () => {
+                                      if (
+                                        !confirm(
+                                          `Delete holding ${h.ticker}? Holdings with buy/sell history can't be deleted — record a sell to close them instead.`
+                                        )
+                                      )
+                                        return;
+                                      setDeleteError(null);
+                                      try {
+                                        const r = await fetch(`/api/holdings/${h.id}`, {
+                                          method: "DELETE",
+                                        });
+                                        if (r.ok) load();
+                                        else
+                                          setDeleteError(
+                                            `Couldn't delete ${h.ticker}: ${await extractDetail(r)}`
+                                          );
+                                      } catch (e) {
+                                        setDeleteError(
+                                          `Couldn't delete ${h.ticker}: ${e instanceof Error ? e.message : "Network error"}`
+                                        );
+                                      }
+                                    },
+                                  },
+                                ]}
+                              />
                             </span>
                           </div>
                         );

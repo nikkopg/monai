@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { tokens, card, input, btn, btnGhost, categoryPalette } from "../styles";
 import ConfirmDialog from "../cashflow/ConfirmDialog";
+import RowMenu from "../components/RowMenu";
 
 // ---------------------------------------------------------------------------
 // CategoryManager (Settings) — recursive tree manager for the category
@@ -115,21 +116,10 @@ const badgeStyle: React.CSSProperties = {
   marginLeft: 8,
 };
 
-const actionStyle: React.CSSProperties = {
-  color: tokens.color.muted,
-  cursor: "pointer",
-  fontSize: 12,
-  marginLeft: 12,
-};
-
-const deleteActionStyle: React.CSSProperties = { ...actionStyle, color: tokens.color.terracotta };
-const lockedActionStyle: React.CSSProperties = { ...actionStyle, color: tokens.color.border2, cursor: "not-allowed" };
-
 export default function CategoryManager({ onChanged }: Props) {
   const [tree, setTree] = useState<CategoryNode[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [expandedIds, setExpandedIds] = useState<Set<number>>(new Set());
-  const [hoveredId, setHoveredId] = useState<number | null>(null);
   const [editFlow, setEditFlow] = useState<EditFlow>({ mode: "idle" });
   const [deleteFlow, setDeleteFlow] = useState<DeleteFlow>({ stage: "idle" });
   const [mergeFlow, setMergeFlow] = useState<MergeFlow>({ stage: "idle" });
@@ -452,15 +442,13 @@ export default function CategoryManager({ onChanged }: Props) {
   function renderRow(node: CategoryNode, depth: number) {
     const isExpandable = depth === 0 || node.children.length > 0;
     const isExpanded = expandedIds.has(node.id);
-    const isHovered = hoveredId === node.id;
     const activeEdit = editFlow.mode === "edit" && editFlow.node.id === node.id ? editFlow : null;
     const isAddingUnder = editFlow.mode === "add" && editFlow.parentId === node.id;
 
     return (
       <div key={node.id}>
         <div
-          onMouseEnter={() => setHoveredId(node.id)}
-          onMouseLeave={() => setHoveredId((h) => (h === node.id ? null : h))}
+          className="cat-row"
           style={{
             display: "flex",
             alignItems: "center",
@@ -523,34 +511,29 @@ export default function CategoryManager({ onChanged }: Props) {
                   System category — can&apos;t be deleted.
                 </span>
               )}
-              {isHovered && (
-                <div style={{ marginLeft: "auto", whiteSpace: "nowrap", paddingRight: 8 }}>
-                  {depth < 2 && (
-                    <span role="button" onClick={() => startAdd(node.id)} style={actionStyle}>
-                      Add subcategory
-                    </span>
-                  )}
-                  <span role="button" onClick={() => startEdit(node)} style={actionStyle}>
-                    Edit
-                  </span>
-                  <span role="button" onClick={() => openMergePicker(node)} style={actionStyle}>
-                    Merge into…
-                  </span>
-                  {node.is_system ? (
-                    <span style={lockedActionStyle} title="System category — can't be deleted.">
-                      Delete
-                    </span>
-                  ) : (
-                    <span
-                      role="button"
-                      onClick={() => setDeleteFlow({ stage: "confirm", node })}
-                      style={deleteActionStyle}
-                    >
-                      Delete
-                    </span>
-                  )}
-                </div>
-              )}
+              <div style={{ marginLeft: "auto", paddingRight: 8 }}>
+                <RowMenu
+                  className="cat-actions"
+                  label={`Category options: ${node.name}`}
+                  items={[
+                    ...(depth < 2 ? [{ label: "Add subcategory", onSelect: () => startAdd(node.id) }] : []),
+                    { label: "Edit", onSelect: () => startEdit(node) },
+                    { label: "Merge into…", onSelect: () => openMergePicker(node) },
+                    node.is_system
+                      ? {
+                          label: "Delete",
+                          disabled: true,
+                          title: "System category — can't be deleted.",
+                          onSelect: () => {},
+                        }
+                      : {
+                          label: "Delete",
+                          destructive: true,
+                          onSelect: () => setDeleteFlow({ stage: "confirm", node }),
+                        },
+                  ]}
+                />
+              </div>
             </>
           )}
         </div>
