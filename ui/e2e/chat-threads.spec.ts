@@ -244,3 +244,183 @@ test.describe("thread load states (THRD-01)", () => {
     await expect(alertBox(page)).toHaveCount(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Thread sidebar, delete/rename, example questions, mobile drawer (36-08).
+// ---------------------------------------------------------------------------
+
+const DAY = 24 * 60 * 60 * 1000;
+const sid = (n: number) => `00000000-0000-4000-8000-0000000000b${n}`;
+const ago = (days: number) => new Date(Date.now() - days * DAY).toISOString();
+const stubList = (page: Page, list: unknown, status = 200) =>
+  page.route(/\/api\/threads$/, (route) => route.fulfill({ status, json: list as object }));
+const rowsOf = (page: Page) => page.getByTestId("thread-row");
+const examples = (page: Page) => page.getByTestId("example-question");
+const ANSWER_STREAM =
+  `data: ${JSON.stringify({ type: "answer", text: "Synthetic sidebar answer", proposals: [] })}\n\n` +
+  "data: [DONE]\n\n";
+
+test.describe("thread sidebar (THRD-02, D-20)", () => {
+  test("sidebar groups threads by recency", async ({ page }) => {
+    await mockInbox(page, { list: [] });
+    await stubList(page, [
+      { id: sid(1), title: "ZZTest today", updated_at: ago(0) },
+      { id: sid(2), title: "ZZTest yesterday", updated_at: ago(1) },
+      { id: sid(3), title: "ZZTest this week", updated_at: ago(3) },
+      { id: sid(4), title: "", updated_at: ago(12) },
+      { id: sid(5), title: "ZZTest old", updated_at: ago(45) },
+    ]);
+    await page.goto("/chat");
+    const headers = page.getByTestId("thread-sidebar").locator("h3");
+    await expect(headers).toHaveText(["Today", "Yesterday", "Previous 7 days", "Previous 30 days", "Older"]);
+    await expect(rowsOf(page)).toHaveCount(5);
+    await expect(rowsOf(page).nth(3)).toContainText("Untitled chat");
+  });
+
+  test("opening a row loads that thread and marks it current", async ({ page }) => {
+    await mockInbox(page, { list: [] });
+    await stubList(page, [
+      { id: TID, title: "ZZTest open me", updated_at: ago(0) },
+      { id: sid(2), title: "ZZTest other", updated_at: ago(0) },
+    ]);
+    let hits = 0;
+    await page.route(threadUrl, (route) => {
+      hits++;
+      return route.fulfill({ json: thread([userMsg("Synthetic q"), asstMsg("Synthetic a")]) });
+    });
+    await page.goto("/chat");
+    await rowsOf(page).first().getByRole("link").click();
+    await expect(page).toHaveURL(new RegExp(`/chat\\?thread=${TID}$`));
+    await expect(page.getByText("Synthetic a", { exact: true })).toBeVisible();
+    expect(hits).toBeGreaterThan(0);
+    await expect(rowsOf(page).first()).toHaveAttribute("aria-current", "page");
+    await expect(rowsOf(page).nth(1)).not.toHaveAttribute("aria-current", "page");
+  });
+
+  test("rename trims and saves, failure reverts with an alert", async ({ page }) => {
+    await mockInbox(page, { list: [] });
+    await stubList(page, [{ id: TID, title: "ZZTest original", updated_at: ago(0) }]);
+    const bodies: unknown[] = [];
+    await page.route(threadUrl, (route) => {
+      if (route.request().method() !== "PATCH") return route.fulfill({ json: thread([]) });
+      bodies.push(route.request().postDataJSON());
+      return bodies.length === 1
+        ? route.fulfill({ json: { id: TID, title: "ZZTest renamed", updated_at: ago(0) } })
+        : route.fulfill({ status: 500, json: { detail: "boom" } });
+    });
+    await page.goto("/chat");
+    await page.getByRole("button", { name: "Rename chat: ZZTest original" }).click();
+    const edit = page.getByLabel("Chat title");
+    await edit.fill("  ZZTest renamed  ");
+    await edit.press("Enter");
+    await expect(rowsOf(page).first()).toContainText("ZZTest renamed");
+    expect(bodies[0]).toEqual({ title: "ZZTest renamed" });
+
+    await page.getByRole("button", { name: "Rename chat: ZZTest renamed" }).click();
+    await page.getByLabel("Chat title").fill("ZZTest again");
+    await page.getByLabel("Chat title").press("Enter");
+    await expect(page.getByRole("alert").filter({ hasText: "Couldn't rename this chat. Try again." })).toBeVisible();
+    await expect(rowsOf(page).first()).toContainText("ZZTest renamed");
+  });
+
+  test("delete confirms, handles 409 and leaves the open thread", async ({ page }) => {
+    await mockInbox(page, { list: [] });
+    await stubList(page, [{ id: TID, title: "ZZTest delete me", updated_at: ago(0) }]);
+    let deletes = 0;
+    await page.route(threadUrl, (route) => {
+      if (route.request().method() === "DELETE") {
+        return ++deletes === 1 ? route.fulfill({ status: 409, json: { detail: "running" } }) : route.fulfill({ status: 204 });
+      }
+      return route.fulfill({ json: thread([userMsg("Synthetic q"), asstMsg("Synthetic a")]) });
+    });
+    await page.goto(`/chat?thread=${TID}`);
+    const del = page.getByRole("button", { name: "Delete chat: ZZTest delete me" });
+    await del.click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("button", { name: "Delete chat" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+
+    await del.click();
+    await dialog.getByRole("button", { name: "Delete chat" }).click();
+    await expect(
+      page.getByRole("alert").filter({ hasText: "This chat is still answering. Stop it first, then delete it." })
+    ).toBeVisible();
+
+    await del.click();
+    await dialog.getByRole("button", { name: "Delete chat" }).click();
+    await expect(page).toHaveURL(/\/chat$/);
+    await expect(rowsOf(page)).toHaveCount(0);
+    await expect(examples(page)).toHaveCount(5);
+  });
+
+  test("sidebar fetch failure is non-fatal", async ({ page }) => {
+    await mockInbox(page, { list: [] });
+    await stubList(page, { detail: "bad gateway" }, 502);
+    await page.route(/\/api\/query-stream$/, (route) =>
+      route.fulfill({ status: 200, contentType: "text/event-stream", body: ANSWER_STREAM })
+    );
+    await page.goto("/chat");
+    await expect(page.getByText("Couldn't load your chats.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
+    await input(page).fill("Synthetic question");
+    await input(page).press("Enter");
+    await expect(page.getByText("Synthetic sidebar answer")).toBeVisible();
+  });
+});
+
+test.describe("example questions and new chat (THRD-08, D-21)", () => {
+  test("examples fill the composer without sending", async ({ page }) => {
+    await setup(page);
+    let posts = 0;
+    await page.route(/\/api\/query-stream$/, (route) => {
+      posts++;
+      return route.fulfill({ status: 200, contentType: "text/event-stream", body: ANSWER_STREAM });
+    });
+    await page.goto("/chat");
+    await expect(examples(page)).toHaveCount(5);
+    await expect(page.getByText("You approve it before anything changes.")).toHaveCount(1);
+    await examples(page).filter({ hasText: "Compare" }).click();
+    await expect(input(page)).toHaveValue("Compare my spending last month against this month");
+    await expect(input(page)).toBeFocused();
+    expect(posts).toBe(0);
+
+    await stubThread(page, thread([userMsg("Synthetic q"), asstMsg("Synthetic a")]));
+    await page.goto(`/chat?thread=${TID}`);
+    await expect(page.getByText("Synthetic a", { exact: true })).toBeVisible();
+    await expect(examples(page)).toHaveCount(0);
+  });
+
+  test("new chat clears the view and keeps the draft", async ({ page }) => {
+    await mockInbox(page, { list: [] });
+    await stubList(page, [{ id: TID, title: "ZZTest open", updated_at: ago(0) }]);
+    await stubThread(page, thread([userMsg("Synthetic q"), asstMsg("Synthetic a")]));
+    await page.goto(`/chat?thread=${TID}`);
+    await expect(page.getByText("Synthetic a", { exact: true })).toBeVisible();
+    await input(page).fill("half-typed synthetic draft");
+    await page.getByTestId("thread-new").click();
+    await expect(page).toHaveURL(/\/chat$/);
+    await expect(examples(page)).toHaveCount(5);
+    await expect(input(page)).toHaveValue("half-typed synthetic draft");
+  });
+});
+
+test.describe("mobile drawer (D-20)", () => {
+  test("toggle opens the sidebar and Escape closes it", async ({ page }) => {
+    await setup(page);
+    await page.setViewportSize({ width: 800, height: 900 });
+    await page.goto("/chat");
+    const side = page.getByTestId("thread-sidebar");
+    const toggle = page.getByTestId("threads-toggle");
+    await expect(side).toBeHidden();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(side).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(side).toBeHidden();
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(toggle).toBeFocused();
+  });
+});

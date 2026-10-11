@@ -6,6 +6,11 @@ import { test, expect, type Page } from "@playwright/test";
 import { MIN, ids, mockInbox } from "./inbox-fixtures";
 
 const TOKEN = "tok-synthetic";
+
+// D-19a: the chat page's sidebar fetches /api/threads; stub it for every test.
+test.beforeEach(async ({ page }) => {
+  await page.route(/\/api\/threads$/, (route) => route.fulfill({ json: [] }));
+});
 const PLACEHOLDER = "Ask anything about your finances…";
 
 const payload = (rows: unknown[]) => ({ operation: "add_transaction", rows });

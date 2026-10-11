@@ -14,6 +14,7 @@ import ProposalCard, {
   toProposal,
 } from "./ProposalCard";
 import type { LiveStatus, Proposal, ServerProposal } from "./ProposalCard";
+import ThreadSidebar from "./ThreadSidebar";
 import { useChatStream } from "./useChatStream";
 import type { StreamOutcome } from "./useChatStream";
 
@@ -52,6 +53,15 @@ type AsstItem = {
 };
 
 type Item = UserItem | AsstItem;
+
+// D-21: five static, synthetic example questions for an empty thread.
+const EXAMPLES = [
+  { caption: "Read", question: "How much did I spend this month?" },
+  { caption: "Breakdown", question: "What were my top spending categories last month?" },
+  { caption: "Compare", question: "Compare my spending last month against this month" },
+  { caption: "Recurring", question: "What are my recurring charges?" },
+  { caption: "Propose a change", question: "Add coffee 25000 to my Cash account" },
+];
 
 type PersistedMessage = {
   id: string;
@@ -236,6 +246,12 @@ function ChatInner() {
   const [notFound, setNotFound] = useState(false);
   const [reconnected, setReconnected] = useState(false);
   const [openTraces, setOpenTraces] = useState<Record<string, boolean>>({});
+  const [sidebarKey, setSidebarKey] = useState(0);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement | null>(null);
+  const composerRef = useRef<HTMLInputElement | null>(null);
+  const focusComposerRef = useRef(false);
+  const bumpSidebar = () => setSidebarKey((k) => k + 1);
 
   const stream = useChatStream();
   const loadedRef = useRef<string | null>(null); // thread this view shows or is loading
@@ -286,6 +302,7 @@ function ChatInner() {
     const proposals = (msg.proposals as ServerProposal[] | undefined) ?? [];
     if (msg.type === "thread" && typeof msg.thread_id === "string") {
       threadSeenRef.current = true;
+      if (loadedRef.current !== msg.thread_id) bumpSidebar(); // new thread: list it
       loadedRef.current = msg.thread_id; // own thread: the URL effect skips its fetch
       if (paramRef.current !== msg.thread_id) {
         router.replace("/chat?thread=" + msg.thread_id);
@@ -405,6 +422,7 @@ function ChatInner() {
     setReconnected(true);
     const out = await stream.attach(tid, handleEvent);
     await afterStream(out, "attach", tries - 1);
+    bumpSidebar();
   }
 
   // `retry` (Ask again) keeps whatever is in the composer.
@@ -437,6 +455,7 @@ function ChatInner() {
 
     const out = await stream.send(q, loadedRef.current, handleEvent);
     await afterStream(out, "send", 1);
+    bumpSidebar(); // turn ended: updated_at / title moved
   }
 
   // Stop: the hook cancels on the server and aborts the fetch; the cancel reply
@@ -485,6 +504,7 @@ function ChatInner() {
     setQuestion((prev) => prev || askedRef.current);
     setStopping(false);
     endRun();
+    bumpSidebar();
   }
 
   async function openThread(id: string) {
@@ -559,6 +579,34 @@ function ChatInner() {
     return () => document.removeEventListener("visibilitychange", onVisible);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [messages, asking, loading]);
+
+  // Mobile drawer: Escape closes it and focus returns to the toggle (36-UI-SPEC 2).
+  function closeDrawer() {
+    if (!drawerOpen) return;
+    setDrawerOpen(false);
+    toggleRef.current?.focus();
+  }
+  useEffect(() => {
+    if (!drawerOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setDrawerOpen(false);
+        toggleRef.current?.focus();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [drawerOpen]);
+
+  // Example click: fill the composer (never send), focus it, cursor at the end.
+  useEffect(() => {
+    if (!focusComposerRef.current) return;
+    focusComposerRef.current = false;
+    const el = composerRef.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, [question]);
 
   const last = messages[messages.length - 1];
   const orphan = last?.kind === "user" && !asking && !loading && !loadError;
@@ -761,191 +809,298 @@ function ChatInner() {
 
   return (
     <div
-      className="tab-in"
-      style={{
-        maxWidth: 760,
-        margin: "0 auto",
-        padding: "40px 44px 60px",
-        minHeight: "100%",
-        display: "flex",
-        flexDirection: "column",
-      }}
+      className="chat-shell"
+      style={{ position: "relative", minHeight: "100%", display: "flex", flexDirection: "column" }}
     >
-      <div style={{ marginBottom: 26 }}>
+      <ThreadSidebar
+        activeId={param}
+        refreshKey={sidebarKey}
+        open={drawerOpen}
+        onClose={closeDrawer}
+      />
+      {drawerOpen && (
         <div
+          className="threads-scrim"
+          data-testid="threads-scrim"
+          onClick={closeDrawer}
+          style={{ position: "absolute", inset: 0, zIndex: 10, background: "rgba(35,32,27,.4)" }}
+        />
+      )}
+      <div
+        className="chat-column"
+        style={{ marginLeft: 240, flex: 1, minWidth: 0, display: "flex", flexDirection: "column" }}
+      >
+        <div
+          className="tab-in chat-column-inner"
           style={{
-            fontSize: 12,
-            letterSpacing: ".12em",
-            textTransform: "uppercase",
-            color: tokens.color.muted2,
-            marginBottom: 6,
+            // 760px content + 2*44px padding (the old content-box 760 max), now border-box
+            maxWidth: 848,
+            width: "100%",
+            boxSizing: "border-box",
+            margin: "0 auto",
+            padding: "40px 44px 60px",
+            flex: 1,
+            display: "flex",
+            flexDirection: "column",
           }}
         >
-          Assistant
-        </div>
-        <h1
-          style={{
-            fontFamily: tokens.font.serif,
-            fontWeight: 400,
-            fontSize: 40,
-            margin: 0,
-            letterSpacing: "-.5px",
-          }}
-        >
-          Ask about your money
-        </h1>
-      </div>
-
-      {/* Conversation */}
-      <div style={{ flex: 1 }}>
-        {notFound && (
-          <div
-            role="status"
-            style={{
-              background: tokens.color.tintNeutral,
-              border: `1px solid ${tokens.color.border2}`,
-              borderRadius: tokens.radius.md,
-              padding: 16,
-              marginBottom: 24,
-            }}
-          >
-            <div style={{ fontSize: 16, fontWeight: 600, color: tokens.color.ink }}>
-              {"That chat isn't available"}
-            </div>
-            <div style={{ fontSize: 14, color: tokens.color.muted3, marginTop: 4, lineHeight: 1.5 }}>
-              It may have been deleted. Start a new chat or pick one from the list.
-            </div>
-          </div>
-        )}
-
-        {reconnected && (
-          <span role="status" className="sr-only">
-            Reconnected to the answer in progress.
-          </span>
-        )}
-
-        {loading && (
-          <div aria-busy="true" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-            <span role="status" className="sr-only">
-              Loading chat…
-            </span>
-            <div style={skeleton(true)} />
-            <div style={skeleton(false)} />
-          </div>
-        )}
-
-        {loadError && (
-          <ErrorBlock
-            title="Couldn't open this chat"
-            body="monai couldn't load the messages. Check that the server is running, then try again."
-          >
+          <div style={{ marginBottom: 26 }}>
             <button
+              ref={toggleRef}
               type="button"
-              style={{ ...btnDark, minHeight: 36 }}
-              onClick={() => param && void openThread(param)}
+              className="threads-toggle"
+              data-testid="threads-toggle"
+              aria-expanded={drawerOpen}
+              aria-controls="chat-threads"
+              onClick={() => setDrawerOpen((o) => !o)}
+              style={{
+                alignItems: "center",
+                gap: 6,
+                minHeight: 44,
+                padding: "0 16px",
+                marginBottom: 16,
+                background: tokens.color.sidebar,
+                border: `1px solid ${tokens.color.border2}`,
+                borderRadius: tokens.radius.pill,
+                color: tokens.color.ink,
+                fontSize: 14,
+                fontWeight: 600,
+                cursor: "pointer",
+              }}
             >
-              Try again
+              Chats <span aria-hidden="true">{drawerOpen ? "▴" : "▾"}</span>
             </button>
-          </ErrorBlock>
-        )}
+            <div
+              style={{
+                fontSize: 12,
+                letterSpacing: ".12em",
+                textTransform: "uppercase",
+                color: tokens.color.muted2,
+                marginBottom: 6,
+              }}
+            >
+              Assistant
+            </div>
+            <h1
+              style={{
+                fontFamily: tokens.font.serif,
+                fontWeight: 400,
+                fontSize: 40,
+                margin: 0,
+                letterSpacing: "-.5px",
+              }}
+            >
+              Ask about your money
+            </h1>
+          </div>
 
-        {!loading && messages.length > 0 && (
-          <div role="presentation" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-            {messages.map((m, i) =>
-              m.kind === "user" ? (
-                <div key={m.id} style={{ display: "flex", justifyContent: "flex-end" }}>
-                  <div
-                    style={{
-                      background: tokens.color.ink,
-                      color: tokens.color.inkText,
-                      padding: "12px 18px",
-                      borderRadius: "16px 16px 4px 16px",
-                      fontSize: 15,
-                      maxWidth: "80%",
-                      overflowWrap: "anywhere",
-                    }}
-                  >
-                    {m.text}
-                  </div>
+          {/* Conversation */}
+          <div style={{ flex: 1 }}>
+            {notFound && (
+              <div
+                role="status"
+                style={{
+                  background: tokens.color.tintNeutral,
+                  border: `1px solid ${tokens.color.border2}`,
+                  borderRadius: tokens.radius.md,
+                  padding: 16,
+                  marginBottom: 24,
+                }}
+              >
+                <div style={{ fontSize: 16, fontWeight: 600, color: tokens.color.ink }}>
+                  {"That chat isn't available"}
                 </div>
-              ) : (
-                renderAssistant(m, i)
-              )
+                <div style={{ fontSize: 14, color: tokens.color.muted3, marginTop: 4, lineHeight: 1.5 }}>
+                  It may have been deleted. Start a new chat or pick one from the list.
+                </div>
+              </div>
             )}
-            {orphan && last?.kind === "user" && (
-              <ErrorBlock title={streamEnded.title} body={streamEnded.body}>
+
+            {reconnected && (
+              <span role="status" className="sr-only">
+                Reconnected to the answer in progress.
+              </span>
+            )}
+
+            {!loading && !loadError && !asking && messages.length === 0 && (
+              <div>
+                <p style={{ fontSize: 14, color: tokens.color.muted3, margin: "0 0 12px", lineHeight: 1.5 }}>
+                  Try one of these, or ask your own.
+                </p>
+                <div
+                  role="group"
+                  aria-label="Example questions"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))",
+                    gap: 8,
+                  }}
+                >
+                  {EXAMPLES.map((ex) => (
+                    <button
+                      key={ex.caption}
+                      type="button"
+                      data-testid="example-question"
+                      onClick={() => {
+                        focusComposerRef.current = true;
+                        setQuestion(ex.question);
+                        // same text re-clicked: no state change, so focus directly too
+                        composerRef.current?.focus();
+                      }}
+                      style={{
+                        background: tokens.color.card,
+                        border: `1px solid ${tokens.color.border2}`,
+                        borderRadius: tokens.radius.md,
+                        padding: 16,
+                        minHeight: 44,
+                        textAlign: "left",
+                        cursor: "pointer",
+                        fontFamily: "inherit",
+                        color: tokens.color.ink,
+                      }}
+                    >
+                      <div style={{ fontSize: 12, color: tokens.color.muted3, lineHeight: 1.5 }}>
+                        {ex.caption}
+                      </div>
+                      <div style={{ fontSize: 14, color: tokens.color.ink, lineHeight: 1.5 }}>
+                        {ex.question}
+                      </div>
+                      {ex.caption === "Propose a change" && (
+                        <div style={{ fontSize: 12, color: tokens.color.muted3, marginTop: 4, lineHeight: 1.5 }}>
+                          You approve it before anything changes.
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {loading && (
+              <div aria-busy="true" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+                <span role="status" className="sr-only">
+                  Loading chat…
+                </span>
+                <div style={skeleton(true)} />
+                <div style={skeleton(false)} />
+              </div>
+            )}
+
+            {loadError && (
+              <ErrorBlock
+                title="Couldn't open this chat"
+                body="monai couldn't load the messages. Check that the server is running, then try again."
+              >
                 <button
                   type="button"
                   style={{ ...btnDark, minHeight: 36 }}
-                  onClick={() => void sendQuestion(last.text, true)}
+                  onClick={() => param && void openThread(param)}
                 >
-                  Ask again
+                  Try again
                 </button>
               </ErrorBlock>
             )}
-          </div>
-        )}
-        <div ref={endRef} />
-      </div>
 
-      {/* Composer — sticky at the bottom of the scroll area */}
-      <div
-        style={{
-          position: "sticky",
-          bottom: 0,
-          display: "flex",
-          gap: 10,
-          background: tokens.color.panel,
-          paddingTop: 8,
-          paddingBottom: 2,
-        }}
-      >
-        <input
-          style={{ ...input, borderRadius: 14, padding: "14px 18px", fontSize: 15 }}
-          value={question}
-          placeholder="Ask anything about your finances…"
-          onChange={(e) => setQuestion(e.target.value)}
-          aria-label="Ask monai a question"
-          onKeyDown={(e) => {
-            if (
-              e.key !== "Enter" ||
-              e.shiftKey ||
-              e.nativeEvent.isComposing ||
-              e.keyCode === 229
-            )
-              return;
-            e.preventDefault();
-            // swallowed while running or while a thread is loading
-            if (asking || loading || stream.busyRef.current) return;
-            void sendQuestion();
-          }}
-        />
-        <button
-          type="button"
-          style={{
-            background: asking ? tokens.color.sidebar : tokens.color.ink,
-            color: asking ? tokens.color.ink : tokens.color.inkText,
-            border: asking ? `1px solid ${tokens.color.border2}` : "none",
-            borderRadius: 14,
-            padding: "0 24px",
-            fontSize: 15,
-            fontWeight: 600,
-            cursor: stopping || (loading && !asking) ? "not-allowed" : "pointer",
-            opacity: stopping || (loading && !asking) ? 0.5 : 1,
-          }}
-          onClick={asking ? stop : () => void sendQuestion()}
-          disabled={stopping || (loading && !asking)}
-        >
-          {stopping ? (
-            "Stopping…"
-          ) : asking ? (
-            <>
-              <span aria-hidden="true">■</span> Stop
-            </>
-          ) : (
-            "Ask"
-          )}
-        </button>
+            {!loading && messages.length > 0 && (
+              <div role="presentation" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+                {messages.map((m, i) =>
+                  m.kind === "user" ? (
+                    <div key={m.id} style={{ display: "flex", justifyContent: "flex-end" }}>
+                      <div
+                        style={{
+                          background: tokens.color.ink,
+                          color: tokens.color.inkText,
+                          padding: "12px 18px",
+                          borderRadius: "16px 16px 4px 16px",
+                          fontSize: 15,
+                          maxWidth: "80%",
+                          overflowWrap: "anywhere",
+                        }}
+                      >
+                        {m.text}
+                      </div>
+                    </div>
+                  ) : (
+                    renderAssistant(m, i)
+                  )
+                )}
+                {orphan && last?.kind === "user" && (
+                  <ErrorBlock title={streamEnded.title} body={streamEnded.body}>
+                    <button
+                      type="button"
+                      style={{ ...btnDark, minHeight: 36 }}
+                      onClick={() => void sendQuestion(last.text, true)}
+                    >
+                      Ask again
+                    </button>
+                  </ErrorBlock>
+                )}
+              </div>
+            )}
+            <div ref={endRef} />
+          </div>
+
+          {/* Composer — sticky at the bottom of the scroll area */}
+          <div
+            style={{
+              position: "sticky",
+              bottom: 0,
+              display: "flex",
+              gap: 10,
+              background: tokens.color.panel,
+              paddingTop: 8,
+              paddingBottom: 2,
+            }}
+          >
+            <input
+              ref={composerRef}
+              style={{ ...input, borderRadius: 14, padding: "14px 18px", fontSize: 15 }}
+              value={question}
+              placeholder="Ask anything about your finances…"
+              onChange={(e) => setQuestion(e.target.value)}
+              aria-label="Ask monai a question"
+              onKeyDown={(e) => {
+                if (
+                  e.key !== "Enter" ||
+                  e.shiftKey ||
+                  e.nativeEvent.isComposing ||
+                  e.keyCode === 229
+                )
+                  return;
+                e.preventDefault();
+                // swallowed while running or while a thread is loading
+                if (asking || loading || stream.busyRef.current) return;
+                void sendQuestion();
+              }}
+            />
+            <button
+              type="button"
+              style={{
+                background: asking ? tokens.color.sidebar : tokens.color.ink,
+                color: asking ? tokens.color.ink : tokens.color.inkText,
+                border: asking ? `1px solid ${tokens.color.border2}` : "none",
+                borderRadius: 14,
+                padding: "0 24px",
+                fontSize: 15,
+                fontWeight: 600,
+                cursor: stopping || (loading && !asking) ? "not-allowed" : "pointer",
+                opacity: stopping || (loading && !asking) ? 0.5 : 1,
+              }}
+              onClick={asking ? stop : () => void sendQuestion()}
+              disabled={stopping || (loading && !asking)}
+            >
+              {stopping ? (
+                "Stopping…"
+              ) : asking ? (
+                <>
+                  <span aria-hidden="true">■</span> Stop
+                </>
+              ) : (
+                "Ask"
+              )}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

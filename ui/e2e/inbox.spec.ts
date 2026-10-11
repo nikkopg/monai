@@ -1439,6 +1439,8 @@ test.describe("chat card", () => {
       posts.push({ path: new URL(req.url()).pathname, body: req.postDataJSON() });
       return route.fulfill({ json: { id: pid, status: req.url().endsWith("/confirm") ? "confirmed" : "rejected" } });
     });
+    // D-19a: stub GET /api/threads (sidebar list)
+    await page.route(/\/api\/threads$/, (route) => route.fulfill({ json: [] }));
     await page.goto("/chat");
     await page.getByPlaceholder("Ask anything about your finances…").fill("Add a synthetic coffee");
     await page.getByPlaceholder("Ask anything about your finances…").press("Enter");
