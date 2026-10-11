@@ -163,6 +163,11 @@ def _persist_end(run: query.Run, state: dict) -> None:
             {"a": run.assistant_message_id, "t": turn},
         )
         db.commit()
+        # WR-02: a Stop that landed after `status` was read ran mark_cancelled
+        # before this INSERT committed and matched nothing; stop_run sets
+        # `stopped` first, so re-checking here closes the race.
+        if status == "complete" and run.stopped:
+            mark_cancelled(run.assistant_message_id)
 
 
 def _observe(state: dict, chunk: str) -> None:

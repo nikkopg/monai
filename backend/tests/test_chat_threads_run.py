@@ -437,6 +437,30 @@ async def test_stop_persists_cancelled_and_backfills_message_id(monkeypatch, _th
     assert "token" not in json.dumps(asst.parts)
 
 
+async def test_stop_racing_persist_stores_cancelled(monkeypatch, _threads):
+    """WR-02: Stop flipping `stopped` after _persist_end read it still stores cancelled."""
+    class FlipRun(q.Run):
+        _reads = 0
+
+        @property
+        def stopped(self):  # False on the first read (status), True after (re-check)
+            FlipRun._reads += 1
+            return FlipRun._reads > 1
+
+        @stopped.setter
+        def stopped(self, v):
+            pass
+
+    _install_stub_workflow(monkeypatch, StubLLM(final_text="ZZTest answer"))
+    run = await chat_service.start_turn("ZZTest race")
+    _threads.append(run.thread_id)
+    run.__class__ = FlipRun
+    await _collect(q.run_stream(run))
+
+    _, asst = _messages(run.thread_id)
+    assert asst.status == "cancelled" and asst.content == ""
+
+
 async def test_tool_turn_parts_have_no_token(monkeypatch, _threads):
     _install_stub_workflow(monkeypatch, StubLLM(mode="tool", final_text="Done"))
     run, lines = await _turn("ZZTest tool turn", threads=_threads)
