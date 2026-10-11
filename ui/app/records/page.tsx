@@ -8,6 +8,7 @@ import TransactionModal, {
   type AccountOption,
 } from "../cashflow/TransactionModal";
 import ConfirmDialog from "../cashflow/ConfirmDialog";
+import RowMenu from "../components/RowMenu";
 
 // ---------------------------------------------------------------------------
 // Records ledger (REC-01/02/03/05) — date-grouped transaction history with a
@@ -112,6 +113,7 @@ const signed = (n: number) =>
 // amount vary; the shell + interaction wiring is identical).
 // ---------------------------------------------------------------------------
 function LedgerRowShell({
+  name,
   tint,
   glyph,
   primary,
@@ -123,6 +125,7 @@ function LedgerRowShell({
   onEdit,
   onDelete,
 }: {
+  name: string;
   tint: string;
   glyph: React.ReactNode;
   primary: React.ReactNode;
@@ -196,22 +199,13 @@ function LedgerRowShell({
       >
         {amountText}
       </div>
-      <div style={{ display: "flex", gap: 12, flexShrink: 0 }}>
-        <span
-          role="button"
-          onClick={onEdit}
-          style={{ color: tokens.color.muted2, cursor: "pointer", fontSize: 12 }}
-        >
-          Edit
-        </span>
-        <span
-          role="button"
-          onClick={onDelete}
-          style={{ color: tokens.color.terracotta, cursor: "pointer", fontSize: 12 }}
-        >
-          Delete
-        </span>
-      </div>
+      <RowMenu
+        label={`Record options: ${name}`}
+        items={[
+          { label: "Edit", onSelect: onEdit },
+          { label: "Delete", onSelect: onDelete, destructive: true },
+        ]}
+      />
     </div>
   );
 }
@@ -453,6 +447,7 @@ export default function RecordsPage() {
       return (
         <LedgerRowShell
           key={tx.id}
+          name={`${tx.merchant || tx.category || "Transaction"} on ${tx.date.slice(0, 10)}`}
           tint={tint}
           glyph={(tx.category || tx.merchant || "?").slice(0, 1).toUpperCase()}
           primary={tx.merchant || tx.category || "Transaction"}
@@ -479,6 +474,7 @@ export default function RecordsPage() {
       return (
         <LedgerRowShell
           key={legA.id}
+          name={`Transfer: ${accountName(outgoing.account_id)} → ${accountName(incoming.account_id)} on ${legA.date.slice(0, 10)}`}
           tint={tokens.color.tintNeutral}
           glyph="⇄"
           primary={`Transfer: ${accountName(outgoing.account_id)} → ${accountName(
@@ -511,6 +507,7 @@ export default function RecordsPage() {
     return (
       <LedgerRowShell
         key={legA.id}
+        name={`${legA.merchant || legA.category || "Transaction"} (transfer) on ${legA.date.slice(0, 10)}`}
         tint={tint}
         glyph={(legA.category || legA.merchant || "?").slice(0, 1).toUpperCase()}
         primary={
