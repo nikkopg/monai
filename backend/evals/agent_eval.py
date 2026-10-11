@@ -3,7 +3,7 @@ Opt-in golden-question eval for the production agent loop.
 
 What this is: a standalone script, NOT a pytest test and NOT collected by
 default pytest or CI (backend/evals/ sits outside pyproject.toml's
-testpaths). It sends ~14 scripted questions through backend.query.agent_stream
+testpaths). It sends ~17 scripted questions through backend.query.agent_stream
 — the real, production agent loop — driven by whatever real LLM is
 configured via LLM_PROVIDER / the matching model env var. It runs only
 against monai_test, never the live monai database; a module-top guard
@@ -16,6 +16,9 @@ running, and removes every ZZEval row and every pending proposal it created
 afterwards, in a `finally` block that
 also runs on Ctrl-C. It never approves a proposal.
 
+Cases 15-17 are multi-turn: their history is built in memory with
+build_history and they create no threads.
+
 Usage:
     env -u DATABASE_URL .venv/bin/python -m backend.evals.agent_eval \
         [--self-check] [--seed-check] [--case N ...]
@@ -23,7 +26,7 @@ Usage:
     --self-check   run the answer-number parser's asserts only. No DB, no LLM.
     --seed-check   run the DB guard, head check, seed, probes and teardown.
                    No LLM.
-    --case N       run only case N (repeatable). Default: run all 14 cases.
+    --case N       run only case N (repeatable). Default: run all 17 cases.
 
 Exit code 0 means every selected case passed (or, for --self-check /
 --seed-check, that check passed). Exit code 1 otherwise.
@@ -659,10 +662,10 @@ def _leftovers(proposal_ids: list[str]) -> int:
 
 # ---------------------------------------------------------------------------
 # Probes — no LLM. Prove the subtree, case-insensitive,
-# unknown-category and period data paths the 14 cases rely on.
+# unknown-category and period data paths the 17 cases rely on.
 # ---------------------------------------------------------------------------
 
-_PROBE_COUNT = 9
+_PROBE_COUNT = 10
 
 
 def _run_probes() -> list[str]:
@@ -755,6 +758,42 @@ def _run_probes() -> list[str]:
     if not all(got) or got_bad:
         failures.append(f"P9: case-14 check ok={got}, wrong-pair={got_bad}")
 
+    # P10: history wiring and the multi-turn checks, positive and negative.
+    from backend import config
+    from backend.chat_history import EARLIER_DATES_NOTE, build_history
+
+    today = _query_today()
+    h = build_history(_stale_history(today), config.CHAT_HISTORY_TOKEN_BUDGET, today)
+    stamp = "[" + _stale_stamp(today).isoformat() + "]"
+    if not (
+        len(h) == 2
+        and stamp in h[0].content and EARLIER_DATES_NOTE in h[0].content
+        and h[1].content.splitlines()[-1].startswith("[tools used: spending_in_category(")
+    ):
+        failures.append(f"P10: stale history did not build as expected: {[m.content for m in h]!r}")
+    else:
+        case15, case16, case17 = (next(c for c in CASES if c["id"] == i) for i in (15, 16, 17))
+
+        def sic(**args):
+            return {"tool": "spending_in_category", "args": {"category": PARENT, **args}, "result": {}}
+
+        s, e = _month_before(_stale_stamp(today), 2)
+        cmp_ok = {"tool": "compare_periods", "result": {"totals": {}},
+                  "args": {"period_a": "last_month", "period_b": "this_month"}}
+        cmp_bad = {**cmp_ok, "args": {"period_a": "last_month", "period_b": "last_month"}}
+        checks = [
+            ("case 17 expected month", case17["step_args"](sic(period="custom", start_date=s, end_date=e)), True),
+            ("case 17 last_month", case17["step_args"](sic(period="last_month")), False),
+            ("case 15 this_month", case15["step_args"](sic(period="this_month")), True),
+            ("case 15 last_month", case15["step_args"](sic(period="last_month")), False),
+            ("case 16 last/this pair", case16["step_args"](cmp_ok), True),
+            ("case 16 last/last pair", case16["step_args"](cmp_bad), False),
+        ]
+        for name, got_p10, want in checks:
+            if got_p10 is not want:
+                failures.append(f"P10: {name} returned {got_p10}, expected {want}")
+                break
+
     return failures
 
 
@@ -781,7 +820,7 @@ def _do_seed_check() -> int:
 
 
 # ---------------------------------------------------------------------------
-# The 14 golden cases.
+# The 17 golden cases.
 # ---------------------------------------------------------------------------
 
 
@@ -1056,6 +1095,42 @@ CASES: list[dict] = [
         "args_desc": "a compare_periods step whose two resolved ranges == {last_month, this_month} (either order), no error",
         "answer": "numbers", "needs_number": True,
     },
+    # Cases 15-17 are multi-turn: "turns" are the questions in order (the last
+    # is graded), "history" optionally seeds synthetic prior messages.
+    {
+        "id": 15,
+        "turns": ["How much did I spend on ZZEval Hobbies last month?", "and this month?"],
+        "question": "and this month?",
+        "tools": ["spending_in_category", "find_transactions"],
+        "step_args": _hobbies_range_step("this_month"),
+        "args_desc": "final turn: category (ci) == PARENT and range == this_month",
+        "answer": "numbers", "needs_number": True,
+    },
+    {
+        "id": 16,
+        "turns": [
+            "How much did I spend on ZZEval Hobbies last month?",
+            "and this month?",
+            "What's the difference between those two?",
+        ],
+        "question": "What's the difference between those two?",
+        "tools": ["compare_periods", "spending_in_category", "find_transactions"],
+        "step_args": _carried_step,
+        "args_desc": "final turn makes its own compare_periods {last_month, this_month} or PARENT re-query; numbers only from this turn's trace",
+        "answer": "numbers", "needs_number": True,
+    },
+    {
+        "id": 17,
+        "history": _stale_history,
+        "turns": ["and the month before that?"],
+        "question": "and the month before that?",
+        "tools": ["spending_in_category", "find_transactions"],
+        "step_args": _stale_step,
+        "args_desc": "range == the calendar month two months before the stamped history date; category PARENT",
+        # A zero month may be phrased without digits, so the args check carries
+        # this case; any stated figure must still come from this turn's trace.
+        "answer": "numbers", "needs_number": False,
+    },
 ]
 
 
@@ -1284,7 +1359,7 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         type=int,
         default=None,
-        help="run only this case id (repeatable). Default: run all 14 cases.",
+        help="run only this case id (repeatable). Default: run all 17 cases.",
     )
     args = parser.parse_args(argv)
 
