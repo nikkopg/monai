@@ -117,9 +117,11 @@ MCP_DESCRIPTIONS: dict[str, str] = {
         "each with delta and percentage computed in code. The earlier period is the base and the later "
         "one current, whatever the argument order; pct is null when the base is zero. other_delta covers "
         "the categories not shown plus uncategorised and system rows. comparable=false flags unequal or "
-        "in-progress periods, with per-day spending. all_time and open-ended custom ranges are refused. "
-        "period_a and period_b each follow these rules; custom dates go in a_start_date/a_end_date and "
-        "b_start_date/b_end_date. " + _PERIOD_HELP
+        "in-progress periods, with per-day spending. all_time, open-ended custom ranges and "
+        "overlapping periods are refused. "
+        "period_a and period_b each take a named period or \"custom\"; custom dates go in "
+        "a_start_date/a_end_date and b_start_date/b_end_date (YYYY-MM-DD, end inclusive). Named periods: "
+        + ", ".join(p for p in PERIODS if p not in ("custom", "all_time")) + "."
     ),
     "propose_transactions": (
         "Propose transactions for the owner to approve; nothing is written until approved. "
