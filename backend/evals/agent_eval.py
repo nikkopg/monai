@@ -31,6 +31,7 @@ Exit code 0 means every selected case passed (or, for --self-check /
 
 import argparse
 import asyncio
+import calendar
 import datetime
 import json
 import os
@@ -338,6 +339,14 @@ def _self_check() -> None:
     assert _check_case(fake_case, {"text": "You spent 43,000", "trace": [right, wrong]})["passed"]
     assert not _check_case(fake_case, {"text": "You spent 134,000", "trace": [right, wrong]})["passed"]
 
+    # Multi-turn helpers (pure): history markers and the calendar-month maths.
+    assert _has_marker("[2026-10-11] You spent 5")
+    assert _has_marker("You spent 5 [tools used: x()]")
+    assert not _has_marker("You spent 5 on 2026-10-11")
+    assert _month_before(datetime.date(2026, 3, 10), 2) == ("2026-01-01", "2026-01-31")
+    assert _month_before(datetime.date(2026, 1, 20), 2) == ("2025-11-01", "2025-11-30")
+    assert _stale_stamp(datetime.date(2026, 10, 11)) == datetime.date(2026, 8, 15)
+
     # Teardown contract: Ctrl-C mid-run, or a failure building the LLM
     # client, must still purge every proposal id collected so far. The DB
     # and LLM hooks are stubbed, so this stays offline.
@@ -345,7 +354,7 @@ def _self_check() -> None:
     saved = {k: g[k] for k in ("_check_db", "_seed", "_header_line", "_run_case", "_purge")}
     purged: list[list[str]] = []
 
-    async def interrupted_case(question: str, proposal_ids: list[str]) -> dict:
+    async def interrupted_case(question: str, proposal_ids: list[str], history=None) -> dict:
         proposal_ids.append("synthetic-proposal-id")
         raise KeyboardInterrupt
 
@@ -532,6 +541,9 @@ def _purge(proposal_ids: list[str]) -> None:
         c.execute(sa_text("DELETE FROM categories WHERE name = :name"), {"name": PARENT})
         c.execute(sa_text("DELETE FROM categories WHERE name = :name"), {"name": RECUR_CAT})
         c.execute(sa_text("DELETE FROM accounts WHERE name = :name"), {"name": ACCOUNT})
+        # Guard (research C6): the eval creates no threads (D-22a), but drop any
+        # eval-titled one; messages cascade, proposals keep their rows.
+        c.execute(sa_text("DELETE FROM threads WHERE title LIKE :tp"), {"tp": MARKER + "%"})
         # Exact ids only (pending, or flipped to expired by a lazy-expiry read).
         # A SIGKILL'd run's proposals are not swept
         # by the next run; they are inert (never confirmed) test-DB rows.
@@ -635,11 +647,12 @@ def _leftovers(proposal_ids: list[str]) -> int:
                 "(SELECT count(*) FROM transactions WHERE " + _EVAL_TXN_WHERE + ") + "
                 "(SELECT count(*) FROM portfolio_events WHERE ticker = :tick) + "
                 "(SELECT count(*) FROM platforms WHERE name = :plat) + "
+                "(SELECT count(*) FROM threads WHERE title LIKE :tp) + "
                 "(SELECT count(*) FROM proposals WHERE status IN ('pending', 'expired') AND "
                 "id = ANY(CAST(:ids AS uuid[])))"
             ),
             {"acct": ACCOUNT, "cats": _EVAL_CATS, "tick": EVAL_TICKER, "plat": EVAL_PLATFORM,
-             "ids": [pid for pid in proposal_ids if pid]},
+             "tp": MARKER + "%", "ids": [pid for pid in proposal_ids if pid]},
         ).scalar()
     return int(n or 0)
 
@@ -893,6 +906,73 @@ def _answer_has_parent_name(text: str) -> bool:
     return PARENT.lower() in text.lower()
 
 
+def _hobbies_range_step(period_name: str):
+    """Check: category PARENT (ci) and the step's range == the named period."""
+    return lambda step: (
+        _category_arg_matches(step, PARENT.lower())
+        and _resolved_args(step) == _period_range(period_name)
+    )
+
+
+def _carried_step(step: dict) -> bool:
+    """Case 16: the final turn re-queries itself: a clean compare_periods over
+    {last_month, this_month}, or a PARENT query over either of those months."""
+    r = step.get("result")
+    if step.get("tool") == "compare_periods":
+        return (
+            isinstance(r, dict) and "error" not in r
+            and _resolved_pair(step) == {_period_range("last_month"), _period_range("this_month")}
+        )
+    return _category_arg_matches(step, PARENT.lower()) and _resolved_args(step) in (
+        _period_range("last_month"), _period_range("this_month"),
+    )
+
+
+def _month_before(d: datetime.date, k: int) -> tuple[str, str]:
+    """(first_day, last_day) ISO strings of the calendar month k months before d's."""
+    idx = d.year * 12 + d.month - 1 - k
+    y, m = divmod(idx, 12)
+    m += 1
+    return f"{y:04d}-{m:02d}-01", f"{y:04d}-{m:02d}-{calendar.monthrange(y, m)[1]:02d}"
+
+
+def _stale_stamp(today: datetime.date) -> datetime.date:
+    """The 15th of the month two months before today: the stale history date."""
+    return datetime.date.fromisoformat(_month_before(today, 2)[0]).replace(day=15)
+
+
+def _query_today() -> datetime.date:
+    from backend.query import _today
+
+    return _today()
+
+
+def _stale_step(step: dict) -> bool:
+    """Case 17: PARENT over the calendar month two months before the stamped
+    history date. The stamped turn asked 'last month' (stamp month - 1), so
+    'the month before that' is stamp month - 2."""
+    return (
+        _category_arg_matches(step, PARENT.lower())
+        and _resolved_args(step)
+        == _period_range("custom", *_month_before(_stale_stamp(_query_today()), 2))
+    )
+
+
+def _stale_history(today: datetime.date) -> list[dict]:
+    """Synthetic prior turn stamped _stale_stamp(today). 4321 is deliberately
+    absent from every seed, so copying it into an answer fails numbers_ok."""
+    at = datetime.datetime.combine(_stale_stamp(today), datetime.time(10, 0)).astimezone()
+    return [
+        {"role": "user", "content": "How much did I spend on ZZEval Hobbies last month?",
+         "status": "complete", "parts": None, "created_at": at},
+        {"role": "assistant", "content": "You spent 4321 on ZZEval Hobbies last month.",
+         "status": "complete",
+         "parts": {"steps": [{"tool": "spending_in_category",
+                              "args": {"category": PARENT, "period": "last_month"}}]},
+         "created_at": at},
+    ]
+
+
 CASES: list[dict] = [
     {
         "id": 1, "question": "How much did I spend this month?",
@@ -984,16 +1064,17 @@ CASES: list[dict] = [
 # ---------------------------------------------------------------------------
 
 
-async def _run_case(question: str, proposal_ids: list[str]) -> dict:
+async def _run_case(question: str, proposal_ids: list[str], history=None) -> dict:
     """Drive agent_stream once and return the answer payload. Every proposal
     id is appended to the caller-owned `proposal_ids` the moment its
     tool_result arrives (not just from the final answer's proposals list),
     so the caller's `finally` still purges it if the run crashes or is
-    interrupted mid-stream."""
+    interrupted mid-stream. `history` is the replayed prior turns of a
+    multi-turn case (None for the single-turn cases)."""
     from backend.query import agent_stream
 
     answer: dict = {"text": "", "trace": [], "proposals": []}
-    async for line in agent_stream(question):
+    async for line in agent_stream(question, history=history):
         if not line.startswith("data: "):
             continue
         raw = line[len("data: "):].strip()
@@ -1015,6 +1096,49 @@ async def _run_case(question: str, proposal_ids: list[str]) -> dict:
         if p.get("id"):
             proposal_ids.append(p["id"])
     return answer
+
+
+def _turn_messages(question: str, result: dict, at: datetime.datetime) -> list[dict]:
+    """One finished turn as two build_history message dicts (in memory only)."""
+    steps = [{"tool": s.get("tool"), "args": s.get("args") or {}} for s in result.get("trace") or []]
+    return [
+        {"role": "user", "content": question, "status": "complete", "parts": None, "created_at": at},
+        {"role": "assistant", "content": result.get("text") or "",
+         "status": "error" if result.get("error") else "complete",
+         "parts": {"steps": steps}, "created_at": at},
+    ]
+
+
+async def _run_multi_case(case: dict, proposal_ids: list[str]) -> dict:
+    """Run a multi-turn case through the real history builder, in memory only
+    (D-22a: no threads or messages rows). Earlier turns are replayed via
+    build_history before every turn; the returned result is the final turn's,
+    with `prior_error` set to the first earlier turn's error code, if any."""
+    from backend import config
+    from backend.chat_history import build_history
+    from backend.query import _today
+
+    today = _today()
+    messages = case["history"](today) if "history" in case else []
+    prior_error = None
+    turns = case["turns"]
+    for turn in turns[:-1]:
+        history = build_history(messages, config.CHAT_HISTORY_TOKEN_BUDGET, today)
+        result = await _run_case(turn, proposal_ids, history=history)
+        prior_error = prior_error or result.get("error")
+        messages.extend(_turn_messages(turn, result, datetime.datetime.now().astimezone()))
+    history = build_history(messages, config.CHAT_HISTORY_TOKEN_BUDGET, today)
+    final = await _run_case(turns[-1], proposal_ids, history=history)
+    return {**final, "prior_error": prior_error}
+
+
+_MARKER_RE = re.compile(r"\[\d{4}-\d{2}-\d{2}\]")
+
+
+def _has_marker(text: str) -> bool:
+    """True when an answer echoes history scaffolding: '[tools used:' or a
+    bracketed '[YYYY-MM-DD]' stamp (Pitfall 5)."""
+    return "[tools used:" in text or bool(_MARKER_RE.search(text))
 
 
 def _has_number(text: str) -> bool:
@@ -1067,7 +1191,18 @@ def _check_case(case: dict, result: dict) -> dict:
 
 
 async def _run_all_cases(selected: list[dict], proposal_ids: list[str]) -> list[dict]:
-    return [_check_case(case, await _run_case(case["question"], proposal_ids)) for case in selected]
+    results = []
+    for case in selected:
+        if "turns" in case:
+            result = await _run_multi_case(case, proposal_ids)
+            r = _check_case(case, result)
+            r["prior_error"] = result.get("prior_error")
+            r["marker"] = _has_marker(r["text"])
+            r["passed"] = r["passed"] and not r["prior_error"] and not r["marker"]
+        else:
+            r = _check_case(case, await _run_case(case["question"], proposal_ids))
+        results.append(r)
+    return results
 
 
 def _header_line() -> str:
@@ -1112,6 +1247,10 @@ def _print_detail(case: dict, r: dict) -> None:
         print(f"  trace step: tool={s.get('tool')} args={json.dumps(s.get('args'), default=str)}")
     if r.get("error"):
         print(f"  stream error: {r['error']}")
+    if r.get("prior_error"):
+        print(f"  prior turn error: {r['prior_error']}")
+    if r.get("marker"):
+        print("  answer echoes a history marker")
     if r["unmatched"]:
         print(f"  unmatched numbers: {r['unmatched']}")
     if r["needs_number_failed"]:
