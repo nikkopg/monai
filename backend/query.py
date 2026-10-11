@@ -659,8 +659,9 @@ def reject_run_proposals(run: Run) -> list[str]:
     recorded id or by turn id (the run id, stamped by tools.CURRENT_TURN_ID, so
     it also catches a propose tool that finished in its executor thread after
     the cancel, D-08a). The created-since-start sweep is only a fallback for
-    legacy rows without a turn id: runs are per thread, so an unrestricted
-    sweep would reject another thread's proposals (Pitfall 7). MCP-channel rows
+    legacy rows without a turn id, and only for thread-less runs: runs are per
+    thread, so a sweep on a thread run would reject another thread's
+    proposals (Pitfall 7, WR-05). MCP-channel rows
     are never touched. Already-rejected rows are reported too, so a cancel
     racing an earlier sweep still answers with the full set (Pitfall 2).
     """
@@ -677,17 +678,16 @@ def reject_run_proposals(run: Run) -> list[str]:
         except ValueError:
             continue
     with get_session_sync() as db:
+        clauses = [Proposal.id.in_(ids), Proposal.turn_id == uuid.UUID(run.id)]
+        if run.thread_id is None:  # WR-05: a thread run never sweeps by time window
+            clauses.append(and_(
+                Proposal.turn_id.is_(None),
+                Proposal.channel == "chat",
+                Proposal.created_at >= run.started_at,
+            ))
         rows = db.execute(
             select(Proposal)
-            .where(or_(
-                Proposal.id.in_(ids),
-                Proposal.turn_id == uuid.UUID(run.id),
-                and_(
-                    Proposal.turn_id.is_(None),
-                    Proposal.channel == "chat",
-                    Proposal.created_at >= run.started_at,
-                ),
-            ))
+            .where(or_(*clauses))
             .order_by(Proposal.id)  # fixed lock order: Stop and disconnect cannot deadlock
             .with_for_update()
         ).scalars().all()

@@ -172,6 +172,19 @@ def test_fallback_sweep_only_matches_rows_without_turn_id():
     assert _status_of(other_turn) == "pending"
 
 
+def test_thread_run_stop_never_sweeps_null_turn_rows():
+    """WR-05: the time-window fallback is for thread-less runs only."""
+    run = q.Run(key="t")
+    run.thread_id = uuid.uuid4()
+    run.started_at = datetime.datetime.now(
+        datetime.timezone.utc
+    ) - datetime.timedelta(seconds=2)
+    legacy, _ = _seed_proposal()  # NULL turn_id, chat channel, inside the window
+
+    assert legacy not in q.reject_run_proposals(run)
+    assert _status_of(legacy) == "pending"
+
+
 # ---------------------------------------------------------------------------
 # Detached pump, buffer and subscribers (D-05, D-06, D-07, D-08)
 # ---------------------------------------------------------------------------
