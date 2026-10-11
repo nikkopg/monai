@@ -170,6 +170,11 @@ def test_base_zero_pct_none(seeded_compare):
     dict(period_a="fortnight", period_b="this_month"),
     dict(period_a="custom", period_b="this_month",
          a_start_date="2015-02-01", a_end_date="2015-01-01"),
+    # Overlap (WR-01): identical, nested and partially overlapping ranges.
+    dict(period_a="this_month", period_b="this_month"),
+    dict(period_a="this_year", period_b="this_month"),
+    dict(period_a="custom", period_b="custom", a_start_date="2015-01-01",
+         a_end_date="2015-01-31", b_start_date="2015-01-31", b_end_date="2015-02-28"),
 ])
 def test_refuse(kwargs):
     r = compare_periods(**kwargs)

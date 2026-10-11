@@ -750,6 +750,9 @@ def compare_periods(
     # Direction is fixed by time: earlier start = base. sorted() is stable, so
     # identical ranges keep their input order.
     (bs, be, bl, bn), (cs, ce, cl, cn) = sorted(sides, key=lambda t: (t[0], t[1]))
+    if cs < be:  # half-open ranges overlap (same, nested or partial)
+        return {"tool": "compare_periods",
+                "error": "period_a and period_b overlap; compare two separate ranges."}
 
     today = datetime.date.today()
     meta: list[dict] = []
