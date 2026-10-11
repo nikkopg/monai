@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useId, useRef } from "react";
 import type { ReactNode } from "react";
 
 import { card, dangerBtn } from "../styles";
@@ -32,8 +33,31 @@ export default function ConfirmDialog({
   onCancel,
   children,
 }: Props) {
+  const msgId = useId();
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
+
+  // Dialog a11y (Phase 36): initial focus on Cancel, Escape cancels, focus
+  // returns to whatever opened the dialog if it is still in the document.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    cancelRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancelRef.current();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (opener && opener.isConnected) opener.focus();
+    };
+  }, []);
+
   return (
     <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={msgId}
       style={{
         position: "fixed",
         inset: 0,
@@ -49,12 +73,13 @@ export default function ConfirmDialog({
         style={{ ...card, maxWidth: 360, width: "100%", padding: 24, margin: 0 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <p style={{ fontSize: 14, fontWeight: 400, margin: "0 0 16px", color: "#23201b" }}>
+        <p id={msgId} style={{ fontSize: 14, fontWeight: 400, margin: "0 0 16px", color: "#23201b" }}>
           {message}
         </p>
         {children && <div style={{ marginBottom: 16 }}>{children}</div>}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button
+            ref={cancelRef}
             type="button"
             onClick={onCancel}
             style={{
