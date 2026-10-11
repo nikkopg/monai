@@ -1490,15 +1490,19 @@ async def query_stream(req: QueryRequest):
 
     One run per conversation: a second request while one is active is 409
     before any streaming starts (D-16). The key is required (D-18, REL-08).
+    The run is server-owned: a detached pump drives it and this response is
+    only a subscriber, so a disconnect detaches and the turn runs on; only the
+    cancel route stops it (D-05, D-06).
     """
-    from backend import query
+    from backend import chat_service, query
     run = query.start_run(query.CHAT_KEY)
     if run is None:
         raise HTTPException(
             status_code=409, detail="A run is already in progress for this conversation"
         )
+    chat_service.launch(run, req.question)
     return StreamingResponse(
-        query.run_stream(run, req.question),
+        query.run_stream(run),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

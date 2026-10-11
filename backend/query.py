@@ -17,9 +17,10 @@ Public surface:
                                            feeds one queue; this generator only
                                            serializes it. Every failure is a
                                            typed `error` event, never an answer.
-  run_stream(run, question)             — async generator for POST /query-stream: a
-                                           `run` event, then agent_stream, with
-                                           shielded cleanup on every exit
+  subscribe(run, *, redact=False)       — replay a run's buffered events, then follow
+                                           live ones until [DONE]; the detached
+                                           pump (chat_service) fills the buffer
+  run_stream(run)                       — the POST /query-stream response body: a subscriber
   start_run(key) / find_run(id)         — one-run-per-conversation registry (CHAT_KEY)
   stop_run(run) -> list[str]            — halt the run, reject its pending chat proposals
   classify_error(exc) -> str            — duck-typed provider failure -> code
@@ -29,7 +30,6 @@ Public surface:
 """
 
 import asyncio
-import contextlib
 import datetime
 import json
 import logging
@@ -238,8 +238,11 @@ def _llm_label(workflow) -> tuple[str | None, str | None]:
 
 @dataclass
 class Run:
-    """State of one chat run. agent_stream records proposal ids and exposes
-    its workflow handler and producer task so Stop/disconnect can halt it."""
+    """State of one chat run. The detached pump (chat_service) owns it: it drives
+    agent_stream and appends every non-ping SSE chunk to `events`; HTTP
+    responses and re-attached clients are subscribers that only read `events`
+    (D-05). agent_stream records proposal ids and exposes its workflow handler
+    and producer task so Stop can halt it."""
 
     key: str = "chat"
     id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -249,9 +252,11 @@ class Run:
     proposal_ids: list[str] = field(default_factory=list)
     handler: Any = None
     task: asyncio.Task | None = None
-    streaming: bool = False
-    completed: bool = False
     stopped: bool = False  # Stop was requested; finish_run sweeps once more (D-08a)
+    events: list[str] = field(default_factory=list)  # every non-ping SSE chunk, in order
+    wake: asyncio.Event = field(default_factory=asyncio.Event)  # swapped on every push
+    done: bool = False  # the pump finished and [DONE] is the last event
+    pump: asyncio.Task | None = None  # strong ref: asyncio keeps only weak ones (Pitfall 2)
 
 
 async def _halt(handler, task) -> None:
@@ -588,17 +593,13 @@ CHAT_KEY = "chat"  # Phase 36 re-keys this to the thread id; nothing else change
 _ACTIVE: dict[str, Run] = {}
 _LAST: dict[str, Run] = {}  # last-finished run per key, kept until the next starts (D-11)
 
-# A run whose response generator never started must not 409 forever.
-_UNSTARTED_GRACE_SECONDS = 10.0
+_LAST_MAX = 20
 
 
 def start_run(key: str) -> Run | None:
-    """Register a new run for `key`; None when one is already active (D-16)."""
-    current = _ACTIVE.get(key)
-    if current is not None:
-        age = (datetime.datetime.now(datetime.timezone.utc) - current.started_at).total_seconds()
-        if current.streaming or age <= _UNSTARTED_GRACE_SECONDS:
-            return None
+    """Register a new run for `key`; None when one is already active (D-05)."""
+    if key in _ACTIVE:
+        return None
     run = Run(key=key)
     _ACTIVE[key] = run
     _LAST.pop(key, None)
@@ -619,6 +620,10 @@ def release_run(run: Run) -> None:
     if _ACTIVE.get(run.key) is run:
         del _ACTIVE[run.key]
         _LAST[run.key] = run
+        # ponytail: oldest-first eviction at 20 finished runs; a Stop on an
+        # evicted run 404s. Raise the cap or persist runs if that ever matters.
+        while len(_LAST) > _LAST_MAX:
+            del _LAST[next(iter(_LAST))]
 
 
 def reject_run_proposals(run: Run) -> list[str]:
@@ -676,48 +681,91 @@ async def stop_run(run: Run) -> list[str]:
 
 
 async def finish_run(run: Run) -> None:
-    """Terminal cleanup for a run's stream; always frees the slot.
+    """The pump's terminal step: sweep if stopped, mark done, end the buffer, free the slot.
 
-    A stream that never delivered its terminal event (a disconnect) halts the
-    workflow and rejects the proposals whose token never reached a client (D-12).
-    A stopped run sweeps again even though its stream ended cleanly: a propose
-    tool still running in its executor thread when Stop swept (D-08a) has
-    committed by now, and its row would otherwise stay pending and approvable.
+    A completed, unstopped run never sweeps. A stopped run sweeps again even
+    though its stream ended cleanly: a propose tool still running in its
+    executor thread when Stop swept (D-08a) has committed by now, and its row
+    would otherwise stay pending and approvable. A client disconnect no longer
+    reaches here: it only detaches a subscriber (D-06).
     """
     try:
-        if not run.completed or run.stopped:
-            await _halt(run.handler, run.task)
+        if run.stopped:
             try:
                 await asyncio.to_thread(reject_run_proposals, run)
             except Exception as e:
                 logger.warning("reject_run_proposals failed: %s: %s", type(e).__name__, e)
     finally:
+        run.done = True
+        push(run, _DONE)
         release_run(run)
 
 
-async def run_stream(run: Run, question: str):
-    """SSE stream of one registered run: a `run` event first, then agent_stream."""
-    if _ACTIVE.get(run.key) is not run:
-        # start_run replaced this run after the unstarted grace (IN-06). Running
-        # it now would race the replacement, and its finish_run sweep would
-        # reject the replacement's proposals. Refuse, and skip cleanup entirely.
-        yield _error_event("unknown", None, None, None)
-        yield _DONE
-        return
-    run.streaming = True
+def push(run: Run, chunk: str) -> None:
+    """Append a chunk to the run's buffer and wake every subscriber (pump only).
+
+    Swapping in a fresh Event before setting the old one means a subscriber that
+    captured `run.wake` before draining can never miss a wake-up.
+    """
+    run.events.append(chunk)
+    old, run.wake = run.wake, asyncio.Event()
+    old.set()
+
+
+def redact_tokens(chunk: str) -> str:
+    """Strip proposal tokens from an answer/error SSE chunk (T-02-07, D-08).
+
+    Only the original stream's terminal event may carry a token; a re-attached
+    subscriber gets proposals without `token` and `proposal_token` null.
+    Anything else (pings, [DONE], step/tool_result events) is returned as is.
+    """
+    if '"token"' not in chunk and '"proposal_token"' not in chunk:
+        return chunk
+    if not chunk.startswith("data: "):
+        return chunk
     try:
-        yield _sse({"type": "run", "run_id": run.id})
-        # aclosing: closing this stream closes agent_stream now, so its shielded
-        # cleanup runs before finish_run, not whenever the finalizer gets to it.
-        async with contextlib.aclosing(agent_stream(question, run=run)) as stream:
-            async for chunk in stream:
-                yield chunk
-        run.completed = True
-    finally:
-        # Starlette cancels this generator on disconnect at the anyio level; a
-        # plain await here would re-raise CancelledError and leak the slot (D-12a).
-        with anyio.CancelScope(shield=True):
-            await finish_run(run)
+        p = json.loads(chunk[len("data: "):].strip())
+    except ValueError:
+        return chunk
+    if not isinstance(p, dict) or p.get("type") not in ("answer", "error"):
+        return chunk
+    for pr in p.get("proposals") or []:
+        pr.pop("token", None)
+    if "proposal_token" in p:
+        p["proposal_token"] = None
+    return _sse(p)
+
+
+async def subscribe(run: Run, *, redact: bool = False, ping_interval: float = 15.0):
+    """Replay the run's buffered events in order, then follow live ones until [DONE].
+
+    A cancelled subscriber has no cleanup on purpose: that is the detach (D-06).
+    Pings are the subscriber's own, never part of the buffer.
+    """
+    i = 0
+    while True:
+        wake = run.wake  # capture BEFORE reading the list
+        while i < len(run.events):
+            chunk = run.events[i]
+            i += 1
+            yield redact_tokens(chunk) if redact else chunk
+            if chunk == _DONE:
+                return
+        if run.done:
+            return
+        try:
+            await asyncio.wait_for(wake.wait(), ping_interval)
+        except TimeoutError:
+            yield ": ping\n\n"
+
+
+async def run_stream(run: Run):
+    """SSE response body of a launched run: a subscriber, not the owner (D-05).
+
+    Emitting the `run` (and `thread`) events is the launcher's job (D-07a).
+    """
+    async for chunk in subscribe(run):
+        yield chunk
 
 
 # ---------------------------------------------------------------------------

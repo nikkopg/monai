@@ -261,3 +261,14 @@ def _payloads(lines: list[str]) -> list[dict]:
 
 def _of_type(payloads: list[dict], t: str) -> list[dict]:
     return [p for p in payloads if p.get("type") == t]
+
+
+def stream_bare(run, question):
+    """Launch a bare run (no thread) and return its subscriber stream.
+
+    Call from inside a running event loop: launch creates the pump task.
+    """
+    from backend import chat_service, query
+
+    chat_service.launch(run, question)
+    return query.run_stream(run)

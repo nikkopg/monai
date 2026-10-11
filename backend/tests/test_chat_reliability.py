@@ -48,6 +48,7 @@ from backend.tests.chat_stubs import (
     _payloads,
     _seed_proposal,
     purge_seeded,
+    stream_bare,
 )
 
 
@@ -454,12 +455,12 @@ def _audit_count() -> int:
 
 
 async def test_run_stream_first_event_is_run(monkeypatch):
-    from backend.query import CHAT_KEY, run_stream, start_run
+    from backend.query import CHAT_KEY, start_run
 
     _install_stub_workflow(monkeypatch, StubLLM(mode="ok"))
     run = start_run(CHAT_KEY)
 
-    lines = await _collect(run_stream(run, "synthetic question"))
+    lines = await _collect(stream_bare(run, "synthetic question"))
     payloads = _payloads(lines)
 
     assert payloads[0] == {"type": "run", "run_id": run.id}
@@ -475,37 +476,6 @@ def test_start_run_refuses_second_active_run():
     assert start_run(CHAT_KEY) is None
 
 
-def test_unstarted_run_is_not_a_permanent_conflict():
-    import datetime as dt
-
-    from backend.query import CHAT_KEY, start_run
-
-    stale = start_run(CHAT_KEY)
-    stale.started_at -= dt.timedelta(seconds=11)  # generator never started
-
-    fresh = start_run(CHAT_KEY)
-    assert fresh is not None and fresh is not stale
-
-
-async def test_replaced_run_refuses_to_stream():
-    """IN-06: a run replaced after the grace must not run or sweep the new run's rows."""
-    import datetime as dt
-
-    import backend.query as q
-
-    stale = q.start_run(q.CHAT_KEY)
-    stale.started_at -= dt.timedelta(seconds=11)
-    fresh = q.start_run(q.CHAT_KEY)
-    delivered, _ = _seed_proposal()  # the fresh run's proposal
-
-    lines = await _collect(q.run_stream(stale, "q"))
-
-    assert [p["type"] for p in _payloads(lines)] == ["error"]
-    assert lines[-1] == "data: [DONE]\n\n"
-    assert _status_of(delivered) == "pending"
-    assert q._ACTIVE[q.CHAT_KEY] is fresh
-
-
 @pytest.mark.parametrize("exit_path", ["answer", "error", "cancel", "disconnect"])
 async def test_registry_released_on_every_exit(monkeypatch, exit_path):
     import anyio
@@ -517,21 +487,28 @@ async def test_registry_released_on_every_exit(monkeypatch, exit_path):
     run = q.start_run(q.CHAT_KEY)
 
     if exit_path in ("answer", "error"):
-        await _collect(q.run_stream(run, "q"))
+        await _collect(stream_bare(run, "q"))
     elif exit_path == "cancel":
         n = 0
-        async for _ in q.run_stream(run, "q"):
+        async for _ in stream_bare(run, "q"):
             n += 1
             if n == 2:  # run event + first step: the workflow is live
                 await q.stop_run(run)
     else:
         async def consume():
-            async for _ in q.run_stream(run, "q"):
+            async for _ in stream_bare(run, "q"):
                 if run.handler is not None and run.task is not None:
                     tg.cancel_scope.cancel()
 
         async with anyio.create_task_group() as tg:
             tg.start_soon(consume)
+
+        # D-06: a disconnect only detaches the subscriber. The run lives on.
+        assert q._ACTIVE[q.CHAT_KEY] is run
+        assert not run.handler.is_done()
+        await q.stop_run(run)
+
+    await run.pump
 
     assert q.CHAT_KEY not in q._ACTIVE
     assert q._LAST[q.CHAT_KEY] is run
@@ -544,7 +521,7 @@ async def test_cancel_mid_run_ends_workflow(monkeypatch):
     _install_stub_workflow(monkeypatch, StubLLM(mode="hang"))
     run = q.start_run(q.CHAT_KEY)
     lines: list[str] = []
-    async for line in q.run_stream(run, "q"):
+    async for line in stream_bare(run, "q"):
         lines.append(line)
         if len(lines) == 2:
             await q.stop_run(run)
@@ -555,7 +532,8 @@ async def test_cancel_mid_run_ends_workflow(monkeypatch):
     assert run.handler.is_done()
 
 
-async def test_disconnect_cleanup_survives_anyio_cancel(monkeypatch):
+async def test_disconnect_detaches_and_keeps_proposals_pending(monkeypatch):
+    """D-06 (amends Phase 34 D-12): a disconnect neither halts nor rejects."""
     import anyio
 
     import backend.query as q
@@ -566,12 +544,19 @@ async def test_disconnect_cleanup_survives_anyio_cancel(monkeypatch):
     run.proposal_ids.append(pid)
 
     async def consume():
-        async for _ in q.run_stream(run, "q"):
+        async for _ in stream_bare(run, "q"):
             if run.handler is not None:
                 tg.cancel_scope.cancel()
 
     async with anyio.create_task_group() as tg:
         tg.start_soon(consume)
+
+    assert _status_of(pid) == "pending"
+    assert not run.handler.is_done()
+    assert q._ACTIVE[q.CHAT_KEY] is run
+
+    await q.stop_run(run)  # only Stop cancels and rejects
+    await run.pump
 
     assert _status_of(pid) == "rejected"
     assert run.handler.is_done()
@@ -605,10 +590,10 @@ async def test_stopped_run_sweeps_again_for_late_propose():
     late, _ = _seed_proposal()  # the tool thread commits after the sweep
     assert _status_of(late) == "pending"
 
-    run.completed = True  # the stream ended cleanly after Stop
-    await q.finish_run(run)
+    await q.finish_run(run)  # the pump's terminal step after a clean end
 
     assert _status_of(late) == "rejected"
+    assert run.done and run.events[-1] == "data: [DONE]\n\n"
     assert q.CHAT_KEY not in q._ACTIVE
 
 
@@ -617,10 +602,10 @@ async def test_completed_unstopped_run_does_not_sweep():
 
     run = q.start_run(q.CHAT_KEY)
     other, _ = _seed_proposal()  # delivered proposal must stay approvable
-    run.completed = True
     await q.finish_run(run)
 
     assert _status_of(other) == "pending"
+    assert run.done and run.events[-1] == "data: [DONE]\n\n"
 
 
 # ---------------------------------------------------------------------------
@@ -701,13 +686,13 @@ def test_cancel_after_completion_still_rejects(client, api_key):
     assert _status_of(a) == "rejected"
 
 
-def test_cancel_returns_rejected_ids_even_if_disconnect_cleanup_ran(client, api_key):
+def test_cancel_returns_rejected_ids_even_if_an_earlier_sweep_ran(client, api_key):
     import backend.query as q
 
     run = q.start_run(q.CHAT_KEY)
     a, _ = _seed_proposal()
     run.proposal_ids.append(a)
-    q.reject_run_proposals(run)  # the disconnect cleanup got there first
+    q.reject_run_proposals(run)  # an earlier sweep (the pump's or Stop's) got there first
 
     assert a in _cancel(client, api_key, run).json()["rejected"]
 
