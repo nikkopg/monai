@@ -124,7 +124,7 @@ test.describe("answer lane (streamed)", () => {
     await page.getByRole("button", { name: "Stop" }).click();
     await expect(page.getByText(/· stopped/)).toBeVisible();
     await expect(page.getByTestId("answer")).toHaveText("half an ans");
-    await expect(page.getByText("Stopped. This partial answer was not saved.")).toBeVisible();
+    await expect(page.getByLabel("Conversation").getByText("Stopped. This partial answer was not saved.")).toBeVisible();
   });
 
   test("re-attach replays tokens then the answer once, without duplicated text", async ({ page }) => {
@@ -161,6 +161,6 @@ test.describe("answer lane (streamed)", () => {
     await expect(page.getByTestId("answer")).toHaveText("Final replayed answer");
     await expect(page.getByTestId("answer")).toHaveCount(1);
     await expect(page.getByText("Draft replay burst")).toHaveCount(0);
-    await expect(page.getByText("Final replayed answer")).toHaveCount(1);
+    await expect(page.getByLabel("Conversation").getByText("Final replayed answer")).toHaveCount(1);
   });
 });

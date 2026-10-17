@@ -59,12 +59,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               background: tokens.color.panel,
               border: `1px solid ${tokens.color.border2}`,
               borderRadius: tokens.radius.xl,
-              overflow: "hidden",
+              // clip, not hidden: hidden makes this a scroll container and stops the chat
+              // composer's `position: sticky` from pinning to the window (D-22a).
+              overflow: "clip",
               boxShadow: tokens.shadow.panel,
             }}
           >
             <Nav />
-            <main style={{ flex: 1, minWidth: 0, overflowX: "hidden" }}>
+            <main style={{ flex: 1, minWidth: 0, overflowX: "clip" }}>
               {children}
             </main>
           </div>

@@ -167,6 +167,18 @@ function answeredLabel(m: AsstItem): string {
     : `answered ${d.toLocaleDateString(undefined, { day: "numeric", month: "short" })}, ${hhmm(ms)}`;
 }
 
+// The Stopped status line, rendered and announced from one place (D-21).
+function stoppedLine(m: AsstItem): string {
+  return (
+    (m.stoppedPartial?.trim()
+      ? "Stopped. This partial answer was not saved."
+      : "Stopped. No answer was kept.") +
+    (m.stopRejected || m.proposals.length > 0 ? " Proposals from this run were rejected." : "")
+  );
+}
+
+const FOLLOW_PX = 80; // D-22: "at the bottom" means within about 80 px of it
+
 // ---------------------------------------------------------------------------
 // Typed error block (REL-01/02/06, 34-UI-SPEC section 2)
 // ---------------------------------------------------------------------------
@@ -268,7 +280,17 @@ function ChatInner() {
   const reconcilingRef = useRef(false);
   const idCounter = useRef(0);
   const scrollNextRef = useRef(false);
-  const endRef = useRef<HTMLDivElement | null>(null);
+  const followingRef = useRef(true); // within ~80 px of the bottom (D-22)
+  const announcedRef = useRef<Set<string>>(new Set());
+  const [announcement, setAnnouncement] = useState("");
+  const [showJump, setShowJump] = useState(false);
+
+  // One polite, atomic region: set once per completed answer, error, Incomplete or
+  // stop notice (D-21). Cleared first so identical consecutive text is re-announced.
+  function announce(text: string) {
+    setAnnouncement("");
+    setTimeout(() => setAnnouncement(text), 0);
+  }
 
   const nextId = (p: string) => `${p}-live-${++idCounter.current}`;
 
@@ -508,6 +530,8 @@ function ChatInner() {
       return [...base, { kind: "user", id: nextId("u"), text: q }, runningItem(aid)];
     });
     scrollNextRef.current = true;
+    followingRef.current = true;
+    setShowJump(false);
 
     const out = await stream.send(q, loadedRef.current, handleEvent);
     await afterStream(out, "send", 1);
@@ -594,6 +618,8 @@ function ChatInner() {
       return;
     }
     scrollNextRef.current = true;
+    followingRef.current = true;
+    setShowJump(false);
     const next = mapMessages(r.messages);
     if (r.active_run) void startAttach(id, r.active_run.run_id, next, 2);
     else setMessages(next);
@@ -616,16 +642,71 @@ function ChatInner() {
     setLoading(false);
     setLoadError(false);
     setMessages([]);
+    followingRef.current = true;
+    setShowJump(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [param]);
 
-  // After a load or a send, bring the newest message into view (no smooth scroll:
-  // rAF never fires in the automated browser pane).
+  // Follow the bottom (D-22, D-22a). The window is the scroll container; measuring
+  // measures with getBoundingClientRect. No smooth scroll, animation frames or
+  // observer APIs: the automated browser pane is hidden and never fires them.
+  // The true document bottom, so the last message ends above the sticky composer.
+  function scrollToLatest() {
+    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "auto" });
+  }
+
   useEffect(() => {
-    if (!scrollNextRef.current || loading) return;
-    scrollNextRef.current = false;
-    endRef.current?.scrollIntoView?.({ behavior: "auto", block: "end" });
+    const onScroll = () => {
+      // Pixels left to scroll: the document's bottom edge minus the viewport's.
+      const left = document.documentElement.getBoundingClientRect().bottom - window.innerHeight;
+      followingRef.current = left < FOLLOW_PX;
+      if (followingRef.current) setShowJump(false);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // After a load or a send (or while following), bring the newest message into view;
+  // otherwise growing content raises the Jump to latest pill.
+  useEffect(() => {
+    if (loading) return;
+    if (scrollNextRef.current || followingRef.current) {
+      scrollNextRef.current = false;
+      scrollToLatest();
+    } else if (messages.length > 0) {
+      setShowJump(true);
+    }
   }, [messages, loading]);
+
+  // Announce each live completed answer, error, Incomplete or stop notice once; never
+  // tokens, steps or working notes (D-21). The answer text is read from the rendered node.
+  useEffect(() => {
+    for (const m of messages) {
+      if (m.kind !== "assistant" || !m.live || m.status === "running") continue;
+      const key = `${m.id}:${m.status}`;
+      if (announcedRef.current.has(key)) continue;
+      announcedRef.current.add(key);
+      let text = "";
+      if (m.status === "complete") {
+        const t = document.querySelector(`[data-mid="${m.id}"]`)?.textContent?.trim();
+        if (t) text = `monai: ${t}`;
+      } else if (m.status === "error" && m.error) {
+        const c = errorCopy(m.error);
+        text = `${c.title}. ${c.body}`;
+      } else if (m.status === "cancelled") {
+        text = stoppedLine(m);
+      }
+      if (text) announce(text);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages]);
+
+  function jumpToLatest() {
+    followingRef.current = true;
+    setShowJump(false);
+    scrollToLatest();
+    composerRef.current?.focus();
+  }
 
   // A card approved in the Inbox flips status when the tab comes back (no polling).
   useEffect(() => {
@@ -743,7 +824,7 @@ function ChatInner() {
           </div>
         )}
         {m.status === "complete" && m.text && (
-          <div data-testid="answer" style={answerBox}>
+          <div data-testid="answer" data-mid={m.id} style={answerBox}>
             <Markdown>{m.text}</Markdown>
           </div>
         )}
@@ -782,10 +863,7 @@ function ChatInner() {
             role="status"
             style={{ fontSize: 14, color: tokens.color.muted3, lineHeight: 1.5, marginBottom: 16 }}
           >
-            {partial ? "Stopped. This partial answer was not saved." : "Stopped. No answer was kept."}
-            {m.stopRejected || m.proposals.length > 0
-              ? " Proposals from this run were rejected."
-              : ""}
+            {stoppedLine(m)}
           </div>
         )}
 
@@ -927,6 +1005,10 @@ function ChatInner() {
               </div>
             )}
 
+            <div aria-live="polite" aria-atomic="true" className="sr-only" data-testid="chat-announcer">
+              {announcement}
+            </div>
+
             {reconnected && (
               <span role="status" className="sr-only">
                 Reconnected to the answer in progress.
@@ -1013,7 +1095,12 @@ function ChatInner() {
             )}
 
             {!loading && messages.length > 0 && (
-              <div role="presentation" style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+              <div
+                role="log"
+                aria-label="Conversation"
+                aria-live="off"
+                style={{ display: "flex", flexDirection: "column", gap: 24 }}
+              >
                 {messages.map((m, i) =>
                   m.kind === "user" ? (
                     <div key={m.id} style={{ display: "flex", justifyContent: "flex-end" }}>
@@ -1048,7 +1135,6 @@ function ChatInner() {
                 )}
               </div>
             )}
-            <div ref={endRef} />
           </div>
 
           {/* Composer — sticky at the bottom of the scroll area */}
@@ -1063,13 +1149,49 @@ function ChatInner() {
               paddingBottom: 2,
             }}
           >
+            {showJump && (
+              <div
+                style={{
+                  position: "absolute",
+                  bottom: "calc(100% + 8px)",
+                  left: "50%",
+                  transform: "translateX(-50%)",
+                  zIndex: 10,
+                }}
+              >
+                <button
+                  type="button"
+                  data-testid="jump-to-latest"
+                  className="coarse-tap"
+                  onClick={jumpToLatest}
+                  style={{
+                    background: tokens.color.card,
+                    border: `1px solid ${tokens.color.border2}`,
+                    borderRadius: tokens.radius.pill,
+                    boxShadow: tokens.shadow.card,
+                    color: tokens.color.ink,
+                    fontSize: 14,
+                    fontWeight: 600,
+                    padding: "0 16px",
+                    minHeight: 36,
+                    cursor: "pointer",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  Jump to latest <span aria-hidden="true">↓</span>
+                </button>
+              </div>
+            )}
+            <label htmlFor="chat-composer" className="sr-only">
+              Ask monai a question
+            </label>
             <input
+              id="chat-composer"
               ref={composerRef}
               style={{ ...input, borderRadius: 14, padding: "14px 18px", fontSize: 15 }}
               value={question}
               placeholder="Ask anything about your finances…"
               onChange={(e) => setQuestion(e.target.value)}
-              aria-label="Ask monai a question"
               onKeyDown={(e) => {
                 if (
                   e.key !== "Enter" ||

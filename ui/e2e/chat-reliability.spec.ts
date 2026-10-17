@@ -225,7 +225,7 @@ test.describe("chat stream reliability (REL-01/02/03/05/06/09)", () => {
       page,
       `: ping\n\n${sse(runEvt, { type: "answer", text: "Synthetic answer", proposals: [] })}: ping\n\ndata: [DONE]\n\n`
     );
-    await expect(page.getByText("Synthetic answer")).toBeVisible();
+    await expect(page.getByLabel("Conversation").getByText("Synthetic answer")).toBeVisible();
     await expect(alertBox(page)).toHaveCount(0);
   });
 
@@ -243,7 +243,7 @@ test.describe("chat stream reliability (REL-01/02/03/05/06/09)", () => {
     await input(page).fill(QUESTION);
     await input(page).press("Enter");
     await page.getByRole("button", { name: "Ask again" }).click();
-    await expect(page.getByText("Synthetic answer")).toBeVisible();
+    await expect(page.getByLabel("Conversation").getByText("Synthetic answer")).toBeVisible();
     await expect(alertBox(page)).toHaveCount(0);
     expect(bodies).toEqual([QUESTION, QUESTION]);
   });
@@ -341,7 +341,7 @@ test.describe("chat stream reliability (REL-01/02/03/05/06/09)", () => {
     await page.getByRole("button", { name: "Stop" }).click();
     await expect(page.getByRole("button", { name: "Stopping…" })).toBeDisabled();
     await expect(
-      page.getByText("Stopped. No answer was kept. Proposals from this run were rejected.")
+      page.getByLabel("Conversation").getByText("Stopped. No answer was kept. Proposals from this run were rejected.")
     ).toBeVisible();
     await expect(page.getByText("Rejected — the run was stopped. No changes made.")).toBeVisible();
     await expect(page.getByText("LATE-ANSWER-SYNTHETIC")).toHaveCount(0);
@@ -382,7 +382,7 @@ test.describe("chat stream reliability (REL-01/02/03/05/06/09)", () => {
     await page.getByRole("button", { name: "Stop" }).click();
     await expect(page.getByRole("button", { name: "Stopping…" })).toBeDisabled();
     await page.clock.fastForward(11_000);
-    await expect(page.getByText(/^Stopped\. No answer was kept\./)).toBeVisible();
+    await expect(page.getByLabel("Conversation").getByText(/^Stopped\. No answer was kept\./)).toBeVisible();
     await expect(page.getByRole("button", { name: "Ask", exact: true })).toBeVisible();
   });
 
@@ -421,7 +421,7 @@ test.describe("chat stream reliability (REL-01/02/03/05/06/09)", () => {
     const cancel = page.waitForRequest(new RegExp(`/api/query-stream/${RUN}/cancel$`));
     await page.evaluate(() => (window as unknown as { __emit: () => void }).__emit());
     await cancel;
-    await expect(page.getByText(/^Stopped\. No answer was kept\./)).toBeVisible();
+    await expect(page.getByLabel("Conversation").getByText(/^Stopped\. No answer was kept\./)).toBeVisible();
   });
 
   test("Stop after a terminal event clears the answer", async ({ page }) => {
@@ -454,10 +454,10 @@ test.describe("chat stream reliability (REL-01/02/03/05/06/09)", () => {
     await page.goto("/chat");
     await input(page).fill(QUESTION);
     await input(page).press("Enter");
-    await expect(page.getByText("TERMINAL-ANSWER-SYNTHETIC")).toBeVisible();
+    await expect(page.getByLabel("Conversation").getByText("TERMINAL-ANSWER-SYNTHETIC")).toBeVisible();
     await page.getByRole("button", { name: "Stop" }).click();
-    await expect(page.getByText(/^Stopped\. No answer was kept\./)).toBeVisible();
-    await expect(page.getByText("TERMINAL-ANSWER-SYNTHETIC")).toHaveCount(0);
+    await expect(page.getByLabel("Conversation").getByText(/^Stopped\. No answer was kept\./)).toBeVisible();
+    await expect(page.getByLabel("Conversation").getByText("TERMINAL-ANSWER-SYNTHETIC")).toHaveCount(0);
     await expect(page.getByText("example-model:7b", { exact: true })).toHaveCount(0);
     await expect(alertBox(page)).toHaveCount(0);
   });

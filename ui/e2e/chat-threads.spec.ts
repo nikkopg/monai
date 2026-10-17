@@ -152,7 +152,7 @@ test.describe("persisted notices (THRD-07)", () => {
     await expect(alertBox(page).first()).toContainText("The model took too long to answer");
     await expect(page.getByText(/ANSWER-MUST-NOT-RENDER/)).toHaveCount(0);
     await expect(
-      page.getByText("Stopped. No answer was kept. Proposals from this run were rejected.")
+      page.getByLabel("Conversation").getByText("Stopped. No answer was kept. Proposals from this run were rejected.")
     ).toBeVisible();
     await expect(page.getByText("Rejected — the run was stopped. No changes made.")).toBeVisible();
     await expect(page.getByRole("button", { name: "Ask again" })).toHaveCount(1);
@@ -453,7 +453,7 @@ test.describe("thread sidebar (THRD-02, D-20)", () => {
     await expect(page.getByRole("button", { name: "Try again" })).toBeVisible();
     await input(page).fill("Synthetic question");
     await input(page).press("Enter");
-    await expect(page.getByText("Synthetic sidebar answer")).toBeVisible();
+    await expect(page.getByLabel("Conversation").getByText("Synthetic sidebar answer")).toBeVisible();
   });
 });
 
