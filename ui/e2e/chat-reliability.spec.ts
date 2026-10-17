@@ -231,7 +231,9 @@ test.describe("chat stream reliability (REL-01/02/03/05/06/09)", () => {
 
   test("Ask again re-sends the same question as a fresh run", async ({ page }) => {
     const bodies: string[] = [];
+    const raw: Record<string, unknown>[] = [];
     await page.route(/\/api\/query-stream$/, (route) => {
+      raw.push(route.request().postDataJSON());
       bodies.push(route.request().postDataJSON().question);
       const body =
         bodies.length === 1
@@ -246,6 +248,8 @@ test.describe("chat stream reliability (REL-01/02/03/05/06/09)", () => {
     await expect(page.getByLabel("Conversation").getByText("Synthetic answer")).toBeVisible();
     await expect(alertBox(page)).toHaveCount(0);
     expect(bodies).toEqual([QUESTION, QUESTION]);
+    // D-18: a thread-less (unsaved) pair is replaced locally, never via replace_from.
+    expect(raw[1]).not.toHaveProperty("replace_from");
   });
 
   test("proposals on an error event stay actionable", async ({ page }) => {

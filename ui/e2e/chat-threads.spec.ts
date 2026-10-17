@@ -4,6 +4,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 import { MIN, ids, mockInbox } from "./inbox-fixtures";
+import { mockStreams, queryBodies } from "./stream-mock";
 
 const TID = "00000000-0000-4000-8000-0000000000a1";
 const RUN = "00000000-0000-4000-8000-0000000000c3";
@@ -157,6 +158,40 @@ test.describe("persisted notices (THRD-07)", () => {
     await expect(page.getByText("Rejected — the run was stopped. No changes made.")).toBeVisible();
     await expect(page.getByRole("button", { name: "Ask again" })).toHaveCount(1);
     await expect(alertBox(page).last().getByRole("button", { name: "Ask again" })).toBeVisible();
+  });
+
+  // D-18 / Pitfall 9: Ask again on a saved error turn is a regenerate through
+  // replace_from, so the failed pair is replaced rather than duplicated.
+  test("Ask again on a persisted error turn replaces it through replace_from", async ({ page }) => {
+    await setup(page);
+    const failedUser = userMsg("Retry synthetic question");
+    const newUser = userMsg("Retry synthetic question");
+    const newAsst = asstMsg("Fresh synthetic answer");
+    let loads = 0;
+    await page.route(threadUrl, (route) =>
+      route.fulfill({
+        json: ++loads === 1
+          ? thread([failedUser, asstMsg("", "error", { error: { code: "rate_limit" } })])
+          : thread([newUser, newAsst]),
+      })
+    );
+    await mockStreams(page, [
+      [
+        { at: 0, data: { type: "thread", thread_id: TID, user_message_id: newUser.id, assistant_message_id: newAsst.id } },
+        { at: 5, data: { type: "run", run_id: RUN } },
+        { at: 15, data: { type: "answer", text: "Fresh synthetic answer", proposals: [] } },
+        { at: 20, data: "[DONE]" },
+      ],
+    ]);
+    await page.goto(`/chat?thread=${TID}`);
+    await page.getByRole("button", { name: "Ask again" }).click();
+    const conversation = page.getByLabel("Conversation");
+    await expect(conversation.getByText("Fresh synthetic answer")).toBeVisible();
+    expect(await queryBodies(page)).toEqual([
+      { question: "Retry synthetic question", thread_id: TID, replace_from: failedUser.id },
+    ]);
+    await expect(conversation.getByText("Retry synthetic question", { exact: true })).toHaveCount(1);
+    await expect(alertBox(page)).toHaveCount(0);
   });
 });
 

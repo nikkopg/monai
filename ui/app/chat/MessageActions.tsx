@@ -18,6 +18,7 @@ export async function copyText(text: string): Promise<boolean> {
   } catch {
     // fall through to the textarea path
   }
+  const prev = document.activeElement as HTMLElement | null;
   try {
     const ta = document.createElement("textarea");
     ta.value = text;
@@ -28,6 +29,7 @@ export async function copyText(text: string): Promise<boolean> {
     ta.select();
     const ok = document.execCommand("copy");
     ta.remove();
+    prev?.focus(); // select() moved focus into the textarea: give it back
     return ok;
   } catch {
     return false;
