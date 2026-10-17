@@ -120,15 +120,18 @@ export function useChatStream() {
   function send(
     question: string,
     threadId: string | null,
-    onEvent: (msg: SseMessage) => void
+    onEvent: (msg: SseMessage) => void,
+    replaceFrom?: string | null
   ) {
     runIdRef.current = null;
+    const body: Record<string, string> = threadId ? { question, thread_id: threadId } : { question };
+    if (replaceFrom && threadId) body.replace_from = replaceFrom; // D-18: regenerate / edit
     return open(
       "/api/query-stream",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(threadId ? { question, thread_id: threadId } : { question }),
+        body: JSON.stringify(body),
       },
       onEvent,
       false

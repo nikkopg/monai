@@ -109,10 +109,12 @@ export default function MessageActions(props: Props) {
   );
 
   const hasCopy = typeof props.copyText === "string" && props.copyText !== "";
-  if (!hasCopy && !props.onRegenerate && !props.onEdit) return null;
+  const hasButtons = hasCopy || !!props.onRegenerate || !!props.onEdit;
+  if (!hasButtons && !props.error) return null;
 
   return (
     <div>
+      {hasButtons && (
       <div
         data-testid="message-actions"
         className={"message-actions" + (props.alwaysVisible ? " always-visible" : "")}
@@ -161,6 +163,7 @@ export default function MessageActions(props: Props) {
           </span>
         )}
       </div>
+      )}
       {props.error && (
         <div
           role="alert"

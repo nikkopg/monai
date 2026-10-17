@@ -3,12 +3,15 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
-import { tokens, input, btnDark } from "../styles";
+import { tokens, input, btnDark, btnGhost } from "../styles";
+import ConfirmDialog from "../cashflow/ConfirmDialog";
 import type { DiffRow } from "../components/ProposalDiff";
 import { hhmm } from "../lib/inbox";
 import { errorCopy } from "./errors";
 import type { ChatError } from "./errors";
+import MessageActions from "./MessageActions";
 import ProposalCard, {
+  clearProposalToken,
   readProposalToken,
   saveProposalToken,
   toProposal,
@@ -178,6 +181,94 @@ function stoppedLine(m: AsstItem): string {
   );
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (id: string) => UUID_RE.test(id);
+
+type SendOpts = { retry?: boolean; replaceFrom?: string; mode?: "regenerate" | "edit" };
+
+const WAIT_REASON = "Wait for the current answer to finish, or stop it first.";
+const APPLIED_REASON = "Can't redo this: a change made from here on was already applied.";
+
+// Inline editor in place of a user bubble (D-20). Mounts focused, caret at the end.
+function EditBox({
+  text,
+  busy,
+  error,
+  onChange,
+  onSubmit,
+  onCancel,
+}: {
+  text: string;
+  busy: boolean;
+  error: string | null;
+  onChange: (t: string) => void;
+  onSubmit: () => void;
+  onCancel: () => void;
+}) {
+  const ref = useRef<HTMLTextAreaElement | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }, []);
+  return (
+    <div style={{ width: "80%", display: "flex", flexDirection: "column", gap: 8 }}>
+      <label htmlFor="chat-edit-box" className="sr-only">
+        Edit your question
+      </label>
+      <textarea
+        id="chat-edit-box"
+        ref={ref}
+        value={text}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            e.preventDefault();
+            onCancel();
+            return;
+          }
+          if (e.key !== "Enter" || e.shiftKey || e.nativeEvent.isComposing || e.keyCode === 229)
+            return;
+          e.preventDefault();
+          onSubmit();
+        }}
+        style={{
+          background: tokens.color.inputBg,
+          border: `1px solid ${tokens.color.border2}`,
+          borderRadius: tokens.radius.md,
+          color: tokens.color.ink,
+          fontSize: 16,
+          fontFamily: "inherit",
+          padding: "12px 16px",
+          minHeight: 80,
+          width: "100%",
+          boxSizing: "border-box",
+          resize: "vertical",
+        }}
+      />
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <button
+          type="button"
+          style={{ ...btnDark, minHeight: 36, opacity: !text.trim() || busy ? 0.5 : 1 }}
+          disabled={!text.trim() || busy}
+          onClick={onSubmit}
+        >
+          Resend question
+        </button>
+        <button type="button" style={{ ...btnGhost, minHeight: 36 }} onClick={onCancel}>
+          Discard edit
+        </button>
+      </div>
+      {error && (
+        <div role="alert" style={{ fontSize: 12, color: tokens.color.terracottaText }}>
+          {error}
+        </div>
+      )}
+    </div>
+  );
+}
+
 const FOLLOW_PX = 80; // D-22: "at the bottom" means within about 80 px of it
 
 // ---------------------------------------------------------------------------
@@ -285,6 +376,18 @@ function ChatInner() {
   const announcedRef = useRef<Set<string>>(new Set());
   const [announcement, setAnnouncement] = useState("");
   const [showJump, setShowJump] = useState(false);
+  // Regenerate / edit (37-08). One editor at a time; refusals show inline.
+  const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
+  const [confirmEdit, setConfirmEdit] = useState<{ n: number; text: string } | null>(null);
+  const [actionError, setActionError] = useState<{
+    userId: string;
+    mode: "regenerate" | "edit";
+    text: string;
+  } | null>(null);
+  const liveUserIdRef = useRef<string | null>(null); // live user item of the run in view
+  const editPendingRef = useRef(false); // edit sent, first event not yet seen
+  const editBtnRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const refocusEditRef = useRef<string | null>(null);
 
   // One polite, atomic region: set once per completed answer, error, Incomplete or
   // stop notice (D-21). Cleared first so identical consecutive text is re-announced.
@@ -338,6 +441,14 @@ function ChatInner() {
       threadSeenRef.current = true;
       if (loadedRef.current !== msg.thread_id) bumpSidebar(); // new thread: list it
       loadedRef.current = msg.thread_id; // own thread: the URL effect skips its fetch
+      // The live user item gets its persisted id, so Ask again / Edit work even if
+      // the reconcile fetch later fails.
+      const from = liveUserIdRef.current;
+      const to = msg.user_message_id;
+      if (from && typeof to === "string") {
+        liveUserIdRef.current = null;
+        setMessages((ms) => ms.map((m) => (m.kind === "user" && m.id === from ? { ...m, id: to } : m)));
+      }
       if (paramRef.current !== msg.thread_id) {
         router.replace("/chat?thread=" + msg.thread_id);
       }
@@ -492,6 +603,7 @@ function ChatInner() {
     terminalRef.current = false;
     threadSeenRef.current = true;
     traceRef.current = [];
+    liveUserIdRef.current = null;
     askedRef.current = [...base].reverse().find((m) => m.kind === "user")?.text ?? "";
     stream.runIdRef.current = runId;
     setMessages([...base, runningItem(aid)]);
@@ -503,38 +615,123 @@ function ChatInner() {
     bumpSidebar();
   }
 
-  // `retry` (Ask again) keeps whatever is in the composer.
-  async function sendQuestion(text?: string, retry = false) {
+  // A refused or failed replace (409 / 422 / other / no connection): restore the
+  // view and show an inline error. The copy is chosen without reading the response
+  // detail (34 D-02); a 409 re-reads the thread to tell "applied" from "running".
+  async function refuseReplace(
+    status: number | null,
+    snapshot: Item[],
+    userId: string,
+    mode: "regenerate" | "edit"
+  ) {
+    const tid = loadedRef.current;
+    let text = "Couldn't redo this. Try again.";
+    let restore = snapshot;
+    if (status === 409 && tid) {
+      const r = await fetchThread(tid);
+      if (typeof r !== "string") {
+        const fresh = mapMessages(r.messages);
+        const at = fresh.findIndex((m) => m.id === userId);
+        if (
+          at >= 0 &&
+          fresh.slice(at).some(
+            (m) => m.kind === "assistant" && m.proposals.some((p) => p.liveStatus === "confirmed")
+          )
+        ) {
+          text = "This answer's changes were already applied, so it can't be redone.";
+          restore = fresh;
+        } else {
+          text = "This chat is still answering. Wait for it to finish.";
+        }
+      }
+    }
+    if (loadedRef.current !== tid) return; // the view moved on
+    editPendingRef.current = false;
+    setMessages(restore);
+    setActionError({ userId, mode, text });
+    endRun();
+  }
+
+  // `retry` (Ask again) keeps whatever is in the composer. `replaceFrom` (D-18) asks
+  // the server to truncate the thread at that user message and run the question
+  // again: regenerate truncates the view at once, edit when the server accepts.
+  async function sendQuestion(text?: string, opts: SendOpts = {}) {
+    const { retry = false, replaceFrom, mode = "regenerate" } = opts;
     const q = (text ?? question).trim();
     if (!q || loading || stream.busyRef.current || reconcilingRef.current) return;
+    const target = replaceFrom
+      ? messages.findIndex((m) => m.kind === "user" && m.id === replaceFrom)
+      : -1;
+    if (replaceFrom && (target < 0 || !loadedRef.current)) return;
+    const replacing = replaceFrom !== undefined;
 
     tokenBuf.cancel();
     const aid = nextId("a");
-    const replaceFailed = retry && loadedRef.current === null; // unsaved pair: replace it
+    const uid = nextId("u");
+    const replaceFailed = retry && !replacing && loadedRef.current === null; // unsaved pair
+    const snapshot = messages;
+    const before = replacing ? messages.slice(0, target) : [];
+    const removedProposals = replacing
+      ? messages.slice(target).flatMap((m) => (m.kind === "assistant" ? m.proposals.map((p) => p.id) : []))
+      : [];
     liveIdRef.current = aid;
+    liveUserIdRef.current = uid;
     askedRef.current = q;
     terminalRef.current = false;
     threadSeenRef.current = false;
     traceRef.current = [];
     setNotFound(false);
+    setActionError(null);
     setAsking(true);
     setStopping(false);
     setReconnected(false);
-    if (!retry) setQuestion("");
-    setMessages((ms) => {
-      const base =
-        replaceFailed &&
-        ms[ms.length - 1]?.kind === "assistant" &&
-        ms[ms.length - 2]?.kind === "user"
-          ? ms.slice(0, -2)
-          : ms;
-      return [...base, { kind: "user", id: nextId("u"), text: q }, runningItem(aid)];
-    });
-    scrollNextRef.current = true;
-    followingRef.current = true;
-    setShowJump(false);
+    if (!retry && !replacing) setQuestion("");
 
-    const out = await stream.send(q, loadedRef.current, handleEvent);
+    const truncate = () => {
+      setOpenSteps((o) => Object.fromEntries(Object.entries(o).filter(([k]) => Number(k) < target)));
+      setMessages([...before, { kind: "user", id: uid, text: q }, runningItem(aid)]);
+      scrollNextRef.current = true;
+      followingRef.current = true;
+      setShowJump(false);
+    };
+    if (replacing) {
+      if (mode === "regenerate") truncate();
+      else editPendingRef.current = true;
+    } else {
+      setMessages((ms) => {
+        const base =
+          replaceFailed &&
+          ms[ms.length - 1]?.kind === "assistant" &&
+          ms[ms.length - 2]?.kind === "user"
+            ? ms.slice(0, -2)
+            : ms;
+        return [...base, { kind: "user", id: uid, text: q }, runningItem(aid)];
+      });
+      scrollNextRef.current = true;
+      followingRef.current = true;
+      setShowJump(false);
+    }
+
+    // The first event proves the server took the replace: supersede is done, so the
+    // removed proposals' single-use tokens are cleared (D-20, 36 D-17).
+    let accepted = !replacing;
+    const onEvent = (m: Record<string, unknown>) => {
+      if (!accepted) {
+        accepted = true;
+        editPendingRef.current = false;
+        if (mode === "edit") truncate();
+        removedProposals.forEach(clearProposalToken);
+        setEditing(null);
+        composerRef.current?.focus();
+      }
+      handleEvent(m);
+    };
+
+    const out = await stream.send(q, loadedRef.current, onEvent, replaceFrom);
+    if (replacing && !accepted && (out.kind === "status" || out.kind === "error")) {
+      await refuseReplace(out.kind === "status" ? out.status : null, snapshot, replaceFrom, mode);
+      return;
+    }
     await afterStream(out, "send", 1);
     bumpSidebar(); // turn ended: updated_at / title moved
   }
@@ -546,6 +743,15 @@ function ChatInner() {
     const pending = tokenBuf.take(); // flushed text not yet in the draft
     const rejected = await stream.stop();
     if (rejected === null) return;
+    if (editPendingRef.current) {
+      // An edit the server never confirmed: nothing local to mark Stopped; re-read.
+      editPendingRef.current = false;
+      setStopping(false);
+      endRun();
+      const tid = loadedRef.current;
+      if (tid) void reconcile(tid, 0);
+      return;
+    }
 
     const cards: Proposal[] = traceRef.current
       .filter(
@@ -757,9 +963,58 @@ function ChatInner() {
   const last = messages[messages.length - 1];
   const orphan = last?.kind === "user" && !asking && !loading && !loadError;
 
+  // Ask again is the same regenerate through replace_from whenever the question is
+  // saved (D-18); an unsaved, thread-less pair is replaced locally instead.
+  function retryUser(u: Item | undefined) {
+    if (u?.kind !== "user") return;
+    if (loadedRef.current && isUuid(u.id)) {
+      void sendQuestion(u.text, { replaceFrom: u.id, mode: "regenerate", retry: true });
+    } else {
+      void sendQuestion(u.text, { retry: true });
+    }
+  }
   function askAgain(index: number) {
-    const prev = messages[index - 1];
-    if (prev?.kind === "user") void sendQuestion(prev.text, true);
+    retryUser(messages[index - 1]);
+  }
+
+  // Why Regenerate / Edit at user index `u` is unavailable (null = available).
+  function redoDisabled(u: number): string | null {
+    if (asking || loading) return WAIT_REASON;
+    if (
+      messages
+        .slice(u)
+        .some((m) => m.kind === "assistant" && m.proposals.some((p) => p.liveStatus === "confirmed"))
+    )
+      return APPLIED_REASON;
+    if (!isUuid(messages[u].id)) return "Saving this chat…";
+    return null;
+  }
+
+  function startEdit(m: UserItem) {
+    setActionError(null);
+    setEditing({ id: m.id, text: m.text });
+  }
+  function closeEdit() {
+    if (editing) refocusEditRef.current = editing.id;
+    setEditing(null);
+    setConfirmEdit(null);
+  }
+  useEffect(() => {
+    if (editing === null && refocusEditRef.current) {
+      editBtnRefs.current[refocusEditRef.current]?.focus();
+      refocusEditRef.current = null;
+    }
+  }, [editing]);
+
+  // N = messages after the edited question other than its own answer (D-20).
+  function submitEdit() {
+    if (!editing || asking) return;
+    const text = editing.text.trim();
+    const u = messages.findIndex((m) => m.kind === "user" && m.id === editing.id);
+    if (!text || u < 0) return;
+    const n = messages.length - u - 1 - (messages[u + 1]?.kind === "assistant" ? 1 : 0);
+    if (n > 0) setConfirmEdit({ n, text });
+    else void sendQuestion(text, { replaceFrom: editing.id, mode: "edit" });
   }
 
   function renderAssistant(m: AsstItem, index: number) {
@@ -774,8 +1029,11 @@ function ChatInner() {
       overflowWrap: "anywhere",
       marginBottom: 16,
     };
+    const prevUser = messages[index - 1]?.kind === "user" ? (messages[index - 1] as UserItem) : null;
+    const lastAsst = messages.map((x) => x.kind).lastIndexOf("assistant") === index;
+    const redoReason = prevUser ? redoDisabled(index - 1) : null;
     return (
-      <div key={m.id}>
+      <div key={m.id} className="chat-msg">
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
           <span style={{ fontFamily: tokens.font.serif, fontSize: 18 }}>monai</span>
           {m.status !== "error" && (
@@ -877,6 +1135,29 @@ function ChatInner() {
           />
         )}
 
+        {/* Actions: Copy on a completed answer, Regenerate on the last (UI-SPEC section 5) */}
+        <MessageActions
+          copyText={m.status === "complete" ? m.text : undefined}
+          onRegenerate={
+            lastAsst && prevUser && (m.status === "complete" || m.status === "cancelled")
+              ? () =>
+                  void sendQuestion(prevUser.text, {
+                    replaceFrom: prevUser.id,
+                    mode: "regenerate",
+                    retry: true,
+                  })
+              : undefined
+          }
+          alwaysVisible={lastAsst}
+          onAnnounce={announce}
+          disabledReason={redoReason}
+          error={
+            prevUser && actionError?.mode === "regenerate" && actionError.userId === prevUser.id
+              ? actionError.text
+              : null
+          }
+        />
+
         {/* Inline ProposalCards — one per proposal in this turn (D-01, AGENT-06) */}
         {m.proposals.map((p) => (
           <ProposalCard
@@ -885,7 +1166,20 @@ function ChatInner() {
             liveStatus={p.liveStatus}
             inCancelledMessage={m.status === "cancelled"}
             onApplied={() => {
-              // /cashflow re-fetches its own list on mount; nothing local.
+              // /cashflow re-fetches its own list on mount. Mark it applied here so
+              // Regenerate / Edit lock for this point at once (D-19).
+              setMessages((ms) =>
+                ms.map((x) =>
+                  x.kind === "assistant" && x.id === m.id
+                    ? {
+                        ...x,
+                        proposals: x.proposals.map((q) =>
+                          q.id === p.id ? { ...q, liveStatus: "confirmed" as LiveStatus } : q
+                        ),
+                      }
+                    : x
+                )
+              );
             }}
             onRejected={() => {
               // nothing extra needed
@@ -1113,20 +1407,49 @@ function ChatInner() {
               >
                 {messages.map((m, i) =>
                   m.kind === "user" ? (
-                    <div key={m.id} style={{ display: "flex", justifyContent: "flex-end" }}>
-                      <div
-                        style={{
-                          background: tokens.color.ink,
-                          color: tokens.color.inkText,
-                          padding: "12px 18px",
-                          borderRadius: "16px 16px 4px 16px",
-                          fontSize: 15,
-                          maxWidth: "80%",
-                          overflowWrap: "anywhere",
-                        }}
-                      >
-                        {m.text}
-                      </div>
+                    <div
+                      key={m.id}
+                      className="chat-msg"
+                      style={{ display: "flex", flexDirection: "column", alignItems: "flex-end" }}
+                    >
+                      {editing?.id === m.id ? (
+                        <EditBox
+                          text={editing.text}
+                          busy={asking}
+                          error={
+                            actionError?.mode === "edit" && actionError.userId === m.id
+                              ? actionError.text
+                              : null
+                          }
+                          onChange={(t) => setEditing({ id: m.id, text: t })}
+                          onSubmit={submitEdit}
+                          onCancel={closeEdit}
+                        />
+                      ) : (
+                        <>
+                          <div
+                            style={{
+                              background: tokens.color.ink,
+                              color: tokens.color.inkText,
+                              padding: "12px 18px",
+                              borderRadius: "16px 16px 4px 16px",
+                              fontSize: 15,
+                              maxWidth: "80%",
+                              overflowWrap: "anywhere",
+                            }}
+                          >
+                            {m.text}
+                          </div>
+                          <MessageActions
+                            questionText={m.text}
+                            onEdit={() => startEdit(m)}
+                            disabledReason={redoDisabled(i)}
+                            editRef={(el) => {
+                              editBtnRefs.current[m.id] = el;
+                            }}
+                          />
+                        </>
+                      )}
                     </div>
                   ) : (
                     renderAssistant(m, i)
@@ -1137,15 +1460,38 @@ function ChatInner() {
                     <button
                       type="button"
                       style={{ ...btnDark, minHeight: 36 }}
-                      onClick={() => void sendQuestion(last.text, true)}
+                      onClick={() => retryUser(last)}
                     >
                       Ask again
                     </button>
                   </ErrorBlock>
                 )}
+                {orphan && last?.kind === "user" && actionError?.userId === last.id && (
+                  <div role="alert" style={{ fontSize: 12, color: tokens.color.terracottaText }}>
+                    {actionError.text}
+                  </div>
+                )}
               </div>
             )}
           </div>
+
+          {confirmEdit && (
+            <ConfirmDialog
+              message={`Edit and resend? The ${confirmEdit.n} later ${
+                confirmEdit.n === 1 ? "message" : "messages"
+              } in this chat will be removed, and any pending proposals from ${
+                confirmEdit.n === 1 ? "it" : "them"
+              } will be cancelled.`}
+              confirmLabel="Remove and resend"
+              cancelLabel="Keep chat"
+              onCancel={() => setConfirmEdit(null)}
+              onConfirm={() => {
+                const c = confirmEdit;
+                setConfirmEdit(null);
+                if (editing) void sendQuestion(c.text, { replaceFrom: editing.id, mode: "edit" });
+              }}
+            />
+          )}
 
           {/* Composer — sticky at the bottom of the scroll area */}
           <div
