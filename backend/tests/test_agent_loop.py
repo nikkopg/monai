@@ -297,6 +297,31 @@ def test_cap_never_writes_shown_or_total_markers():
     assert "total" not in out and "shown" not in out
 
 
+def test_cap_keeps_the_tools_own_note():
+    import ast
+
+    from backend.agent_loop import cap_for_llm
+
+    out = ast.literal_eval(cap_for_llm({"groups": _rows(300), "note": "ZZ caveat"}))
+    assert out["note"].startswith("ZZ caveat (") and "narrow the query" in out["note"]
+
+
+async def test_zero_arg_tool_is_never_capped():
+    """list_categories takes no args, so it cannot be narrowed: the LLM sees all of it."""
+    from backend import query
+
+    def zz_reference():
+        return {"tool": "zz_reference", "categories": [{"name": f"ZZ Group {i}", "children": []} for i in range(400)]}
+
+    def zz_rows(limit: int = 50):
+        return {"tool": "zz_rows", "rows": _rows(300)}
+
+    whole = await query._llm_tool("zz_reference", zz_reference).acall()
+    assert "truncated" not in whole.content and "ZZ Group 399" in whole.content
+    capped = await query._llm_tool("zz_rows", zz_rows).acall()
+    assert "'truncated': True" in capped.content
+
+
 def test_cap_huge_nested_dict_keeps_only_scalars():
     import ast
 
@@ -462,7 +487,7 @@ async def test_proposal_order_matches_creation_order(monkeypatch, cleanup):
 async def test_cap_llm_sees_trimmed_sse_sees_full(monkeypatch):
     full = {"tool": "find_transactions", "rows": _rows(300), "total": 4321.0}
 
-    def find_transactions() -> dict:
+    def find_transactions(limit: int = 50) -> dict:
         """Synthetic read."""
         return full
 

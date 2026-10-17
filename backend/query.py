@@ -196,8 +196,12 @@ def _llm_tool(name: str, fn):
     no new proposal row (D-12); the lock is kept even though it is redundant if
     the framework ever runs calls serially (D-13). Reads take no lock and may
     overlap. The cap is LLM-only: async_callback overrides the content while
-    raw_output stays the full dict (D-08).
+    raw_output stays the full dict (D-08). A tool with no parameters is never
+    capped: its note would tell the model to narrow a query it cannot narrow,
+    and a reference list such as list_categories would silently lose entries.
     """
+    import inspect
+
     from llama_index.core.tools import FunctionTool
 
     from backend.tools import READ_TOOL_NAMES
@@ -220,6 +224,8 @@ def _llm_tool(name: str, fn):
 
         return cap_for_llm(raw)
 
+    if not inspect.signature(fn).parameters:
+        return FunctionTool.from_defaults(fn=hidden, name=name)
     return FunctionTool.from_defaults(fn=hidden, name=name, async_callback=_cap)
 
 

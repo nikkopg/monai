@@ -64,7 +64,8 @@ def cap_for_llm(raw, cap: int = CAP_CHARS) -> str | None:
                 cut[k] = {"shown": 0, "of": len(v)}
     out["truncated"] = True
     out["truncated_lists"] = cut
-    out["note"] = "partial result; narrow the query (period, category, limit) for the rest"
+    note = "partial result; narrow the query (period, category, limit) for the rest"
+    out["note"] = f"{raw['note']} ({note})" if raw.get("note") else note  # keep the tool's own caveat
     return str(out)
 
 
