@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useEffect, useRef, useState } from "react";
+import { Fragment, Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { tokens, input, btnDark, btnGhost } from "../styles";
@@ -44,7 +44,7 @@ type TraceStep = {
   result: Record<string, unknown>;
 };
 
-type UserItem = { kind: "user"; id: string; text: string };
+type UserItem = { kind: "user"; id: string; text: string; seq?: number };
 
 type AsstItem = {
   kind: "assistant";
@@ -59,6 +59,7 @@ type AsstItem = {
   createdAt: string | null;
   live: boolean; // answered in this view (state text "just now")
   stopRejected?: boolean;
+  seq?: number; // persisted position; live items have none and sit after any boundary
 };
 
 type Item = UserItem | AsstItem;
@@ -91,7 +92,16 @@ type ThreadDetail = {
   id: string;
   active_run: { run_id: string } | null;
   messages: PersistedMessage[];
+  summary_upto_seq?: number;
+  has_summary?: boolean;
 };
+
+type Boundary = { upto: number; summarized: boolean };
+
+// Where the model's context starts (D-24); null when nothing is summarized or cleared.
+function boundaryOf(r: ThreadDetail): Boundary | null {
+  return r.summary_upto_seq ? { upto: r.summary_upto_seq, summarized: !!r.has_summary } : null;
+}
 
 const NOT_FOUND = "404";
 
@@ -111,7 +121,7 @@ function mapMessages(list: PersistedMessage[]): Item[] {
   return [...list]
     .sort((a, b) => a.seq - b.seq)
     .map((m): Item => {
-      if (m.role !== "assistant") return { kind: "user", id: m.id, text: m.content };
+      if (m.role !== "assistant") return { kind: "user", id: m.id, text: m.content, seq: m.seq };
       const parts = m.parts ?? {};
       const status: AsstItem["status"] =
         m.status === "error" || m.status === "cancelled" ? m.status : "complete";
@@ -138,6 +148,7 @@ function mapMessages(list: PersistedMessage[]): Item[] {
           : null,
         createdAt: m.created_at,
         live: false,
+        seq: m.seq,
       };
     });
 }
@@ -345,6 +356,10 @@ function ChatInner() {
   paramRef.current = param;
 
   const [question, setQuestion] = useState("");
+  // Context boundary + /compact, /clear state (38 D-23..D-26).
+  const [boundary, setBoundary] = useState<Boundary | null>(null);
+  const [slash, setSlash] = useState<"compacting" | "clearing" | null>(null);
+  const [note, setNote] = useState<{ text: string; error: boolean } | null>(null);
   const [messages, setMessages] = useState<Item[]>([]);
   const [asking, setAsking] = useState(false);
   const [stopping, setStopping] = useState(false);
@@ -553,6 +568,7 @@ function ChatInner() {
       return;
     }
     const next = mapMessages(r.messages);
+    setBoundary(boundaryOf(r));
     if (r.active_run && tries > 0) {
       void startAttach(tid, r.active_run.run_id, next, tries);
       return;
@@ -638,6 +654,7 @@ function ChatInner() {
       const r = await fetchThread(tid);
       if (typeof r !== "string") {
         const fresh = mapMessages(r.messages);
+        setBoundary(boundaryOf(r));
         const at = fresh.findIndex((m) => m.id === userId);
         if (
           at >= 0 &&
@@ -658,6 +675,7 @@ function ChatInner() {
       const r = await fetchThread(tid);
       if (typeof r !== "string") {
         restore = mapMessages(r.messages);
+        setBoundary(boundaryOf(r));
         if (loadedRef.current === tid && r.active_run) {
           editPendingRef.current = false;
           setEditing(null);
@@ -676,8 +694,57 @@ function ChatInner() {
   // `retry` (Ask again) keeps whatever is in the composer. `replaceFrom` (D-18) asks
   // the server to truncate the thread at that user message and run the question
   // again: regenerate truncates the view at once, edit when the server accepts.
+  // /compact and /clear (D-26): exact trimmed match only, never a chat turn.
+  async function runSlash(cmd: "/compact" | "/clear") {
+    if (asking || loading || stream.busyRef.current || reconcilingRef.current || slash !== null) return;
+    const tid = loadedRef.current;
+    const verb = cmd.slice(1);
+    if (!tid) {
+      setNote({ text: `Nothing to ${verb} yet.`, error: false });
+      return;
+    }
+    const generic = `Couldn't ${verb} this chat right now. Try again later.`;
+    setSlash(cmd === "/compact" ? "compacting" : "clearing");
+    setNote(null);
+    try {
+      const res = await fetch(`/api/threads/${tid}/${verb}`, { method: "POST" });
+      if (res.ok) {
+        setQuestion("");
+        const r = await fetchThread(tid);
+        if (typeof r !== "string" && loadedRef.current === tid) {
+          setMessages(mapMessages(r.messages));
+          setBoundary(boundaryOf(r));
+        }
+      } else {
+        const d = await res.json().catch(() => ({}));
+        setNote({
+          text:
+            res.status === 409
+              ? "Wait for the current answer to finish, then try again."
+              : res.status === 404
+                ? "This chat no longer exists."
+                : typeof d?.detail === "string" && d.detail
+                  ? d.detail
+                  : generic,
+          error: true,
+        });
+      }
+    } catch {
+      setNote({ text: generic, error: true });
+    } finally {
+      setSlash(null);
+    }
+  }
+
   async function sendQuestion(text?: string, opts: SendOpts = {}) {
     const { retry = false, replaceFrom, mode = "regenerate" } = opts;
+    if (text === undefined && !replaceFrom && !retry) {
+      const cmd = question.trim();
+      if (cmd === "/compact" || cmd === "/clear") {
+        void runSlash(cmd);
+        return;
+      }
+    }
     const q = (text ?? question).trim();
     if (!q || loading || stream.busyRef.current || reconcilingRef.current) return;
     const target = replaceFrom
@@ -831,6 +898,8 @@ function ChatInner() {
     setLoadError(false);
     setNotFound(false);
     setMessages([]);
+    setBoundary(null);
+    setNote(null);
     const r = await fetchThread(id);
     if (seq !== loadSeqRef.current) return;
     setLoading(false);
@@ -849,6 +918,7 @@ function ChatInner() {
     followingRef.current = true;
     setShowJump(false);
     const next = mapMessages(r.messages);
+    setBoundary(boundaryOf(r));
     if (r.active_run) void startAttach(id, r.active_run.run_id, next, 2);
     else setMessages(next);
   }
@@ -870,6 +940,8 @@ function ChatInner() {
     setLoading(false);
     setLoadError(false);
     setMessages([]);
+    setBoundary(null);
+    setNote(null);
     followingRef.current = true;
     setShowJump(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -983,6 +1055,13 @@ function ChatInner() {
 
   const last = messages[messages.length - 1];
   const orphan = last?.kind === "user" && !asking && !loading && !loadError;
+  // The divider goes after the last persisted message at or before the boundary (D-24).
+  const dividerAt = boundary
+    ? messages.reduce((at, m, i) => (m.seq !== undefined && m.seq <= boundary.upto ? i : at), -1)
+    : -1;
+  const dividerText = boundary?.summarized
+    ? "Earlier messages summarized"
+    : "Context cleared — earlier messages are not sent to the model";
 
   // Ask again is the same regenerate through replace_from whenever the question is
   // saved (D-18); an unsaved, thread-less pair is replaced locally instead.
@@ -1445,8 +1524,9 @@ function ChatInner() {
                 aria-live="off"
                 style={{ display: "flex", flexDirection: "column", gap: 24 }}
               >
-                {messages.map((m, i) =>
-                  m.kind === "user" ? (
+                {messages.map((m, i) => (
+                  <Fragment key={m.id}>
+                  {m.kind === "user" ? (
                     <div
                       key={m.id}
                       className="chat-msg"
@@ -1493,8 +1573,21 @@ function ChatInner() {
                     </div>
                   ) : (
                     renderAssistant(m, i)
-                  )
-                )}
+                  )}
+                  {i === dividerAt && boundary && (
+                    <div
+                      role="separator"
+                      aria-label={dividerText}
+                      data-testid="context-divider"
+                      style={{ display: "flex", alignItems: "center", gap: 12 }}
+                    >
+                      <span style={{ flex: 1, height: 1, background: tokens.color.border2 }} />
+                      <span style={{ fontSize: 12, color: tokens.color.muted3 }}>{dividerText}</span>
+                      <span style={{ flex: 1, height: 1, background: tokens.color.border2 }} />
+                    </div>
+                  )}
+                  </Fragment>
+                ))}
                 {orphan && last?.kind === "user" && (
                   <ErrorBlock title={streamEnded.title} body={streamEnded.body}>
                     <button
@@ -1578,6 +1671,21 @@ function ChatInner() {
                 </button>
               </div>
             )}
+            {(slash || note) && (
+              <div
+                role="status"
+                data-testid="composer-note"
+                style={{
+                  position: "absolute",
+                  bottom: "calc(100% + 4px)",
+                  left: 0,
+                  fontSize: 13,
+                  color: !slash && note?.error ? tokens.color.terracottaText : tokens.color.muted3,
+                }}
+              >
+                {slash ? (slash === "compacting" ? "Compacting…" : "Clearing…") : note?.text}
+              </div>
+            )}
             <label htmlFor="chat-composer" className="sr-only">
               Ask monai a question
             </label>
@@ -1586,8 +1694,12 @@ function ChatInner() {
               ref={composerRef}
               style={{ ...input, borderRadius: 14, padding: "14px 18px", fontSize: 15 }}
               value={question}
+              disabled={slash !== null}
               placeholder="Ask anything about your finances…"
-              onChange={(e) => setQuestion(e.target.value)}
+              onChange={(e) => {
+                setQuestion(e.target.value);
+                setNote(null);
+              }}
               onKeyDown={(e) => {
                 if (
                   e.key !== "Enter" ||
@@ -1612,11 +1724,11 @@ function ChatInner() {
                 padding: "0 24px",
                 fontSize: 15,
                 fontWeight: 600,
-                cursor: stopping || (loading && !asking) ? "not-allowed" : "pointer",
-                opacity: stopping || (loading && !asking) ? 0.5 : 1,
+                cursor: stopping || (loading && !asking) || slash ? "not-allowed" : "pointer",
+                opacity: stopping || (loading && !asking) || slash ? 0.5 : 1,
               }}
               onClick={asking ? stop : () => void sendQuestion()}
-              disabled={stopping || (loading && !asking)}
+              disabled={stopping || (loading && !asking) || slash !== null}
             >
               {stopping ? (
                 "Stopping…"
