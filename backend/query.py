@@ -399,9 +399,13 @@ async def agent_stream(
     idle_timeout: float | None = None,
     ping_interval: float = 15.0,
     history: list | None = None,
+    tool_names: frozenset[str] | None = None,
 ):
     """
     Async generator that drives the agent workflow and yields SSE lines.
+
+    `tool_names`: the tools this turn carries; None means
+    agent_loop.tools_for_turn(question).
 
     `history`: prior turns as ChatMessages built by
     backend.chat_history.build_history; passed to the workflow as chat_history
@@ -452,7 +456,11 @@ async def agent_stream(
 
     model = provider = None
     try:
-        workflow = _get_agent_workflow()
+        if tool_names is None:
+            from backend.agent_loop import tools_for_turn
+
+            tool_names = tools_for_turn(question)
+        workflow = _get_agent_workflow(tool_names)
         model, provider = _llm_label(workflow)
         if history:
             handler = workflow.run(user_msg=question, chat_history=history, max_iterations=10)
@@ -505,6 +513,9 @@ async def agent_stream(
                                     "iteration": max(iteration, 0)}))
 
                         elif isinstance(event, ToolCall):
+                            if event.tool_name not in tool_names:
+                                # Name only, never args (a missed write verb shows up here).
+                                logger.warning("tool %s is not in this turn's subset", event.tool_name)
                             call_id = f"c{max(iteration, 0)}-{n_in_iter}"
                             n_in_iter += 1
                             pending.setdefault(_key(event.tool_name, event.tool_kwargs), deque()

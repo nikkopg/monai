@@ -25,7 +25,7 @@ import uuid
 import anyio
 from sqlalchemy import delete, func, or_, select, text, update
 
-from backend import config, query, tools
+from backend import agent_loop, config, query, tools
 from backend.chat_history import build_history
 from backend.db import get_session_sync
 from backend.models import AuditLog, Message, Proposal, Thread
@@ -34,14 +34,17 @@ from backend.proposals import expire_stale, transition
 logger = logging.getLogger(__name__)
 
 
-def launch(run: query.Run, question: str, history: list | None = None) -> None:
+def launch(
+    run: query.Run, question: str, history: list | None = None,
+    tool_names: frozenset[str] | None = None,
+) -> None:
     """Seed the buffer with the `run` event and start the detached pump.
 
     Must be called from inside the running event loop. The task reference lives
     on `run.pump` (asyncio keeps only weak ones).
     """
     query.push(run, query._sse({"type": "run", "run_id": run.id}))
-    run.pump = asyncio.create_task(_pump(run, question, history))
+    run.pump = asyncio.create_task(_pump(run, question, history, tool_names))
 
 
 def title_from(text_: str, limit: int = 60) -> str:
@@ -159,6 +162,7 @@ async def start_turn(
         )
         # Module attribute reads so tests can monkeypatch the budget and the date.
         history = build_history(prior, config.CHAT_HISTORY_TOKEN_BUDGET, query._today())
+        tool_names = agent_loop.tools_for_turn(question, prior)
         run.thread_id, run.user_message_id, run.user_seq = tid, user_id, seq
         run.assistant_message_id = uuid.uuid4()
         query.push(
@@ -172,7 +176,7 @@ async def start_turn(
                 }
             ),
         )
-        launch(run, question, history)
+        launch(run, question, history, tool_names)
     except BaseException:
         # Not via release_run: a never-finished run must not become _LAST.
         if query._ACTIVE.get(run.key) is run:
@@ -246,7 +250,10 @@ def _observe(state: dict, chunk: str) -> None:
         state.update(error=p.get("code"), model=p.get("model"), provider=p.get("provider"))
 
 
-async def _pump(run: query.Run, question: str, history: list | None) -> None:
+async def _pump(
+    run: query.Run, question: str, history: list | None,
+    tool_names: frozenset[str] | None = None,
+) -> None:
     # create_task copied the context, so no reset is needed; tool executor
     # threads inherit the value (D-12a).
     tools.CURRENT_TURN_ID.set(uuid.UUID(run.id))
@@ -257,7 +264,9 @@ async def _pump(run: query.Run, question: str, history: list | None) -> None:
     try:
         # Attribute lookup on the module, never a from-import: tests and
         # test_auth monkeypatch backend.query.agent_stream.
-        async for chunk in query.agent_stream(question, run=run, history=history):
+        async for chunk in query.agent_stream(
+            question, run=run, history=history, tool_names=tool_names
+        ):
             if chunk.startswith(":") or chunk == query._DONE:
                 continue  # pings are the subscriber's own; [DONE] is withheld to the end
             _observe(state, chunk)
