@@ -103,7 +103,7 @@ test.describe("Markdown renderer (node-only)", () => {
 
   test("a mixed text column keeps the model's explicit alignment", () => {
     const html = render(
-      ["| Name | Note |", "| :--- | :---: |", "| Food | 1,000 |", "| Fun | n/a |"].join("\n"),
+      ["| Name | Note |", "| :--- | :---: |", "| Food | 1,000 |", "| Fun | weekly |"].join("\n"),
     );
     expect(html).not.toContain("text-align:right");
     const td = html.match(/<td\s[^>]*>/g) ?? [];
@@ -112,10 +112,38 @@ test.describe("Markdown renderer (node-only)", () => {
 
   test("a mixed text column is not right-aligned", () => {
     const html = render(
-      ["| Name | Note |", "| --- | --- |", "| Food | 1,000 |", "| Fun | n/a |"].join("\n"),
+      ["| Name | Note |", "| --- | --- |", "| Food | 1,000 |", "| Fun | weekly |"].join("\n"),
     );
     expect(html).not.toContain("text-align:right");
   });
+
+  // [cells of column 2, right-aligned?]; column 1 is a plain label.
+  const columnCases: [string[], boolean][] = [
+    // placeholders are skipped
+    [["1,000", "—", "n/a", "", "-", "–"], true],
+    // signed Rp, U+2212 minus, trailing IDR, short scale
+    [["Rp -50,000", "−50,000", "12,345 IDR", "1.5 jt"], true],
+    // no real amount: stays as written
+    [["—", "n/a", ""], false],
+    // text that merely contains digits
+    [["Q3 2026", "1,000"], false],
+    [["2026-10", "1,000"], false],
+    [["Account 2", "1,000"], false],
+  ];
+  for (const [cells, right] of columnCases) {
+    test(`column [${cells.join(" | ")}] is ${right ? "" : "not "}right-aligned`, () => {
+      const html = render(
+        ["| Name | Value |", "| --- | --- |", ...cells.map((v, i) => `| Row ${i} | ${v} |`)].join("\n"),
+      );
+      const th = html.match(/<th\s[^>]*>/g) ?? [];
+      const td = html.match(/<td\s[^>]*>/g) ?? [];
+      expect(td).toHaveLength(cells.length * 2);
+      for (const cell of [th[1], ...td.filter((_, i) => i % 2 === 1)]) {
+        if (right) expect(cell).toContain("text-align:right");
+        else expect(cell).not.toContain("text-align:right");
+      }
+    });
+  }
 
   test("protocol-relative links render as spans, never an in-app href", () => {
     const html = render("[x](//evil.example/p?d=1)");

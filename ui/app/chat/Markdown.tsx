@@ -33,7 +33,13 @@ export function safeUrl(url: string): string {
   return /^([a-zA-Z][a-zA-Z0-9+.-]*:|[/\\]{2})/.test(url) && !SAFE_SCHEME.test(url) ? "" : url;
 }
 
-const NUMERIC = /^[\s(+\-]*(?:Rp\.?\s*|IDR\s*)?[\d.,]+\s*%?\)?\s*$/i;
+// An amount cell: optional sign/parens (ASCII or U+2212 minus), optional Rp/IDR
+// prefix (a sign may follow it), digits with separators, then an optional %,
+// IDR or short-scale suffix (jt/juta, rb). A placeholder cell (empty, a dash,
+// n/a) is no evidence either way and is skipped when judging a column.
+const NUMERIC =
+  /^[\s(+\-−]*(?:(?:Rp\.?|IDR)\s*[(+\-−]*)?\s*[\d.,]*\d[\d.,]*\s*(?:%|IDR|jt|juta|rb)?\)?\s*$/i;
+const PLACEHOLDER = /^\s*(?:[-–—]|n\/?a)?\s*$/i;
 
 // Minimal hast shapes: just what the numeric-column pass touches.
 type HastNode = {
@@ -68,8 +74,11 @@ function rehypeNumericColumns() {
       const body = rows.filter((cells) => cells.some((x) => x.tagName === "td"));
       const cols = Math.max(0, ...rows.map((r) => r.length));
       for (let i = 1; i < cols; i++) {
+        const vals = body.map((r) => (r[i] ? textOf(r[i]) : ""));
+        // at least one real amount; an all-placeholder column stays as written
         const numeric =
-          body.length > 0 && body.every((r) => r[i] && NUMERIC.test(textOf(r[i])));
+          vals.some((v) => NUMERIC.test(v)) &&
+          vals.every((v) => PLACEHOLDER.test(v) || NUMERIC.test(v));
         if (!numeric) continue;
         for (const r of rows) {
           const cell = r[i];
