@@ -23,10 +23,11 @@ import logging
 import uuid
 
 import anyio
+from llama_index.core.llms import ChatMessage, MessageRole
 from sqlalchemy import delete, func, or_, select, text, update
 
 from backend import agent_loop, config, query, tools
-from backend.chat_history import plan_history
+from backend.chat_history import _pairs, _provenance, _stamp, plan_history
 from backend.db import get_session_sync
 from backend.models import AuditLog, Message, Proposal, Thread
 from backend.proposals import expire_stale, transition
@@ -36,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 def launch(
     run: query.Run, question: str, history: list | None = None,
-    tool_names: frozenset[str] | None = None,
+    tool_names: frozenset[str] | None = None, compact: bool = False,
 ) -> None:
     """Seed the buffer with the `run` event and start the detached pump.
 
@@ -44,7 +45,7 @@ def launch(
     on `run.pump` (asyncio keeps only weak ones).
     """
     query.push(run, query._sse({"type": "run", "run_id": run.id}))
-    run.pump = asyncio.create_task(_pump(run, question, history, tool_names))
+    run.pump = asyncio.create_task(_pump(run, question, history, tool_names, compact))
 
 
 def title_from(text_: str, limit: int = 60) -> str:
@@ -173,7 +174,7 @@ async def start_turn(
             _begin_turn, tid, thread_id is None, question, replace_from
         )
         # Module attribute reads so tests can monkeypatch the budget and the date.
-        history, _ = plan_history(
+        history, to_compact = plan_history(
             prior, config.CHAT_HISTORY_TOKEN_BUDGET, query._today(), summary=summary, upto_seq=upto
         )
         tool_names = agent_loop.tools_for_turn(question, prior)
@@ -190,7 +191,7 @@ async def start_turn(
                 }
             ),
         )
-        launch(run, question, history, tool_names)
+        launch(run, question, history, tool_names, compact=bool(to_compact))
     except BaseException:
         # Not via release_run: a never-finished run must not become _LAST.
         if query._ACTIVE.get(run.key) is run:
@@ -266,7 +267,7 @@ def _observe(state: dict, chunk: str) -> None:
 
 async def _pump(
     run: query.Run, question: str, history: list | None,
-    tool_names: frozenset[str] | None = None,
+    tool_names: frozenset[str] | None = None, compact: bool = False,
 ) -> None:
     # create_task copied the context, so no reset is needed; tool executor
     # threads inherit the value (D-12a).
@@ -297,6 +298,206 @@ async def _pump(
             except Exception as e:  # a persistence failure must never keep the slot
                 logger.warning("chat persist failed: %s: %s", type(e).__name__, e)
             await query.finish_run(run)  # sweep if stopped, [DONE], release (D-05a)
+        # After the slot is free, so the guard does not see this run (D-21). A failed or
+        # stopped turn does not spend a summariser call.
+        if compact and run.thread_id is not None and state["answered"] and not run.stopped:
+            schedule_compaction(run.thread_id)
+
+
+# ---------------------------------------------------------------------------
+# Rolling summary (Phase 38, D-21..D-25)
+# ---------------------------------------------------------------------------
+
+SUMMARY_INPUT_CHARS = 12000  # per summariser call; a longer fold is chunked (D-21a b)
+SUMMARY_MAX_CHARS = 1500  # stored summary cap (D-21a e)
+
+SUMMARY_PROMPT = (
+    "You are summarising a personal-finance chat so the assistant can use it as context later. "
+    "Fold the new conversation into the current summary.\n"
+    "Keep: what the owner asked, the filters, periods as absolute dates (YYYY-MM-DD or month and "
+    "year), the accounts, categories and merchants named, decisions, and the outcome of each "
+    "proposed change (applied, rejected, pending, expired).\n"
+    "Omit every amount, total, balance, count and percentage; write \"a figure was given\" "
+    "instead, because the assistant re-queries any number.\n"
+    "Plain text, at most 1200 characters, no preamble."
+)
+
+# ponytail: in-process, valid for the single uvicorn worker (same assumption as query._ACTIVE).
+_COMPACTING: set[str] = set()
+_BG: set[asyncio.Task] = set()  # strong refs: asyncio keeps only weak ones
+
+
+class ThreadBusy(Exception):
+    """A run or a compaction is already active for the thread (routes map this to 409)."""
+
+
+def thread_busy(key: str) -> bool:
+    return key in query._ACTIVE or key in _COMPACTING
+
+
+def _load_for_compaction(thread_id: uuid.UUID):
+    """(summary, upto, messages as dicts in seq order, {proposal_id: (operation, status)}), or None."""
+    with get_session_sync() as db:
+        t = db.get(Thread, thread_id)
+        if t is None:
+            return None
+        msgs = [
+            {"id": m.id, "seq": m.seq, "role": m.role, "content": m.content,
+             "status": m.status, "parts": m.parts, "created_at": m.created_at}
+            for m in db.execute(
+                select(Message).where(Message.thread_id == thread_id).order_by(Message.seq)
+            ).scalars()
+        ]
+        ids: set[uuid.UUID] = set()
+        for m in msgs:
+            for p in (m["parts"] or {}).get("proposals", []):
+                try:
+                    ids.add(uuid.UUID(p["id"]))
+                except (ValueError, KeyError, TypeError):
+                    pass
+        outcomes = {
+            str(r.id): (r.operation, r.status)
+            for r in (
+                db.execute(
+                    select(Proposal.id, Proposal.operation, Proposal.status).where(Proposal.id.in_(ids))
+                ) if ids else []
+            )
+        }
+        return t.summary, t.summary_upto_seq or 0, msgs, outcomes
+
+
+def _render_pair(u: dict, a: dict, outcomes: dict) -> str:
+    """Owner text, final answer, provenance and proposal op/status only; never tool results (D-22)."""
+    out = f"[{_stamp(u['created_at'])}] Owner: {u['content']}\nAssistant: {a['content']}"
+    parts = a.get("parts") or {}
+    if prov := _provenance(parts.get("steps")):
+        out += "\n" + prov
+    changes = [
+        f"{o[0]} {o[1]}"
+        for p in parts.get("proposals", [])
+        if (o := outcomes.get(p.get("id")))
+    ]
+    if changes:
+        out += f"\n[changes: {'; '.join(changes)}]"
+    return out[:SUMMARY_INPUT_CHARS]
+
+
+def _chunks(pairs: list[tuple[dict, dict]], outcomes: dict) -> list[tuple[str, dict]]:
+    """Consecutive rendered pairs grouped to at most SUMMARY_INPUT_CHARS: (text, last assistant)."""
+    out: list[tuple[str, dict]] = []
+    cur: list[str] = []
+    size = 0
+    for u, a in pairs:
+        r = _render_pair(u, a, outcomes)
+        if cur and size + 2 + len(r) > SUMMARY_INPUT_CHARS:
+            out.append(("\n\n".join(cur), last))
+            cur, size = [], 0
+        size += len(r) + (2 if cur else 0)
+        cur.append(r)
+        last = a
+    if cur:
+        out.append(("\n\n".join(cur), last))
+    return out
+
+
+def _cas_write(thread_id: uuid.UUID, summary: str, new: int, old: int, msg_id: uuid.UUID) -> bool:
+    """Write only if the boundary is unchanged and the last folded message still exists, so a
+    /clear, a replace or another compaction that won the race makes this a no-op (D-21a c)."""
+    with get_session_sync() as db:
+        n = db.execute(
+            text(
+                "UPDATE threads SET summary = :s, summary_upto_seq = :new "
+                "WHERE id = :t AND summary_upto_seq = :old "
+                "AND EXISTS (SELECT 1 FROM messages WHERE id = :m AND thread_id = :t)"
+            ),
+            {"s": summary, "new": new, "t": thread_id, "old": old, "m": msg_id},
+        ).rowcount
+        db.commit()
+        return n == 1
+
+
+async def compact_thread(thread_id: uuid.UUID, *, everything: bool) -> dict | None:
+    """Fold complete pairs after the boundary into the thread summary, chunk by chunk.
+
+    None when the thread is missing. Raises ThreadBusy when a run or a compaction is
+    active. Provider and empty-summary errors propagate; the columns keep the last
+    committed chunk and nothing retries (D-21).
+    """
+    key = str(thread_id)
+    if thread_busy(key):
+        raise ThreadBusy(key)
+    _COMPACTING.add(key)  # before the first await
+    try:
+        loaded = await asyncio.to_thread(_load_for_compaction, thread_id)
+        if loaded is None:
+            return None
+        summary, upto, msgs, outcomes = loaded
+        if everything:
+            pairs = [(u, a) for u, a in _pairs(msgs) if u["seq"] > upto]
+        else:
+            pairs = plan_history(
+                msgs, config.CHAT_HISTORY_TOKEN_BUDGET, query._today(), summary=summary, upto_seq=upto
+            )[1]
+        if not pairs:
+            return {"summary_upto_seq": upto, "has_summary": bool(summary), "compacted": False}
+        chunks = _chunks(pairs, outcomes)
+        for i, (chunk_text, last_a) in enumerate(chunks):
+            async with asyncio.timeout(config.CHAT_IDLE_TIMEOUT_SECONDS):
+                resp = await query._get_llm().achat([
+                    ChatMessage(role=MessageRole.SYSTEM, content=SUMMARY_PROMPT),
+                    ChatMessage(
+                        role=MessageRole.USER,
+                        content="Current summary:\n" + (summary or "(none)")
+                        + "\n\nConversation to fold in:\n" + chunk_text,
+                    ),
+                ])
+            new_summary = (resp.message.content or "").strip()[:SUMMARY_MAX_CHARS]
+            if not new_summary:
+                raise ValueError("empty summary")
+            target = msgs[-1] if everything and i == len(chunks) - 1 else last_a
+            if not await asyncio.to_thread(
+                _cas_write, thread_id, new_summary, target["seq"], upto, target["id"]
+            ):
+                logger.info("compaction result dropped: the thread changed")
+                return {"summary_upto_seq": upto, "has_summary": bool(summary), "compacted": False}
+            summary, upto = new_summary, target["seq"]
+        return {"summary_upto_seq": upto, "has_summary": True, "compacted": True}
+    finally:
+        _COMPACTING.discard(key)
+
+
+async def _auto_compact(thread_id: uuid.UUID) -> None:
+    try:
+        await compact_thread(thread_id, everything=False)
+    except ThreadBusy:
+        pass  # a later turn retries
+    except Exception as e:  # class and message only: the summary text is never logged
+        logger.warning("compaction failed: %s: %s", type(e).__name__, e)
+
+
+def schedule_compaction(thread_id: uuid.UUID) -> asyncio.Task | None:
+    """Fire-and-forget post-turn compaction; None (skipped) while the thread is busy (D-21)."""
+    if thread_busy(str(thread_id)):
+        return None
+    task = asyncio.create_task(_auto_compact(thread_id))
+    _BG.add(task)
+    task.add_done_callback(_BG.discard)
+    return task
+
+
+def clear_thread(thread_id: uuid.UUID) -> dict | None:
+    """Hide every message from the prompt and drop the summary; messages stay (D-24)."""
+    with get_session_sync() as db:
+        row = db.execute(
+            text(
+                "UPDATE threads SET summary = NULL, summary_upto_seq = "
+                "COALESCE((SELECT max(seq) FROM messages WHERE thread_id = :t), 0) "
+                "WHERE id = :t RETURNING summary_upto_seq"
+            ),
+            {"t": thread_id},
+        ).first()
+        db.commit()
+        return None if row is None else {"summary_upto_seq": row[0], "has_summary": False}
 
 
 # ---------------------------------------------------------------------------
@@ -365,7 +566,10 @@ def thread_detail(db, thread_id: uuid.UUID) -> dict | None:
             {"id": m.id, "seq": m.seq, "role": m.role, "content": m.content,
              "status": m.status, "created_at": m.created_at, "parts": parts}
         )
-    return {**_thread_row(t), "messages": out}
+    return {
+        **_thread_row(t), "messages": out,
+        "summary_upto_seq": t.summary_upto_seq or 0, "has_summary": bool(t.summary),
+    }
 
 
 def rename_thread(db, thread_id: uuid.UUID, title: str) -> dict | None:
