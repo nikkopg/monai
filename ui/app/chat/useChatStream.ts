@@ -312,8 +312,8 @@ export function stepsFromParts(
 }
 
 // ---- Token buffer (D-05) -----------------------------------------------------
-// Deltas accumulate and flush at most every `delayMs` via setTimeout. Never
-// requestAnimationFrame: the hidden automated browser pane never runs it.
+// Deltas accumulate and flush at most every `delayMs` via setTimeout. Never an
+// animation-frame timer: the hidden automated browser pane never runs those.
 
 export function createTokenBuffer(
   onFlush: (text: string, iteration: number) => void,

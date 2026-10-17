@@ -16,8 +16,18 @@ import ProposalCard, {
 import type { LiveStatus, Proposal, ServerProposal } from "./ProposalCard";
 import Markdown from "./Markdown";
 import ThreadSidebar from "./ThreadSidebar";
-import { useChatStream } from "./useChatStream";
-import type { StreamOutcome } from "./useChatStream";
+import ToolSteps from "./ToolSteps";
+import type { Source } from "./labels";
+import {
+  EMPTY_LANE,
+  laneAppend,
+  laneToolResult,
+  laneToolStart,
+  stepsFromParts,
+  useChatStream,
+  useTokenBuffer,
+} from "./useChatStream";
+import type { Lane, StreamOutcome } from "./useChatStream";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -29,13 +39,6 @@ type TraceStep = {
   result: Record<string, unknown>;
 };
 
-// Rehydrated steps carry no result (D-11: results are never stored).
-type TraceView = {
-  tool: string;
-  args: Record<string, unknown>;
-  result?: Record<string, unknown>;
-};
-
 type UserItem = { kind: "user"; id: string; text: string };
 
 type AsstItem = {
@@ -43,8 +46,8 @@ type AsstItem = {
   id: string;
   status: "running" | "complete" | "error" | "cancelled";
   text: string;
-  steps: string[]; // live step lines while running
-  trace: TraceView[];
+  lane: Lane; // streamed draft + steps / working notes (D-24)
+  stoppedPartial?: string; // live view only: the partial text kept after Stop (D-03a)
   proposals: Proposal[];
   error: ChatError | null;
   model: { name: string | null; provider: string | null } | null;
@@ -72,7 +75,7 @@ type PersistedMessage = {
   status: string;
   created_at: string;
   parts?: {
-    steps?: { tool: string; args?: Record<string, unknown> }[];
+    steps?: { tool: string; args?: Record<string, unknown>; ms?: number; sources?: Source[] }[];
     proposals?: (ServerProposal & { status?: string })[];
     error?: { code?: string } | null;
     provider?: { name?: string | null; model?: string | null } | null;
@@ -112,8 +115,7 @@ function mapMessages(list: PersistedMessage[]): Item[] {
         id: m.id,
         status,
         text: m.content,
-        steps: [],
-        trace: (parts.steps ?? []).map((s) => ({ tool: s.tool, args: s.args ?? {} })),
+        lane: { ...EMPTY_LANE, timeline: stepsFromParts(parts.steps) },
         proposals: (parts.proposals ?? []).map((p) => ({
           ...toProposal({ ...p, token: null }),
           liveStatus: (p.status ?? "missing") as LiveStatus,
@@ -141,8 +143,7 @@ function runningItem(id: string): AsstItem {
     id,
     status: "running",
     text: "",
-    steps: [],
-    trace: [],
+    lane: EMPTY_LANE,
     proposals: [],
     error: null,
     model: null,
@@ -246,7 +247,9 @@ function ChatInner() {
   const [loadError, setLoadError] = useState(false);
   const [notFound, setNotFound] = useState(false);
   const [reconnected, setReconnected] = useState(false);
-  const [openTraces, setOpenTraces] = useState<Record<string, boolean>>({});
+  // Open tool-step panels per message, keyed by the message's index (stable across
+  // the post-answer reconcile swap of live ids for persisted ids).
+  const [openSteps, setOpenSteps] = useState<Record<number, Record<string, boolean>>>({});
   const [sidebarKey, setSidebarKey] = useState(0);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const toggleRef = useRef<HTMLButtonElement | null>(null);
@@ -269,6 +272,11 @@ function ChatInner() {
 
   const nextId = (p: string) => `${p}-live-${++idCounter.current}`;
 
+  // D-05: deltas flush at most every 50 ms (setTimeout; rAF never fires in a hidden tab).
+  const tokenBuf = useTokenBuffer((text, iteration) =>
+    updateLive((m) => ({ ...m, lane: laneAppend(m.lane, text, iteration) }))
+  );
+
   // D-17: a delivered single-use token is kept for this tab only.
   function keepTokens(ps?: ServerProposal[]) {
     for (const p of ps ?? []) if (p.token) saveProposalToken(p.id, p.token);
@@ -286,8 +294,10 @@ function ChatInner() {
 
   function failLive(err: ChatError, proposals: ServerProposal[] = []) {
     terminalRef.current = true;
+    tokenBuf.cancel(); // a draft is never shown on an error
     updateLive((m) => ({
       ...m,
+      lane: { ...m.lane, draft: "", draftIteration: null },
       status: "error",
       error: err,
       proposals: proposals.map(toProposal),
@@ -308,29 +318,60 @@ function ChatInner() {
       if (paramRef.current !== msg.thread_id) {
         router.replace("/chat?thread=" + msg.thread_id);
       }
-    } else if (msg.type === "step" && typeof msg.msg === "string") {
-      const line = msg.msg;
-      updateLive((m) => ({ ...m, steps: [...m.steps, line] }));
+    } else if (
+      msg.type === "token" &&
+      typeof msg.delta === "string" &&
+      typeof msg.iteration === "number"
+    ) {
+      tokenBuf.push(msg.delta, msg.iteration);
+    } else if (msg.type === "tool_start" && typeof msg.tool === "string") {
+      // The narration so far becomes a working note, never the answer (lane rule).
+      const pending = tokenBuf.take();
+      const ev = {
+        call_id: typeof msg.call_id === "string" ? msg.call_id : `t${Date.now()}`,
+        tool: msg.tool,
+        args: (msg.args as Record<string, unknown> | undefined) ?? {},
+        iteration: typeof msg.iteration === "number" ? msg.iteration : 0,
+      };
+      updateLive((m) => {
+        const lane = pending.text
+          ? laneAppend(m.lane, pending.text, pending.iteration ?? ev.iteration)
+          : m.lane;
+        return { ...m, lane: laneToolStart(lane, ev, Date.now()) };
+      });
     } else if (msg.type === "tool_result" && msg.step) {
       traceRef.current = [...traceRef.current, msg.step as TraceStep];
-      const t = traceRef.current;
-      updateLive((m) => ({ ...m, trace: t }));
+      const ev = {
+        call_id: typeof msg.call_id === "string" ? msg.call_id : null,
+        step: msg.step as TraceStep,
+        ms: typeof msg.ms === "number" ? msg.ms : null,
+        sources: Array.isArray(msg.sources) ? (msg.sources as Source[]) : [],
+      };
+      updateLive((m) => ({ ...m, lane: laneToolResult(m.lane, ev) }));
     } else if (msg.type === "answer") {
       terminalRef.current = true;
-      if (Array.isArray(msg.trace)) traceRef.current = msg.trace as TraceStep[];
-      const t = traceRef.current;
-      updateLive((m) => ({
-        ...m,
-        status: "complete",
-        text: typeof msg.text === "string" ? msg.text : "",
-        trace: t.length ? t : m.trace,
-        model: {
-          name: typeof msg.model === "string" ? msg.model : null,
-          provider: typeof msg.provider === "string" ? msg.provider : null,
-        },
-        proposals: proposals.map(toProposal),
-        live: true,
-      }));
+      tokenBuf.cancel();
+      const trace = Array.isArray(msg.trace) ? (msg.trace as TraceStep[]) : [];
+      if (trace.length) traceRef.current = trace;
+      updateLive((m) => {
+        // answer.text is authoritative: it replaces the streamed draft.
+        let lane: Lane = { ...m.lane, draft: "", draftIteration: null };
+        if (!lane.timeline.some((e) => e.kind === "step")) {
+          lane = trace.reduce((l, s) => laneToolResult(l, { step: s }), lane);
+        }
+        return {
+          ...m,
+          lane,
+          status: "complete",
+          text: typeof msg.text === "string" ? msg.text : "",
+          model: {
+            name: typeof msg.model === "string" ? msg.model : null,
+            provider: typeof msg.provider === "string" ? msg.provider : null,
+          },
+          proposals: proposals.map(toProposal),
+          live: true,
+        };
+      });
       keepTokens(proposals);
     } else if (msg.type === "error") {
       // Proposals created before the failure stay actionable (D-05).
@@ -347,7 +388,7 @@ function ChatInner() {
 
   // Re-read the thread; keep the live block until the response arrives, then swap
   // the persisted messages in place (no flicker). Re-attach if a run is still going.
-  async function reconcile(tid: string, tries: number) {
+  async function reconcile(tid: string, tries: number, cleanEnd = false) {
     reconcilingRef.current = true;
     let r: Awaited<ReturnType<typeof fetchThread>>;
     try {
@@ -359,7 +400,13 @@ function ChatInner() {
     if (typeof r === "string") {
       // Keep what is on screen; a live block that never finished reads as a failure.
       if (!terminalRef.current) {
-        failLive({ code: "connection", model: null, idleSeconds: null, transport: true });
+        // A stream that closed cleanly with no answer or error is Incomplete,
+        // not a connection failure (D-03a).
+        failLive(
+          cleanEnd
+            ? { code: "stream_ended", model: null, idleSeconds: null }
+            : { code: "connection", model: null, idleSeconds: null, transport: true }
+        );
       }
       endRun();
       return;
@@ -405,7 +452,7 @@ function ChatInner() {
     }
     const tid = loadedRef.current;
     if (tid && (source === "attach" || threadSeenRef.current)) {
-      await reconcile(tid, tries);
+      await reconcile(tid, tries, out.kind === "done" || out.kind === "ended");
       return;
     }
     // No thread (streams without a thread event): the live block is all there is.
@@ -416,6 +463,7 @@ function ChatInner() {
   }
 
   async function startAttach(tid: string, runId: string, base: Item[], tries: number) {
+    tokenBuf.cancel();
     const aid = nextId("a");
     liveIdRef.current = aid;
     terminalRef.current = false;
@@ -437,6 +485,7 @@ function ChatInner() {
     const q = (text ?? question).trim();
     if (!q || loading || stream.busyRef.current || reconcilingRef.current) return;
 
+    tokenBuf.cancel();
     const aid = nextId("a");
     const replaceFailed = retry && loadedRef.current === null; // unsaved pair: replace it
     liveIdRef.current = aid;
@@ -469,6 +518,7 @@ function ChatInner() {
   // lists the proposals the server rejected so their cards show rejected-by-Stop.
   async function stop() {
     setStopping(true);
+    const pending = tokenBuf.take(); // flushed text not yet in the draft
     const rejected = await stream.stop();
     if (rejected === null) return;
 
@@ -500,6 +550,9 @@ function ChatInner() {
     // A terminal event may have landed just before Stop; Stop wins (34 section 3).
     updateLive((m) => ({
       ...m,
+      lane: { ...m.lane, draft: "", draftIteration: null },
+      // Live view only (D-03a): the partial is never persisted, a reload loses it.
+      stoppedPartial: m.status === "running" ? m.lane.draft + pending.text : "",
       status: "cancelled",
       text: "",
       error: null,
@@ -516,6 +569,8 @@ function ChatInner() {
 
   async function openThread(id: string) {
     const seq = ++loadSeqRef.current;
+    tokenBuf.cancel();
+    setOpenSteps({});
     stream.detach(); // client-side only; never cancels the run (D-06)
     loadedRef.current = id;
     endRun();
@@ -552,6 +607,8 @@ function ChatInner() {
       return;
     }
     loadSeqRef.current++;
+    tokenBuf.cancel();
+    setOpenSteps({});
     stream.detach();
     loadedRef.current = null;
     endRun();
@@ -626,10 +683,18 @@ function ChatInner() {
   function renderAssistant(m: AsstItem, index: number) {
     const isLast = index === messages.length - 1;
     const errCopy = m.error ? errorCopy(m.error) : null;
-    const open = !!openTraces[m.id];
+    const draft = m.lane.draft.trim() ? m.lane.draft : "";
+    const partial = m.stoppedPartial?.trim() ? m.stoppedPartial : "";
+    const answerBox: React.CSSProperties = {
+      color: tokens.color.ink,
+      fontSize: 16,
+      lineHeight: 1.6,
+      overflowWrap: "anywhere",
+      marginBottom: 16,
+    };
     return (
       <div key={m.id}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
           <span style={{ fontFamily: tokens.font.serif, fontSize: 18 }}>monai</span>
           {m.status !== "error" && (
             <span style={{ fontSize: 12, color: tokens.color.muted3 }}>
@@ -638,6 +703,8 @@ function ChatInner() {
                 ? "stopped"
                 : m.status === "complete"
                 ? answeredLabel(m)
+                : draft
+                ? "answering…"
                 : "thinking…"}
             </span>
           )}
@@ -659,25 +726,37 @@ function ChatInner() {
           )}
         </div>
 
-        {/* Progressive step indicator while streaming (D-08) */}
-        {m.steps.length > 0 && m.status !== "complete" && (
-          <div style={{ marginBottom: 6 }}>
-            {m.steps.map((s, i) => (
-              <div
-                key={i}
-                style={{
-                  fontSize: 13,
-                  color: tokens.color.muted,
-                  padding: "2px 0",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                }}
-              >
-                <span style={{ color: tokens.color.green }}>›</span>
-                {s}
-              </div>
-            ))}
+        <ToolSteps
+          timeline={m.lane.timeline}
+          running={m.status === "running"}
+          open={openSteps[index] ?? {}}
+          onToggle={(key) =>
+            setOpenSteps((o) => ({ ...o, [index]: { ...o[index], [key]: !o[index]?.[key] } }))
+          }
+        />
+
+        {/* Answer lane: the streaming draft, the final text, or a dimmed Stopped
+            partial. All through the safe Markdown component (D-10). */}
+        {m.status === "running" && draft && (
+          <div data-testid="answer" aria-busy="true" style={answerBox}>
+            <Markdown>{draft}</Markdown>
+          </div>
+        )}
+        {m.status === "complete" && m.text && (
+          <div data-testid="answer" style={answerBox}>
+            <Markdown>{m.text}</Markdown>
+          </div>
+        )}
+        {m.status === "cancelled" && partial && (
+          <div
+            data-testid="answer"
+            style={{
+              ...answerBox,
+              borderLeft: `3px solid ${tokens.color.border2}`,
+              paddingLeft: 16,
+            }}
+          >
+            <Markdown dimmed>{partial}</Markdown>
           </div>
         )}
 
@@ -701,89 +780,13 @@ function ChatInner() {
         {m.status === "cancelled" && (
           <div
             role="status"
-            style={{ fontSize: 14, color: tokens.color.muted3, lineHeight: 1.5, marginBottom: 14 }}
+            style={{ fontSize: 14, color: tokens.color.muted3, lineHeight: 1.5, marginBottom: 16 }}
           >
-            Stopped. No answer was kept.
+            {partial ? "Stopped. This partial answer was not saved." : "Stopped. No answer was kept."}
             {m.stopRejected || m.proposals.length > 0
               ? " Proposals from this run were rejected."
               : ""}
           </div>
-        )}
-
-        {/* Answer: rendered through the safe Markdown component (D-10), never as injected HTML */}
-        {m.status === "complete" && m.text && (
-          <div
-            data-testid="answer"
-            style={{
-              color: tokens.color.ink,
-              fontSize: 16,
-              lineHeight: 1.6,
-              overflowWrap: "anywhere",
-              marginBottom: 16,
-            }}
-          >
-            <Markdown>{m.text}</Markdown>
-          </div>
-        )}
-
-        {/* Collapsible tool-call trace (D-07) */}
-        {m.trace.length > 0 && (
-          <>
-            <button
-              onClick={() => setOpenTraces((o) => ({ ...o, [m.id]: !o[m.id] }))}
-              style={{
-                background: "none",
-                border: "none",
-                color: tokens.color.muted,
-                cursor: "pointer",
-                fontSize: 13,
-                padding: 0,
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              {open ? "▴" : "▾"} how I got this ({m.trace.length} step
-              {m.trace.length !== 1 ? "s" : ""})
-            </button>
-            {open && (
-              <div
-                style={{
-                  marginTop: 10,
-                  borderLeft: `2px solid ${tokens.color.border2}`,
-                  paddingLeft: 14,
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 8,
-                }}
-              >
-                {m.trace.map((step, i) => (
-                  <div
-                    key={i}
-                    style={{
-                      fontSize: 12,
-                      color: tokens.color.muted,
-                      fontFamily: "ui-monospace, monospace",
-                    }}
-                  >
-                    <span style={{ color: tokens.color.green, fontWeight: 600 }}>{step.tool}</span>
-                    (
-                    {Object.entries(step.args ?? {})
-                      .map(([k, v]) => `${k}=${JSON.stringify(v)}`)
-                      .join(", ")}
-                    )
-                    {step.result && (
-                      <>
-                        {" "}
-                        <span style={{ color: tokens.color.inkTextMuted }}>→</span>{" "}
-                        {JSON.stringify(step.result).slice(0, 120)}
-                      </>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
         )}
 
         {/* Inline ProposalCards — one per proposal in this turn (D-01, AGENT-06) */}

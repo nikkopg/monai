@@ -192,3 +192,10 @@
 .md > :last-child { margin-bottom: 0 !important; }
 .md li > ul, .md li > ol { margin: 4px 0 0 !important; }
 .md li > p { margin: 0 0 4px !important; }
+
+/* Tool steps (37-05). */
+@media (pointer: coarse) {
+  .coarse-tap { min-height: 44px; }
+}
+.step-toggle:hover .step-label { text-decoration: underline; }
+.steps-toggle:hover { color: #23201b !important; }

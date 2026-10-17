@@ -30,7 +30,7 @@ export const ERROR_COPY: Record<string, { title: string; body: string }> = {
     body: "It replied with nothing and ran no tools. Retry or rephrase the question.",
   },
   stream_ended: {
-    title: "The answer stopped early",
+    title: "Incomplete answer",
     body: "The connection closed before the answer finished. Nothing was changed.",
   },
   conflict: {
