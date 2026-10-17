@@ -61,6 +61,7 @@ class StubLLM(MockFunctionCallingLLM):
     tool_name: str = "seed_proposal"
     tool_kwargs: dict = Field(default_factory=dict)
     seen: list = Field(default_factory=list)  # chat_history contents per LLM call
+    seen_roles: list = Field(default_factory=list)  # [(role, content)] per LLM call
     script: list = Field(default_factory=list)
 
     @property
@@ -72,6 +73,9 @@ class StubLLM(MockFunctionCallingLLM):
     ):
         self.calls += 1
         self.seen.append([str(m.content) for m in (chat_history or [])])
+        self.seen_roles.append(
+            [(m.role.value if hasattr(m.role, "value") else str(m.role), str(m.content))
+             for m in (chat_history or [])])
         n = self.calls
         mode = self.mode
         text_ = self.final_text
@@ -310,10 +314,12 @@ def fake_spending_total(
 # ---------------------------------------------------------------------------
 
 
-def _install_stub_workflow(monkeypatch, llm, *, timeout=30.0, extra_tools=None):
+def _install_stub_workflow(
+    monkeypatch, llm, *, timeout=30.0, extra_tools=None, agent_cls=None
+):
     import backend.query as query_mod
 
-    agent = FunctionAgent(
+    agent = (agent_cls or FunctionAgent)(
         tools=[
             query_mod._llm_tool("seed_proposal", seed_proposal),
             *(query_mod._llm_tool(k, fn) for k, fn in (extra_tools or {}).items()),

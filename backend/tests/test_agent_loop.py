@@ -538,3 +538,120 @@ def test_workflow_uses_tail_agent(monkeypatch):
     assert cls is agent_loop.tail_agent_cls()
     assert isinstance(q._get_agent_workflow().agents["Agent"], cls)
     assert isinstance(q._get_agent_workflow(READ_TOOL_NAMES).agents["Agent"], cls)
+
+
+def _slow_echo(n: int) -> dict:
+    """Synthetic read."""
+    return {"tool": "slow_echo", "n": n}
+
+
+def _two_rounds():
+    return StubLLM(mode="script", script=[[("slow_echo", {"n": 1})], [("slow_echo", {"n": 2})]])
+
+
+def _assert_tail_last(llm, calls):
+    from backend.agent_loop import TAIL_REMINDER
+
+    assert len(llm.seen_roles) == calls
+    for call in llm.seen_roles:
+        assert call[-1] == ("user", TAIL_REMINDER)
+        assert sum(c == TAIL_REMINDER for _, c in call) == 1
+
+
+async def test_tail_reminder_last_on_every_call(monkeypatch):
+    from backend import agent_loop
+
+    llm = _two_rounds()
+    _install_stub_workflow(
+        monkeypatch, llm, agent_cls=agent_loop.tail_agent_cls(), extra_tools={"slow_echo": _slow_echo})
+    await _collect(q.agent_stream("ZZ two rounds"))
+    _assert_tail_last(llm, 3)
+    for call in llm.seen_roles[1:]:
+        assert call[-2][0] == "tool"
+
+
+async def test_tail_reminder_never_streamed_or_persisted(monkeypatch, cleanup):
+    from backend import agent_loop
+
+    first = agent_loop.TAIL_REMINDER.split(".")[0]
+    llm = _two_rounds()
+    _install_stub_workflow(
+        monkeypatch, llm, agent_cls=agent_loop.tail_agent_cls(), extra_tools={"slow_echo": _slow_echo})
+    question = "ZZ persisted reminder"
+    run = await chat_service.start_turn(question, None)
+    cleanup.append(run.thread_id)
+    lines = await _collect(q.run_stream(run))
+    _assert_tail_last(llm, 3)
+    assert not any(first in line for line in lines)
+    db = SessionLocal()
+    rows = db.query(Message).filter(Message.thread_id == run.thread_id).order_by(Message.seq).all()
+    db.close()
+    assert [r.role for r in rows] == ["user", "assistant"]
+    assert rows[0].content == question
+    assert all(first not in (r.content or "") and first not in json.dumps(r.parts) for r in rows)
+
+
+async def test_tail_reminder_on_long_trimmed_thread(monkeypatch):
+    from backend import agent_loop
+    from backend.chat_history import plan_history
+
+    msgs = []
+    for i in range(40):
+        msgs += _pair(f"ZZ question {i} " + "x" * 400, f"ZZ answer {i} " + "y" * 400)
+    history, _ = plan_history(msgs, 600, datetime.date(2026, 1, 6), summary="ZZ synthetic summary")
+    assert len(history) < 80
+    llm = _two_rounds()
+    _install_stub_workflow(
+        monkeypatch, llm, agent_cls=agent_loop.tail_agent_cls(), extra_tools={"slow_echo": _slow_echo})
+    await _collect(q.agent_stream("ZZ long", history=history))
+    _assert_tail_last(llm, 3)
+    for call in llm.seen_roles:
+        assert call[0] == ("system", "synthetic")
+        assert call[1][1].startswith("Summary of earlier conversation")
+
+
+def _convert_ollama(ms):
+    from llama_index.llms.ollama import Ollama
+
+    return Ollama(model="example-model:7b")._convert_to_ollama_messages(ms)
+
+
+def _convert_openai(ms):
+    from llama_index.llms.openai.utils import to_openai_message_dicts
+
+    return to_openai_message_dicts(ms)
+
+
+def _convert_anthropic(ms):
+    from llama_index.llms.anthropic.utils import messages_to_anthropic_messages
+
+    return messages_to_anthropic_messages(ms)[0]
+
+
+@pytest.mark.parametrize(
+    "pkg,convert",
+    [("llama_index.llms.ollama", _convert_ollama),
+     ("llama_index.llms.openai", _convert_openai),
+     ("llama_index.llms.anthropic", _convert_anthropic)],
+)
+def test_adapter_trailing_user(pkg, convert):
+    """D-28: a trailing user message after a tool message is accepted: user role it is."""
+    pytest.importorskip(pkg)
+    from llama_index.core.base.llms.types import ToolCallBlock
+    from llama_index.core.llms import ChatMessage
+
+    from backend.agent_loop import TAIL_REMINDER
+
+    msgs = [
+        ChatMessage(role="system", content="synthetic"),
+        ChatMessage(role="user", content="ZZ question"),
+        ChatMessage(role="assistant", content="", blocks=[
+            ToolCallBlock(tool_call_id="call_1", tool_name="slow_echo", tool_kwargs={"n": 1})]),
+        ChatMessage(role="tool", content="{'n': 1}", additional_kwargs={"tool_call_id": "call_1"}),
+        ChatMessage(role="user", content=TAIL_REMINDER),
+    ]
+    out = convert(msgs)
+    last = out[-1]
+    role = last["role"] if isinstance(last, dict) else last.role
+    assert role == "user"
+    assert TAIL_REMINDER in str(last)
