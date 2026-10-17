@@ -93,6 +93,15 @@ test.describe("Markdown renderer (node-only)", () => {
     expect(html).not.toContain("text-align:right");
   });
 
+  test("protocol-relative links render as spans, never an in-app href", () => {
+    const html = render("[x](//evil.example/p?d=1)");
+    expect(html).not.toMatch(/<a /);
+    expect(html).not.toContain("evil.example");
+    expect(safeUrl("//evil.example/p")).toBe("");
+    expect(safeUrl("/\\evil.example")).toBe("");
+    expect(safeUrl("/records?x=1")).toBe("/records?x=1");
+  });
+
   test("safeUrl allows http, https, mailto and relative only", () => {
     expect(safeUrl("https://a.example")).toBe("https://a.example");
     expect(safeUrl("javascript:x")).toBe("");

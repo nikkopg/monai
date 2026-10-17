@@ -25,10 +25,12 @@ import { tokens } from "../styles";
 const { color: c, radius } = tokens;
 const MONO = "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace";
 
-// Relative URLs pass; any URL with a scheme must be http(s) or mailto.
+// Relative URLs pass; any URL with a scheme must be http(s) or mailto. A
+// protocol-relative `//host` (or `/\host`, which browsers treat the same) is
+// off-site yet scheme-less, so it is blanked too, not shown as an in-app link.
 const SAFE_SCHEME = /^(https?:|mailto:)/i;
 export function safeUrl(url: string): string {
-  return /^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(url) && !SAFE_SCHEME.test(url) ? "" : url;
+  return /^([a-zA-Z][a-zA-Z0-9+.-]*:|[/\\]{2})/.test(url) && !SAFE_SCHEME.test(url) ? "" : url;
 }
 
 const NUMERIC = /^[\s(+\-]*(?:Rp\.?\s*|IDR\s*)?[\d.,]+\s*%?\)?\s*$/i;
