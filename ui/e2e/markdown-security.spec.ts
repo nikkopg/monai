@@ -106,8 +106,12 @@ test.describe("Markdown renderer (node-only)", () => {
       ["| Name | Note |", "| :--- | :---: |", "| Food | 1,000 |", "| Fun | weekly |"].join("\n"),
     );
     expect(html).not.toContain("text-align:right");
+    const th = html.match(/<th\s[^>]*>/g) ?? [];
     const td = html.match(/<td\s[^>]*>/g) ?? [];
-    expect(td[1]).toContain("text-align:center");
+    expect(th).toHaveLength(2);
+    expect(td).toHaveLength(4);
+    // header and every row keep the centre
+    for (const cell of [th[1], td[1], td[3]]) expect(cell).toContain("text-align:center");
   });
 
   test("a mixed text column is not right-aligned", () => {
