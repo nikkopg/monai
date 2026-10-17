@@ -46,7 +46,7 @@ function summaryFixture(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-async function mockSummary(page: Page) {
+async function mockSummary(page: Page, body: unknown = summaryFixture()) {
   const requestedPeriods: string[] = [];
   await page.route("**/api/cashflow/summary**", async (route) => {
     const url = new URL(route.request().url());
@@ -55,7 +55,7 @@ async function mockSummary(page: Page) {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(summaryFixture()),
+      body: JSON.stringify(body),
     });
   });
   return requestedPeriods;
@@ -113,4 +113,83 @@ test.describe("/cashflow dashboard", () => {
       .poll(() => requestedPeriods.includes("this_year"))
       .toBe(true);
   });
+});
+
+// ---------------------------------------------------------------------------
+// UAT gap 2: the Spending by category legend must stay inside its card. All
+// names and amounts below are synthetic.
+// ---------------------------------------------------------------------------
+const layoutCategories = [
+  ["Telecommunications", 12_345_678],
+  ["Transportation", 9_876_543],
+  ["Entertainment", 7_654_321],
+  ["Bills & Utilities", 987_654],
+  ["Health & Fitness", 456_789],
+  ["Food & Drinks", 234_567],
+  ["Shopping", 123_456],
+].map(([name, total], i) => ({
+  id: i + 1,
+  name,
+  color: ["#4f8", "#48f", "#f84", "#8f4", "#f48", "#84f", "#ff4"][i],
+  icon: null,
+  total,
+  children: [],
+}));
+
+const layoutSummary = summaryFixture({ by_category: layoutCategories });
+
+const layoutNetWorth = {
+  total: 4_000_000,
+  liquid_total: 4_000_000,
+  investment_total: 0,
+  liquid_accounts: [
+    { id: 1, name: "Cash", type: "liquid", current_balance: 4_000_000, period_net: 0 },
+  ],
+  investment_groups: [],
+  accounts_covered: 1,
+  accounts_total: 1,
+};
+
+test.describe("Spending by category card layout", () => {
+  // 1100: two-column grid, narrow card -> legend stacked below the donut.
+  // 420: single column, narrow card -> stacked. 1000: single column, wide
+  // card -> legend beside the 150px donut (150 + 22 gap = 172).
+  const cases: [number, "stacked" | "side-by-side"][] = [
+    [1100, "stacked"],
+    [420, "stacked"],
+    [1000, "side-by-side"],
+  ];
+  for (const [width, layout] of cases) {
+    test(`legend amounts stay inside the card at ${width}px (${layout})`, async ({ page }) => {
+      await mockSummary(page, layoutSummary);
+      await page.route("**/api/net-worth**", (route) => route.fulfill({ json: layoutNetWorth }));
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("/cashflow");
+      const card = page.getByText("Spending by category", { exact: true }).locator("xpath=..");
+      await expect(card.getByText("12,345,678")).toBeVisible();
+      const m = await card.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        const cs = getComputedStyle(el);
+        const left = r.left + parseFloat(cs.paddingLeft) + parseFloat(cs.borderLeftWidth);
+        const right = r.right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth);
+        const amounts = Array.from(el.querySelectorAll("span")).filter((s) => /\d/.test(s.textContent ?? ""));
+        return {
+          cardWidth: r.width,
+          left,
+          right,
+          count: amounts.length,
+          amountRights: amounts.map((s) => s.getBoundingClientRect().right),
+          legendLeft: amounts[0]?.parentElement?.parentElement?.getBoundingClientRect().left ?? NaN,
+        };
+      });
+      expect(m.count).toBe(layoutCategories.length);
+      for (const right of m.amountRights) expect(right).toBeLessThanOrEqual(m.right + 0.5);
+      if (layout === "stacked") {
+        expect(Math.abs(m.legendLeft - m.left)).toBeLessThanOrEqual(1);
+      } else {
+        expect(m.cardWidth).toBeGreaterThanOrEqual(460);
+        expect(m.legendLeft - m.left).toBeGreaterThanOrEqual(171);
+      }
+    });
+  }
 });
