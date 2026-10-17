@@ -555,11 +555,12 @@ async def agent_stream(
                             else:  # result with no announced call: never an exception
                                 call_id, ms = f"c{max(iteration, 0)}-{n_in_iter}", None
                                 n_in_iter += 1
+                            # category-bearing tools hit the DB: keep it off the event loop
+                            chips = await asyncio.to_thread(
+                                sources.source_for, event.tool_name, event.tool_kwargs, result_dict)
                             queue.put_nowait(_sse({
                                 "type": "tool_result", "step": step, "call_id": call_id,
-                                "ms": ms,
-                                "sources": sources.source_for(
-                                    event.tool_name, event.tool_kwargs, result_dict)}))
+                                "ms": ms, "sources": chips}))
 
                         # Terminal dispatch (D-01a): Failed, TimedOut, Cancelled and
                         # IdleReleased all SUBCLASS StopEvent, so they must be tested
