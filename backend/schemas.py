@@ -578,6 +578,8 @@ class ThreadDetailOut(ThreadOut):
 
     active_run: ActiveRunOut | None = None
     messages: list[MessageOut]
+    summary_upto_seq: int = 0
+    has_summary: bool = False  # flags only: the summary text never leaves the server
 
 
 class ImportResponse(BaseModel):

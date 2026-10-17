@@ -33,6 +33,8 @@ Endpoints:
     GET  /threads/{id}          thread with messages and live proposal status (requires API key)
     PATCH /threads/{id}         rename a thread (requires API key)
     DELETE /threads/{id}        delete a thread, 409 while its run is active (requires API key)
+    POST /threads/{id}/compact  summarise the older turns now, 409 while a run or compaction is active (requires API key)
+    POST /threads/{id}/clear    hide every turn from the prompt and drop the summary, 409 while a run or compaction is active (requires API key)
     GET  /threads/{id}/stream   re-attach to the active or last-finished run (requires API key)
     GET  /proposals             list pending proposals, lazy expiry first (public)
     GET  /proposals/counts      {"pending": N} after lazy expiry (public)
@@ -1640,6 +1642,42 @@ async def delete_thread(thread_id: uuid.UUID):
         raise HTTPException(404, "Thread not found")
     query._LAST.pop(str(thread_id), None)  # WR-07: drop the deleted thread's replay buffer
     return Response(status_code=204)
+
+
+COMPACT_TIMEOUT_SECONDS = 120  # bounds the whole multi-chunk /compact; each chunk is saved by its CAS write
+
+_THREAD_BUSY = "A run or compaction is in progress for this thread"
+
+
+@app.post("/threads/{thread_id}/compact", dependencies=[Depends(require_api_key)])
+async def compact_thread_route(thread_id: uuid.UUID):
+    """Summarise every complete pair after the boundary now (D-23). Returns flags only."""
+    from backend import chat_service
+    if chat_service.thread_busy(str(thread_id)):
+        raise HTTPException(409, _THREAD_BUSY)
+    try:
+        async with asyncio.timeout(COMPACT_TIMEOUT_SECONDS):
+            res = await chat_service.compact_thread(thread_id, everything=True)
+    except chat_service.ThreadBusy:
+        raise HTTPException(409, _THREAD_BUSY)
+    except Exception as e:  # fixed message: never the provider's text
+        logger.warning("compact failed: %s", type(e).__name__)
+        raise HTTPException(503, "Couldn't compact this chat right now. Try again later.")
+    if res is None:
+        raise HTTPException(404, "Thread not found")
+    return res
+
+
+@app.post("/threads/{thread_id}/clear", dependencies=[Depends(require_api_key)])
+async def clear_thread_route(thread_id: uuid.UUID):
+    """Start fresh without deleting: every message stays, none is replayed (D-24)."""
+    from backend import chat_service
+    if chat_service.thread_busy(str(thread_id)):
+        raise HTTPException(409, _THREAD_BUSY)
+    res = await asyncio.to_thread(chat_service.clear_thread, thread_id)
+    if res is None:
+        raise HTTPException(404, "Thread not found")
+    return res
 
 
 @app.get("/threads/{thread_id}/stream", dependencies=[Depends(require_api_key)])

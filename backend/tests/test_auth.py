@@ -210,6 +210,8 @@ def test_thread_routes_require_key(client, api_key, monkeypatch):
         ("patch", f"/threads/{tid}"),
         ("delete", f"/threads/{tid}"),
         ("get", f"/threads/{tid}/stream"),
+        ("post", f"/threads/{tid}/compact"),
+        ("post", f"/threads/{tid}/clear"),
     ]
     for method, url in calls:
         kw = {"json": {"title": "ZZTest t"}} if method == "patch" else {}
@@ -227,6 +229,6 @@ def test_every_thread_route_depends_on_api_key():
     from backend.main import app
 
     routes = [r for r in app.routes if getattr(r, "path", "").startswith("/threads")]
-    assert len(routes) == 5
+    assert len(routes) == 7
     for r in routes:
         assert require_api_key in [d.call for d in r.dependant.dependencies], r.path

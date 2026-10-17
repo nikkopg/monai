@@ -221,3 +221,132 @@ def test_late_stop_flips_persisted_answer(env):
     assert client.post(f"/query-stream/{run_id}/cancel", headers=h).status_code == 200
     m = client.get(f"/threads/{tid}", headers=h).json()["messages"][1]
     assert m["status"] == "cancelled" and m["content"] == ""
+
+
+# ---------------------------------------------------------------------------
+# /compact and /clear (Phase 38 plan 06)
+# ---------------------------------------------------------------------------
+
+
+class _Summariser:
+    def __init__(self, exc=None, delay=0.0):
+        self.exc, self.delay, self.calls = exc, delay, 0
+
+    async def achat(self, messages, **kw):
+        import asyncio
+
+        from llama_index.core.llms import ChatMessage, ChatResponse
+
+        self.calls += 1
+        await asyncio.sleep(self.delay)
+        if self.exc:
+            raise self.exc
+        return ChatResponse(message=ChatMessage(role="assistant", content="ZZ route summary"))
+
+
+def _mk_pairs(created, pairs=2, last_status="complete"):
+    tid = _mk(created)
+    db = SessionLocal()
+    for i in range(pairs):
+        db.add(Message(thread_id=tid, seq=2 * i + 1, role="user", content=f"ZZ q{i}", parts={}))
+        db.add(Message(thread_id=tid, seq=2 * i + 2, role="assistant", content=f"ZZ a{i}",
+                       status=last_status if i == pairs - 1 else "complete", parts={}))
+    db.commit()
+    db.close()
+    return tid
+
+
+def _cols(tid):
+    db = SessionLocal()
+    t = db.get(Thread, tid)
+    out = (t.summary, t.summary_upto_seq)
+    db.close()
+    return out
+
+
+@pytest.mark.parametrize("action", ["compact", "clear"])
+def test_compact_clear_422_and_404(env, action):
+    client, h, _ = env
+    assert client.post(f"/threads/not-a-uuid/{action}", headers=h).status_code == 422
+    assert client.post(f"/threads/{uuid.uuid4()}/{action}", headers=h).status_code == 404
+
+
+@pytest.mark.parametrize("action", ["compact", "clear"])
+def test_compact_clear_409_when_busy(env, monkeypatch, action):
+    from backend import chat_service
+
+    client, h, created = env
+    monkeypatch.setattr(chat_service, "_COMPACTING", set())
+    tid = _mk_pairs(created)
+    q._ACTIVE[str(tid)] = q.Run(key=str(tid))
+    assert client.post(f"/threads/{tid}/{action}", headers=h).status_code == 409
+    q._ACTIVE.clear()
+    chat_service._COMPACTING.add(str(tid))
+    try:
+        assert client.post(f"/threads/{tid}/{action}", headers=h).status_code == 409
+    finally:
+        chat_service._COMPACTING.discard(str(tid))
+
+
+def test_compact_success_returns_flags_only(env, monkeypatch):
+    client, h, created = env
+    monkeypatch.setattr(q, "_get_llm", lambda: _Summariser())
+    tid = _mk_pairs(created)
+    r = client.post(f"/threads/{tid}/compact", headers=h)
+    assert r.status_code == 200
+    assert r.json() == {"summary_upto_seq": 4, "has_summary": True, "compacted": True}
+    assert "ZZ route summary" not in r.text
+    d = client.get(f"/threads/{tid}", headers=h)
+    assert "ZZ route summary" not in d.text
+    assert d.json()["has_summary"] is True and d.json()["summary_upto_seq"] == 4
+    assert _cols(tid) == ("ZZ route summary", 4)
+
+
+def test_compact_nothing_to_fold(env, monkeypatch):
+    client, h, created = env
+    stub = _Summariser()
+    monkeypatch.setattr(q, "_get_llm", lambda: stub)
+    tid = _mk_pairs(created, pairs=1, last_status="error")
+    r = client.post(f"/threads/{tid}/compact", headers=h)
+    assert r.status_code == 200 and r.json()["compacted"] is False
+    assert stub.calls == 0
+
+
+def test_compact_provider_failure_is_503(env, monkeypatch):
+    from backend.tests.chat_stubs import Err429
+
+    client, h, created = env
+    monkeypatch.setattr(q, "_get_llm", lambda: _Summariser(exc=Err429("synthetic secret")))
+    tid = _mk_pairs(created)
+    r = client.post(f"/threads/{tid}/compact", headers=h)
+    assert r.status_code == 503
+    assert r.json()["detail"] == "Couldn't compact this chat right now. Try again later."
+    assert _cols(tid) == (None, 0)
+
+
+def test_compact_timeout_is_503(env, monkeypatch):
+    import backend.main as main
+
+    client, h, created = env
+    monkeypatch.setattr(main, "COMPACT_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(q, "_get_llm", lambda: _Summariser(delay=1.0))
+    tid = _mk_pairs(created)
+    r = client.post(f"/threads/{tid}/compact", headers=h)
+    assert r.status_code == 503
+    assert r.json()["detail"] == "Couldn't compact this chat right now. Try again later."
+    assert _cols(tid) == (None, 0)
+
+
+def test_clear_keeps_messages(env):
+    client, h, created = env
+    tid = _mk_pairs(created)
+    db = SessionLocal()
+    t = db.get(Thread, tid)
+    t.summary, t.summary_upto_seq = "ZZ route summary", 2
+    db.commit()
+    db.close()
+    r = client.post(f"/threads/{tid}/clear", headers=h)
+    assert r.status_code == 200
+    assert r.json() == {"summary_upto_seq": 4, "has_summary": False}
+    d = client.get(f"/threads/{tid}", headers=h).json()
+    assert len(d["messages"]) == 4 and d["has_summary"] is False and d["summary_upto_seq"] == 4
