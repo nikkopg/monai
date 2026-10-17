@@ -524,6 +524,7 @@ class AffectedCountResponse(BaseModel):
 class QueryRequest(BaseModel):
     question: str
     thread_id: _uuid.UUID | None = None
+    replace_from: _uuid.UUID | None = None  # the user message to replace (regenerate and edit, Phase 37 D-18)
 
 
 class ThreadTitleUpdate(BaseModel):

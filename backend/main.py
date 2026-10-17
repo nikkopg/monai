@@ -1516,12 +1516,22 @@ async def query_stream(req: QueryRequest):
     only a subscriber, so a disconnect detaches and the turn runs on; only the
     cancel route stops it (D-05, D-06). The stream opens with the thread event
     then the run event.
+
+    `replace_from` (a user message id; regenerate and edit-and-resend, Phase 37
+    D-18) truncates the thread from that message: 409 when the thread's run is
+    active (checked first), 422 for a missing thread_id or a target that is not
+    a user message of the thread, 409 when a proposal on the removed turns was
+    already applied. Otherwise pending chat proposals there are superseded.
     """
     from backend import chat_service, query
     try:
-        run = await chat_service.start_turn(req.question, req.thread_id)
+        run = await chat_service.start_turn(req.question, req.thread_id, req.replace_from)
     except LookupError:
         raise HTTPException(404, "Thread not found")
+    except chat_service.ReplaceConflict:
+        raise HTTPException(409, "This answer's changes were already applied")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     if run is None:
         raise HTTPException(
             status_code=409, detail="A run is already in progress for this conversation"

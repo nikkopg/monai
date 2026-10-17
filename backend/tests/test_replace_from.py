@@ -268,3 +268,74 @@ async def test_mcp_pending_proposal_is_left_pending(monkeypatch, threads):
 
     assert _prop(p1)[0] == "pending"
     assert _audit(tid) == []
+
+
+# ---------------------------------------------------------------------------
+# HTTP mapping: POST /query-stream
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def http(client, api_key, monkeypatch):
+    async def _stub(question, **kw):
+        yield "data: " + json.dumps({"type": "answer", "text": "stub answer", "trace": [],
+                                     "proposals": []}) + "\n\n"
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(q, "agent_stream", _stub)
+    return client, {"MONAI_API_KEY": api_key}
+
+
+def _post(http, **body):
+    client, h = http
+    return client.post("/query-stream", json={"question": Q1, **body}, headers=h)
+
+
+def test_http_replace_without_thread_is_422(http):
+    assert _post(http, replace_from=str(uuid.uuid4())).status_code == 422
+
+
+def test_http_replace_from_other_thread_is_422(http, threads):
+    tid, _ = _mk_thread(threads, [(Q1, "a")])
+    _, other = _mk_thread(threads, [(Q2, "b")])
+    assert _post(http, thread_id=str(tid), replace_from=str(other[0])).status_code == 422
+
+
+def test_http_non_uuid_replace_from_is_422(http, threads):
+    tid, _ = _mk_thread(threads, [(Q1, "a")])
+    assert _post(http, thread_id=str(tid), replace_from="nope").status_code == 422
+
+
+def test_http_applied_change_is_409_and_thread_unchanged(http, threads):
+    p1, _ = _seed_proposal()
+    tid, old = _mk_thread(threads, [(Q1, "a")], pids=[p1])
+    _set(p1, status="confirmed")
+    before = _msgs(tid)
+    r = _post(http, thread_id=str(tid), replace_from=str(old[0]))
+    assert r.status_code == 409
+    assert "already applied" in r.json()["detail"]
+    assert _msgs(tid) == before
+
+
+def test_http_active_run_is_409_before_replace(http, threads, monkeypatch):
+    p1, _ = _seed_proposal()
+    tid, old = _mk_thread(threads, [(Q1, "a")], pids=[p1])
+    q._ACTIVE[str(tid)] = q.Run(key=str(tid))
+    before = _msgs(tid)
+    r = _post(http, thread_id=str(tid), replace_from=str(old[0]))
+    assert r.status_code == 409
+    assert _msgs(tid) == before and _prop(p1)[0] == "pending"
+
+
+def test_http_unknown_thread_is_404(http):
+    assert _post(http, thread_id=str(uuid.uuid4()), replace_from=str(uuid.uuid4())).status_code == 404
+
+
+def test_http_valid_regenerate_streams_new_user_message(http, threads):
+    tid, old = _mk_thread(threads, [(Q1, "a")])
+    r = _post(http, thread_id=str(tid), replace_from=str(old[0]))
+    assert r.status_code == 200
+    ev = [json.loads(b[6:]) for b in r.text.split("\n\n") if b.startswith("data: {")]
+    assert [e["type"] for e in ev[:2]] == ["thread", "run"]
+    assert ev[0]["user_message_id"] != str(old[0])
+    assert [(m[1], m[2]) for m in _msgs(tid)] == [(1, "user"), (2, "assistant")]
