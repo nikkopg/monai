@@ -1,4 +1,7 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+import { mockInbox } from "./inbox-fixtures";
+import { mockStreams, type StreamScript } from "./stream-mock";
 
 import {
   argRows,
@@ -206,5 +209,142 @@ test.describe("labels and lane (node-only)", () => {
     await new Promise((r) => setTimeout(r, 60));
     expect(got).toHaveLength(2);
     expect(buf.take()).toEqual({ text: "", iteration: null });
+  });
+});
+
+// ---- Browser: the step UI ----------------------------------------------------
+
+const TID = "00000000-0000-4000-8000-0000000000a1";
+const input = (page: Page) => page.getByLabel("Ask monai a question");
+const toggle = (page: Page) => page.getByTestId("steps-toggle");
+
+const food = { category: "Food", period: "this_month" };
+const toolStart = (id: string, tool: string, args: Record<string, unknown>, at: number) => ({
+  data: { type: "tool_start", call_id: id, tool, args, iteration: 0 },
+  at,
+});
+const toolResult = (
+  id: string,
+  tool: string,
+  args: Record<string, unknown>,
+  ms: number,
+  sources: Source[],
+  at: number,
+) => ({
+  data: { type: "tool_result", call_id: id, ms, sources, step: { tool, args, result: { total: 1 } } },
+  at,
+});
+const run = { data: { type: "run", run_id: "00000000-0000-4000-8000-0000000000c3" }, at: 0 };
+const finalAnswer = (at: number) => ({
+  data: { type: "answer", text: "Done.", proposals: [], trace: [], model: "example-model:7b", provider: "ollama" },
+  at,
+});
+
+async function ask(page: Page, scripts: StreamScript[], keepOpen = false) {
+  await mockInbox(page, { list: [] });
+  await page.route(/\/api\/threads$/, (route) => route.fulfill({ json: [] }));
+  await mockStreams(page, scripts, { keepOpen });
+  await page.goto("/chat");
+  await input(page).fill("How much did I spend on food?");
+  await input(page).press("Enter");
+}
+
+test.describe("tool steps (browser)", () => {
+  test("the live line ticks and the toggle is a collapsed disclosure", async ({ page }) => {
+    await ask(page, [[run, toolStart("c0-0", "spending_in_category", food, 50)]], true);
+    await expect(toggle(page)).toContainText(/Spending in category · 0s/);
+    await expect(toggle(page)).toContainText("· 2s", { timeout: 6000 });
+    await expect(toggle(page)).toHaveAttribute("aria-expanded", "false");
+    const panelId = await toggle(page).getAttribute("aria-controls");
+    expect(panelId).toBeTruthy();
+    await expect(page.locator(`[id="${panelId}"]`)).toHaveAttribute("hidden", "");
+  });
+
+  test("Used 2 tools expands to labelled rows with resolved dates and no JSON", async ({ page }) => {
+    const source: Source = {
+      label: "Spending",
+      period_label: "Sep 2026",
+      date_from: "2026-09-01",
+      date_to: "2026-09-30",
+      category: "Food",
+      linked: true,
+    };
+    await ask(page, [
+      [
+        run,
+        toolStart("c0-0", "spending_in_category", food, 50),
+        toolResult("c0-0", "spending_in_category", food, 400, [source], 100),
+        toolStart("c0-1", "net_worth", {}, 150),
+        toolResult("c0-1", "net_worth", {}, 2100, [], 200),
+        finalAnswer(300),
+        { data: "[DONE]", at: 320 },
+      ],
+    ]);
+    await expect(toggle(page)).toHaveText(/Used 2 tools/);
+    await toggle(page).click();
+    await expect(toggle(page)).toHaveAttribute("aria-expanded", "true");
+    const panel = page.locator(`[id="${await toggle(page).getAttribute("aria-controls")}"]`);
+    await expect(panel).toBeVisible();
+    await page.getByTestId("step-toggle").first().click();
+    await expect(page.getByText("Category", { exact: true })).toBeVisible();
+    await expect(page.getByText("Food", { exact: true })).toBeVisible();
+    await expect(page.getByText("Period", { exact: true })).toBeVisible();
+    await expect(page.getByText("This month", { exact: true })).toBeVisible();
+    await expect(page.getByText("Dates", { exact: true })).toBeVisible();
+    await expect(page.getByText("Sep 1 \u2013 Sep 30, 2026", { exact: true })).toBeVisible();
+    await expect(panel).not.toContainText("{");
+  });
+
+  test("persisted steps show duration and dates only when stored", async ({ page }) => {
+    await mockInbox(page, { list: [] });
+    await page.route(/\/api\/threads$/, (route) => route.fulfill({ json: [] }));
+    const base = { status: "complete", created_at: new Date().toISOString() };
+    await page.route(new RegExp(`/api/threads/${TID}$`), (route) =>
+      route.fulfill({
+        json: {
+          id: TID,
+          title: "Synthetic chat",
+          updated_at: base.created_at,
+          active_run: null,
+          messages: [
+            { ...base, id: "00000000-0000-4000-8000-00000000d001", seq: 1, role: "user", content: "Q?", parts: {} },
+            {
+              ...base,
+              id: "00000000-0000-4000-8000-00000000d002",
+              seq: 2,
+              role: "assistant",
+              content: "Done.",
+              parts: {
+                steps: [
+                  {
+                    tool: "spending_in_category",
+                    args: food,
+                    ms: 2100,
+                    sources: [src({ category: "Food" })],
+                  },
+                  { tool: "net_worth", args: {} },
+                ],
+                proposals: [],
+              },
+            },
+          ],
+        },
+      }),
+    );
+    await page.goto(`/chat?thread=${TID}`);
+    await expect(toggle(page)).toHaveText(/Used 2 tools/);
+    await toggle(page).click();
+    const [first, second] = [page.getByTestId("step-toggle").nth(0), page.getByTestId("step-toggle").nth(1)];
+    await expect(first).toContainText("· 2.1s");
+    await expect(second).not.toContainText("·");
+    await first.click();
+    await second.click();
+    await expect(page.getByText("Dates", { exact: true })).toHaveCount(1);
+    await expect(page.getByText("No filters")).toBeVisible();
+  });
+
+  test("an unknown tool name falls back to a humanised label", async ({ page }) => {
+    await ask(page, [[run, toolStart("c0-0", "propose_add_transaction", {}, 50)]], true);
+    await expect(toggle(page)).toContainText("Propose add transaction");
   });
 });

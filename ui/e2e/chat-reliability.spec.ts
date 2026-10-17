@@ -217,7 +217,7 @@ test.describe("chat stream reliability (REL-01/02/03/05/06/09)", () => {
 
   test("a stream that closes without a terminal event is stream_ended", async ({ page }) => {
     await askWithBody(page, sse(stepEvt, "[DONE]"));
-    await expect(alertBox(page)).toContainText("The answer stopped early");
+    await expect(alertBox(page)).toContainText("Incomplete answer");
   });
 
   test("keep-alive pings are ignored", async ({ page }) => {
@@ -337,7 +337,7 @@ test.describe("chat stream reliability (REL-01/02/03/05/06/09)", () => {
     await page.goto("/chat");
     await input(page).fill(QUESTION);
     await input(page).press("Enter");
-    await expect(page.getByText("working…")).toBeVisible();
+    await expect(page.getByTestId("steps-toggle")).toBeVisible();
     await page.getByRole("button", { name: "Stop" }).click();
     await expect(page.getByRole("button", { name: "Stopping…" })).toBeDisabled();
     await expect(
@@ -378,7 +378,7 @@ test.describe("chat stream reliability (REL-01/02/03/05/06/09)", () => {
     await page.goto("/chat");
     await input(page).fill(QUESTION);
     await input(page).press("Enter");
-    await expect(page.getByText("working…")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Stop" })).toBeVisible();
     await page.getByRole("button", { name: "Stop" }).click();
     await expect(page.getByRole("button", { name: "Stopping…" })).toBeDisabled();
     await page.clock.fastForward(11_000);
