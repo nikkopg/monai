@@ -152,12 +152,15 @@ const layoutNetWorth = {
 
 test.describe("Spending by category card layout", () => {
   // 1100: two-column grid, narrow card -> legend stacked below the donut.
-  // 420: single column, narrow card -> stacked. 1000: single column, wide
-  // card -> legend beside the 150px donut (150 + 22 gap = 172).
+  // 420: single column, narrow card -> stacked. 920: single column, wide
+  // card (mid-band, clear of the ~1035px grid breakpoint) -> legend beside
+  // the 150px donut (150 + 22 gap = 172). 1440: max-width cap, the layout
+  // most desktops get -> side-by-side with a ~209px legend.
   const cases: [number, "stacked" | "side-by-side"][] = [
     [1100, "stacked"],
     [420, "stacked"],
-    [1000, "side-by-side"],
+    [920, "side-by-side"],
+    [1440, "side-by-side"],
   ];
   for (const [width, layout] of cases) {
     test(`legend amounts stay inside the card at ${width}px (${layout})`, async ({ page }) => {
@@ -173,21 +176,34 @@ test.describe("Spending by category card layout", () => {
         const left = r.left + parseFloat(cs.paddingLeft) + parseFloat(cs.borderLeftWidth);
         const right = r.right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth);
         const amounts = Array.from(el.querySelectorAll("span")).filter((s) => /\d/.test(s.textContent ?? ""));
+        const names = Array.from(el.querySelectorAll("span[title]"));
         return {
-          cardWidth: r.width,
           left,
           right,
           count: amounts.length,
           amountRights: amounts.map((s) => s.getBoundingClientRect().right),
           legendLeft: amounts[0]?.parentElement?.parentElement?.getBoundingClientRect().left ?? NaN,
+          // Lines each name occupies (distinct rect tops; an ellipsis adds a
+          // rect on the same line). A mid-word split shows as 2+.
+          names: names.map((s) => {
+            const range = document.createRange();
+            range.selectNodeContents(s);
+            const lines = new Set(Array.from(range.getClientRects(), (q) => Math.round(q.top))).size;
+            return { text: s.textContent, title: s.getAttribute("title"), lines };
+          }),
         };
       });
       expect(m.count).toBe(layoutCategories.length);
       for (const right of m.amountRights) expect(right).toBeLessThanOrEqual(m.right + 0.5);
+      // Every name keeps its full text in the tooltip; single words never split.
+      expect(m.names.map((n) => n.title)).toEqual(layoutCategories.map((c) => c.name));
+      for (const n of m.names) {
+        expect(n.text).toBe(n.title);
+        if (!n.text?.includes(" ")) expect(n.lines, n.text ?? "").toBe(1);
+      }
       if (layout === "stacked") {
         expect(Math.abs(m.legendLeft - m.left)).toBeLessThanOrEqual(1);
       } else {
-        expect(m.cardWidth).toBeGreaterThanOrEqual(460);
         expect(m.legendLeft - m.left).toBeGreaterThanOrEqual(171);
       }
     });
