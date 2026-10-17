@@ -5,7 +5,10 @@ A helper module, not a test module: its name does not start with `test_`, so
 pytest does not collect it, and importing it never re-collects the tests of
 test_chat_reliability.py. Holds the scripted function-calling StubLLM, the
 proposal seeding helpers (`purge_seeded` is the cleanup both test modules
-call), the stub-workflow installer and the SSE collectors.
+call), the stub-workflow installer and the SSE collectors. Phase 37 adds
+the configurable tool call (`tool_name`/`tool_kwargs`), a `two_calls` mode
+that reproduces Ollama's tool id == tool name collision, and the synthetic
+`slow_echo` / `fake_spending_total` tools.
 
 All values are synthetic.
 """
@@ -14,6 +17,7 @@ import asyncio
 import datetime
 import json
 import secrets
+import time
 import uuid
 
 from llama_index.core.agent.workflow import AgentWorkflow, FunctionAgent
@@ -50,6 +54,8 @@ class StubLLM(MockFunctionCallingLLM):
     final_text: str = "Hello"
     drip_count: int = 5
     drip_gap: float = 0.2
+    tool_name: str = "seed_proposal"
+    tool_kwargs: dict = Field(default_factory=dict)
     seen: list = Field(default_factory=list)  # chat_history contents per LLM call
 
     @property
@@ -81,9 +87,32 @@ class StubLLM(MockFunctionCallingLLM):
                     blocks=[
                         TextBlock(text="let me check"),
                         ToolCallBlock(
-                            tool_name="seed_proposal",
-                            tool_kwargs={},
+                            tool_name=self.tool_name,
+                            tool_kwargs=self.tool_kwargs,
                             tool_call_id="c1",
+                        ),
+                    ],
+                ),
+                delta="",
+            )
+
+        async def two_calls_turn():
+            # Ollama sets the tool id to the tool name: both ids collide.
+            yield _resp("checking both", "checking both")
+            yield ChatResponse(
+                message=ChatMessage(
+                    role="assistant",
+                    blocks=[
+                        TextBlock(text="checking both"),
+                        ToolCallBlock(
+                            tool_name="slow_echo",
+                            tool_kwargs={"n": 1},
+                            tool_call_id="slow_echo",
+                        ),
+                        ToolCallBlock(
+                            tool_name="slow_echo",
+                            tool_kwargs={"n": 2},
+                            tool_call_id="slow_echo",
                         ),
                     ],
                 ),
@@ -107,6 +136,13 @@ class StubLLM(MockFunctionCallingLLM):
                     yield _resp(acc, "x")
                 async for r in final():
                     yield r
+            elif mode == "two_calls":
+                if n == 1:
+                    async for r in two_calls_turn():
+                        yield r
+                else:
+                    async for r in final():
+                        yield r
             elif mode in ("tool", "tool_then_429", "tool_then_hang"):
                 if n == 1:
                     async for r in tool_turn():
@@ -226,16 +262,34 @@ def seed_proposal() -> dict:
     }
 
 
+def slow_echo(n: int) -> dict:
+    """Synthetic tool that takes 50 ms, for duration pairing."""
+    time.sleep(0.05)
+    return {"tool": "slow_echo", "n": n}
+
+
+def fake_spending_total(
+    period: str = "all_time",
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict:
+    """Synthetic stand-in for the read tool of the same name (no DB)."""
+    return {"tool": "spending_total", "total": 1.0, "period": "synthetic"}
+
+
 # ---------------------------------------------------------------------------
 # Harness helpers
 # ---------------------------------------------------------------------------
 
 
-def _install_stub_workflow(monkeypatch, llm, *, timeout=30.0):
+def _install_stub_workflow(monkeypatch, llm, *, timeout=30.0, extra_tools=None):
     import backend.query as query_mod
 
     agent = FunctionAgent(
-        tools=[query_mod._llm_tool("seed_proposal", seed_proposal)],
+        tools=[
+            query_mod._llm_tool("seed_proposal", seed_proposal),
+            *(query_mod._llm_tool(k, fn) for k, fn in (extra_tools or {}).items()),
+        ],
         llm=llm,
         system_prompt="synthetic",
     )

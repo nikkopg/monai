@@ -34,12 +34,15 @@ import datetime
 import functools
 import json
 import logging
+import time
 import uuid
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
 import anyio
 
+from backend import sources
 from backend.config import configure_llm
 from backend.tools import PERIODS
 
@@ -359,6 +362,8 @@ def _extract_proposals(tool_trace: list) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 _DONE = "data: [DONE]\n\n"
+# _sse puts "type" first, so a token chunk is recognised by prefix (no JSON parse).
+TOKEN_PREFIX = 'data: {"type": "token"'
 
 
 def _sse(payload: dict) -> str:
@@ -404,7 +409,11 @@ async def agent_stream(
 
     Event types emitted:
       data: {"type": "step", "msg": "thinking…"}
-      data: {"type": "tool_result", "step": {"tool": ..., "args": ..., "result": ...}}
+      data: {"type": "token", "delta": ..., "iteration": n}   (one per streamed delta)
+      data: {"type": "tool_start", "call_id": "c{iteration}-{n}", "tool": ..., "args": ...,
+             "iteration": n}
+      data: {"type": "tool_result", "step": {"tool": ..., "args": ..., "result": ...},
+             "call_id": ..., "ms": int | null, "sources": [chip, ...]}
       data: {"type": "answer", "text": ..., "trace": [...], "model": ..., "provider": ...,
              "proposals": [{"id", "token", "operation", "payload", "expires_at"}, ...],
              "proposal_id": ..., "proposal_token": ...}
@@ -416,7 +425,12 @@ async def agent_stream(
       data: [DONE]
     There is no server retry and no provider fallback (D-07).
     """
-    from llama_index.core.agent.workflow.workflow_events import AgentInput, ToolCallResult
+    from llama_index.core.agent.workflow.workflow_events import (
+        AgentInput,
+        AgentStream,
+        ToolCall,
+        ToolCallResult,
+    )
     from workflows.errors import WorkflowCancelledByUser
     from workflows.events import (
         IdleReleasedEvent,
@@ -448,6 +462,14 @@ async def agent_stream(
     queue: asyncio.Queue = asyncio.Queue()
     tool_trace: list = []
     terminal = False  # a terminal event (answer / error / cancel) was handled
+    iteration = -1  # LLM turn counter, bumped at each AgentInput
+    n_in_iter = 0  # call_id counter within the iteration
+    # FIFO of (call_id, t0) per (tool, canonical args): provider tool ids are not
+    # unique (Ollama sets id == tool name), so pair a result to its call by content.
+    pending: dict[tuple[str, str], deque] = {}
+
+    def _key(name, kwargs):
+        return name, json.dumps(kwargs or {}, sort_keys=True, default=str)
 
     def emit_error(code: str, idle_seconds: float | None = None) -> None:
         nonlocal terminal
@@ -456,7 +478,7 @@ async def agent_stream(
             code, model, provider, _extract_proposals(tool_trace), idle_seconds))
 
     async def produce() -> None:
-        nonlocal terminal
+        nonlocal terminal, iteration, n_in_iter
         try:
             try:
                 async with asyncio.timeout(idle) as cm:
@@ -465,7 +487,27 @@ async def agent_stream(
                         # not forward) proves liveness. Pings never reach here.
                         cm.reschedule(asyncio.get_running_loop().time() + idle)
                         if isinstance(event, AgentInput):
+                            iteration += 1
+                            n_in_iter = 0
                             queue.put_nowait(_sse({"type": "step", "msg": "thinking…"}))
+
+                        elif isinstance(event, AgentStream):
+                            # Only the delta: never the cumulative response, the
+                            # reasoning field or tool_calls. Not stripped (spaces matter).
+                            if event.delta:
+                                queue.put_nowait(_sse({
+                                    "type": "token", "delta": event.delta,
+                                    "iteration": max(iteration, 0)}))
+
+                        elif isinstance(event, ToolCall):
+                            call_id = f"c{max(iteration, 0)}-{n_in_iter}"
+                            n_in_iter += 1
+                            pending.setdefault(_key(event.tool_name, event.tool_kwargs), deque()
+                                               ).append((call_id, time.monotonic()))
+                            queue.put_nowait(_sse({
+                                "type": "tool_start", "call_id": call_id,
+                                "tool": event.tool_name, "args": event.tool_kwargs,
+                                "iteration": max(iteration, 0)}))
 
                         elif isinstance(event, ToolCallResult):
                             # Prefer the untouched dict LlamaIndex's FunctionTool.call() sets on
@@ -506,7 +548,18 @@ async def agent_stream(
                             if run is not None and isinstance(result_dict, dict) \
                                     and result_dict.get("proposal_id"):
                                 run.proposal_ids.append(str(result_dict["proposal_id"]))
-                            queue.put_nowait(_sse({"type": "tool_result", "step": step}))
+                            waiting = pending.get(_key(event.tool_name, event.tool_kwargs))
+                            if waiting:
+                                call_id, t0 = waiting.popleft()
+                                ms = round((time.monotonic() - t0) * 1000)
+                            else:  # result with no announced call: never an exception
+                                call_id, ms = f"c{max(iteration, 0)}-{n_in_iter}", None
+                                n_in_iter += 1
+                            queue.put_nowait(_sse({
+                                "type": "tool_result", "step": step, "call_id": call_id,
+                                "ms": ms,
+                                "sources": sources.source_for(
+                                    event.tool_name, event.tool_kwargs, result_dict)}))
 
                         # Terminal dispatch (D-01a): Failed, TimedOut, Cancelled and
                         # IdleReleased all SUBCLASS StopEvent, so they must be tested
@@ -744,6 +797,8 @@ def redact_tokens(chunk: str) -> str:
     subscriber gets proposals without `token` and `proposal_token` null.
     Anything else (pings, [DONE], step/tool_result events) is returned as is.
     """
+    if chunk.startswith(TOKEN_PREFIX):  # a delta may contain the word "token"
+        return chunk
     if '"token"' not in chunk and '"proposal_token"' not in chunk:
         return chunk
     if not chunk.startswith("data: "):
