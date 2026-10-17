@@ -512,3 +512,29 @@ async def test_stall_regression_guard(monkeypatch):
         assert r.status_code == 200 and elapsed < 0.2
         assert not finished.is_set()
         await task
+
+
+# ---------------------------------------------------------------------------
+# 38-05: tail reminder agent and prompt rules (LOOP-07, D-15, D-07)
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_rules():
+    p = q._SYSTEM_PROMPT
+    assert "13. For a request that needs two or more separate changes" in p
+    assert "repeat the numbered plan in your final answer" in p
+    assert "14. A tool result marked truncated is partial" in p
+    assert "I can also add, edit, or delete transactions" in p  # rule 3 untouched (D-06)
+
+
+def test_workflow_uses_tail_agent(monkeypatch):
+    from llama_index.core.llms import MockLLM
+
+    from backend import agent_loop
+
+    monkeypatch.setattr(q, "_agent_workflows", {})
+    monkeypatch.setattr(q, "_get_llm", lambda: MockLLM())
+    cls = agent_loop.tail_agent_cls()
+    assert cls is agent_loop.tail_agent_cls()
+    assert isinstance(q._get_agent_workflow().agents["Agent"], cls)
+    assert isinstance(q._get_agent_workflow(READ_TOOL_NAMES).agents["Agent"], cls)

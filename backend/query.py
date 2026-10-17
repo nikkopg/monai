@@ -119,6 +119,12 @@ reuse a number from an earlier answer: call the tool again, and use compare_peri
 difference between periods.
 12. Never write the date stamps or the "[tools used: ...]" lines in your answer; they are \
 context, not output.
+13. For a request that needs two or more separate changes (different propose_* tools or \
+different targets), first write a short numbered plan, one line per change, then call the \
+propose_* tools in that order in this same turn, and repeat the numbered plan in your final \
+answer. A batch request under rule 7 is one change. Questions that only read data never need a plan.
+14. A tool result marked truncated is partial: never state a total or count from its list. \
+Use the tool's own total field, or narrow the query (period, category, limit).
 """.strip()
 
 
@@ -227,7 +233,9 @@ def _get_agent_workflow(tool_names: frozenset[str] | None = None):
     # goes stale on a day with no writes (AGENT-05).
     cached = _agent_workflows.get(names)
     if cached is None or cached[0] != today:
-        from llama_index.core.agent import AgentWorkflow, FunctionAgent
+        from llama_index.core.agent import AgentWorkflow
+
+        from backend.agent_loop import tail_agent_cls
 
         llm = _get_llm()
 
@@ -239,7 +247,7 @@ def _get_agent_workflow(tool_names: frozenset[str] | None = None):
 
         system_prompt = _SYSTEM_PROMPT.format(today=today.isoformat())
 
-        agent = FunctionAgent(
+        agent = tail_agent_cls()(
             tools=tools,
             llm=llm,
             system_prompt=system_prompt,

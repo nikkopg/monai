@@ -10,6 +10,7 @@ write intent (LOOP-01). A smaller tool block is cheaper on every iteration and
 the small default model picks from a shorter list more reliably.
 """
 
+import functools
 import re
 
 # D-04 list, finalised from the eval questions. Biased towards false positives:
@@ -95,3 +96,44 @@ def tools_for_turn(question: str, prior: list[dict] | None = None) -> frozenset[
     if sticky or WRITE_RE.search(question or ""):
         return frozenset(TOOLS)
     return READ_TOOL_NAMES
+
+
+# D-27: the never-fabricate rule, restated as the last input of every model step.
+TAIL_REMINDER = (
+    "Reminder: every figure in your answer must come from a tool call made in this turn. "
+    "If a tool returns zero, say zero. Never compute a difference or percentage yourself, "
+    "and never state a total from a truncated list."
+)
+
+
+@functools.cache
+def tail_agent_cls():
+    """The FunctionAgent subclass that appends TAIL_REMINDER to every LLM call.
+
+    The hook is FunctionAgent's private _get_streaming_response / _get_response,
+    not take_step: they are the only place that sees the true final input
+    [*llm_input, *scratchpad], so the reminder lands after every tool round
+    (Spike 3a). It is appended to a copy at call time, so it never enters agent
+    memory, events or the DB. User role (D-28): the Ollama, OpenAI and Anthropic
+    adapters all accept a trailing user message after a tool message (Spike 3c);
+    fall back to system role only if the eval shows the model mishandles it.
+    Ollama front-truncates oldest non-system messages first and keeps the last,
+    so the reminder is the protected message; the casualties are the question
+    and early tool rounds (D-27a). Pinned to llama-index-core 0.14.25 because of
+    the two underscore methods; test_tail_reminder_last_on_every_call is the
+    tripwire for a bump. Cached so every call returns the same class.
+    """
+    from llama_index.core.agent.workflow import FunctionAgent
+    from llama_index.core.llms import ChatMessage
+
+    class TailFunctionAgent(FunctionAgent):
+        def _tail(self, msgs):
+            return [*msgs, ChatMessage(role="user", content=TAIL_REMINDER)]
+
+        async def _get_streaming_response(self, ctx, current_llm_input, tools):
+            return await super()._get_streaming_response(ctx, self._tail(current_llm_input), tools)
+
+        async def _get_response(self, current_llm_input, tools):
+            return await super()._get_response(self._tail(current_llm_input), tools)
+
+    return TailFunctionAgent
