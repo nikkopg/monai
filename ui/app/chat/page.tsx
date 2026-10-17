@@ -17,6 +17,7 @@ import type { LiveStatus, Proposal, ServerProposal } from "./ProposalCard";
 import Markdown from "./Markdown";
 import ThreadSidebar from "./ThreadSidebar";
 import ToolSteps from "./ToolSteps";
+import SourceChips, { dedupeSources } from "./SourceChips";
 import type { Source } from "./labels";
 import {
   EMPTY_LANE,
@@ -865,6 +866,15 @@ function ChatInner() {
           >
             {stoppedLine(m)}
           </div>
+        )}
+
+        {/* Sources: only on a completed answer (D-12) */}
+        {m.status === "complete" && (
+          <SourceChips
+            sources={dedupeSources(
+              m.lane.timeline.flatMap((e) => (e.kind === "step" ? e.sources : []))
+            )}
+          />
         )}
 
         {/* Inline ProposalCards — one per proposal in this turn (D-01, AGENT-06) */}

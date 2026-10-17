@@ -197,5 +197,6 @@
 @media (pointer: coarse) {
   .coarse-tap { min-height: 44px; }
 }
+.source-chip:hover { background: #f2efe8 !important; text-decoration: underline; }
 .step-toggle:hover .step-label { text-decoration: underline; }
 .steps-toggle:hover { color: #23201b !important; }
