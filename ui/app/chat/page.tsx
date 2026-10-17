@@ -14,6 +14,7 @@ import ProposalCard, {
   toProposal,
 } from "./ProposalCard";
 import type { LiveStatus, Proposal, ServerProposal } from "./ProposalCard";
+import Markdown from "./Markdown";
 import ThreadSidebar from "./ThreadSidebar";
 import { useChatStream } from "./useChatStream";
 import type { StreamOutcome } from "./useChatStream";
@@ -709,18 +710,19 @@ function ChatInner() {
           </div>
         )}
 
-        {/* Answer (D-07): React text only, never injected HTML */}
+        {/* Answer: rendered through the safe Markdown component (D-10), never as injected HTML */}
         {m.status === "complete" && m.text && (
           <div
+            data-testid="answer"
             style={{
+              color: tokens.color.ink,
               fontSize: 16,
               lineHeight: 1.6,
-              margin: "0 0 14px",
-              color: tokens.color.textSoft,
-              whiteSpace: "pre-wrap",
+              overflowWrap: "anywhere",
+              marginBottom: 16,
             }}
           >
-            {m.text}
+            <Markdown>{m.text}</Markdown>
           </div>
         )}
 
