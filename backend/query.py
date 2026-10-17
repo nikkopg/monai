@@ -25,8 +25,7 @@ Public surface:
   stop_run(run) -> list[str]            — halt the run, reject its pending chat proposals
   classify_error(exc) -> str            — duck-typed provider failure -> code
   Run                                   — dataclass: one in-flight chat run
-  reset_engine() -> None                — clears _llm, _agent_workflow and its
-                                           build date
+  reset_engine() -> None                — clears _llm and every cached workflow
 """
 
 import asyncio
@@ -53,8 +52,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 _llm = None
-_agent_workflow = None
-_agent_workflow_date: datetime.date | None = None  # the date whose TODAY the cached workflow's prompt holds
+# One workflow per tool-name subset, with the date whose TODAY its prompt holds.
+# ponytail: unbounded, two keys this phase (reads, all); add LRU eviction when
+# Phases 39/41 add per-thread subsets.
+_agent_workflows: dict[frozenset[str], tuple[datetime.date, Any]] = {}
 
 # ---------------------------------------------------------------------------
 # System prompt — tool-only, no SQL, honest refusal, no fabrication
@@ -164,21 +165,25 @@ def _llm_tool(name: str, fn):
     return FunctionTool.from_defaults(fn=hidden, name=name)
 
 
-def _get_agent_workflow():
-    global _agent_workflow, _agent_workflow_date
+def _get_agent_workflow(tool_names: frozenset[str] | None = None):
+    """The cached workflow for a tool-name subset; None means every registered tool."""
+    from backend.tools import TOOLS
+
+    names = frozenset(TOOLS) if tool_names is None else frozenset(tool_names)
     today = _today()
     # A new calendar day rebuilds the workflow so the prompt's TODAY never
     # goes stale on a day with no writes (AGENT-05).
-    if _agent_workflow is None or _agent_workflow_date != today:
+    cached = _agent_workflows.get(names)
+    if cached is None or cached[0] != today:
         from llama_index.core.agent import AgentWorkflow, FunctionAgent
-        from backend.tools import TOOLS
 
         llm = _get_llm()
 
         # Tools come from the single TOOLS registry (18 read + 16 propose_*
         # writes); descriptions live in the functions' docstrings. A new
-        # tool needs only a TOOLS entry — nothing here changes.
-        tools = [_llm_tool(name, fn) for name, fn in TOOLS.items()]
+        # tool needs only a TOOLS entry — nothing here changes. Registry
+        # order is kept so the tool-surface snapshot is stable.
+        tools = [_llm_tool(n, fn) for n, fn in TOOLS.items() if n in names]
 
         system_prompt = _SYSTEM_PROMPT.format(today=today.isoformat())
 
@@ -190,9 +195,9 @@ def _get_agent_workflow():
         )
         # D-15: 300 s whole-run backstop for slow-but-alive runs; it maps to
         # `timeout` via WorkflowTimedOutEvent. The idle watchdog is the real guard.
-        _agent_workflow = AgentWorkflow(agents=[agent], timeout=300.0)
-        _agent_workflow_date = today
-    return _agent_workflow
+        cached = (today, AgentWorkflow(agents=[agent], timeout=300.0))
+        _agent_workflows[names] = cached
+    return cached[1]
 
 
 # ---------------------------------------------------------------------------
@@ -854,8 +859,7 @@ async def run_stream(run: Run):
 # ---------------------------------------------------------------------------
 
 def reset_engine() -> None:
-    """Clear the LLM, the agent workflow and its build date (called after writes)."""
-    global _llm, _agent_workflow, _agent_workflow_date
+    """Clear the LLM and every cached agent workflow (called after writes)."""
+    global _llm
     _llm = None
-    _agent_workflow = None
-    _agent_workflow_date = None
+    _agent_workflows.clear()

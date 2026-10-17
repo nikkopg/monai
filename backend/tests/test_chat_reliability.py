@@ -5,7 +5,7 @@ Every test drives the REAL agent_stream through a REAL LlamaIndex
 AgentWorkflow whose FunctionAgent uses StubLLM, so the terminal workflow
 events (WorkflowFailedEvent, WorkflowTimedOutEvent, ...) are genuinely
 produced rather than mocked. The stub workflow is planted through the
-backend.query._agent_workflow / _agent_workflow_date seam.
+backend.query._get_agent_workflow seam.
 
 Tests:
   test_provider_429_emits_error_not_answer — a provider 429 is an error

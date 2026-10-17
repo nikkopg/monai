@@ -113,8 +113,7 @@ def _install_mock_workflow(monkeypatch, stream_events):
     workflow = MagicMock()
     workflow.run = MagicMock(return_value=handler)
 
-    monkeypatch.setattr(query_mod, "_agent_workflow", workflow)
-    monkeypatch.setattr(query_mod, "_agent_workflow_date", query_mod._today())
+    monkeypatch.setattr(query_mod, "_get_agent_workflow", lambda tool_names=None: workflow)
     return workflow
 
 
@@ -447,8 +446,9 @@ def test_agent_workflow_rebuilds_across_midnight(monkeypatch):
     import backend.query as query_mod
     from llama_index.core.llms import MockLLM
 
-    monkeypatch.setattr(query_mod, "_agent_workflow", None)
-    monkeypatch.setattr(query_mod, "_agent_workflow_date", None)
+    from backend.tools import TOOLS
+
+    monkeypatch.setattr(query_mod, "_agent_workflows", {})
     monkeypatch.setattr(query_mod, "_get_llm", lambda: MockLLM())
 
     d1 = datetime.date(2020, 1, 31)
@@ -464,11 +464,31 @@ def test_agent_workflow_rebuilds_across_midnight(monkeypatch):
     assert wf2 is not wf1
     assert "TODAY is 2020-02-01." in wf2.agents["Agent"].system_prompt
     assert "2020-01-31" not in wf2.agents["Agent"].system_prompt
-    assert query_mod._agent_workflow_date == d2
+    assert query_mod._agent_workflows[frozenset(TOOLS)][0] == d2
 
     query_mod.reset_engine()
-    assert query_mod._agent_workflow is None
-    assert query_mod._agent_workflow_date is None
+    assert query_mod._agent_workflows == {}
+
+
+def test_workflow_cache_per_subset(monkeypatch):
+    """One workflow per tool-name subset: reads-only has 18 tools, None has all."""
+    import backend.query as query_mod
+    from backend.tools import READ_TOOL_NAMES, TOOLS
+    from llama_index.core.llms import MockLLM
+
+    monkeypatch.setattr(query_mod, "_agent_workflows", {})
+    monkeypatch.setattr(query_mod, "_get_llm", lambda: MockLLM())
+
+    def names(wf):
+        return {t.metadata.name for t in wf.agents["Agent"].tools}
+
+    reads = query_mod._get_agent_workflow(READ_TOOL_NAMES)
+    everything = query_mod._get_agent_workflow()
+    assert names(reads) == set(READ_TOOL_NAMES)
+    assert names(everything) == set(TOOLS)
+    assert reads is not everything
+    assert query_mod._get_agent_workflow(READ_TOOL_NAMES) is reads
+    assert len(query_mod._agent_workflows) == 2
 
 
 # ---------------------------------------------------------------------------

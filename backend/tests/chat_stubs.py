@@ -294,8 +294,7 @@ def _install_stub_workflow(monkeypatch, llm, *, timeout=30.0, extra_tools=None):
         system_prompt="synthetic",
     )
     workflow = AgentWorkflow(agents=[agent], timeout=timeout)
-    monkeypatch.setattr(query_mod, "_agent_workflow", workflow)
-    monkeypatch.setattr(query_mod, "_agent_workflow_date", query_mod._today())
+    monkeypatch.setattr(query_mod, "_get_agent_workflow", lambda tool_names=None: workflow)
     return workflow
 
 

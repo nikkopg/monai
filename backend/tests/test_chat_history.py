@@ -134,8 +134,7 @@ def test_agent_stream_passes_history_only_when_given(monkeypatch):
 
     wf = MagicMock()
     wf.run.side_effect = RuntimeError("synthetic")
-    monkeypatch.setattr(query, "_agent_workflow", wf)
-    monkeypatch.setattr(query, "_agent_workflow_date", query._today())
+    monkeypatch.setattr(query, "_get_agent_workflow", lambda tool_names=None: wf)
 
     hist = [ChatMessage(role=MessageRole.USER, content="x")]
     _drain(query.agent_stream("q", history=hist))
