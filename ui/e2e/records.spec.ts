@@ -355,3 +355,75 @@ test.describe("Row options menu (quick 261011-mgj)", () => {
     await expect(opts).toBeFocused();
   });
 });
+
+// Phase 37-07 — chat source chips open Records pre-filtered (D-14/D-14a/D-14b).
+test.describe("Records URL-seeded filters and pills (37-07)", () => {
+  const SEEDED =
+    "/records?date_from=2026-09-01&date_to=2026-09-30&category=Food&type=expense&cashflow=1";
+
+  async function captureRequests(page: Page): Promise<URL[]> {
+    const urls: URL[] = [];
+    await mockSupportRoutes(page);
+    await page.route("**/api/transactions*", async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.fallback();
+        return;
+      }
+      urls.push(new URL(route.request().url()));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(transactionsFixture()),
+      });
+    });
+    return urls;
+  }
+
+  test("the FIRST request already carries the chip filters, incl. cashflow=true", async ({ page }) => {
+    const urls = await captureRequests(page);
+    await page.goto(SEEDED);
+    await expect(page.getByTestId("records-pill-dates")).toBeVisible();
+    const first = urls[0];
+    expect(first.searchParams.get("date_from")).toBe("2026-09-01");
+    expect(first.searchParams.get("date_to")).toBe("2026-09-30");
+    expect(first.searchParams.get("category")).toBe("Food");
+    expect(first.searchParams.get("type")).toBe("expense");
+    expect(first.searchParams.get("cashflow")).toBe("true");
+  });
+
+  test("pills read as specified and a seeded unknown category is a selected option", async ({ page }) => {
+    await captureRequests(page);
+    await page.goto(SEEDED);
+    await expect(page.getByTestId("records-pill-dates")).toContainText("Sep 1 – Sep 30, 2026");
+    await expect(page.getByTestId("records-pill-cashflow")).toContainText("Cash-flow only");
+    await expect(page.locator("select").nth(1)).toHaveValue("Food");
+    await expect(page.locator("select").nth(1).locator("option:checked")).toHaveText("Food");
+  });
+
+  test("removing a pill refetches without that filter and leaves the URL unchanged", async ({ page }) => {
+    const urls = await captureRequests(page);
+    await page.goto(SEEDED);
+    await expect(page.getByTestId("records-pill-dates")).toBeVisible();
+
+    await page.getByRole("button", { name: /Remove date filter/ }).click();
+    await expect(page.getByTestId("records-pill-dates")).toHaveCount(0);
+    await expect.poll(() => urls.at(-1)!.searchParams.has("date_from")).toBe(false);
+    expect(urls.at(-1)!.searchParams.has("date_to")).toBe(false);
+    expect(urls.at(-1)!.searchParams.get("cashflow")).toBe("true");
+
+    await page.getByRole("button", { name: "Remove cash-flow filter" }).click();
+    await expect(page.getByTestId("records-pill-cashflow")).toHaveCount(0);
+    await expect.poll(() => urls.at(-1)!.searchParams.has("cashflow")).toBe(false);
+    expect(page.url()).toContain(SEEDED);
+  });
+
+  test("no params: no cashflow, no dates, no pills; bad seeds are ignored", async ({ page }) => {
+    const urls = await captureRequests(page);
+    await page.goto("/records?date_from=nope&type=bogus&account_id=1%3Bx");
+    await expect(page.getByText("Today", { exact: true })).toBeVisible();
+    for (const k of ["cashflow", "date_from", "date_to", "type", "account_id"]) {
+      expect(urls[0].searchParams.has(k)).toBe(false);
+    }
+    await expect(page.getByRole("group", { name: "Active filters" })).toHaveCount(0);
+  });
+});

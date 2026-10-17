@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { tokens, card, input, btn, btnDark, dangerBtn } from "../styles";
 import TransactionModal, {
@@ -9,6 +10,7 @@ import TransactionModal, {
 } from "../cashflow/TransactionModal";
 import ConfirmDialog from "../cashflow/ConfirmDialog";
 import RowMenu from "../components/RowMenu";
+import { formatDateRange } from "../chat/labels";
 
 // ---------------------------------------------------------------------------
 // Records ledger (REC-01/02/03/05) — date-grouped transaction history with a
@@ -212,7 +214,22 @@ function LedgerRowShell({
 
 type DeleteTarget = { kind: "single"; tx: Tx } | { kind: "pair"; id: number };
 
+// Suspense boundary: useSearchParams needs one for the production build.
 export default function RecordsPage() {
+  return (
+    <Suspense fallback={null}>
+      <RecordsInner />
+    </Suspense>
+  );
+}
+
+// Seeds come from a chat source-chip URL (anyone can craft one), so each is
+// validated before it can reach state or the query string.
+const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+const TX_TYPES = ["expense", "income", "transfer"];
+
+function RecordsInner() {
+  const sp = useSearchParams();
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
   const [categoryTree, setCategoryTree] = useState<CategoryNode[]>([]);
   const categoryOptions = flattenCategories(categoryTree);
@@ -221,9 +238,26 @@ export default function RecordsPage() {
   // Type, Min, Max, Show-transfers. Any change debounces a refetch (300ms)
   // and ALWAYS resets offset to 0.
   const [q, setQ] = useState("");
-  const [accountId, setAccountId] = useState("");
-  const [category, setCategory] = useState("");
-  const [type, setType] = useState("");
+  const [accountId, setAccountId] = useState(() => {
+    const a = sp.get("account_id") ?? "";
+    return /^\d+$/.test(a) ? a : "";
+  });
+  const [category, setCategory] = useState(() => sp.get("category") ?? "");
+  const [type, setType] = useState(() => {
+    const t = sp.get("type") ?? "";
+    return TX_TYPES.includes(t) ? t : "";
+  });
+  const [dateFrom, setDateFrom] = useState(() => {
+    const d = sp.get("date_from") ?? "";
+    return ISO_DAY.test(d) ? d : "";
+  });
+  const [dateTo, setDateTo] = useState(() => {
+    const d = sp.get("date_to") ?? "";
+    return ISO_DAY.test(d) ? d : "";
+  });
+  const [cashflow, setCashflow] = useState(
+    () => sp.get("cashflow") === "1" || sp.get("cashflow") === "true"
+  );
   const [amountMin, setAmountMin] = useState("");
   const [amountMax, setAmountMax] = useState("");
   const [showTransfers, setShowTransfers] = useState(true);
@@ -270,6 +304,9 @@ export default function RecordsPage() {
     if (type) p.set("type", type);
     if (amountMin) p.set("amount_min", amountMin);
     if (amountMax) p.set("amount_max", amountMax);
+    if (dateFrom) p.set("date_from", dateFrom);
+    if (dateTo) p.set("date_to", dateTo);
+    if (cashflow) p.set("cashflow", "true");
     p.set("include_transfers", String(showTransfers));
     p.set("limit", "100");
     p.set("offset", String(atOffset));
@@ -313,7 +350,7 @@ export default function RecordsPage() {
     }
     const timer = setTimeout(() => load(true), 300);
     return () => clearTimeout(timer);
-  }, [q, accountId, category, type, amountMin, amountMax, showTransfers]);
+  }, [q, accountId, category, type, amountMin, amountMax, showTransfers, dateFrom, dateTo, cashflow]);
 
   // Bulk-recategorize target defaults to the first non-system category once
   // the tree loads (Copywriting Contract).
@@ -554,7 +591,33 @@ export default function RecordsPage() {
     type !== "" ||
     amountMin !== "" ||
     amountMax !== "" ||
+    dateFrom !== "" ||
+    dateTo !== "" ||
+    cashflow ||
     !showTransfers;
+  const hasDatePill = dateFrom !== "" || dateTo !== "";
+  const datePillText = formatDateRange(dateFrom || undefined, dateTo || undefined);
+  const pillStyle: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    minHeight: 32,
+    padding: "0 4px 0 12px",
+    fontSize: 14,
+    color: tokens.color.ink,
+    background: tokens.color.tintNeutral,
+    border: `1px solid ${tokens.color.border2}`,
+    borderRadius: tokens.radius.pill,
+  };
+  const pillX: React.CSSProperties = {
+    width: 32,
+    height: 32,
+    background: "transparent",
+    border: "none",
+    cursor: "pointer",
+    fontSize: 16,
+    color: tokens.color.muted3,
+  };
 
   return (
     // section, not div — records.spec.ts locates specific rows via
@@ -648,6 +711,9 @@ export default function RecordsPage() {
                 onChange={(e) => setCategory(e.target.value)}
               >
                 <option value="">All categories</option>
+                {category && !categoryOptions.some((o) => o.name === category) && (
+                  <option value={category}>{category}</option>
+                )}
                 {categoryOptions.map((o) => (
                   <option key={o.name} value={o.name}>
                     {`${"  ".repeat(o.depth)}${o.name}`}
@@ -748,6 +814,50 @@ export default function RecordsPage() {
                   Cancel selection
                 </span>
               </div>
+            </div>
+          )}
+
+          {(hasDatePill || cashflow) && (
+            <div
+              role="group"
+              aria-label="Active filters"
+              style={{ display: "flex", flexWrap: "wrap", gap: 8, marginBottom: 16 }}
+            >
+              {hasDatePill && (
+                <span style={pillStyle} data-testid="records-pill-dates">
+                  {datePillText}
+                  <button
+                    type="button"
+                    className="coarse-tap"
+                    style={pillX}
+                    aria-label={`Remove date filter: ${datePillText}`}
+                    onClick={() => {
+                      setDateFrom("");
+                      setDateTo("");
+                    }}
+                  >
+                    <span aria-hidden="true">×</span>
+                  </button>
+                </span>
+              )}
+              {cashflow && (
+                <span
+                  style={pillStyle}
+                  data-testid="records-pill-cashflow"
+                  title="Excludes transfers and investment accounts, so the rows match the number monai quoted."
+                >
+                  Cash-flow only
+                  <button
+                    type="button"
+                    className="coarse-tap"
+                    style={pillX}
+                    aria-label="Remove cash-flow filter"
+                    onClick={() => setCashflow(false)}
+                  >
+                    <span aria-hidden="true">×</span>
+                  </button>
+                </span>
+              )}
             </div>
           )}
 
