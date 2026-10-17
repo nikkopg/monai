@@ -93,18 +93,47 @@ export function clearProposalToken(id: string): void {
 // (D-01, D-02, D-03, D-10). Rehydration decision table: 36-UI-SPEC section 7.
 // ---------------------------------------------------------------------------
 
+/** POST the confirm call; shared by the card and the plan bar. No React state. */
+export async function confirmProposal(
+  id: string,
+  token: string | null
+): Promise<{ ok: true } | { ok: false; text: string }> {
+  try {
+    const r = await fetch(`/api/proposals/${id}/confirm`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
+    });
+    if (r.ok) return { ok: true };
+    const d = await r.json().catch(() => ({}));
+    if (r.status === 410) return { ok: false, text: "Expired — ask again to redo this" };
+    return { ok: false, text: d.detail || `Error ${r.status}` };
+  } catch (e: unknown) {
+    return { ok: false, text: e instanceof Error ? e.message : "Network error" };
+  }
+}
+
 export default function ProposalCard({
   proposal,
   onApplied,
   onRejected,
   liveStatus,
   inCancelledMessage,
+  locked,
+  externalError,
+  step,
 }: {
   proposal: Proposal;
   onApplied: () => void;
   onRejected: () => void;
   liveStatus?: LiveStatus;
   inCancelledMessage?: boolean;
+  /** Plan bar is running Approve all: disable both buttons. */
+  locked?: boolean;
+  /** Error from a plan-bar apply of this card. */
+  externalError?: string | null;
+  /** 1-based position in a multi-step plan. */
+  step?: number;
 }) {
   const [status, setStatus] = useState<"pending" | "applied" | "rejected">(
     "pending"
@@ -164,7 +193,7 @@ export default function ProposalCard({
   const pending = view === "pending";
   const readOnly = pending && !expired && tokenChecked && token === null;
   const noticeId = `unapprovable-${proposal.id}`;
-  const rejectDisabled = busy || !pending || expired;
+  const rejectDisabled = busy || !!locked || !pending || expired;
   const approveDisabled = rejectDisabled || unapprovableReason !== null || !token;
   const remMs = expiresAt ? expiresAt.getTime() - now.getTime() : 0;
 
@@ -194,25 +223,14 @@ export default function ProposalCard({
     setBusy(true);
     setError(null);
     try {
-      const r = await fetch(`/api/proposals/${proposal.id}/confirm`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token }),
-      });
+      const r = await confirmProposal(proposal.id, token);
       if (r.ok) {
         setStatus("applied");
         clearProposalToken(proposal.id);
         onApplied();
       } else {
-        const d = await r.json().catch(() => ({}));
-        if (r.status === 410) {
-          setError("Expired — ask again to redo this");
-        } else {
-          setError(d.detail || `Error ${r.status}`);
-        }
+        setError(r.text);
       }
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Network error");
     } finally {
       setBusy(false);
     }
@@ -276,7 +294,7 @@ export default function ProposalCard({
           marginBottom: 10,
         }}
       >
-        Proposed {(proposal.operation ?? "write").replace(/_/g, " ")}
+        {step ? `${step}. ` : ""}Proposed {(proposal.operation ?? "write").replace(/_/g, " ")}
       </div>
 
       {rows.length > 0 && <ProposalDiff rows={rows} dimColor={tokens.color.muted3} />}
@@ -303,11 +321,11 @@ export default function ProposalCard({
             : "Rejected — no changes made."}
         </div>
       )}
-      {error && (
+      {(error ?? externalError) && (
         <div
           style={{ color: tokens.color.terracottaText, fontSize: 12, marginTop: 8 }}
         >
-          {error}
+          {error ?? externalError}
         </div>
       )}
 
