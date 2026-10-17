@@ -66,7 +66,7 @@ export function useChatStream() {
   const genRef = useRef(0);
   // WR-01: set while a Stop that beat the `run` event waits for it. The stream
   // stays open (events still delivered) until the run id is known, so the cancel
-  // route can halt the server run, and until the `thread` event, so a new
+  // route can halt the server run, and until the `thread` and `run` events, so a new
   // thread is not lost. A disconnect alone only detaches (D-06).
   const holdRef = useRef<{ onRun: (id: string | null) => void } | null>(null);
 
@@ -87,13 +87,18 @@ export function useChatStream() {
     const stale = () => gen !== genRef.current;
     const ac = new AbortController();
     abortRef.current = ac;
+    // The server emits `thread` THEN `run`; a held Stop needs both, in either order.
+    let seenThread = false;
+    let seenRun = false;
     const wrapped = (m: SseMessage) => {
       if (m.type === "run" && typeof m.run_id === "string") {
         runIdRef.current = m.run_id;
         holdRef.current?.onRun(m.run_id);
+        seenRun = true;
       }
+      if (m.type === "thread") seenThread = true;
       onEvent(m);
-      if (m.type === "thread" && holdRef.current) releaseHold();
+      if (seenThread && seenRun && holdRef.current) releaseHold();
     };
     const settle = (kind: "done" | "ended" | "error"): StreamOutcome =>
       stale() ? { kind: "stale" } : stoppedRef.current ? { kind: "stopped" } : { kind };
@@ -177,7 +182,7 @@ export function useChatStream() {
           .catch(() => [])
           .finally(() => clearTimeout(cancelTimer))
       : Promise.resolve([]);
-    if (!holdRef.current) abortRef.current?.abort(); // else released on the `thread` event
+    if (!holdRef.current) abortRef.current?.abort(); // else released once `thread` and `run` have both arrived
     return cancel;
   }
 

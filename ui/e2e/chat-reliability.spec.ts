@@ -402,8 +402,9 @@ test.describe("chat stream reliability (REL-01/02/03/05/06/09)", () => {
             start(c) {
               // The test releases the first events only after Stop was clicked.
               (window as unknown as { __emit: () => void }).__emit = () => {
-                c.enqueue(evt({ type: "run", run_id: RUN }));
+                // Real server order: `thread` first, then `run` (WR-05).
                 c.enqueue(evt({ type: "thread", thread_id: "00000000-0000-4000-8000-0000000000c3" }));
+                c.enqueue(evt({ type: "run", run_id: RUN }));
               };
               init?.signal?.addEventListener("abort", () => c.close());
             },
