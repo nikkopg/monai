@@ -230,3 +230,77 @@ async def test_out_of_subset_call_is_logged_and_turn_continues(monkeypatch, capl
     assert _of_type(_payloads(lines), "answer")
     hits = [r for r in caplog.records if "propose_add_account" in r.getMessage()]
     assert len(hits) == 1 and hits[0].levelno == logging.WARNING
+
+
+# ---------------------------------------------------------------------------
+# LOOP-02: LLM-only result cap (D-07, D-07a)
+# ---------------------------------------------------------------------------
+
+
+def _rows(n):
+    return [{"date": "2020-01-01", "merchant": f"ZZ Merchant {i}", "amount": -10000.0} for i in range(n)]
+
+
+def test_cap_small_or_non_dict_returns_none():
+    from backend.agent_loop import cap_for_llm
+
+    assert cap_for_llm({"tool": "x", "rows": _rows(3)}) is None
+
+
+def test_cap_non_dict_is_left_alone():
+    from backend.agent_loop import cap_for_llm
+
+    assert cap_for_llm("a" * 20000) is None
+    assert cap_for_llm([1, 2, 3]) is None
+
+
+def test_cap_trims_rows_keeps_scalars():
+    import ast
+
+    from backend.agent_loop import CAP_CHARS, cap_for_llm
+
+    raw = {"tool": "find_transactions", "rows": _rows(300), "total": 4321.0, "period": "custom"}
+    s = cap_for_llm(raw)
+    assert len(s) <= CAP_CHARS
+    out = ast.literal_eval(s)
+    k = len(out["rows"])
+    assert 0 < k < 300 and out["rows"] == raw["rows"][:k]
+    assert out["total"] == 4321.0 and out["period"] == "custom"
+    assert out["truncated"] is True
+    assert out["truncated_lists"] == {"rows": {"shown": k, "of": 300}}
+    assert "narrow the query" in out["note"]
+    assert len(raw["rows"]) == 300  # input never mutated
+
+
+def test_cap_longest_list_first_and_only_trimmed_lists_listed():
+    import ast
+
+    from backend.agent_loop import cap_for_llm
+
+    raw = {"groups": _rows(300), "categories": ["A", "B"], "total": 1.0}
+    out = ast.literal_eval(cap_for_llm(raw))
+    assert out["categories"] == ["A", "B"]
+    assert list(out["truncated_lists"]) == ["groups"]
+
+
+def test_cap_never_writes_shown_or_total_markers():
+    import ast
+
+    from backend.agent_loop import cap_for_llm
+
+    out = ast.literal_eval(cap_for_llm({"rows": _rows(300)}))
+    assert "total" not in out and "shown" not in out
+
+
+def test_cap_huge_nested_dict_keeps_only_scalars():
+    import ast
+
+    from backend.agent_loop import CAP_CHARS, cap_for_llm
+
+    raw = {"tool": "x", "total": 7.0, "nested": {f"k{i}": "ZZ" * 50 for i in range(500)}, "rows": [{"a": "Z" * 9000}]}
+    s = cap_for_llm(raw)
+    assert len(s) <= CAP_CHARS
+    out = ast.literal_eval(s)
+    assert out["total"] == 7.0 and "nested" not in out and "rows" not in out
+    assert out["truncated_lists"]["nested"] == {"shown": 0, "of": 500}
+    assert out["truncated_lists"]["rows"] == {"shown": 0, "of": 1}

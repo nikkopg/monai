@@ -27,6 +27,45 @@ WRITE_RE = re.compile(
 
 _QUESTION_RE = re.compile(r"[^.?!\n]*\?")
 
+# What the LLM sees of a tool result is str(raw) (the Python repr), so the cap
+# is measured on that: 8000 chars is about 3.4k tokens of dense rows (RESEARCH
+# Spike 2). A module constant, not an env setting (D-07).
+CAP_CHARS = 8000
+_MARKER_RESERVE = 300  # room for truncated / truncated_lists / note
+
+
+def cap_for_llm(raw, cap: int = CAP_CHARS) -> str | None:
+    """The LLM-visible text of a tool result, or None when it needs no change.
+
+    None for a non-dict or a result whose str() fits `cap`, so FunctionTool keeps
+    today's content byte-identical. Otherwise list fields lose items from the
+    end (longest list first) until it fits; scalars stay untouched, and the
+    result gains truncated, truncated_lists {key: {shown, of}} and a narrowing
+    note. Never a top-level `shown` or `total`: five read tools already return a
+    scalar money `total` (D-07a). The caller's dict is not mutated (D-08: the
+    SSE trace and proposal extraction keep the full raw_output).
+    """
+    if not isinstance(raw, dict) or len(str(raw)) <= cap:
+        return None
+    out = dict(raw)
+    of = {k: len(v) for k, v in raw.items() if isinstance(v, list) and v}
+    budget = cap - _MARKER_RESERVE
+    while len(str(out)) > budget:
+        k = max((k for k in of if out[k]), key=lambda k: len(str(out[k])), default=None)
+        if k is None:
+            break
+        out[k] = out[k][:-1]
+    cut = {k: {"shown": len(out[k]), "of": n} for k, n in of.items() if len(out[k]) < n}
+    if len(str(out)) > budget:  # nothing list-shaped left to trim: keep scalars only
+        for k, v in raw.items():
+            if isinstance(v, (list, dict)):
+                out.pop(k, None)
+                cut[k] = {"shown": 0, "of": len(v)}
+    out["truncated"] = True
+    out["truncated_lists"] = cut
+    out["note"] = "partial result; narrow the query (period, category, limit) for the rest"
+    return str(out)
+
 
 def tools_for_turn(question: str, prior: list[dict] | None = None) -> frozenset[str]:
     """Tool names for one turn: READ_TOOL_NAMES, or every tool on write intent.
