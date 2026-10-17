@@ -52,10 +52,11 @@ const tagsIn = (n: HastNode, tag: string): HastNode[] =>
     ch.type === "element" && ch.tagName === tag ? [ch] : tagsIn(ch, tag),
   );
 
-// For each table: a column (other than the first) whose body cells are all
-// numeric gets align=right on its th and td cells, unless GFM set an explicit
-// alignment (explicit always wins). The hast-to-JSX step turns align into
-// style.textAlign, which the th/td overrides below merge.
+// For each table: an all-numeric column other than the first is right-aligned
+// on its th and td cells, overriding any alignment the model's GFM row set
+// (UAT 37 decision (b)); the first column and non-numeric columns keep the
+// model's alignment. The hast-to-JSX step turns align into style.textAlign,
+// which the th/td overrides below merge.
 function rehypeNumericColumns() {
   const visit = (n: HastNode) => {
     if (n.type === "element" && n.tagName === "table") {
@@ -72,7 +73,7 @@ function rehypeNumericColumns() {
         if (!numeric) continue;
         for (const r of rows) {
           const cell = r[i];
-          if (cell && !cell.properties?.align) {
+          if (cell) {
             cell.properties = { ...cell.properties, align: "right" };
           }
         }

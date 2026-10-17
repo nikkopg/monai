@@ -77,13 +77,37 @@ test.describe("Markdown renderer (node-only)", () => {
     expect(td[3]).toContain("text-align:right");
   });
 
-  test("explicit GFM alignment wins over the numeric heuristic", () => {
+  test("numeric column is right-aligned even over an explicit GFM alignment", () => {
+    // UAT shape: model writes a left-aligned row; centre variant too.
+    const cases: [string, string][] = [
+      ["| :--- | :--- |", "left"],
+      ["| --- | :---: |", "center"],
+    ];
+    for (const [align, wrong] of cases) {
+      const html = render(
+        ["| Name | Amount |", align, "| Food | 1,000 |", "| Fun | 2,500 |"].join("\n"),
+      );
+      const th = html.match(/<th\s[^>]*>/g) ?? [];
+      const td = html.match(/<td\s[^>]*>/g) ?? [];
+      expect(th).toHaveLength(2);
+      expect(td).toHaveLength(4);
+      for (const cell of [th[1], td[1], td[3]]) {
+        expect(cell).toContain("text-align:right");
+        expect(cell).not.toContain(`text-align:${wrong}`);
+      }
+      // first column keeps its alignment
+      expect(th[0]).toContain("text-align:left");
+      expect(td[0]).toContain("text-align:left");
+    }
+  });
+
+  test("a mixed text column keeps the model's explicit alignment", () => {
     const html = render(
-      ["| Name | Amount |", "| --- | :--- |", "| Food | 1,000 |"].join("\n"),
+      ["| Name | Note |", "| :--- | :---: |", "| Food | 1,000 |", "| Fun | n/a |"].join("\n"),
     );
+    expect(html).not.toContain("text-align:right");
     const td = html.match(/<td\s[^>]*>/g) ?? [];
-    expect(td[1]).toContain("text-align:left");
-    expect(td[1]).not.toContain("text-align:right");
+    expect(td[1]).toContain("text-align:center");
   });
 
   test("a mixed text column is not right-aligned", () => {
@@ -179,6 +203,18 @@ test.describe("Markdown in the chat page (browser)", () => {
     expect(await answer.getByRole("region", { name: "Table" }).evaluate((e) => getComputedStyle(e).overflowX)).toBe("auto");
     for (const v of await css("th, td", "font-variant-numeric")) expect(v).toContain("tabular-nums");
     // th: [Category, Amount]; td: [Food, 1,250,000, Transport, 300,000]
+    expect(await css("th", "text-align")).toEqual(["left", "right"]);
+    expect(await css("td", "text-align")).toEqual(["left", "right", "left", "right"]);
+  });
+
+  test("a model-left-aligned numeric column still renders right-aligned", async ({ page }) => {
+    await askWithText(
+      page,
+      ["| Name | Amount |", "| :--- | :--- |", "| Food | 1,000 |", "| Fun | 2,500 |"].join("\n"),
+    );
+    const answer = page.locator('[data-testid="answer"]');
+    const css = (sel: string, prop: string) =>
+      answer.locator(sel).evaluateAll((els, p) => els.map((e) => getComputedStyle(e).getPropertyValue(p)), prop);
     expect(await css("th", "text-align")).toEqual(["left", "right"]);
     expect(await css("td", "text-align")).toEqual(["left", "right", "left", "right"]);
   });
