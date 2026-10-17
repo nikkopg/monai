@@ -810,6 +810,7 @@ def list_transactions(
     amount_min: float | None = None,
     amount_max: float | None = None,
     include_transfers: bool = True,
+    cashflow: bool = False,
     date_from: str | None = None,
     date_to: str | None = None,
     limit: int = 50,
@@ -828,7 +829,11 @@ def list_transactions(
     unclassified is_transfer row that isn't one of the known Adjustment/
     Investment bookkeeping categories (see _NON_PAIR_TRANSFER_CATEGORIES).
     Still queries the base `transactions` table, NOT `cashflow_transactions`
-    (a full ledger must include investment-account rows). Hard-capped at 500
+    (a full ledger must include investment-account rows). `cashflow=true` is
+    the "cash-flow view": the rows the chat chip tools aggregate (is_transfer
+    false, investment-account rows excluded, NULL-account rows kept), added so
+    a source chip opens exactly the rows behind a quoted number (Phase 37
+    D-14a); the default false keeps the full-ledger semantics. Hard-capped at 500
     rows regardless of the requested `limit` (Pitfall 4) — the Records page
     pages via `offset`. Open read (no require_api_key), matching the
     unmodified endpoint's existing convention.
@@ -862,6 +867,13 @@ def list_transactions(
         query = query.filter(Transaction.transfer_pair_id.isnot(None))  # LOCKED: pair-id, not is_transfer (Pitfall 5)
     elif not include_transfers:
         query = query.filter(Transaction.is_transfer == False)
+    if cashflow:
+        # NOT EXISTS (via .has) keeps NULL-account rows, like the
+        # cashflow_transactions view does (T-12-02).
+        query = query.filter(
+            Transaction.is_transfer.is_(False),
+            ~Transaction.account.has(Account.type == "investment"),
+        )
     if amount_min is not None:
         query = query.filter(func.abs(Transaction.amount) >= amount_min)
     if amount_max is not None:
