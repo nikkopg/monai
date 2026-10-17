@@ -39,6 +39,7 @@ from backend.tests.chat_stubs import (
     _of_type,
     _payloads,
     _seed_proposal,
+    fake_spending_total,
     purge_seeded,
     stream_bare,
 )
@@ -215,7 +216,9 @@ async def test_disconnect_detaches(monkeypatch):
     await run.pump
 
     assert run.done and not run.stopped
-    assert _types(run.events) == ["run", "step", "answer"]
+    assert [t for t in _types(run.events) if t != "token"] == ["run", "step", "answer"]
+    # 5 drip deltas + the 2 halves of "Hello"
+    assert _types(run.events).count("token") == 7
     assert q._LAST["t"] is run and "t" not in q._ACTIVE
 
 
@@ -232,7 +235,8 @@ async def test_reattach_replay_order(monkeypatch):
     lines_late = await _collect(q.subscribe(run))  # after completion: from _LAST
 
     assert lines_first == await second == lines_late
-    assert _types(lines_first) == ["run", "step", "answer"]
+    assert [t for t in _types(lines_first) if t != "token"] == ["run", "step", "answer"]
+    assert _types(lines_first).count("token") == 7
     assert lines_first[-1] == "data: [DONE]\n\n"
 
 
@@ -480,7 +484,11 @@ async def test_tool_turn_parts_have_no_token(monkeypatch, _threads):
     answer = _of_type(_payloads(lines), "answer")[0]
     _, asst = _messages(run.thread_id)
     assert asst.status == "complete"
-    assert asst.parts["steps"] == [{"tool": "seed_proposal", "args": {}}]
+    step = asst.parts["steps"][0]
+    assert len(asst.parts["steps"]) == 1
+    assert step["tool"] == "seed_proposal" and step["args"] == {}
+    assert isinstance(step["ms"], int)
+    assert "sources" not in step  # a write has no chip
     assert "token" not in json.dumps(asst.parts)
     assert answer["proposals"][0]["token"] not in json.dumps(asst.parts)
     pid = asst.parts["proposals"][0]["id"]
@@ -492,6 +500,43 @@ async def test_tool_turn_parts_have_no_token(monkeypatch, _threads):
         assert db.get(Proposal, uuid.UUID(pid)).message_id == asst.id
     finally:
         db.close()
+
+
+async def test_read_tool_step_persists_ms_and_sources(monkeypatch, _threads):
+    from backend.sources import source_for
+
+    kw = {"period": "custom", "start_date": "2001-03-01", "end_date": "2001-03-31"}
+    llm = StubLLM(mode="tool", tool_name="spending_total", tool_kwargs=kw, final_text="Done")
+    _install_stub_workflow(monkeypatch, llm, extra_tools={"spending_total": fake_spending_total})
+    run, _ = await _turn("ZZTest read tool turn", threads=_threads)
+    _, asst = _messages(run.thread_id)
+    chips = source_for("spending_total", kw, {"tool": "spending_total", "total": 1.0})
+    assert chips
+    (step,) = asst.parts["steps"]
+    ms = step.pop("ms")
+    assert isinstance(ms, int)
+    assert step == {"tool": "spending_total", "args": kw, "sources": chips}
+    assert "let me check" not in json.dumps(asst.parts)  # narration is not persisted
+
+
+async def test_old_steps_without_ms_still_load(_threads):
+    from backend.db import SessionLocal
+    from backend.models import Message, Thread
+
+    db = SessionLocal()
+    try:
+        t = Thread(title="ZZTest old steps")
+        db.add(t)
+        db.flush()
+        _threads.append(t.id)
+        steps = [{"tool": "spending_total", "args": {}}]
+        db.add(Message(thread_id=t.id, seq=1, role="assistant", content="x",
+                       status="complete", parts={"steps": steps}))
+        db.commit()
+        detail = chat_service.thread_detail(db, t.id)
+    finally:
+        db.close()
+    assert detail["messages"][0]["parts"]["steps"] == steps
 
 
 async def test_start_turn_busy_persists_nothing(monkeypatch, _threads):

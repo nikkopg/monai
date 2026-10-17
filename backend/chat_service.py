@@ -172,8 +172,8 @@ def _persist_end(run: query.Run, state: dict) -> None:
 
 def _observe(state: dict, chunk: str) -> None:
     """Record what the persisted turn needs from one SSE chunk (never results)."""
-    if not chunk.startswith("data: "):
-        return
+    if not chunk.startswith("data: ") or chunk.startswith(query.TOKEN_PREFIX):
+        return  # token deltas are ephemeral (D-04) and never parsed per token
     try:
         p = json.loads(chunk[6:])
     except ValueError:
@@ -181,7 +181,12 @@ def _observe(state: dict, chunk: str) -> None:
     t = p.get("type")
     if t == "tool_result":
         step = p.get("step") or {}
-        state["steps"].append({"tool": step.get("tool"), "args": step.get("args") or {}})
+        rec = {"tool": step.get("tool"), "args": step.get("args") or {}}
+        if isinstance(p.get("ms"), int):
+            rec["ms"] = p["ms"]
+        if p.get("sources"):
+            rec["sources"] = p["sources"]
+        state["steps"].append(rec)
     elif t == "answer":
         state.update(answered=True, text=p.get("text") or "", model=p.get("model"), provider=p.get("provider"))
     elif t == "error":
