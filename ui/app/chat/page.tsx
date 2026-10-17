@@ -886,7 +886,7 @@ function ChatInner() {
                 fontSize: 12,
                 letterSpacing: ".12em",
                 textTransform: "uppercase",
-                color: tokens.color.muted2,
+                color: tokens.color.muted3,
                 marginBottom: 6,
               }}
             >

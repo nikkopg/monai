@@ -279,7 +279,7 @@ export default function ProposalCard({
         Proposed {(proposal.operation ?? "write").replace(/_/g, " ")}
       </div>
 
-      {rows.length > 0 && <ProposalDiff rows={rows} />}
+      {rows.length > 0 && <ProposalDiff rows={rows} dimColor={tokens.color.muted3} />}
 
       {pending && !readOnly && unapprovableReason && (
         <div id={noticeId} style={{ ...small, marginTop: 8 }}>
@@ -305,7 +305,7 @@ export default function ProposalCard({
       )}
       {error && (
         <div
-          style={{ color: tokens.color.terracotta, fontSize: 12, marginTop: 8 }}
+          style={{ color: tokens.color.terracottaText, fontSize: 12, marginTop: 8 }}
         >
           {error}
         </div>

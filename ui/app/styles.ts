@@ -25,6 +25,7 @@ export const tokens = {
     green: "#2f6f4f", // accent / income / positive
     greenDark: "#23543c", // hover
     terracotta: "#b5503f", // expenses / negative / destructive
+    terracottaText: "#a64636", // small destructive / error text (AA on every chat surface; terracotta stays for fills and rules)
     gold: "#d8b26a",
     sage: "#5a8f73",
     sageLight: "#8fae9c",

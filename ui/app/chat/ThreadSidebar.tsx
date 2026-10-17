@@ -62,7 +62,7 @@ function truncate(s: string, n: number): string {
 
 const rowErrStyle: CSSProperties = {
   fontSize: 12,
-  color: tokens.color.terracotta,
+  color: tokens.color.terracottaText,
   margin: "0 12px 8px",
   lineHeight: 1.5,
 };
