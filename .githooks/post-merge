@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Post-merge: refresh the local code graph after pulling main.
+#
+# graphify-out/ is the single graph copy (.planning/graphs/ symlinks to it), so
+# GSD's planner and researcher read whatever this rebuilds. AST-only, no LLM
+# cost. Skips quietly off main or when graphify isn't installed. Never blocks.
+#
+# Enable once per clone:   git config core.hooksPath .githooks
+[ "$(git rev-parse --abbrev-ref HEAD)" = main ] || exit 0
+command -v graphify >/dev/null 2>&1 || exit 0
+graphify update . >/dev/null 2>&1 || echo "post-merge: graphify update failed (graph left as-is)" >&2
+exit 0
