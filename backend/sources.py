@@ -131,7 +131,8 @@ def _build(tool: str, args: dict, result: dict) -> list[dict]:
         return [_chip(tool, "Transactions", s, e, type_=kind if kind in ("expense", "income") else None)]
     if tool == "largest_transactions":
         s, e = _window(tool, args)
-        income = (args.get("kind") or _default(tool, "kind")) == "income"
+        # tools.largest_transactions treats every kind but "expense" as income
+        income = (args.get("kind") or _default(tool, "kind")) != "expense"
         return [_chip(tool, "Largest income" if income else "Largest expenses", s, e,
                       type_="income" if income else "expense")]
     if tool == "monthly_trend":
@@ -157,7 +158,10 @@ def _build(tool: str, args: dict, result: dict) -> list[dict]:
 
 def source_for(tool: str, args: dict | None, result) -> list[dict]:
     """Chips for one executed tool call; [] for writes, errors and garbage."""
-    if tool not in tools.READ_TOOL_NAMES or not isinstance(result, dict) or "error" in result:
+    # A real read result carries its own {"tool": name}; a raised tool arrives as
+    # {"raw": <exception text>} and must not earn a citation (Pitfall 21).
+    if (tool not in tools.READ_TOOL_NAMES or not isinstance(result, dict)
+            or result.get("tool") != tool or "error" in result):
         return []
     try:
         chips = _build(tool, args or {}, result)

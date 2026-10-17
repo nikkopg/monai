@@ -102,7 +102,7 @@ def test_chip_kind_and_count_per_read_tool(tool):
 
 
 def test_spending_total_custom_month():
-    (chip,) = sources.source_for("spending_total", MARCH, {"total": 1})
+    (chip,) = sources.source_for("spending_total", MARCH, {"tool": "spending_total", "total": 1})
     assert chip == {
         "tool": "spending_total", "label": "Spending", "period_label": "Mar 2001",
         "date_from": "2001-03-01", "date_to": "2001-03-31",
@@ -112,34 +112,34 @@ def test_spending_total_custom_month():
 
 def test_named_period_matches_resolve_period():
     s, e = tools.resolve_period("last_month")
-    (chip,) = sources.source_for("spending_total", {"period": "last_month"}, {"total": 1})
+    (chip,) = sources.source_for("spending_total", {"period": "last_month"}, {"tool": "spending_total", "total": 1})
     assert chip["date_from"] == s.isoformat()
     assert chip["date_to"] == (e - datetime.timedelta(days=1)).isoformat()
 
 
 def test_all_time_has_no_dates_and_average_defaults_to_this_month():
-    (chip,) = sources.source_for("spending_total", {}, {"total": 1})
+    (chip,) = sources.source_for("spending_total", {}, {"tool": "spending_total", "total": 1})
     assert chip["period_label"] == "All time"
     assert "date_from" not in chip and "date_to" not in chip
     s, e = tools.resolve_period("this_month")
-    (avg,) = sources.source_for("average_daily_spending", {}, {"total": 1})
+    (avg,) = sources.source_for("average_daily_spending", {}, {"tool": "average_daily_spending", "total": 1})
     assert avg["date_from"] == s.isoformat()
     assert avg["date_to"] == (e - datetime.timedelta(days=1)).isoformat()
 
 
 def test_category_resolution():
-    (chip,) = sources.source_for("spending_in_category", {**MARCH, "category": "FOOD"}, {"total": 1})
+    (chip,) = sources.source_for("spending_in_category", {**MARCH, "category": "FOOD"}, {"tool": "spending_in_category", "total": 1})
     assert chip["category"] == "Food" and chip["type"] == "expense"
-    assert sources.source_for("spending_in_category", {**MARCH, "category": "nope"}, {"total": 1}) == []
+    assert sources.source_for("spending_in_category", {**MARCH, "category": "nope"}, {"tool": "spending_in_category", "total": 1}) == []
 
 
 def test_kind_drives_type_and_label():
     for kind, typ in (("expense", "expense"), ("income", "income"), ("all", None)):
-        (chip,) = sources.source_for("transaction_count", {**MARCH, "kind": kind}, {"count": 1})
+        (chip,) = sources.source_for("transaction_count", {**MARCH, "kind": kind}, {"tool": "transaction_count", "count": 1})
         assert chip.get("type") == typ and chip["label"] == "Transactions"
-    (inc,) = sources.source_for("largest_transactions", {**MARCH, "kind": "income"}, {"rows": []})
+    (inc,) = sources.source_for("largest_transactions", {**MARCH, "kind": "income"}, {"tool": "largest_transactions", "rows": []})
     assert inc["label"] == "Largest income" and inc["type"] == "income"
-    (exp,) = sources.source_for("largest_transactions", MARCH, {"rows": []})
+    (exp,) = sources.source_for("largest_transactions", MARCH, {"tool": "largest_transactions", "rows": []})
     assert exp["label"] == "Largest expenses" and exp["type"] == "expense"
 
 
@@ -160,13 +160,13 @@ def test_monthly_trend_clamps_to_six_months_open_ended():
     today = datetime.date.today()
     y, m = divmod(today.year * 12 + today.month - 1 - 6, 12)
     first = datetime.date(y, m + 1, 1)
-    (chip,) = sources.source_for("monthly_trend", {"months": 3}, {"rows": []})
+    (chip,) = sources.source_for("monthly_trend", {"months": 3}, {"tool": "monthly_trend", "rows": []})
     assert chip["date_from"] == first.isoformat() and "date_to" not in chip
     assert chip["period_label"] == f"since {first.strftime('%b %Y')}"
 
 
 def test_plain_chips():
-    (rec,) = sources.source_for("recurring_charges", {}, {"months": 12})
+    (rec,) = sources.source_for("recurring_charges", {}, {"tool": "recurring_charges", "months": 12})
     assert rec["period_label"] == "last 12 months" and rec["linked"] is False
     assert rec["date_to"] == datetime.date.today().isoformat()
     (nw,) = sources.source_for("net_worth", {}, {"tool": "net_worth"})
@@ -186,15 +186,16 @@ def test_plain_chips():
 )
 def test_period_label_shapes(start, end, label):
     (chip,) = sources.source_for(
-        "spending_total", {"period": "custom", "start_date": start, "end_date": end}, {"total": 1}
+        "spending_total", {"period": "custom", "start_date": start, "end_date": end},
+        {"tool": "spending_total", "total": 1}
     )
     assert chip["period_label"] == label
 
 
 def test_open_ended_labels():
-    (a,) = sources.source_for("spending_total", {"period": "custom", "start_date": "2001-03-01"}, {"total": 1})
+    (a,) = sources.source_for("spending_total", {"period": "custom", "start_date": "2001-03-01"}, {"tool": "spending_total", "total": 1})
     assert a["period_label"] == "since 1 Mar 2001" and "date_to" not in a
-    (b,) = sources.source_for("spending_total", {"period": "custom", "end_date": "2001-03-31"}, {"total": 1})
+    (b,) = sources.source_for("spending_total", {"period": "custom", "end_date": "2001-03-31"}, {"tool": "spending_total", "total": 1})
     assert b["period_label"] == "until 31 Mar 2001" and "date_from" not in b
 
 
@@ -206,11 +207,27 @@ def test_garbage_yields_empty_and_never_raises():
     assert sources.source_for("spending_total", MARCH, {"error": "x"}) == []
     assert sources.source_for("spending_total", MARCH, "text") == []
     assert sources.source_for("spending_total", MARCH, None) == []
-    assert sources.source_for("spending_total", {"period": "bogus"}, {"total": 1}) == []
-    assert sources.source_for("spending_total", None, {"total": 1})[0]["period_label"] == "All time"
+    assert sources.source_for("spending_total", {"period": "bogus"}, {"tool": "spending_total", "total": 1}) == []
+    assert sources.source_for("spending_total", None, {"tool": "spending_total", "total": 1})[0]["period_label"] == "All time"
 
 
 def test_identical_chips_are_deduped():
-    same = {"base": {"start": "2001-03-01", "end_inclusive": "2001-03-31"},
+    same = {"tool": "compare_periods", "base": {"start": "2001-03-01", "end_inclusive": "2001-03-31"},
             "current": {"start": "2001-03-01", "end_inclusive": "2001-03-31"}}
     assert len(sources.source_for("compare_periods", {}, same)) == 1
+
+
+def test_failed_tool_raw_result_gets_no_chip():
+    # a raised tool reaches the loop as {"raw": <exception text>} - no "error" key
+    assert sources.source_for("spending_total", {"period": "last_month"}, {"raw": "Error: boom"}) == []
+    assert sources.source_for("spending_total", MARCH, {"tool": "income_total", "total": 1}) == []
+
+
+def test_largest_transactions_chip_follows_the_tool_for_unexpected_kind():
+    res = {"tool": "largest_transactions", "rows": []}
+    for kind, income in (("expense", False), ("income", True), ("all", True)):
+        (chip,) = sources.source_for("largest_transactions", {**MARCH, "kind": kind}, res)
+        assert chip["type"] == ("income" if income else "expense")
+        assert chip["label"] == ("Largest income" if income else "Largest expenses")
+    (chip,) = sources.source_for("largest_transactions", MARCH, res)  # default kind
+    assert chip["type"] == "expense"
