@@ -23,13 +23,13 @@ import logging
 import uuid
 
 import anyio
-from sqlalchemy import func, select, text, update
+from sqlalchemy import delete, func, or_, select, text, update
 
 from backend import config, query, tools
 from backend.chat_history import build_history
 from backend.db import get_session_sync
-from backend.models import Message, Proposal, Thread
-from backend.proposals import expire_stale
+from backend.models import AuditLog, Message, Proposal, Thread
+from backend.proposals import expire_stale, transition
 
 logger = logging.getLogger(__name__)
 
@@ -53,15 +53,61 @@ def title_from(text_: str, limit: int = 60) -> str:
     return cut.rstrip(" ,.;:") + "…"
 
 
-def _begin_turn(thread_id: uuid.UUID, new: bool, question: str):
+class ReplaceConflict(Exception):
+    """A proposal at or after the replace point was applied, so the turn cannot
+    be redone (the route maps this to 409)."""
+
+
+def _replace_branch(db, thread_id: uuid.UUID, question: str, replace_from: uuid.UUID) -> None:
+    """Supersede pending chat proposals, then delete the target message and
+    everything after it (D-18, D-19). Caller commits, so it is all-or-nothing."""
+    target = db.get(Message, replace_from)
+    if target is None or target.thread_id != thread_id or target.role != "user":
+        raise ValueError("Message not found in this thread")  # explicit, never an FK error
+    doomed = db.execute(
+        select(Message).where(Message.thread_id == thread_id, Message.seq >= target.seq)
+    ).scalars().all()
+    ids: set[uuid.UUID] = set()
+    for m in doomed:
+        for p in (m.parts or {}).get("proposals", []):
+            try:
+                ids.add(uuid.UUID(p["id"]))
+            except (ValueError, KeyError, TypeError):
+                pass
+    locked = db.execute(
+        select(Proposal)
+        .where(or_(Proposal.id.in_(ids), Proposal.message_id.in_([m.id for m in doomed])))
+        .order_by(Proposal.id)
+        .with_for_update()
+    ).scalars().all()
+    if any(p.status == "confirmed" for p in locked):
+        raise ReplaceConflict("This answer's changes were already applied")
+    reason = "regenerated" if question.strip() == target.content.strip() else "edited"
+    for p in locked:
+        if p.channel == "chat" and p.status == "pending":
+            transition(p, "superseded")
+            db.add(AuditLog(
+                entity="proposal", entity_id=None, operation="superseded",
+                before={"proposal_id": str(p.id), "status": "pending"},
+                after={"status": "superseded", "reason": reason, "thread_id": str(thread_id)},
+            ))
+    # Proposal rows survive the delete: messages FK is ON DELETE SET NULL.
+    db.execute(delete(Message).where(Message.thread_id == thread_id, Message.seq >= target.seq))
+    db.flush()
+
+
+def _begin_turn(thread_id: uuid.UUID, new: bool, question: str, replace_from: uuid.UUID | None = None):
     """Create/find the thread and store the user message; return
-    (user_message_id, seq, prior messages as dicts). One short session."""
+    (user_message_id, seq, prior messages as dicts). One short session; with
+    `replace_from` the old branch is superseded and deleted in the same commit."""
     with get_session_sync() as db:
         if new:
             db.add(Thread(id=thread_id, title=title_from(question)))
             db.flush()
         elif db.get(Thread, thread_id) is None:
             raise LookupError("Thread not found")  # never an FK IntegrityError
+        if replace_from is not None:
+            _replace_branch(db, thread_id, question, replace_from)
         prior = [
             {
                 "role": m.role,
@@ -91,18 +137,25 @@ def _begin_turn(thread_id: uuid.UUID, new: bool, question: str):
         return user.id, seq, prior
 
 
-async def start_turn(question: str, thread_id: uuid.UUID | None = None) -> query.Run | None:
+async def start_turn(
+    question: str, thread_id: uuid.UUID | None = None, replace_from: uuid.UUID | None = None
+) -> query.Run | None:
     """Start a persisted turn; None when the thread already has a run (D-05).
 
-    Raises LookupError for an unknown thread id. Must run inside the event loop.
+    The run guard goes first (409). Raises LookupError for an unknown thread
+    id, ValueError for a bad `replace_from` (needs thread_id; must be a user
+    message of that thread) and ReplaceConflict when a change was applied.
+    Must run inside the event loop.
     """
+    if replace_from is not None and thread_id is None:
+        raise ValueError("replace_from needs thread_id")
     tid = thread_id or uuid.uuid4()
     run = query.start_run(str(tid))
     if run is None:
         return None
     try:
         user_id, seq, prior = await asyncio.to_thread(
-            _begin_turn, tid, thread_id is None, question
+            _begin_turn, tid, thread_id is None, question, replace_from
         )
         # Module attribute reads so tests can monkeypatch the budget and the date.
         history = build_history(prior, config.CHAT_HISTORY_TOKEN_BUDGET, query._today())
