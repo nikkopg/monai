@@ -3,7 +3,7 @@ Opt-in golden-question eval for the production agent loop.
 
 What this is: a standalone script, NOT a pytest test and NOT collected by
 default pytest or CI (backend/evals/ sits outside pyproject.toml's
-testpaths). It sends ~17 scripted questions through backend.query.agent_stream
+testpaths). It sends ~20 scripted questions through backend.query.agent_stream
 — the real, production agent loop — driven by whatever real LLM is
 configured via LLM_PROVIDER / the matching model env var. It runs only
 against monai_test, never the live monai database; a module-top guard
@@ -16,8 +16,9 @@ running, and removes every ZZEval row and every pending proposal it created
 afterwards, in a `finally` block that
 also runs on Ctrl-C. It never approves a proposal.
 
-Cases 15-17 are multi-turn: their history is built in memory with
-build_history and they create no threads.
+Cases 15-17 and 20 are multi-turn: their history is built in memory with
+plan_history and they create no threads. Cases 18-20 cover Phase 38 (a
+read-only tool subset, an ordered two-write request, a long summarised thread).
 
 Usage:
     env -u DATABASE_URL .venv/bin/python -m backend.evals.agent_eval \
@@ -26,7 +27,7 @@ Usage:
     --self-check   run the answer-number parser's asserts only. No DB, no LLM.
     --seed-check   run the DB guard, head check, seed, probes and teardown.
                    No LLM.
-    --case N       run only case N (repeatable). Default: run all 17 cases.
+    --case N       run only case N (repeatable). Default: run all 20 cases.
 
 Exit code 0 means every selected case passed (or, for --self-check /
 --seed-check, that check passed). Exit code 1 otherwise.
@@ -662,10 +663,11 @@ def _leftovers(proposal_ids: list[str]) -> int:
 
 # ---------------------------------------------------------------------------
 # Probes — no LLM. Prove the subtree, case-insensitive,
-# unknown-category and period data paths the 17 cases rely on.
+# unknown-category and period data paths the 20 cases rely on, plus the
+# Phase 38 subset (P11) and summary-aware history (P12) wiring.
 # ---------------------------------------------------------------------------
 
-_PROBE_COUNT = 10
+_PROBE_COUNT = 12
 
 
 def _run_probes() -> list[str]:
@@ -794,6 +796,36 @@ def _run_probes() -> list[str]:
                 failures.append(f"P10: {name} returned {got_p10}, expected {want}")
                 break
 
+    # P11: per-turn tool subset (D-02, D-04a), no LLM.
+    from backend.agent_loop import tools_for_turn
+    from backend.tools import READ_TOOL_NAMES, TOOLS
+
+    q18, q19, q12 = (next(c for c in CASES if c["id"] == i)["question"] for i in (18, 19, 12))
+    sub18 = tools_for_turn(q18)
+    if sub18 != READ_TOOL_NAMES or any(n.startswith("propose_") for n in sub18):
+        failures.append("P11: case 18 question did not get the read-only subset")
+    if tools_for_turn(q12) != frozenset(TOOLS) or tools_for_turn(q19) != frozenset(TOOLS):
+        failures.append("P11: case 12/19 questions did not get every tool")
+    offered = _turn_messages("Add a coffee", {"text": "Proposed.", "trace": []}, datetime.datetime.now().astimezone())
+    offered[1]["parts"]["proposals"] = [{"id": "x"}]
+    if tools_for_turn("yes, do that", offered) != frozenset(TOOLS):
+        failures.append("P11: sticky write intent after a proposal did not keep every tool")
+
+    # P12: summary-aware, budget-trimmed history (D-20, D-30), no LLM.
+    from backend.chat_history import plan_history
+
+    long_h = _long_history(today)
+    hist, to_compact = plan_history(
+        long_h, config.CHAT_HISTORY_TOKEN_BUDGET, today, summary=LONG_SUMMARY)
+    if not hist or not hist[0].content.startswith("Summary of earlier conversation"):
+        failures.append("P12: summary did not lead the planned history")
+    if len(hist) - 1 >= len(long_h):
+        failures.append(f"P12: long thread was not budget-trimmed ({len(hist) - 1} of {len(long_h)} messages kept)")
+    if not to_compact:
+        failures.append("P12: trimmed long thread returned nothing to compact")
+    if re.search(r"\d", LONG_SUMMARY):
+        failures.append("P12: LONG_SUMMARY holds a digit")
+
     return failures
 
 
@@ -820,7 +852,7 @@ def _do_seed_check() -> int:
 
 
 # ---------------------------------------------------------------------------
-# The 17 golden cases.
+# The 20 golden cases.
 # ---------------------------------------------------------------------------
 
 
@@ -1012,6 +1044,43 @@ def _stale_history(today: datetime.date) -> list[dict]:
     ]
 
 
+def _args_two_ordered(trace, payload):
+    """Case 19: exactly one add_account and one rename_category proposal, no
+    other propose_* step, two distinct ids, operations in the stated order."""
+    proposes = [s for s in trace if str(s.get("tool", "")).startswith("propose_")]
+    if sorted(s["tool"] for s in proposes) != ["propose_add_account", "propose_rename_category"]:
+        return False
+    proposals = payload.get("proposals") or []
+    return (
+        len(proposals) == 2
+        and len({p.get("id") for p in proposals}) == 2
+        and [p.get("operation") for p in proposals] == ["add_account", "rename_category"]
+    )
+
+
+LONG_SUMMARY = (
+    "The owner asked several times about ZZEval Hobbies spending by month and about "
+    "ZZEval Streaming charges; no changes were proposed."
+)
+
+
+def _long_history(today: datetime.date) -> list[dict]:
+    """30 synthetic pairs stamped earlier today, long enough to overflow the
+    history budget. 7777 is deliberately absent from every seed, so copying it
+    into an answer fails numbers_ok."""
+    at = datetime.datetime.combine(today, datetime.time(0, 5)).astimezone()
+    out: list[dict] = []
+    for i in range(30):
+        topic = PARENT if i % 2 == 0 else "ZZEval Streaming"
+        out.append({"role": "user", "status": "complete", "parts": None, "created_at": at,
+                    "content": f"Question {i}: " + f"what did I spend on {topic} in the earlier months? " * 4})
+        out.append({"role": "assistant", "status": "complete", "created_at": at,
+                    "content": f"Answer {i}: " + f"you spent 7777 on {topic} in that period. " * 11,
+                    "parts": {"steps": [{"tool": "spending_in_category",
+                                         "args": {"category": PARENT, "period": "last_month"}}]}})
+    return out
+
+
 CASES: list[dict] = [
     {
         "id": 1, "question": "How much did I spend this month?",
@@ -1131,6 +1200,31 @@ CASES: list[dict] = [
         # this case; any stated figure must still come from this turn's trace.
         "answer": "numbers", "needs_number": False,
     },
+    # Cases 18-20 cover Phase 38: tool subset, ordered two-write, long summarised thread.
+    {
+        "id": 18, "question": "How much did I spend on ZZEval Hobbies last month?",
+        "tools": ["spending_in_category", "find_transactions"],
+        "step_args": _hobbies_range_step("last_month"), "no_writes": True,
+        "args_desc": "PARENT over last_month; trace has no propose_* step (subset)",
+        "answer": "numbers", "needs_number": True,
+    },
+    {
+        "id": 19,
+        "question": "Add an account named ZZEval Savings and rename the category ZZEval Pottery to ZZEval Ceramics.",
+        "tools": ["propose_add_account", "propose_rename_category"], "args": _args_two_ordered,
+        "args_desc": "exactly 2 proposals, distinct ids, operations [add_account, rename_category] in order",
+        "answer": "numbers", "needs_number": False,
+    },
+    {
+        "id": 20,
+        "history": _long_history, "summary": LONG_SUMMARY,
+        "turns": ["How much did I spend on ZZEval Hobbies this month?"],
+        "question": "How much did I spend on ZZEval Hobbies this month?",
+        "tools": ["spending_in_category", "find_transactions"],
+        "step_args": _hobbies_range_step("this_month"),
+        "args_desc": "long budget-trimmed thread with a summary; this_month PARENT re-query; no figure from history",
+        "answer": "numbers", "needs_number": True,
+    },
 ]
 
 
@@ -1139,17 +1233,21 @@ CASES: list[dict] = [
 # ---------------------------------------------------------------------------
 
 
-async def _run_case(question: str, proposal_ids: list[str], history=None) -> dict:
+async def _run_case(question: str, proposal_ids: list[str], history=None, prior=None) -> dict:
     """Drive agent_stream once and return the answer payload. Every proposal
     id is appended to the caller-owned `proposal_ids` the moment its
     tool_result arrives (not just from the final answer's proposals list),
     so the caller's `finally` still purges it if the run crashes or is
     interrupted mid-stream. `history` is the replayed prior turns of a
-    multi-turn case (None for the single-turn cases)."""
+    multi-turn case (None for the single-turn cases); `prior` is its message
+    dicts, which with the question pick the turn's tool subset like chat does."""
+    from backend.agent_loop import tools_for_turn
     from backend.query import agent_stream
 
     answer: dict = {"text": "", "trace": [], "proposals": []}
-    async for line in agent_stream(question, history=history):
+    async for line in agent_stream(
+        question, history=history, tool_names=tools_for_turn(question, prior)
+    ):
         if not line.startswith("data: "):
             continue
         raw = line[len("data: "):].strip()
@@ -1187,23 +1285,27 @@ def _turn_messages(question: str, result: dict, at: datetime.datetime) -> list[d
 async def _run_multi_case(case: dict, proposal_ids: list[str]) -> dict:
     """Run a multi-turn case through the real history builder, in memory only
     (D-22a: no threads or messages rows). Earlier turns are replayed via
-    build_history before every turn; the returned result is the final turn's,
+    plan_history before every turn; the returned result is the final turn's,
     with `prior_error` set to the first earlier turn's error code, if any."""
     from backend import config
-    from backend.chat_history import build_history
+    from backend.chat_history import plan_history
     from backend.query import _today
 
     today = _today()
     messages = case["history"](today) if "history" in case else []
     prior_error = None
     turns = case["turns"]
+    def plan():
+        return plan_history(
+            messages, config.CHAT_HISTORY_TOKEN_BUDGET, today,
+            summary=case.get("summary"), upto_seq=case.get("upto_seq", 0),
+        )[0]
+
     for turn in turns[:-1]:
-        history = build_history(messages, config.CHAT_HISTORY_TOKEN_BUDGET, today)
-        result = await _run_case(turn, proposal_ids, history=history)
+        result = await _run_case(turn, proposal_ids, history=plan(), prior=messages)
         prior_error = prior_error or result.get("error")
         messages.extend(_turn_messages(turn, result, datetime.datetime.now().astimezone()))
-    history = build_history(messages, config.CHAT_HISTORY_TOKEN_BUDGET, today)
-    final = await _run_case(turns[-1], proposal_ids, history=history)
+    final = await _run_case(turns[-1], proposal_ids, history=plan(), prior=messages)
     return {**final, "prior_error": prior_error}
 
 
@@ -1252,6 +1354,9 @@ def _check_case(case: dict, result: dict) -> dict:
     needs_number_failed = bool(case.get("needs_number")) and not _has_number(answer_text)
     if needs_number_failed:
         ok = False
+
+    if case.get("no_writes") and any(str(s.get("tool", "")).startswith("propose_") for s in trace):
+        args_ok = False
 
     error = (result or {}).get("error")
     passed = tool_ok and args_ok and ok and not error
@@ -1359,7 +1464,7 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         type=int,
         default=None,
-        help="run only this case id (repeatable). Default: run all 17 cases.",
+        help="run only this case id (repeatable). Default: run all 20 cases.",
     )
     args = parser.parse_args(argv)
 
