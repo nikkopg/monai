@@ -498,11 +498,17 @@ export default function CashflowPage() {
                             flexShrink: 0,
                           }}
                         />
+                        {/* Wrap at spaces; a single word too long for the line
+                            ends in an ellipsis instead of splitting mid-word
+                            (hyphens:auto has no dictionary in headless
+                            Chromium). Full name stays in the tooltip. */}
                         <span
+                          title={c.name || undefined}
                           style={{
                             flex: 1,
                             minWidth: 0,
-                            overflowWrap: "break-word",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
                           }}
                         >
                           {c.name || "—"}
