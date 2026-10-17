@@ -1199,7 +1199,7 @@ const RGB = {
   ink: "rgb(35, 32, 27)",
   tintNeutral: "rgb(238, 241, 236)",
   white: "rgb(255, 255, 255)",
-  chatDim: "rgb(164, 156, 140)",
+  chatDim: "rgb(111, 104, 87)", // muted3 since 37-06 (AA contrast); was muted2
 };
 const css = (loc: ReturnType<Page["locator"]>, prop: string) =>
   loc.evaluate((el, p) => getComputedStyle(el).getPropertyValue(p), prop);
