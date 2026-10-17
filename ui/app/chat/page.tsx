@@ -645,6 +645,20 @@ function ChatInner() {
         }
       }
     }
+    // Dropped connection or 5xx: the server may already have replaced the branch and
+    // started a run, so the pre-replace snapshot can be stale. Trust the server.
+    if ((status === null || status >= 500) && tid) {
+      const r = await fetchThread(tid);
+      if (typeof r !== "string") {
+        restore = mapMessages(r.messages);
+        if (loadedRef.current === tid && r.active_run) {
+          editPendingRef.current = false;
+          setEditing(null);
+          void startAttach(tid, r.active_run.run_id, restore, 2);
+          return;
+        }
+      }
+    }
     if (loadedRef.current !== tid) return; // the view moved on
     editPendingRef.current = false;
     setMessages(restore);

@@ -269,4 +269,21 @@ test.describe("Disabled states (D-19)", () => {
       }
     });
   }
+
+  // WR-06: a transport failure after the server already replaced the branch must
+  // show the server's thread, not the stale pre-replace snapshot.
+  for (const [name, fail] of [
+    ["dropped connection", (r: import("@playwright/test").Route) => r.abort("connectionreset")],
+    ["502", (r: import("@playwright/test").Route) => r.fulfill({ status: 502, body: "bad gateway" })],
+  ] as const) {
+    test(`a ${name} on replace re-reads the thread instead of restoring the snapshot`, async ({ page }) => {
+      const u1 = user("Synthetic question");
+      await setup(page, [u1, asst("Original synthetic answer")], [u1, asst("Answer the server kept")]);
+      await page.route(/\/api\/query-stream$/, fail);
+      await page.goto(`/chat?thread=${TID}`);
+      await page.getByRole("button", { name: "Regenerate answer" }).click();
+      await expect(conv(page).getByText("Answer the server kept")).toBeVisible();
+      await expect(conv(page).getByText("Original synthetic answer")).toHaveCount(0);
+    });
+  }
 });
