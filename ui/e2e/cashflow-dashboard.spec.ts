@@ -1,5 +1,16 @@
 import { test, expect, type Page } from "@playwright/test";
 
+import { cspViolations, watchCsp } from "./csp-fixture";
+
+// D-11: these pages run with real chart data under the CSP header; any
+// securitypolicyviolation fails the test.
+test.beforeEach(async ({ page }) => {
+  await watchCsp(page);
+});
+test.afterEach(async ({ page }) => {
+  expect(await cspViolations(page)).toEqual([]);
+});
+
 // ---------------------------------------------------------------------------
 // Phase 4 Plan 04 — Cashflow dashboard render + period-refetch spec.
 //

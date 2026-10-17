@@ -1,5 +1,16 @@
 import { test, expect, type Page } from "@playwright/test";
 
+import { cspViolations, watchCsp } from "./csp-fixture";
+
+// D-11: these pages run with real chart data under the CSP header; any
+// securitypolicyviolation fails the test.
+test.beforeEach(async ({ page }) => {
+  await watchCsp(page);
+});
+test.afterEach(async ({ page }) => {
+  expect(await cspViolations(page)).toEqual([]);
+});
+
 // ---------------------------------------------------------------------------
 // Phase 17 Plan 02 — RED e2e spec for Platform detail (PLAT-01).
 //
