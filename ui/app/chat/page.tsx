@@ -10,6 +10,7 @@ import { hhmm } from "../lib/inbox";
 import { errorCopy } from "./errors";
 import type { ChatError } from "./errors";
 import MessageActions from "./MessageActions";
+import PlanBar from "./PlanBar";
 import ProposalCard, {
   clearProposalToken,
   readProposalToken,
@@ -377,6 +378,12 @@ function ChatInner() {
   const [announcement, setAnnouncement] = useState("");
   const [showJump, setShowJump] = useState(false);
   // Regenerate / edit (37-08). One editor at a time; refusals show inline.
+  // Approve all in flight / last failure, scoped to one assistant message (38 D-17).
+  const [bulk, setBulk] = useState<{
+    msgId: string;
+    running: boolean;
+    failed: { id: string; text: string } | null;
+  } | null>(null);
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [confirmEdit, setConfirmEdit] = useState<{ n: number; text: string } | null>(null);
   const [actionError, setActionError] = useState<{
@@ -1031,6 +1038,23 @@ function ChatInner() {
     else void sendQuestion(text, { replaceFrom: editing.id, mode: "edit" });
   }
 
+  // /cashflow re-fetches its own list on mount. Mark the proposal applied here so
+  // Regenerate / Edit lock for this point at once (D-19). Card and plan bar share it.
+  function markApplied(msgId: string, pid: string) {
+    setMessages((ms) =>
+      ms.map((x) =>
+        x.kind === "assistant" && x.id === msgId
+          ? {
+              ...x,
+              proposals: x.proposals.map((q) =>
+                q.id === pid ? { ...q, liveStatus: "confirmed" as LiveStatus } : q
+              ),
+            }
+          : x
+      )
+    );
+  }
+
   function renderAssistant(m: AsstItem, index: number) {
     const isLast = index === messages.length - 1;
     const errCopy = m.error ? errorCopy(m.error) : null;
@@ -1173,28 +1197,30 @@ function ChatInner() {
         />
 
         {/* Inline ProposalCards — one per proposal in this turn (D-01, AGENT-06) */}
-        {m.proposals.map((p) => (
+        {m.proposals.length >= 2 && (
+          <PlanBar
+            proposals={m.proposals}
+            onApplied={(id) => markApplied(m.id, id)}
+            onFailed={(id, text) => setBulk({ msgId: m.id, running: false, failed: { id, text } })}
+            onRunning={(r) =>
+              setBulk((b) => ({
+                msgId: m.id,
+                running: r,
+                failed: r ? null : b?.msgId === m.id ? b.failed : null,
+              }))
+            }
+          />
+        )}
+        {m.proposals.map((p, i) => (
           <ProposalCard
             key={p.id}
             proposal={p}
             liveStatus={p.liveStatus}
             inCancelledMessage={m.status === "cancelled"}
-            onApplied={() => {
-              // /cashflow re-fetches its own list on mount. Mark it applied here so
-              // Regenerate / Edit lock for this point at once (D-19).
-              setMessages((ms) =>
-                ms.map((x) =>
-                  x.kind === "assistant" && x.id === m.id
-                    ? {
-                        ...x,
-                        proposals: x.proposals.map((q) =>
-                          q.id === p.id ? { ...q, liveStatus: "confirmed" as LiveStatus } : q
-                        ),
-                      }
-                    : x
-                )
-              );
-            }}
+            locked={bulk?.msgId === m.id && bulk.running}
+            externalError={bulk?.msgId === m.id && bulk.failed?.id === p.id ? bulk.failed.text : null}
+            step={m.proposals.length >= 2 ? i + 1 : undefined}
+            onApplied={() => markApplied(m.id, p.id)}
             onRejected={() => {
               // nothing extra needed
             }}
