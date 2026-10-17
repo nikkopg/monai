@@ -185,3 +185,10 @@
     display: block !important;
   }
 }
+
+/* Markdown answers (37-04): inline margins cannot express first/last-child or
+   nested-list rules, so these use !important to beat the inline styles. */
+.md > :first-child { margin-top: 0 !important; }
+.md > :last-child { margin-bottom: 0 !important; }
+.md li > ul, .md li > ol { margin: 4px 0 0 !important; }
+.md li > p { margin: 0 0 4px !important; }
