@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 
 import { CANCEL_TIMEOUT_MS } from "./errors";
+import type { Source } from "./labels";
 
 type SseMessage = Record<string, unknown>;
 
@@ -190,4 +191,183 @@ export function useChatStream() {
   }
 
   return { busyRef, runIdRef, stoppedRef, send, attach, stop, detach };
+}
+
+// ---- Answer lane (D-03, D-24) ------------------------------------------------
+// Pure reducers over one assistant message's streamed state. The lane rule
+// (Pitfall 14): narration streamed before a tool call is a working note, never
+// the answer; only the `answer` event's text is final.
+
+export type StepEntry = {
+  kind: "step";
+  callId: string | null;
+  tool: string;
+  args: Record<string, unknown>;
+  status: "running" | "done";
+  startedAt: number | null;
+  ms: number | null;
+  sources: Source[];
+  failed: boolean;
+};
+export type NoteEntry = { kind: "note"; iteration: number; text: string };
+export type TimelineEntry = StepEntry | NoteEntry;
+export type Lane = {
+  draft: string;
+  draftIteration: number | null;
+  timeline: TimelineEntry[];
+};
+export const EMPTY_LANE: Lane = { draft: "", draftIteration: null, timeline: [] };
+
+function draftToNote(lane: Lane, fallbackIteration: number): TimelineEntry[] {
+  if (!lane.draft.trim()) return lane.timeline;
+  return [
+    ...lane.timeline,
+    { kind: "note", iteration: lane.draftIteration ?? fallbackIteration, text: lane.draft },
+  ];
+}
+
+export function laneAppend(lane: Lane, text: string, iteration: number): Lane {
+  if (lane.draftIteration !== null && iteration > lane.draftIteration) {
+    return { draft: text, draftIteration: iteration, timeline: draftToNote(lane, iteration) };
+  }
+  return { ...lane, draft: lane.draft + text, draftIteration: iteration };
+}
+
+export function laneToolStart(
+  lane: Lane,
+  ev: { call_id: string; tool: string; args: Record<string, unknown>; iteration: number },
+  now: number
+): Lane {
+  const step: StepEntry = {
+    kind: "step",
+    callId: ev.call_id,
+    tool: ev.tool,
+    args: ev.args ?? {},
+    status: "running",
+    startedAt: now,
+    ms: null,
+    sources: [],
+    failed: false,
+  };
+  return {
+    draft: "",
+    draftIteration: null,
+    timeline: [...draftToNote(lane, ev.iteration), step],
+  };
+}
+
+export function laneToolResult(
+  lane: Lane,
+  ev: {
+    call_id?: string | null;
+    step: { tool: string; args?: Record<string, unknown>; result?: unknown };
+    ms?: number | null;
+    sources?: Source[];
+  }
+): Lane {
+  const result = ev.step.result;
+  const failed = !!result && typeof result === "object" && "error" in (result as object);
+  const done = {
+    status: "done" as const,
+    ms: typeof ev.ms === "number" ? ev.ms : null,
+    sources: ev.sources ?? [],
+    failed,
+  };
+  const idx = ev.call_id
+    ? lane.timeline.findIndex(
+        (e) => e.kind === "step" && e.callId === ev.call_id && e.status === "running"
+      )
+    : -1;
+  if (idx >= 0) {
+    const timeline = lane.timeline.slice();
+    timeline[idx] = { ...(timeline[idx] as StepEntry), ...done };
+    return { ...lane, timeline };
+  }
+  const step: StepEntry = {
+    kind: "step",
+    callId: ev.call_id ?? null,
+    tool: ev.step.tool,
+    args: ev.step.args ?? {},
+    startedAt: null,
+    ...done,
+  };
+  return { ...lane, timeline: [...lane.timeline, step] };
+}
+
+/** Persisted `parts.steps` to done steps; ms and sources only when stored (D-09). */
+export function stepsFromParts(
+  steps?: { tool: string; args?: Record<string, unknown>; ms?: number; sources?: Source[] }[]
+): TimelineEntry[] {
+  return (steps ?? []).map((s) => ({
+    kind: "step",
+    callId: null,
+    tool: s.tool,
+    args: s.args ?? {},
+    status: "done",
+    startedAt: null,
+    ms: typeof s.ms === "number" ? s.ms : null,
+    sources: s.sources ?? [],
+    failed: false,
+  }));
+}
+
+// ---- Token buffer (D-05) -----------------------------------------------------
+// Deltas accumulate and flush at most every `delayMs` via setTimeout. Never
+// requestAnimationFrame: the hidden automated browser pane never runs it.
+
+export function createTokenBuffer(
+  onFlush: (text: string, iteration: number) => void,
+  delayMs = 50
+) {
+  let text = "";
+  let iteration: number | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  function clear() {
+    if (timer !== null) clearTimeout(timer);
+    timer = null;
+  }
+  function flush() {
+    clear();
+    const t = text;
+    const it = iteration;
+    text = "";
+    iteration = null;
+    if (t && it !== null) onFlush(t, it);
+  }
+  return {
+    push(delta: string, it: number) {
+      if (iteration !== null && iteration !== it) flush();
+      text += delta;
+      iteration = it;
+      if (timer === null) timer = setTimeout(flush, delayMs);
+    },
+    /** Return what is pending without calling onFlush. */
+    take() {
+      clear();
+      const out = { text, iteration };
+      text = "";
+      iteration = null;
+      return out;
+    },
+    cancel() {
+      clear();
+      text = "";
+      iteration = null;
+    },
+  };
+}
+
+export function useTokenBuffer(
+  onFlush: (text: string, iteration: number) => void,
+  delayMs = 50
+) {
+  const flushRef = useRef(onFlush);
+  flushRef.current = onFlush; // never call a stale closure
+  const bufRef = useRef<ReturnType<typeof createTokenBuffer> | null>(null);
+  if (bufRef.current === null) {
+    bufRef.current = createTokenBuffer((t, i) => flushRef.current(t, i), delayMs);
+  }
+  useEffect(() => () => bufRef.current?.cancel(), []);
+  return bufRef.current;
 }
