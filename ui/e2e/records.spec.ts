@@ -417,9 +417,9 @@ test.describe("Records URL-seeded filters and pills (37-07)", () => {
     expect(page.url()).toContain(SEEDED);
   });
 
-  test("no params: no cashflow, no dates, no pills; bad seeds are ignored", async ({ page }) => {
+  test("no params: no cashflow, no dates, no pills; bad and impossible-date seeds are ignored", async ({ page }) => {
     const urls = await captureRequests(page);
-    await page.goto("/records?date_from=nope&type=bogus&account_id=1%3Bx");
+    await page.goto("/records?date_from=2026-02-31&date_to=2026-13-45&type=bogus&account_id=1%3Bx");
     await expect(page.getByText("Today", { exact: true })).toBeVisible();
     for (const k of ["cashflow", "date_from", "date_to", "type", "account_id"]) {
       expect(urls[0].searchParams.has(k)).toBe(false);

@@ -226,6 +226,11 @@ export default function RecordsPage() {
 // Seeds come from a chat source-chip URL (anyone can craft one), so each is
 // validated before it can reach state or the query string.
 const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
+// Shape alone lets 2026-02-31 through (the API rejects it), so round-trip it.
+function isRealDay(d: string): boolean {
+  const t = Date.parse(`${d}T00:00:00Z`);
+  return ISO_DAY.test(d) && !Number.isNaN(t) && new Date(t).toISOString().slice(0, 10) === d;
+}
 const TX_TYPES = ["expense", "income", "transfer"];
 
 function RecordsInner() {
@@ -249,11 +254,11 @@ function RecordsInner() {
   });
   const [dateFrom, setDateFrom] = useState(() => {
     const d = sp.get("date_from") ?? "";
-    return ISO_DAY.test(d) ? d : "";
+    return isRealDay(d) ? d : "";
   });
   const [dateTo, setDateTo] = useState(() => {
     const d = sp.get("date_to") ?? "";
-    return ISO_DAY.test(d) ? d : "";
+    return isRealDay(d) ? d : "";
   });
   const [cashflow, setCashflow] = useState(
     () => sp.get("cashflow") === "1" || sp.get("cashflow") === "true"

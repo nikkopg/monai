@@ -878,13 +878,17 @@ def list_transactions(
         query = query.filter(func.abs(Transaction.amount) >= amount_min)
     if amount_max is not None:
         query = query.filter(func.abs(Transaction.amount) <= amount_max)
-    if date_from:
-        query = query.filter(Transaction.date >= datetime.fromisoformat(date_from))
-    if date_to:
+    try:
+        start = datetime.fromisoformat(date_from) if date_from else None
+        end = datetime.fromisoformat(date_to) + timedelta(days=1) if date_to else None
+    except ValueError:
+        raise HTTPException(status_code=422, detail="date_from/date_to must be valid ISO dates")
+    if start is not None:
+        query = query.filter(Transaction.date >= start)
+    if end is not None:
         # date_to is an inclusive calendar day from the caller's POV — widen
         # to an exclusive upper bound so a same-day timestamp isn't dropped
         # (mirrors resolve_period's [start, end) convention).
-        end = datetime.fromisoformat(date_to) + timedelta(days=1)
         query = query.filter(Transaction.date < end)
     return (
         query.order_by(desc(Transaction.date))

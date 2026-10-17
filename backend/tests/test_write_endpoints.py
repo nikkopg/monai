@@ -531,6 +531,12 @@ def test_transaction_paging(client, db_session):
         _cleanup_account(db_session, name)
 
 
+def test_transactions_impossible_date_is_422_not_500(client):
+    for qs in ("date_from=2001-02-31", "date_to=2001-13-45", "date_from=nope"):
+        assert client.get(f"/transactions?{qs}").status_code == 422
+    assert client.get("/transactions?date_from=2001-02-28&date_to=2001-03-01").status_code == 200
+
+
 def test_category_filter_hierarchy(client, db_session):
     """category filter matches the node + ALL descendants (hierarchy), not
     exact-string-only — derives the expected count live from the category
