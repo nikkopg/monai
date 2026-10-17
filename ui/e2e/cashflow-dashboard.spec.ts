@@ -155,10 +155,12 @@ test.describe("Spending by category card layout", () => {
   // 420: single column, narrow card -> stacked. 920: single column, wide
   // card (mid-band, clear of the ~1035px grid breakpoint) -> legend beside
   // the 150px donut (150 + 22 gap = 172). 1440: max-width cap, the layout
-  // most desktops get -> side-by-side with a ~209px legend.
+  // most desktops get -> side-by-side with a ~209px legend. 320: below the
+  // 340px floor, where only the narrowed page gutters keep amounts inside.
   const cases: [number, "stacked" | "side-by-side"][] = [
     [1100, "stacked"],
     [420, "stacked"],
+    [320, "stacked"],
     [920, "side-by-side"],
     [1440, "side-by-side"],
   ];

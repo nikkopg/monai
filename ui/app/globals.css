@@ -39,6 +39,15 @@
   }
 }
 
+/* Below 340px the 44px page gutters leave cards too narrow for an amount
+   (37 IN-03). Chat's own 16px rule further down wins for the chat column. */
+@media (max-width: 339px) {
+  .tab-in {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+}
+
 /* Phase 33 Inbox. Hex values are literal copies of ui/app/styles.ts tokens
    because CSS cannot import styles.ts: #2f6f4f green, #6f6857 muted3,
    #f0ece3 hairline. */
