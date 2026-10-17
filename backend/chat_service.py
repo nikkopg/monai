@@ -26,7 +26,7 @@ import anyio
 from sqlalchemy import delete, func, or_, select, text, update
 
 from backend import agent_loop, config, query, tools
-from backend.chat_history import build_history
+from backend.chat_history import plan_history
 from backend.db import get_session_sync
 from backend.models import AuditLog, Message, Proposal, Thread
 from backend.proposals import expire_stale, transition
@@ -63,10 +63,19 @@ class ReplaceConflict(Exception):
 
 def _replace_branch(db, thread_id: uuid.UUID, question: str, replace_from: uuid.UUID) -> None:
     """Supersede pending chat proposals, then delete the target message and
-    everything after it (D-18, D-19). Caller commits, so it is all-or-nothing."""
+    everything after it (D-18, D-19). Caller commits, so it is all-or-nothing.
+    A target at or below the thread's summary boundary drops the stored summary and
+    moves the boundary to just before it (D-26a)."""
     target = db.get(Message, replace_from)
     if target is None or target.thread_id != thread_id or target.role != "user":
         raise ValueError("Message not found in this thread")  # explicit, never an FK error
+    t = db.get(Thread, thread_id)
+    if target.seq <= (t.summary_upto_seq or 0):
+        # The summary may describe turns about to be deleted, so drop it. The boundary
+        # moves to just before the target: hidden messages stay hidden and nothing
+        # deleted is summarised (D-26a).
+        t.summary = None
+        t.summary_upto_seq = target.seq - 1
     doomed = db.execute(
         select(Message).where(Message.thread_id == thread_id, Message.seq >= target.seq)
     ).scalars().all()
@@ -101,7 +110,8 @@ def _replace_branch(db, thread_id: uuid.UUID, question: str, replace_from: uuid.
 
 def _begin_turn(thread_id: uuid.UUID, new: bool, question: str, replace_from: uuid.UUID | None = None):
     """Create/find the thread and store the user message; return
-    (user_message_id, seq, prior messages as dicts). One short session; with
+    (user_message_id, seq, prior messages as dicts with seq, thread summary,
+    summary boundary). One short session; with
     `replace_from` the old branch is superseded and deleted in the same commit."""
     with get_session_sync() as db:
         if new:
@@ -118,6 +128,7 @@ def _begin_turn(thread_id: uuid.UUID, new: bool, question: str, replace_from: uu
                 "status": m.status,
                 "parts": m.parts,
                 "created_at": m.created_at,
+                "seq": m.seq,
             }
             for m in db.execute(
                 select(Message).where(Message.thread_id == thread_id).order_by(Message.seq)
@@ -137,7 +148,8 @@ def _begin_turn(thread_id: uuid.UUID, new: bool, question: str, replace_from: uu
         db.flush()
         db.execute(text("UPDATE threads SET updated_at = now() WHERE id = :t"), {"t": thread_id})
         db.commit()
-        return user.id, seq, prior
+        t = db.get(Thread, thread_id)
+        return user.id, seq, prior, t.summary, t.summary_upto_seq or 0
 
 
 async def start_turn(
@@ -157,11 +169,13 @@ async def start_turn(
     if run is None:
         return None
     try:
-        user_id, seq, prior = await asyncio.to_thread(
+        user_id, seq, prior, summary, upto = await asyncio.to_thread(
             _begin_turn, tid, thread_id is None, question, replace_from
         )
         # Module attribute reads so tests can monkeypatch the budget and the date.
-        history = build_history(prior, config.CHAT_HISTORY_TOKEN_BUDGET, query._today())
+        history, _ = plan_history(
+            prior, config.CHAT_HISTORY_TOKEN_BUDGET, query._today(), summary=summary, upto_seq=upto
+        )
         tool_names = agent_loop.tools_for_turn(question, prior)
         run.thread_id, run.user_message_id, run.user_seq = tid, user_id, seq
         run.assistant_message_id = uuid.uuid4()

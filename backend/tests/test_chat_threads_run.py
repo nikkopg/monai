@@ -413,6 +413,53 @@ async def test_followup_replays_prior_pair(monkeypatch, _threads):
     assert len(_messages(run.thread_id)) == 4
 
 
+def _seed_summarised_thread(summary, upto):
+    """Thread with pairs at seq 1-2 (old) and 3-4 (recent), a stored summary and boundary."""
+    from backend.db import SessionLocal
+    from backend.models import Message, Thread
+
+    db = SessionLocal()
+    try:
+        t = Thread(title="ZZ summarised", summary=summary, summary_upto_seq=upto)
+        db.add(t)
+        db.flush()
+        for seq, role, content in [
+            (1, "user", "ZZ old question"), (2, "assistant", "ZZ old answer"),
+            (3, "user", "ZZ recent question"), (4, "assistant", "ZZ recent answer"),
+        ]:
+            db.add(Message(thread_id=t.id, seq=seq, role=role, content=content,
+                           status="complete", parts={}))
+        db.commit()
+        return t.id
+    finally:
+        db.close()
+
+
+async def test_turn_replays_summary_and_boundary(monkeypatch, _threads):
+    llm = StubLLM()
+    _install_stub_workflow(monkeypatch, llm)
+    tid = _seed_summarised_thread("ZZ synthetic summary", 2)
+    _threads.append(tid)
+    await _turn("ZZ next", tid, _threads)
+
+    joined = " ".join(llm.seen[0])
+    assert "Summary of earlier conversation" in joined
+    assert "ZZ synthetic summary" in joined and "ZZ recent question" in joined
+    assert "ZZ old question" not in joined
+
+
+async def test_turn_after_clear_replays_nothing(monkeypatch, _threads):
+    llm = StubLLM()
+    _install_stub_workflow(monkeypatch, llm)
+    tid = _seed_summarised_thread(None, 4)
+    _threads.append(tid)
+    await _turn("ZZ next", tid, _threads)
+
+    joined = " ".join(llm.seen[0])
+    assert "ZZ old question" not in joined and "ZZ recent question" not in joined
+    assert "Summary of earlier conversation" not in joined
+
+
 async def test_error_turn_persisted_and_not_replayed(monkeypatch, _threads):
     llm = StubLLM(mode="429")
     _install_stub_workflow(monkeypatch, llm)

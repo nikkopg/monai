@@ -339,3 +339,44 @@ def test_http_valid_regenerate_streams_new_user_message(http, threads):
     assert [e["type"] for e in ev[:2]] == ["thread", "run"]
     assert ev[0]["user_message_id"] != str(old[0])
     assert [(m[1], m[2]) for m in _msgs(tid)] == [(1, "user"), (2, "assistant")]
+
+
+def _boundary(tid, summary, upto):
+    db = SessionLocal()
+    try:
+        db.execute(
+            text("UPDATE threads SET summary = :s, summary_upto_seq = :u WHERE id = :i"),
+            {"s": summary, "u": upto, "i": tid},
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
+def _thread_boundary(tid):
+    db = SessionLocal()
+    try:
+        t = db.get(Thread, tid)
+        return t.summary, t.summary_upto_seq
+    finally:
+        db.close()
+
+
+async def test_replace_under_boundary_drops_summary(monkeypatch, threads):
+    _install_stub_workflow(monkeypatch, StubLLM())
+    tid, old = _mk_thread(threads, [(Q1, "a1"), (Q2, "a2"), ("ZZ37 third", "a3")])
+    _boundary(tid, "ZZ s", 4)
+
+    await _replace(Q2, tid, old[2])  # user message at seq 3, below the boundary
+
+    assert _thread_boundary(tid) == (None, 2)
+
+
+async def test_replace_above_boundary_keeps_summary(monkeypatch, threads):
+    _install_stub_workflow(monkeypatch, StubLLM())
+    tid, old = _mk_thread(threads, [(Q1, "a1"), (Q2, "a2"), ("ZZ37 third", "a3")])
+    _boundary(tid, "ZZ s", 2)
+
+    await _replace(Q2, tid, old[2])
+
+    assert _thread_boundary(tid) == ("ZZ s", 2)
