@@ -10,6 +10,8 @@ agent_stream seam and the out-of-subset warning.
 import datetime
 import json
 import logging
+import threading
+import time
 import uuid
 from unittest.mock import MagicMock
 
@@ -21,12 +23,14 @@ from backend import chat_service
 from backend.agent_loop import tools_for_turn
 from backend.db import SessionLocal
 from backend.models import Message, Thread
+from backend.tests import chat_stubs
 from backend.tests.chat_stubs import (
     StubLLM,
     _collect,
     _install_stub_workflow,
     _of_type,
     _payloads,
+    purge_seeded,
 )
 from backend.tools import READ_TOOL_NAMES, TOOLS
 
@@ -304,3 +308,168 @@ def test_cap_huge_nested_dict_keeps_only_scalars():
     assert out["total"] == 7.0 and "nested" not in out and "rows" not in out
     assert out["truncated_lists"]["nested"] == {"shown": 0, "of": 500}
     assert out["truncated_lists"]["rows"] == {"shown": 0, "of": 1}
+
+
+# ---------------------------------------------------------------------------
+# LOOP-02 / LOOP-03: tool wrapper (cap callback, serial writes, dedupe, order)
+# ---------------------------------------------------------------------------
+
+
+class _Probe:
+    """Records in-flight count, its maximum and start order across tool threads."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.now = self.max = 0
+        self.started: list = []
+
+    def run(self, tag, secs):
+        with self.lock:
+            self.now += 1
+            self.max = max(self.max, self.now)
+            self.started.append(tag)
+        time.sleep(secs)
+        with self.lock:
+            self.now -= 1
+
+
+@pytest.fixture()
+def cleanup():
+    ids: list = []
+    yield ids
+    purge_seeded()
+    db = SessionLocal()
+    for t in ids:
+        db.execute(text("DELETE FROM threads WHERE id = :i"), {"i": t})
+    db.commit()
+    db.close()
+
+
+async def test_serial_proposers(monkeypatch):
+    probe = _Probe()
+
+    def slow_propose(n: int) -> dict:
+        """Synthetic proposer."""
+        probe.run(n, 0.1)
+        return {"tool": "slow_propose", "n": n}
+
+    llm = StubLLM(mode="script", script=[[("slow_propose", {"n": 1}), ("slow_propose", {"n": 2})]])
+    _install_stub_workflow(monkeypatch, llm, extra_tools={"slow_propose": slow_propose})
+    lines = await _collect(q.agent_stream("ZZ two writes"))
+    assert probe.max == 1 and probe.started == [1, 2]
+    assert len(_of_type(_payloads(lines), "tool_result")) == 2
+
+
+async def test_six_proposers_serial(monkeypatch):
+    probe = _Probe()
+
+    def slow_propose(n: int) -> dict:
+        """Synthetic proposer."""
+        probe.run(n, 0.02)
+        return {"tool": "slow_propose", "n": n}
+
+    llm = StubLLM(mode="script", script=[[("slow_propose", {"n": i}) for i in range(6)]])
+    _install_stub_workflow(monkeypatch, llm, extra_tools={"slow_propose": slow_propose})
+    lines = await _collect(q.agent_stream("ZZ six writes"))
+    assert probe.max == 1 and sorted(probe.started) == list(range(6))
+    assert len(_of_type(_payloads(lines), "tool_result")) == 6
+
+
+async def test_parallel_reads_overlap(monkeypatch):
+    probe = _Probe()
+
+    def spending_total() -> dict:
+        """Synthetic read."""
+        probe.run("s", 0.3)
+        return {"tool": "spending_total", "total": 1.0}
+
+    def income_total() -> dict:
+        """Synthetic read."""
+        probe.run("i", 0.3)
+        return {"tool": "income_total", "total": 2.0}
+
+    llm = StubLLM(mode="script", script=[[("spending_total", {}), ("income_total", {})]])
+    _install_stub_workflow(
+        monkeypatch, llm, extra_tools={"spending_total": spending_total, "income_total": income_total})
+    await _collect(q.agent_stream("ZZ two reads"))
+    assert probe.max == 2
+
+
+def _proposal_rows(turn_id):
+    db = SessionLocal()
+    try:
+        return db.execute(
+            text("SELECT id, token, payload FROM proposals WHERE turn_id = :t ORDER BY created_at, id"),
+            {"t": turn_id}).all()
+    finally:
+        db.close()
+
+
+def _assistant_parts(tid):
+    db = SessionLocal()
+    try:
+        m = db.query(Message).filter(Message.thread_id == tid, Message.role == "assistant").one()
+        return m.parts
+    finally:
+        db.close()
+
+
+async def test_dedupe_one_row(monkeypatch, cleanup):
+    llm = StubLLM(mode="script", script=[[("seed_proposal", {})], [("seed_proposal", {})]])
+    _install_stub_workflow(monkeypatch, llm)
+    run = await chat_service.start_turn("ZZ add it", None)
+    cleanup.append(run.thread_id)
+    payloads = _payloads(await _collect(q.run_stream(run)))
+
+    rows = _proposal_rows(uuid.UUID(run.id))
+    assert len(rows) == 1
+    results = _of_type(payloads, "tool_result")
+    assert [r["step"]["result"]["proposal_id"] for r in results] == [str(rows[0].id)] * 2
+    answer = _of_type(payloads, "answer")[0]
+    assert [p["id"] for p in answer["proposals"]] == [str(rows[0].id)]
+    assert run.proposal_ids == [str(rows[0].id)]
+    assert [p["id"] for p in _assistant_parts(run.thread_id)["proposals"]] == [str(rows[0].id)]
+    assert rows[0].token not in json.dumps(llm.seen)
+
+
+async def test_proposal_order_matches_creation_order(monkeypatch, cleanup):
+    def seed_with(n: int) -> dict:
+        """Synthetic proposer whose payload amount encodes n."""
+        from backend.tools import _make_proposal
+
+        pid, token = _make_proposal(
+            "add_transaction",
+            {"operation": "add_transaction",
+             "rows": [{"before": None, "after": {"amount": str(n * 1000)}}]},
+            "chat")
+        chat_stubs._SEEDED.append(uuid.UUID(pid))
+        return {"tool": "seed_with", "proposal_id": pid, "proposal_token": token}
+
+    llm = StubLLM(mode="script", script=[[("seed_with", {"n": i}) for i in (1, 2, 3)]])
+    _install_stub_workflow(monkeypatch, llm, extra_tools={"seed_with": seed_with})
+    run = await chat_service.start_turn("ZZ add three", None)
+    cleanup.append(run.thread_id)
+    payloads = _payloads(await _collect(q.run_stream(run)))
+
+    rows = _proposal_rows(uuid.UUID(run.id))
+    db_ids = [str(r.id) for r in rows]
+    assert [int(r.payload["rows"][0]["after"]["amount"]) // 1000 for r in rows] == [1, 2, 3]
+    assert [p["id"] for p in _of_type(payloads, "answer")[0]["proposals"]] == db_ids
+    assert [p["id"] for p in _assistant_parts(run.thread_id)["proposals"]] == db_ids
+
+
+async def test_cap_llm_sees_trimmed_sse_sees_full(monkeypatch):
+    full = {"tool": "find_transactions", "rows": _rows(300), "total": 4321.0}
+
+    def find_transactions() -> dict:
+        """Synthetic read."""
+        return full
+
+    llm = StubLLM(mode="script", script=[[("find_transactions", {})]])
+    _install_stub_workflow(monkeypatch, llm, extra_tools={"find_transactions": find_transactions})
+    lines = await _collect(q.agent_stream("ZZ big read"))
+    second = "".join(llm.seen[1])
+    assert "truncated_lists" in second and "4321.0" in second
+    assert len(second) < len(str(full))
+    result = _of_type(_payloads(lines), "tool_result")[0]["step"]["result"]
+    assert len(result["rows"]) == 300

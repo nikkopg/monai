@@ -46,7 +46,11 @@ def _resp(content: str, delta: str) -> ChatResponse:
 
 
 class StubLLM(MockFunctionCallingLLM):
-    """Scripted function-calling LLM. `mode` picks the behaviour."""
+    """Scripted function-calling LLM. `mode` picks the behaviour.
+
+    `script` mode: call n emits script[n-1], a list of (tool_name, kwargs) pairs
+    in ONE message (id == tool name, like Ollama); after the script, `final()`.
+    """
 
     mode: str = "ok"
     model: str = "example-model:7b"
@@ -57,6 +61,7 @@ class StubLLM(MockFunctionCallingLLM):
     tool_name: str = "seed_proposal"
     tool_kwargs: dict = Field(default_factory=dict)
     seen: list = Field(default_factory=list)  # chat_history contents per LLM call
+    script: list = Field(default_factory=list)
 
     @property
     def metadata(self):
@@ -119,10 +124,33 @@ class StubLLM(MockFunctionCallingLLM):
                 delta="",
             )
 
+        async def script_turn(calls):
+            yield _resp("working", "working")
+            yield ChatResponse(
+                message=ChatMessage(
+                    role="assistant",
+                    blocks=[
+                        TextBlock(text="working"),
+                        *(
+                            ToolCallBlock(tool_name=t, tool_kwargs=kw, tool_call_id=t)
+                            for t, kw in calls
+                        ),
+                    ],
+                ),
+                delta="",
+            )
+
         async def gen():
-            if mode == "429":
+            if mode == "script":
+                if n <= len(self.script):
+                    async for r in script_turn(self.script[n - 1]):
+                        yield r
+                else:
+                    async for r in final():
+                        yield r
+            elif mode == "429":
                 raise Err429("rate limited SECRET-sk-synthetic")
-            if mode == "hang":
+            elif mode == "hang":
                 yield _resp("par", "par")
                 await asyncio.sleep(3600)
             elif mode == "empty":

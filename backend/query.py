@@ -29,6 +29,7 @@ Public surface:
 """
 
 import asyncio
+import contextvars
 import datetime
 import functools
 import json
@@ -144,25 +145,76 @@ def _get_llm():
     return _llm
 
 
+class Turn:
+    """Per-turn tool state, one per agent_stream call (D-11, D-12).
+
+    `lock` serialises the turn's write tools; `seen` maps a write call's
+    canonical key to its first (token-stripped) result so a repeat returns it.
+    Created inside the running loop, never at import.
+    """
+
+    def __init__(self) -> None:
+        self.lock = asyncio.Lock()
+        self.seen: dict[tuple[str, str], Any] = {}
+
+
+TURN: contextvars.ContextVar["Turn | None"] = contextvars.ContextVar("monai_turn", default=None)
+
+
+def _call_key(name: str, kwargs) -> tuple[str, str]:
+    """Canonical (tool, args) key: dedupe and call pairing share one form (D-12)."""
+    return name, json.dumps(kwargs or {}, sort_keys=True, default=str)
+
+
+def _strip_token(out):
+    if isinstance(out, dict) and "proposal_token" in out:
+        return {k: v for k, v in out.items() if k != "proposal_token"}
+    return out
+
+
 def _llm_tool(name: str, fn):
     """FunctionTool for the agent whose result never shows the LLM a proposal_token.
 
-    The model gets the full tool output back, so a token in it could be echoed
-    into answer text that is stored and re-served (WR-03). The token is dropped
-    here; agent_stream re-reads it from the proposal row for the originating
-    answer event. functools.wraps keeps name, docstring and signature, so the
-    tool schema is unchanged.
+    The model gets the tool output back, so a token in it could be echoed into
+    answer text that is stored and re-served (WR-03). The token is dropped here,
+    before the result is cached for dedupe, so a replay never shows one either;
+    agent_stream re-reads it from the proposal row for the originating answer
+    event. functools.wraps keeps name, docstring and signature, so the tool
+    schema is unchanged.
+
+    The wrapper is async so it can host the per-turn write lock (D-11) and the
+    cap callback. asyncio.to_thread keeps the sync SQL off the event loop (D-09);
+    LlamaIndex already ran sync tools in an executor (D-09a), so this keeps an
+    existing property rather than fixing a stall. Every non-read tool takes the
+    turn's lock and a repeated (tool, args) call returns the first result with
+    no new proposal row (D-12); the lock is kept even though it is redundant if
+    the framework ever runs calls serially (D-13). Reads take no lock and may
+    overlap. The cap is LLM-only: async_callback overrides the content while
+    raw_output stays the full dict (D-08).
     """
     from llama_index.core.tools import FunctionTool
 
-    @functools.wraps(fn)
-    def hidden(*args, **kwargs):
-        out = fn(*args, **kwargs)
-        if isinstance(out, dict) and "proposal_token" in out:
-            return {k: v for k, v in out.items() if k != "proposal_token"}
-        return out
+    from backend.tools import READ_TOOL_NAMES
 
-    return FunctionTool.from_defaults(fn=hidden, name=name)
+    write = name not in READ_TOOL_NAMES
+
+    @functools.wraps(fn)
+    async def hidden(*args, **kwargs):
+        turn = TURN.get() if write else None
+        if turn is None:
+            return _strip_token(await asyncio.to_thread(fn, *args, **kwargs))
+        async with turn.lock:
+            key = _call_key(name, kwargs)
+            if key not in turn.seen:
+                turn.seen[key] = _strip_token(await asyncio.to_thread(fn, *args, **kwargs))
+            return turn.seen[key]
+
+    async def _cap(raw):
+        from backend.agent_loop import cap_for_llm
+
+        return cap_for_llm(raw)
+
+    return FunctionTool.from_defaults(fn=hidden, name=name, async_callback=_cap)
 
 
 def _get_agent_workflow(tool_names: frozenset[str] | None = None):
@@ -321,11 +373,16 @@ def _extract_proposals(tool_trace: list) -> list[dict]:
     hide the answer; the UI then shows its cannot-approve notice). Tokens
     surface only in the terminal answer/error event to the originating chat
     session — never in a tool_result event or the public trace (T-02-07).
+    A proposal id listed twice (a deduped replay, D-12a) contributes once.
     """
     proposals = []
+    seen_ids: set[str] = set()
     for step in tool_trace:
         result = step.get("result")
         if isinstance(result, dict) and "proposal_id" in result:
+            if str(result["proposal_id"]) in seen_ids:
+                continue
+            seen_ids.add(str(result["proposal_id"]))
             proposals.append({
                 "id": result["proposal_id"], "token": result.get("proposal_token"),
                 "operation": None, "payload": None, "expires_at": None,
@@ -462,6 +519,11 @@ async def agent_stream(
             tool_names = tools_for_turn(question)
         workflow = _get_agent_workflow(tool_names)
         model, provider = _llm_label(workflow)
+        # Before workflow.run: the run's tasks copy the context at creation, so
+        # the tool step tasks see this Turn. No reset: an async generator can be
+        # closed from another context, and the pump task's context is per run
+        # (36 D-12a).
+        TURN.set(Turn())
         if history:
             handler = workflow.run(user_msg=question, chat_history=history, max_iterations=10)
         else:
@@ -480,9 +542,6 @@ async def agent_stream(
     # FIFO of (call_id, t0) per (tool, canonical args): provider tool ids are not
     # unique (Ollama sets id == tool name), so pair a result to its call by content.
     pending: dict[tuple[str, str], deque] = {}
-
-    def _key(name, kwargs):
-        return name, json.dumps(kwargs or {}, sort_keys=True, default=str)
 
     def emit_error(code: str, idle_seconds: float | None = None) -> None:
         nonlocal terminal
@@ -518,7 +577,7 @@ async def agent_stream(
                                 logger.warning("tool %s is not in this turn's subset", event.tool_name)
                             call_id = f"c{max(iteration, 0)}-{n_in_iter}"
                             n_in_iter += 1
-                            pending.setdefault(_key(event.tool_name, event.tool_kwargs), deque()
+                            pending.setdefault(_call_key(event.tool_name, event.tool_kwargs), deque()
                                                ).append((call_id, time.monotonic()))
                             queue.put_nowait(_sse({
                                 "type": "tool_start", "call_id": call_id,
@@ -562,9 +621,10 @@ async def agent_stream(
                             })
                             # D-10: record the id as the result arrives, before any answer.
                             if run is not None and isinstance(result_dict, dict) \
-                                    and result_dict.get("proposal_id"):
+                                    and result_dict.get("proposal_id") \
+                                    and str(result_dict["proposal_id"]) not in run.proposal_ids:
                                 run.proposal_ids.append(str(result_dict["proposal_id"]))
-                            waiting = pending.get(_key(event.tool_name, event.tool_kwargs))
+                            waiting = pending.get(_call_key(event.tool_name, event.tool_kwargs))
                             if waiting:
                                 call_id, t0 = waiting.popleft()
                                 ms = round((time.monotonic() - t0) * 1000)
