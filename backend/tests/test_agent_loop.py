@@ -7,6 +7,7 @@ complete pair). Wiring tests cover agent_stream's subset, the start_turn ->
 agent_stream seam and the out-of-subset warning.
 """
 
+import asyncio
 import datetime
 import json
 import logging
@@ -473,3 +474,41 @@ async def test_cap_llm_sees_trimmed_sse_sees_full(monkeypatch):
     assert len(second) < len(str(full))
     result = _of_type(_payloads(lines), "tool_result")[0]["step"]["result"]
     assert len(result["rows"]) == 300
+
+
+async def test_stall_regression_guard(monkeypatch):
+    """GET /health stays fast while a 2 s tool runs inside a turn (D-10).
+
+    A regression guard, green before and after the async wrapper: RESEARCH D-09a
+    found sync tools already ran in an executor. Not a red-to-green test.
+    """
+    import httpx
+
+    from backend.main import app
+
+    started, finished = threading.Event(), threading.Event()
+
+    def spending_total() -> dict:
+        """Synthetic slow read."""
+        started.set()
+        time.sleep(2)
+        finished.set()
+        return {"tool": "spending_total", "total": 1.0}
+
+    started.clear()
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as c:
+        # Warm up: the cold first run has a ~250 ms import gap (RESEARCH Pitfall 10).
+        _install_stub_workflow(monkeypatch, StubLLM())
+        await _collect(q.agent_stream("ZZ warm up"))
+        await c.get("/health")
+        _install_stub_workflow(
+            monkeypatch, StubLLM(mode="script", script=[[("spending_total", {})]]),
+            extra_tools={"spending_total": spending_total})
+        task = asyncio.create_task(_collect(q.agent_stream("ZZ stall probe")))
+        assert await asyncio.to_thread(started.wait, 5)
+        t0 = time.monotonic()
+        r = await c.get("/health")
+        elapsed = time.monotonic() - t0
+        assert r.status_code == 200 and elapsed < 0.2
+        assert not finished.is_set()
+        await task
