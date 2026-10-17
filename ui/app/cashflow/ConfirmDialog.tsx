@@ -21,6 +21,7 @@ import { card, dangerBtn } from "../styles";
 type Props = {
   message: string;
   confirmLabel: string;
+  cancelLabel?: string;
   onConfirm: () => void;
   onCancel: () => void;
   children?: ReactNode;
@@ -29,6 +30,7 @@ type Props = {
 export default function ConfirmDialog({
   message,
   confirmLabel,
+  cancelLabel = "Cancel",
   onConfirm,
   onCancel,
   children,
@@ -109,14 +111,14 @@ export default function ConfirmDialog({
             onClick={onCancel}
             style={{
               background: "transparent",
-              color: "#8b8474",
+              color: "#6f6857",
               border: "none",
               padding: "8px 16px",
               fontSize: 14,
               cursor: "pointer",
             }}
           >
-            Cancel
+            {cancelLabel}
           </button>
           <button type="button" style={dangerBtn} onClick={onConfirm}>
             {confirmLabel}

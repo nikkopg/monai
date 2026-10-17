@@ -200,3 +200,16 @@
 .source-chip:hover { background: #f2efe8 !important; text-decoration: underline; }
 .step-toggle:hover .step-label { text-decoration: underline; }
 .steps-toggle:hover { color: #23201b !important; }
+
+/* Message actions (37-08): opacity only, so every button stays focusable. */
+.message-actions { opacity: 0; }
+.message-actions.always-visible,
+.chat-msg:hover .message-actions,
+.chat-msg:focus-within .message-actions { opacity: 1; }
+@media (hover: none), (pointer: coarse) {
+  .message-actions { opacity: 1; }
+}
+.action-btn:hover, .action-btn:focus-visible { color: #23201b !important; text-decoration: underline; }
+.action-tooltip { display: none; position: absolute; bottom: calc(100% + 4px); left: 0; }
+.action-wrap:hover .action-tooltip,
+.action-wrap:focus-within .action-tooltip { display: block; }
