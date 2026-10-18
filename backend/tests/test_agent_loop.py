@@ -579,7 +579,7 @@ def _assert_tail_last(llm, calls):
 
     assert len(llm.seen_roles) == calls
     for call in llm.seen_roles:
-        assert call[-1] == ("user", TAIL_REMINDER)
+        assert call[-1] == ("system", TAIL_REMINDER)
         assert sum(c == TAIL_REMINDER for _, c in call) == 1
 
 
@@ -650,7 +650,7 @@ def _convert_openai(ms):
 def _convert_anthropic(ms):
     from llama_index.llms.anthropic.utils import messages_to_anthropic_messages
 
-    return messages_to_anthropic_messages(ms)[0]
+    return messages_to_anthropic_messages(ms)  # (messages, system_prompt)
 
 
 @pytest.mark.parametrize(
@@ -659,8 +659,10 @@ def _convert_anthropic(ms):
      ("llama_index.llms.openai", _convert_openai),
      ("llama_index.llms.anthropic", _convert_anthropic)],
 )
-def test_adapter_trailing_user(pkg, convert):
-    """D-28: a trailing user message after a tool message is accepted: user role it is."""
+def test_adapter_trailing_system(pkg, convert):
+    """D-28: a trailing system reminder after a tool message survives conversion.
+    Ollama and OpenAI keep it as the last message; Anthropic folds it into the
+    system prompt."""
     pytest.importorskip(pkg)
     from llama_index.core.base.llms.types import ToolCallBlock
     from llama_index.core.llms import ChatMessage
@@ -673,10 +675,13 @@ def test_adapter_trailing_user(pkg, convert):
         ChatMessage(role="assistant", content="", blocks=[
             ToolCallBlock(tool_call_id="call_1", tool_name="slow_echo", tool_kwargs={"n": 1})]),
         ChatMessage(role="tool", content="{'n': 1}", additional_kwargs={"tool_call_id": "call_1"}),
-        ChatMessage(role="user", content=TAIL_REMINDER),
+        ChatMessage(role="system", content=TAIL_REMINDER),
     ]
     out = convert(msgs)
+    if pkg == "llama_index.llms.anthropic":
+        assert TAIL_REMINDER in str(out[1])
+        return
     last = out[-1]
     role = last["role"] if isinstance(last, dict) else last.role
-    assert role == "user"
+    assert role == "system"
     assert TAIL_REMINDER in str(last)

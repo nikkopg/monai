@@ -1213,7 +1213,9 @@ CASES: list[dict] = [
         "question": "Add an account named ZZEval Savings and rename the category ZZEval Pottery to ZZEval Ceramics.",
         "tools": ["propose_add_account", "propose_rename_category"], "args": _args_two_ordered,
         "args_desc": "exactly 2 proposals, distinct ids, operations [add_account, rename_category] in order",
-        "answer": "numbers", "needs_number": False,
+        # The answer must describe the changes, not reply to the tail reminder
+        # ("Understood. I will ensure...", seen live on 2026-10-18 with a user-role reminder).
+        "answer": lambda text: "zzeval savings" in text.lower(), "needs_number": False,
     },
     {
         "id": 20,

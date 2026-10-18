@@ -115,9 +115,11 @@ def tail_agent_cls():
     not take_step: they are the only place that sees the true final input
     [*llm_input, *scratchpad], so the reminder lands after every tool round
     (Spike 3a). It is appended to a copy at call time, so it never enters agent
-    memory, events or the DB. User role (D-28): the Ollama, OpenAI and Anthropic
-    adapters all accept a trailing user message after a tool message (Spike 3c);
-    fall back to system role only if the eval shows the model mishandles it.
+    memory, events or the DB. System role (D-28 fallback, measured 2026-10-18):
+    as a trailing user message the default model answered the reminder itself
+    ("Understood. I will ensure...") on 3/3 two-write turns, and replied to the
+    owner 3/3 as a system message. Ollama and OpenAI keep it last; the Anthropic
+    adapter folds it into the system prompt, so it still rides every call.
     Ollama front-truncates oldest non-system messages first and keeps the last,
     so the reminder is the protected message; the casualties are the question
     and early tool rounds (D-27a). Pinned to llama-index-core 0.14.25 because of
@@ -129,7 +131,7 @@ def tail_agent_cls():
 
     class TailFunctionAgent(FunctionAgent):
         def _tail(self, msgs):
-            return [*msgs, ChatMessage(role="user", content=TAIL_REMINDER)]
+            return [*msgs, ChatMessage(role="system", content=TAIL_REMINDER)]
 
         async def _get_streaming_response(self, ctx, current_llm_input, tools):
             return await super()._get_streaming_response(ctx, self._tail(current_llm_input), tools)
