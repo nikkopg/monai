@@ -60,6 +60,20 @@ const btnStyle: React.CSSProperties = {
   fontFamily: "inherit",
 };
 
+/** Shared by every disabled-reason tooltip (Regenerate, Edit, Attach). */
+export const tooltipStyle: React.CSSProperties = {
+  background: tokens.color.card,
+  border: `1px solid ${tokens.color.border2}`,
+  borderRadius: tokens.radius.sm,
+  boxShadow: tokens.shadow.card,
+  padding: "8px 12px",
+  fontSize: 14,
+  color: tokens.color.ink,
+  maxWidth: 280,
+  width: "max-content",
+  zIndex: 20,
+};
+
 export default function MessageActions(props: Props) {
   const tipId = useId();
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
@@ -93,18 +107,7 @@ export default function MessageActions(props: Props) {
       role="tooltip"
       id={tipId}
       className="action-tooltip"
-      style={{
-        background: tokens.color.card,
-        border: `1px solid ${tokens.color.border2}`,
-        borderRadius: tokens.radius.sm,
-        boxShadow: tokens.shadow.card,
-        padding: "8px 12px",
-        fontSize: 14,
-        color: tokens.color.ink,
-        maxWidth: 280,
-        width: "max-content",
-        zIndex: 20,
-      }}
+      style={tooltipStyle}
     >
       {reason}
     </span>
