@@ -3,6 +3,7 @@
 // chunked fake backend (support/fake-sse-backend.cjs). Skipped unless
 // PROD_BASE_URL is set; see the 37-09 SUMMARY for the scratch-build recipe.
 // All values are synthetic.
+import { createHash, randomUUID } from "node:crypto";
 import http from "node:http";
 
 import { test, expect, type Page } from "@playwright/test";
@@ -92,5 +93,44 @@ test.describe("production proxy", () => {
       expect(await cspViolations(page), path).toEqual([]);
     }
     expect(refused).toEqual([]);
+  });
+
+  // Phase 39 plan 14: the multipart upload path through the production proxy
+  // (D-02 item 3, D-06a). The proxy does not cap size; the backend does.
+  const MIB10 = 10485760;
+  const upload = async (fileBytes: number, headers: Record<string, string>) => {
+    const fd = new FormData();
+    fd.append("file", new Blob([Buffer.alloc(fileBytes, 97)]), "zz-big.csv");
+    fd.append("account_id", "1");
+    const enc = new Response(fd); // serialises the exact multipart body
+    const body = Buffer.from(await enc.arrayBuffer());
+    const res = await fetch(`${BASE}/api/threads/${randomUUID()}/attachments`, {
+      method: "POST",
+      body,
+      headers: { "content-type": enc.headers.get("content-type") ?? "", ...headers },
+    });
+    return { res, body, sha256: createHash("sha256").update(body).digest("hex") };
+  };
+  const SAME = { origin: BASE, "sec-fetch-site": "same-origin" };
+  const hits = async () => ((await (await fetch(`${BASE}/api/__upload_hits`)).json()) as { hits: number }).hits;
+
+  for (const size of [MIB10, MIB10 + 1]) {
+    test(`a ${size}-byte file reaches the backend byte-identical`, async () => {
+      const { res, body, sha256 } = await upload(size, SAME);
+      expect(res.status).toBe(200);
+      const echo = await res.json();
+      expect(echo.bytes).toBe(body.length);
+      expect(echo.sha256).toBe(sha256);
+      expect(echo.has_key).toBe(true);
+      expect(echo.content_type).toContain("multipart/form-data");
+    });
+  }
+
+  test("a cross-site upload is refused 403 before the backend sees it", async () => {
+    const before = await hits();
+    const { res } = await upload(1024, { origin: "http://evil.example", "sec-fetch-site": "cross-site" });
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ detail: "Uploads must come from monai itself." });
+    expect(await hits()).toBe(before);
   });
 });

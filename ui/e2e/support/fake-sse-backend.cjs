@@ -3,6 +3,7 @@
 // owner's containers. Synthetic data only. Not part of the app.
 //   FAKE_SSE_PORT=18001 node ui/e2e/support/fake-sse-backend.cjs
 const http = require("node:http");
+const crypto = require("node:crypto");
 
 const PORT = Number(process.env.FAKE_SSE_PORT || 18001);
 const RUN_ID = "00000000-0000-4000-8000-0000000000f1";
@@ -11,6 +12,10 @@ const json = (res, status, body) => {
   res.writeHead(status, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
 };
+
+// Upload echo (phase 39 plan 14): counts the hits so a refused cross-site POST can
+// be shown never to have reached the backend.
+let uploadHits = 0;
 
 function streamTurn(res, closeEarly, onClose) {
   res.writeHead(200, {
@@ -49,6 +54,24 @@ http
       req.on("end", () => streamTurn(res, body.includes("close-early"), (fn) => res.on("close", fn)));
     } else if (req.method === "POST" && /^\/query-stream\/[^/]+\/cancel$/.test(path)) {
       json(res, 200, { rejected: [] });
+    } else if (req.method === "POST" && /^\/threads\/[0-9a-f-]{36}\/attachments$/.test(path)) {
+      uploadHits++;
+      const hash = crypto.createHash("sha256");
+      let bytes = 0;
+      req.on("data", (c) => {
+        hash.update(c);
+        bytes += c.length;
+      });
+      req.on("end", () =>
+        json(res, 200, {
+          bytes,
+          sha256: hash.digest("hex"),
+          has_key: Boolean(req.headers["monai_api_key"]),
+          content_type: req.headers["content-type"] || "",
+        }),
+      );
+    } else if (req.method === "GET" && path === "/__upload_hits") {
+      json(res, 200, { hits: uploadHits });
     } else if (req.method === "GET" && path === "/threads") {
       json(res, 200, []);
     } else {
