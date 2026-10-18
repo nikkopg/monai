@@ -26,6 +26,10 @@ WRITE_RE = re.compile(
     re.I,
 )
 
+# Phase 39 (D-16a): words that ask for a file's rows to be imported. Matched on the
+# owner's current question only, never on document text or history.
+ATTACH_RE = re.compile(r"\b(?:import|impor|propose|ajukan|upload|unggah|save|simpan|enter|submit)\w*", re.I)
+
 _QUESTION_RE = re.compile(r"[^.?!\n]*\?")
 
 # What the LLM sees of a tool result is str(raw) (the Python repr), so the cap
@@ -69,7 +73,9 @@ def cap_for_llm(raw, cap: int = CAP_CHARS) -> str | None:
     return str(out)
 
 
-def tools_for_turn(question: str, prior: list[dict] | None = None) -> frozenset[str]:
+def tools_for_turn(
+    question: str, prior: list[dict] | None = None, *, attachment_thread: bool = False
+) -> frozenset[str]:
     """Tool names for one turn: READ_TOOL_NAMES, or every tool on write intent.
 
     `prior` is the thread's message dicts (the build_history input). Write
@@ -77,9 +83,20 @@ def tools_for_turn(question: str, prior: list[dict] | None = None) -> frozenset[
     proposal or an offer keeps the writes (D-04, D-04a), and from the newest
     user message even when its reply failed. This is the seam
     Phases 39 and 41 extend by unioning their own names into the result.
+
+    On a thread holding an attachment (D-16, D-16b) the set is exactly the 18
+    reads plus read_attachment, plus propose_statement_rows only when the owner's
+    CURRENT question matches WRITE_RE or ATTACH_RE. The thread is tainted, so no
+    other write and no history or assistant offer can open the proposer: a
+    poisoned document cannot steer a later read turn into a proposal.
     """
     from backend.chat_history import _pairs
     from backend.tools import READ_TOOL_NAMES, TOOLS
+
+    if attachment_thread:
+        q = question or ""
+        extra = {"propose_statement_rows"} if WRITE_RE.search(q) or ATTACH_RE.search(q) else set()
+        return frozenset(READ_TOOL_NAMES | {"read_attachment"} | extra)
 
     sticky = False
     last = None

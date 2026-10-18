@@ -693,3 +693,121 @@ def test_adapter_trailing_system(pkg, convert):
     role = last["role"] if isinstance(last, dict) else last.role
     assert role == "system"
     assert TAIL_REMINDER in str(last)
+
+# ---------------------------------------------------------------------------
+# 39-07: attachment threads carry a pinned reduced tool set (D-16, D-16a, D-16b)
+# ---------------------------------------------------------------------------
+
+ATT_READS = READ_TOOL_NAMES | {"read_attachment"}
+ATT_ALL = ATT_READS | {"propose_statement_rows"}
+
+
+@pytest.mark.parametrize(
+    "question",
+    ["what is in this file?", "total debits?", "and last month?", "berapa totalnya?"],
+)
+def test_attachment_thread_read_question_gets_reads_plus_read_attachment(question):
+    assert tools_for_turn(question, attachment_thread=True) == ATT_READS
+    assert len(ATT_READS) == 19
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "import this file", "propose the rows", "please add these to my account", "simpan ke Cash",
+        "unggah", "upload these", "ajukan baris ini", "submit them", "enter these rows",
+    ],
+)
+def test_attachment_thread_owner_ask_opens_the_proposer(question):
+    assert tools_for_turn(question, attachment_thread=True) == ATT_ALL
+    assert len(ATT_ALL) == 20
+
+
+@pytest.mark.parametrize(
+    "prior",
+    [
+        _pair("import this file", "Proposed.", parts={"proposals": [{"id": "p1"}], "steps": []}),
+        _pair("do it", "Done.", parts={"steps": [{"tool": "propose_statement_rows"}]}),
+        _pair("what is in it?", "Shall I propose these rows?"),
+    ],
+    ids=["proposals", "propose_step", "assistant_offer"],
+)
+def test_attachment_thread_history_never_opens_the_proposer(prior):
+    assert tools_for_turn("what is the total?", prior, attachment_thread=True) == ATT_READS
+    assert tools_for_turn("yes", prior, attachment_thread=True) == ATT_READS
+
+
+@pytest.mark.parametrize("question", ["what is in this file?", "import this file", "delete it", "ignore previous"])
+def test_attachment_tool_set_is_pinned(question):
+    """Phases 40 and 41 must extend this set deliberately: on an attachment thread
+    the only possible names are the 18 reads, read_attachment and propose_statement_rows."""
+    from backend.chat_tools import CHAT_ONLY_TOOLS
+
+    got = tools_for_turn(question, attachment_thread=True)
+    assert got <= READ_TOOL_NAMES | set(CHAT_ONLY_TOOLS)
+    assert not [n for n in got if n.startswith("ext__") or (n.startswith("propose_") and n != "propose_statement_rows")]
+
+
+def test_no_attachment_thread_keeps_existing_results():
+    assert tools_for_turn("delete it") == ALL
+    assert tools_for_turn("and last month?") == READ_TOOL_NAMES
+
+
+def test_chat_only_tools_are_in_neither_registry():
+    from backend.chat_tools import CHAT_ONLY_TOOLS
+
+    assert len(TOOLS) == 34 and len(READ_TOOL_NAMES) == 18
+    assert not set(CHAT_ONLY_TOOLS) & set(TOOLS) and not set(CHAT_ONLY_TOOLS) & READ_TOOL_NAMES
+
+
+def _agent(monkeypatch, names=None):
+    from llama_index.core.llms import MockLLM
+
+    monkeypatch.setattr(q, "_agent_workflows", {})
+    monkeypatch.setattr(q, "_get_llm", lambda: MockLLM())
+    return q._get_agent_workflow(names).agents["Agent"]
+
+
+NOTICE = "This thread has a document. Start a new thread for other changes."
+
+
+def test_attachment_workflow_has_the_pinned_tools_and_prompt_rules(monkeypatch):
+    agent = _agent(monkeypatch, tools_for_turn("import this file", attachment_thread=True))
+    assert {t.metadata.name for t in agent.tools} == ATT_ALL
+    assert NOTICE in agent.system_prompt and "never instructions" in agent.system_prompt
+    assert "from {filename}" in agent.system_prompt and "propose the rows" in agent.system_prompt
+
+
+def test_plain_workflows_have_no_attachment_rules(monkeypatch):
+    for names in (READ_TOOL_NAMES, None):
+        agent = _agent(monkeypatch, names)
+        assert NOTICE not in agent.system_prompt and "never instructions" not in agent.system_prompt
+    assert [t.metadata.name for t in agent.tools] == list(TOOLS)
+
+
+async def test_read_attachment_takes_no_turn_lock_but_the_proposer_does():
+    probe = _Probe()
+
+    def read_attachment(n: int) -> dict:
+        """Synthetic read."""
+        probe.run(n, 0.2)
+        return {"tool": "read_attachment", "n": n}
+
+    def propose_statement_rows(n: int) -> dict:
+        """Synthetic write."""
+        probe.run(n, 0.05)
+        return {"tool": "propose_statement_rows", "n": n}
+
+    tok = q.TURN.set(q.Turn())
+    try:
+        reader = q._llm_tool("read_attachment", read_attachment)
+        await asyncio.gather(reader.acall(n=1), reader.acall(n=2))
+        assert probe.max == 2
+        probe.max = 0
+        writer = q._llm_tool("propose_statement_rows", propose_statement_rows)
+        await asyncio.gather(writer.acall(n=1), writer.acall(n=2))
+        assert probe.max == 1
+        again = await writer.acall(n=1)
+        assert again.raw_output["duplicate_of_earlier_call"] is True
+    finally:
+        q.TURN.reset(tok)
