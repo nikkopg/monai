@@ -21,6 +21,8 @@ export const TOOL_LABELS: Record<string, string> = {
   find_transactions: "Find transactions",
   find_platforms: "Find platforms",
   find_accounts: "Find accounts",
+  read_attachment: "Read attached file",
+  propose_statement_rows: "Propose file rows",
 };
 
 /** snake_case to "Snake case". */

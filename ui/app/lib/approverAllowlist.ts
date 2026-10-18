@@ -58,6 +58,19 @@ export function isLocalSameOrigin(incoming: Headers): boolean {
   return true;
 }
 
+const UPLOAD_PATH = new RegExp(`^threads/${UUID}/attachments$`);
+
+/**
+ * False for a cross-site POST to the attachment upload route (RESEARCH A3). The
+ * proxy injects MONAI_API_KEY on every request, so a foreign form post must not
+ * reach this route; the check runs before the body is read. Everything else is
+ * untouched (`/api/import` has the same gap, a recorded follow-up in 39-DESIGN).
+ */
+export function uploadOriginAllowed(method: string, path: string, incoming: Headers): boolean {
+  if (method.toUpperCase() !== "POST" || !UPLOAD_PATH.test(path)) return true;
+  return isLocalSameOrigin(incoming);
+}
+
 /**
  * Marker the Inbox sends on its own list/approve/reject/skip calls. Not a
  * secret (the allowlist and the same-origin check still apply); it only stops

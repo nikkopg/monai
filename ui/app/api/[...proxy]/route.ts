@@ -27,7 +27,7 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { buildForwardHeaders } from "../../lib/approverAllowlist";
+import { buildForwardHeaders, uploadOriginAllowed } from "../../lib/approverAllowlist";
 import { isNullBodyStatus, isStreamPath } from "../../lib/proxyStream";
 
 const BACKEND = process.env.MONAI_API || "http://127.0.0.1:8001";
@@ -54,6 +54,12 @@ async function forwardRequest(
   const isStream = isStreamPath(path);
 
   const method = req.method.toUpperCase();
+
+  // A cross-site form must not upload through the key-injecting proxy (RESEARCH A3):
+  // refuse before the body is read.
+  if (!uploadOriginAllowed(method, path, req.headers)) {
+    return NextResponse.json({ detail: "Uploads must come from monai itself." }, { status: 403 });
+  }
 
   // Inject the API key; strip any client approver header, then attach the
   // server's only on allowlisted shapes. The approver key is read per request
