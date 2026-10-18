@@ -1049,14 +1049,15 @@ def _make_proposal(
     proposal_token is returned to the caller so the SSE answer event can carry
     it to the originating session — it is NEVER stored in the trace or returned
     by GET /proposals (T-02-07). `channel` picks the TTL from
-    backend.proposals.TTL (chat 15 min, mcp 48 h); unknown channels raise
+    backend.proposals.TTL (chat 15 min, mcp and upload 48 h); unknown channels raise
     ValueError before any insert.
 
     mcp proposals also get a 6-character confirm code, stored plaintext (shown
-    only to approver-key readers); chat proposals keep code NULL. Chat proposals
-    are stamped with `turn_id` from CURRENT_TURN_ID (NULL when unset; mcp rows
-    never carry one) so Stop can reject exactly one turn's rows. Callers on the
-    MCP path must discard the returned token. With `db=` the row is added and
+    only to approver-key readers); chat proposals keep code NULL. Chat and
+    upload proposals are stamped with `turn_id` from CURRENT_TURN_ID (NULL when
+    unset; mcp rows never carry one) so Stop can reject exactly one turn's rows
+    and `_persist_end` can back-fill message_id. Callers on the MCP and upload
+    paths must discard the returned token. With `db=` the row is added and
     flushed in the caller's transaction and NOT committed (used by MCP replace).
     """
     from backend.models import Proposal
@@ -1075,7 +1076,7 @@ def _make_proposal(
             expires_at=expires_at,
             code=_new_code() if channel == "mcp" else None,
             supersedes_id=supersedes_id,
-            turn_id=CURRENT_TURN_ID.get() if channel == "chat" else None,
+            turn_id=CURRENT_TURN_ID.get() if channel in ("chat", "upload") else None,
         )
 
     if db is not None:

@@ -199,6 +199,15 @@ class TxnRow(BaseModel):
     notes: str | None = None
 
 
+class UploadRow(TxnRow):
+    """Upload-channel row (parser output). Internal: never registered on FastMCP,
+    so TxnRow's published schema is unchanged."""
+
+    raw_line: str | None = None
+    llm_read: bool = False
+    assumptions: list[str] = Field(default_factory=list)
+
+
 # ---------------------------------------------------------------------------
 # Validation (D-05); no message echoes a submitted value
 # ---------------------------------------------------------------------------
@@ -302,6 +311,21 @@ def _supersede(db: Session, replaces: str) -> uuid.UUID:
     return old.id
 
 
+def _supersede_upload(db: Session, attachment_id: str) -> uuid.UUID | None:
+    """Supersede this attachment's pending upload proposals (D-20); returns the newest id.
+
+    Same session as the replacement's insert, so a later failure rolls both back.
+    """
+    rows = db.execute(text(
+        "SELECT id FROM proposals WHERE channel = 'upload' AND status = 'pending' "
+        "AND payload->'attachment'->>'id' = :aid ORDER BY created_at DESC FOR UPDATE"),
+        {"aid": attachment_id}).scalars().all()
+    for pid in rows:
+        transition(db.get(Proposal, pid), "superseded")
+    db.flush()
+    return rows[0] if rows else None
+
+
 def _create(db: Session, operation: str, payload: dict, replaces: str | None, summary: str, many: bool,
             *, channel: str = "mcp") -> dict:
     """Insert one proposal (mcp by default; superseding `replaces`) and commit once.
@@ -309,13 +333,19 @@ def _create(db: Session, operation: str, payload: dict, replaces: str | None, su
     The token _make_proposal returns is discarded; flags are computed after the
     supersede flush so a replacement is not flagged against its predecessor.
     """
-    old_id = _supersede(db, replaces) if replaces else None
+    upload = channel == "upload"
+    old_id = _supersede_upload(db, payload["attachment"]["id"]) if upload else _supersede(db, replaces) if replaces else None
     pid, _ = _make_proposal(operation, payload, channel, db=db, supersedes_id=old_id)
     p = db.get(Proposal, uuid.UUID(pid))
     flags = duplicate_flags(db, [p])[p.id]
     dups = [{"row": i, "matches": f} for i, f in enumerate(flags) if f]
     if dups:
         summary += f", {len(dups)} flagged as possible duplicate(s)" if many else ", flagged as a possible duplicate"
+    if upload:
+        # Rows a person should look at: possible duplicate, LLM-read, or a parser assumption.
+        flagged = sum(1 for i, row in enumerate(payload["rows"])
+                      if flags[i] or row["after"]["llm_read"] or row["after"]["assumptions"])
+        p.payload = {**p.payload, "attachment": {**p.payload["attachment"], "flagged_count": flagged}}
     result = {
         "proposal_id": str(p.id),
         "summary": summary,
@@ -325,6 +355,8 @@ def _create(db: Session, operation: str, payload: dict, replaces: str | None, su
     }
     if channel == "mcp":
         result["next_step"] = NEXT_STEP
+    elif upload:
+        result["flagged"] = flagged
     db.commit()
     return result
 
@@ -353,16 +385,27 @@ def propose_batch(
     errors: list[str] = []
     out: list[dict] = []
     names: set[str] = set()
+    upload = channel == "upload"
     accounts, cats = _load_refs(db)
+    if upload:
+        if account is None or attachment is None:
+            raise ValueError("upload batches need an account and an attachment")
+        # Row text never picks the account (D-13): re-check the passed id as liquid now.
+        row = db.execute(text("SELECT id, name, currency FROM accounts WHERE id = :id AND type = 'liquid'"),
+                         {"id": account[0]}).first()
+        if row is None:
+            raise BatchRefused("The account for this file can't take transactions any more. "
+                               "Upload it again with another account.")
+        account = (row[0], row[1], row[2] or "IDR")
     for i, r in enumerate(rows):
         errs = []
-        acct, err = _resolve_account(accounts, r.account)
+        acct, err = (account, None) if upload else _resolve_account(accounts, r.account)
         if err:
             errs.append(err)
         category = None
         if r.category:
             category = cats.get(r.category.strip().casefold())
-            if category is None:
+            if category is None and not upload:  # an upload row keeps its text in notes, not a bad category
                 errs.append("unknown category, call list_categories")
         amount = _parse_amount(r.amount)
         if amount is None or amount == 0:
@@ -374,18 +417,25 @@ def propose_batch(
             errors += [f"row {i}: {e}" for e in errs]
             continue
         names.add(acct[1])
-        out.append({"before": None, "after": {
+        after = {
             "date": r.date, "amount": str(amount), "account": acct[1], "category": category,
             # External-LLM text enters the ledger here: strip control/bidi chars (WR-03).
             "merchant": _clean_text(r.merchant, None), "notes": _clean_text(r.notes, None),
             "currency": acct[2], "is_transfer": False,
-        }})
+        }
+        if upload:
+            after |= {**(provenance or {}), "llm_read": r.llm_read, "raw_line": _clean_text(r.raw_line, 200),
+                      "assumptions": list(r.assumptions)}
+        out.append({"before": None, "after": after})
     if errors:
         more = f", and {len(errors) - 20} more" if len(errors) > 20 else ""
         raise BatchRefused("Nothing was proposed. Fix these rows (numbered from 0) and call again: "
                            + "; ".join(errors[:20]) + more)
     n = len(out)
-    return _create(db, "add_transaction", {"operation": "add_transaction", "rows": out}, replaces,
+    payload = {"operation": "add_transaction", "rows": out}
+    if upload:
+        payload["attachment"] = {**attachment, "row_count": n}
+    return _create(db, "add_transaction", payload, replaces,
                    f"Add {n} transaction(s) to {', '.join(sorted(names))}", many=True, channel=channel)
 
 
