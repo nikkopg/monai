@@ -991,7 +991,10 @@ def summary_for(parsed: Parsed) -> str:
     """The one-line chip text, built in code (never by the model)."""
     n = len(parsed.rows)
     if parsed.status == "refused":
-        return parsed.note or ""
+        # One Refused chip (owner cut `askable`), so the text says whether the file is still askable.
+        tail = ("You can still ask questions about it." if parsed.askable
+                else "Nothing from this file can be used. Remove it and try another.")
+        return f"{parsed.note} {tail}" if parsed.note else tail
     if parsed.status == "llm_read":
         return "1 row read by the model from an image. It will be flagged for review."
     if parsed.kind == "csv":

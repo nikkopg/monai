@@ -40,8 +40,8 @@ async def test_ingest_pdf_summaries():
 
 async def test_ingest_tampered_statement_is_refused_with_its_note():
     p = await _ingest(fx.bca_like_statement(tamper="closing"), "pdf")
-    assert p.status == "refused" and p.note
-    assert att.summary_for(p) == p.note
+    assert p.status == "refused" and p.note and p.askable
+    assert att.summary_for(p) == f"{p.note} You can still ask questions about it."
 
 
 def _fake_receipt(monkeypatch, kind_seen):
@@ -83,7 +83,7 @@ async def test_ingest_password_propagates(monkeypatch, password, wrong):
 async def test_ingest_image_refused_becomes_refused_parsed():
     p = await _ingest(b"\x89PNG\r\n\x1a\nnot really a png", "image")
     assert (p.kind, p.status) == ("image", "refused") and p.note == "The image could not be read."
-    assert att.summary_for(p) == p.note
+    assert att.summary_for(p) == f"{p.note} Nothing from this file can be used. Remove it and try another."
 
 
 def test_summary_singular():
