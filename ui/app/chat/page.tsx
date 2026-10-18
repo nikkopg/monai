@@ -199,6 +199,7 @@ const isUuid = (id: string) => UUID_RE.test(id);
 type SendOpts = { retry?: boolean; replaceFrom?: string; mode?: "regenerate" | "edit" };
 
 const WAIT_REASON = "Wait for the current answer to finish, or stop it first.";
+const SLASH_REASON = "Wait for this chat to finish compacting or clearing.";
 const APPLIED_REASON = "Can't redo this: a change made from here on was already applied.";
 
 // Inline editor in place of a user bubble (D-20). Mounts focused, caret at the end.
@@ -748,7 +749,8 @@ function ChatInner() {
       }
     }
     const q = (text ?? question).trim();
-    if (!q || loading || stream.busyRef.current || reconcilingRef.current) return;
+    // A turn during /compact or /clear would be clobbered by its refetch (WR-05).
+    if (!q || loading || slash !== null || stream.busyRef.current || reconcilingRef.current) return;
     const target = replaceFrom
       ? messages.findIndex((m) => m.kind === "user" && m.id === replaceFrom)
       : -1;
@@ -1082,6 +1084,7 @@ function ChatInner() {
   // Why Regenerate / Edit at user index `u` is unavailable (null = available).
   function redoDisabled(u: number): string | null {
     if (asking || loading) return WAIT_REASON;
+    if (slash !== null) return SLASH_REASON;
     if (
       messages
         .slice(u)
@@ -1223,7 +1226,7 @@ function ChatInner() {
         {m.status === "error" && m.error && errCopy && (
           <div style={{ marginBottom: 16 }}>
             <ErrorBlock title={errCopy.title} body={errCopy.body} model={m.error.model}>
-              {isLast && !asking && !loading && (
+              {isLast && !asking && !loading && !slash && (
                 <button
                   type="button"
                   style={{ ...btnDark, minHeight: 36 }}

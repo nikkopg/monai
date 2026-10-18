@@ -89,6 +89,10 @@ test.describe("/compact and /clear (D-26)", () => {
     await expect(page.getByTestId("composer-note")).toHaveText("Compacting…");
     await expect(composer(page)).toBeDisabled();
     await expect(page.getByRole("button", { name: "Ask" })).toBeDisabled();
+    // Regenerate is locked too: its turn would be clobbered by the refetch (WR-05).
+    const regen = page.getByRole("button", { name: "Regenerate answer" }).last();
+    await expect(regen).toHaveAttribute("aria-disabled", "true");
+    await regen.click({ force: true });
     release();
 
     await expect(DIVIDER(page)).toHaveText("Earlier messages summarized");
