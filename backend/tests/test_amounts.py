@@ -1,9 +1,11 @@
 """Phase 39 amount parsing (D-12); synthetic values only."""
 import re
+import uuid
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from sqlalchemy import text
 
 from backend import attachments as att
 from backend.attachments import (
@@ -96,3 +98,51 @@ def test_no_float_in_money_paths():
             assert not annotation.search(line), f"{name}:{n} binary float annotation"
             if "json.loads(" in line:
                 assert "parse_float=str" in line, f"{name}:{n} json.loads without parse_float=str"
+
+
+def test_idr_amount_round_trips_upload_to_ledger(client, api_key, approver_key):
+    """1.250.000,00 stays an exact decimal string from the file to the transaction and its audit row (D-12)."""
+    from backend import chat_tools, tools
+    from backend.db import SessionLocal
+    from backend.models import Account, AuditLog, Transaction
+    from backend.tests.test_write_endpoints import _cleanup_account
+
+    name, tid = "ZZ39 Round Cash", uuid.uuid4()
+    db = SessionLocal()
+    _cleanup_account(db, name)
+    acct = Account(name=name, type="liquid", currency="IDR")
+    db.add(acct)
+    db.commit()
+    pid = None
+    try:
+        csv_text = "Tanggal;Keterangan;Debit;Kredit\n25/03/2026;ZZ Sewa;1.250.000,00;\n"
+        r = client.post(f"/threads/{tid}/attachments", headers={"MONAI_API_KEY": api_key},
+                        data={"account_id": acct.id}, files={"file": ("zz39.csv", csv_text.encode(), "text/csv")})
+        assert r.status_code == 200 and r.json()["status"] == "ok", r.text
+        aid = r.json()["attachment_id"]
+        assert db.execute(text("SELECT rows->0->>'amount' FROM attachments WHERE id = :a"), {"a": aid}).scalar() == "-1250000.00"
+
+        token = tools.CURRENT_THREAD_ID.set(tid)
+        try:
+            pid = chat_tools.propose_statement_rows(aid)["proposal_id"]
+        finally:
+            tools.CURRENT_THREAD_ID.reset(token)
+        payload = db.execute(text("SELECT payload FROM proposals WHERE id = :i"), {"i": pid}).scalar()
+        assert payload["rows"][0]["after"]["amount"] == "-1250000.00"
+
+        r = client.post(f"/proposals/{pid}/approve", headers={"MONAI_APPROVER_KEY": approver_key})
+        assert r.status_code == 200, r.text
+        db.expire_all()
+        tx = db.query(Transaction).filter(Transaction.account_id == acct.id).one()
+        assert tx.amount == Decimal("-1250000.00") and tx.amount.as_tuple().exponent == -2
+        after = db.query(AuditLog).filter(AuditLog.entity == "transaction", AuditLog.entity_id == tx.id).one().after
+        assert after["amount"] == "-1250000.00" and after["attachment_id"] == aid and after["sha256"]
+    finally:
+        db.rollback()
+        if pid:
+            db.execute(text("UPDATE proposals SET supersedes_id = NULL WHERE id = :i"), {"i": pid})
+            db.execute(text("DELETE FROM proposals WHERE id = :i"), {"i": pid})
+        db.execute(text("DELETE FROM threads WHERE id = :t"), {"t": tid})
+        db.commit()
+        _cleanup_account(db, name)
+        db.close()
