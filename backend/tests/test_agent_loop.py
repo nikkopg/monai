@@ -135,8 +135,14 @@ def test_not_sticky_after_read_pair():
     assert tools_for_turn("and last month?", prior) == READ_TOOL_NAMES
 
 
-def test_not_sticky_when_last_turn_errored():
-    prior = _pair("How much did I spend?", "Total 100.") + _pair("add coffee", "", status="error")
+@pytest.mark.parametrize("status", ["error", "cancelled"])
+def test_sticky_after_failed_write_turn(status):
+    prior = _pair("How much did I spend?", "Total 100.") + _pair("add coffee", "", status=status)
+    assert tools_for_turn("try again", prior) == ALL
+
+
+def test_not_sticky_when_last_read_turn_errored():
+    prior = _pair("How much did I spend?", "Total 100.") + _pair("and income?", "", status="error")
     assert tools_for_turn("and last month?", prior) == READ_TOOL_NAMES
 
 

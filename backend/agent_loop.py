@@ -74,7 +74,8 @@ def tools_for_turn(question: str, prior: list[dict] | None = None) -> frozenset[
 
     `prior` is the thread's message dicts (the build_history input). Write
     intent is sticky from the last complete pair, so "yes, do that" after a
-    proposal or an offer keeps the writes (D-04, D-04a). This is the seam
+    proposal or an offer keeps the writes (D-04, D-04a), and from the newest
+    user message even when its reply failed. This is the seam
     Phases 39 and 41 extend by unioning their own names into the result.
     """
     from backend.chat_history import _pairs
@@ -94,6 +95,11 @@ def tools_for_turn(question: str, prior: list[dict] | None = None) -> frozenset[
             or parts.get("proposals")
             or any(str(s.get("tool", "")).startswith("propose_") for s in parts.get("steps") or [])
         )
+    # The newest user message counts even when its reply errored or was stopped,
+    # so "try again" after a failed write turn keeps the writes (WR-07).
+    last_user = next((m for m in reversed(prior or []) if m["role"] == "user"), None)
+    if last_user is not None and WRITE_RE.search(last_user["content"] or ""):
+        sticky = True
     if sticky or WRITE_RE.search(question or ""):
         return frozenset(TOOLS)
     return READ_TOOL_NAMES
