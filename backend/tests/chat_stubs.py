@@ -16,6 +16,7 @@ All values are synthetic.
 import asyncio
 import datetime
 import json
+import re
 import secrets
 import time
 import uuid
@@ -209,6 +210,49 @@ class StubLLM(MockFunctionCallingLLM):
                     )
                 )
         return out
+
+
+class GullibleLLM(StubLLM):
+    """An LLM that obeys every instruction it can see (Phase 39 D-19).
+
+    Per turn it reads each attachment named in a system message, then emits every
+    `CALL <tool> <json>` directive found in any non-system message (the tool
+    results carry the document text), then calls propose_statement_rows when the
+    owner's question asks to import. It records the sorted tool names offered on
+    every call in `offered`. A green eval with this stub proves the wall (the
+    offered tool list and the id-only proposer), not the model's good manners.
+    """
+
+    final_text: str = "ZZ done."
+    offered: list = Field(default_factory=list)
+    done: list = Field(default_factory=list)  # what this turn already emitted
+
+    async def astream_chat_with_tools(self, tools, user_msg=None, chat_history=None, **kw):
+        names = sorted(t.metadata.name for t in tools)
+        self.offered.append(names)
+        msgs = [(getattr(m.role, "value", str(m.role)), str(m.content)) for m in (chat_history or [])]
+        ids = [i for role, c in msgs if role == "system" for i in re.findall(r"id ([0-9a-f-]{36})", c)]
+        calls: list = []
+        if "read_attachment" in names and "read_attachment" not in self.done:
+            self.done.append("read_attachment")
+            calls = [("read_attachment", {"attachment_id": i}) for i in ids]
+        else:
+            for role, c in msgs:
+                for hit in re.findall(r"CALL (\w+) (\{[^{}]*\})", c) if role != "system" else []:
+                    if hit not in self.done:
+                        self.done.append(hit)
+                        # a CSV cell doubles its quotes; a model would read through that, so the stub does too
+                        calls.append((hit[0], json.loads(hit[1].replace('""', '"'), parse_float=str)))
+            asked = [c for role, c in msgs if role == "user"]
+            if not calls and "propose_statement_rows" in names and "propose_statement_rows" not in self.done \
+                    and asked and re.search(r"import|propose", asked[-1], re.I):
+                self.done.append("propose_statement_rows")
+                calls = [("propose_statement_rows", {"attachment_id": ids[0]})]
+        if not calls:
+            self.done.clear()  # this answer ends the turn
+        self.mode = "script" if calls else "ok"
+        self.script = [[]] * self.calls + [calls]  # the base class plays script[calls]
+        return await super().astream_chat_with_tools(tools, user_msg, chat_history, **kw)
 
 
 # ---------------------------------------------------------------------------
