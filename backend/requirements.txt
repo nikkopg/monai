@@ -18,3 +18,5 @@ apscheduler>=3.11.3
 pytest>=8.0.0
 fastmcp>=3.4,<4
 pytest-asyncio>=1.4,<2
+# Text-PDF statement parsing (Phase 39); brings pdfminer.six and pypdfium2. Pillow is already present via llama-index-core.
+pdfplumber>=0.11.10,<0.12
