@@ -228,3 +228,35 @@ def scanned_pdf(pages: int = 1) -> bytes:
 # NeedsPassword mapping is covered by a monkeypatched pdfplumber.open instead.
 ENC_PDF_B64 = None
 ENC_PDF_PASSWORD = "zz-test-pw"
+
+
+# ---------------------------------------------------------------------------
+# Receipt images (Plan 39-06): drawn with Pillow at test time, fictional shops.
+# ---------------------------------------------------------------------------
+
+def receipt_png(merchant="ZZ Synthetic Shop", total="50.500", date="2026-03-14", lines=(), fmt="PNG",
+                size=(400, 300)) -> bytes:
+    """A white receipt with black text, as bytes in the given Pillow format."""
+    from PIL import Image, ImageDraw
+
+    im = Image.new("RGB", size, "white")
+    d = ImageDraw.Draw(im)
+    for i, t in enumerate([merchant, date, *lines, f"TOTAL {total}"]):
+        d.text((20, 20 + 18 * i), t, fill="black")
+    buf = io.BytesIO()
+    im.save(buf, fmt)
+    return buf.getvalue()
+
+
+def receipt_png_with_gps() -> bytes:
+    """The same receipt as a JPEG carrying an EXIF GPSInfo block (synthetic coordinates)."""
+    from PIL import Image, ExifTags
+
+    im = Image.open(io.BytesIO(receipt_png()))
+    exif = Image.Exif()
+    gps = exif.get_ifd(ExifTags.IFD.GPSInfo)
+    gps[ExifTags.GPS.GPSLatitudeRef] = "S"
+    gps[ExifTags.GPS.GPSLatitude] = (6.0, 12.0, 30.0)
+    buf = io.BytesIO()
+    im.save(buf, "JPEG", exif=exif)
+    return buf.getvalue()

@@ -738,3 +738,60 @@ def current_locality(db: Session) -> dict:
     return locality(
         eff["llm_provider"], eff["llm_model"], os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     )
+
+
+# ---------------------------------------------------------------------------
+# Images and scanned PDFs (D-11): capped, EXIF-free PNGs for the vision read.
+# ---------------------------------------------------------------------------
+
+MAX_IMAGE_PIXELS = 40_000_000
+MAX_VISION_PAGES = 5
+MAX_IMAGE_SIDE = 2000
+_RENDER_DPI = 150
+
+
+class ImageRefused(ValueError):
+    """The image can't be sent to a model; the message is fixed text, safe to show."""
+
+
+_TOO_LARGE = "The image is too large to read safely."
+
+
+def _to_png(im) -> bytes:
+    """RGB, at most MAX_IMAGE_SIDE a side, as PNG. No exif argument is passed, so EXIF (GPS included) is dropped."""
+    im = im.convert("RGB")
+    im.thumbnail((MAX_IMAGE_SIDE, MAX_IMAGE_SIDE))
+    buf = io.BytesIO()
+    im.save(buf, "PNG")
+    return buf.getvalue()
+
+
+def prepare_images(data: bytes, kind: str, password: str | None = None) -> list[bytes]:
+    """PNG bytes for the model: one for an image, up to MAX_VISION_PAGES for a scanned PDF.
+
+    Raises ImageRefused (bomb, unreadable) or NeedsPassword. Pillow's pixel
+    warning is turned into an error so a bomb is refused before it is decoded.
+    """
+    import warnings
+
+    from PIL import Image, ImageOps
+
+    Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            if kind == "image":
+                Image.open(io.BytesIO(data)).verify()  # verify() spoils the image, so open it again
+                return [_to_png(ImageOps.exif_transpose(Image.open(io.BytesIO(data))))]
+            with open_pdf(data, password) as pdf:
+                pages = pdf.pages[:MAX_VISION_PAGES]
+                # a huge MediaBox would be rasterised in full before any pixel check
+                if any(p.width * p.height * (_RENDER_DPI / 72) ** 2 > MAX_IMAGE_PIXELS for p in pages):
+                    raise ImageRefused(_TOO_LARGE)
+                return [_to_png(p.to_image(resolution=_RENDER_DPI).original) for p in pages]
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning):
+        raise ImageRefused(_TOO_LARGE) from None
+    except (ImageRefused, NeedsPassword):
+        raise
+    except Exception:
+        raise ImageRefused("The image could not be read.") from None
