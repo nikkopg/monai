@@ -29,6 +29,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -297,6 +298,52 @@ class Message(Base):
     )
 
     thread: Mapped["Thread"] = relationship(back_populates="messages")
+
+
+class Attachment(Base):
+    """A file attached to a chat thread (migration 018, Phase 39).
+
+    `raw` is purged after 7 days (backend/attachments.purge_expired sets it
+    NULL and stamps `purged_at`); `extracted_text`, `rows` and `meta` stay.
+    `rows` holds Decimal amounts as strings. Deleting the thread cascades;
+    deleting the message or account only NULLs the reference.
+    """
+
+    __tablename__ = "attachments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("threads.id", ondelete="CASCADE"), nullable=False
+    )
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    mime: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    raw: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    extracted_text: Mapped[str] = mapped_column(Text, server_default="", nullable=False)
+    rows: Mapped[list] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb"), nullable=False
+    )
+    meta: Mapped[dict] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb"), nullable=False
+    )
+    parse_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    parse_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
+    )
+    purged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class Holding(Base):
