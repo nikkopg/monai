@@ -9,8 +9,14 @@ the file remain. Plans 39-04..06 add the parsers to this module.
 pdfplumber and Pillow must only ever be imported inside functions here, never at
 module level: main.py imports this module at startup and the 3.12 snapshot
 image predates pdfplumber.
+
+PDF statements are read in code and accepted only when their own printed
+balances reconcile (D-09). The currency is the picked account's: statements are
+not currency-detected. Having an LLM structure an unrecognised layout is
+deferred (AIEX), so such a file is refused with a reason but stays askable.
 """
 
+import calendar
 import codecs
 import csv
 import io
@@ -378,6 +384,277 @@ def parse_csv_attachment(data: bytes, *, account_name: str, account_currency: st
             "assumptions": list(assumptions),
         })
     return Parsed("csv", "ok", rows, text, meta, note)
+
+
+# ---------------------------------------------------------------------------
+# Text-PDF statements (D-09, D-09a, D-10): rows are accepted only when they reconcile.
+# ---------------------------------------------------------------------------
+
+MAX_PDF_PAGES = 60
+
+
+class NeedsPassword(Exception):
+    """The PDF needs a password (wrong=False) or the one given did not open it (wrong=True).
+
+    The message is fixed text: the password never enters an exception, note or log.
+    """
+
+    def __init__(self, wrong: bool):
+        super().__init__("That password didn't open the file." if wrong else "This PDF needs a password.")
+        self.wrong = wrong
+
+
+def open_pdf(data: bytes, password: str | None):
+    """An open pdfplumber PDF (use `with`); NeedsPassword when it can't be decrypted."""
+    import pdfplumber
+    from pdfminer.pdfdocument import PDFPasswordIncorrect
+    from pdfplumber.utils.exceptions import PdfminerException
+
+    try:
+        return pdfplumber.open(io.BytesIO(data), password=password or "")
+    except PdfminerException as e:
+        if e.args and isinstance(e.args[0], PDFPasswordIncorrect):
+            raise NeedsPassword(bool(password)) from None
+        raise
+
+
+def classify_pdf(data: bytes, password: str | None) -> tuple[str, int]:
+    """("pdf_text" | "pdf_scanned", page count); scanned means no text layer on the first 3 pages."""
+    with open_pdf(data, password) as pdf:
+        return ("pdf_text" if any(p.chars for p in pdf.pages[:3]) else "pdf_scanned"), len(pdf.pages)
+
+
+# Per-bank vocabulary as data over one generic line parser. The parser uses the union
+# of every layout's words; a layout matters for `name` and its own rules. Adding a
+# bank is a fixture plus an entry here.
+LAYOUTS = (
+    {   # BCA e-statement: credits carry no marker, the running balance shows on some rows only
+        "name": "bca_like",
+        "header_words": ("tanggal", "keterangan", "mutasi", "saldo"),
+        "footer_labels": (("mutasi cr", "cr"), ("mutasi db", "db")),
+        "unmarked_credit": True,
+    },
+    {
+        "name": "mandiri_like",
+        "header_words": ("tanggal", "keterangan", "debit", "kredit", "saldo"),
+        "footer_labels": (("total kredit", "cr"), ("total debit", "db")),
+    },
+    {
+        "name": "generic",
+        "header_words": (),
+        "open_labels": ("saldo awal", "opening balance", "beginning balance"),
+        "close_labels": ("saldo akhir", "closing balance", "ending balance"),
+        "footer_labels": (("total credits", "cr"), ("total debits", "db")),
+        "carried_labels": ("saldo pindahan", "brought forward", "carried forward"),
+        "skip_words": ("halaman", "page", "periode", "period", "tanggal", "keterangan", "description"),
+    },
+)
+
+
+def _words(key: str) -> tuple[str, ...]:
+    return tuple(w for L in LAYOUTS for w in L.get(key, ()))
+
+
+_AMT = r"[-(+]?\d[\d.,]*[.,]\d{1,2}\)?(?:\s?(?:DB|CR|D|K)\b)?"  # always has 1-2 decimals
+_TX = re.compile(
+    rf"^(?P<d>\d{{2}}[/-]\d{{2}}(?:[/-]\d{{2,4}})?)\s+(?P<desc>.+?)\s+(?P<a1>{_AMT})(?:\s+(?P<a2>{_AMT}))?$", re.I
+)
+_OPEN = re.compile(rf"(?i)\b(?:{'|'.join(map(re.escape, _words('open_labels')))})\b\W*(?P<a>{_AMT})\s*$")
+_CLOSE = re.compile(rf"(?i)\b(?:{'|'.join(map(re.escape, _words('close_labels')))})\b\W*(?P<a>{_AMT})\s*$")
+_FOOT_KIND = {label: kind for label, kind in _words("footer_labels")}
+_FOOT = re.compile(
+    rf"(?i)\b(?P<label>{'|'.join(map(re.escape, _FOOT_KIND))})\b\s+(?P<n>\d+)\s+(?P<a>{_AMT})\s*$"
+)
+_CARRIED, _SKIP = _words("carried_labels"), _words("skip_words")
+
+_MONTHS = {
+    n: i
+    for i, names in enumerate(
+        [("jan", "januari", "january"), ("feb", "februari", "february"), ("mar", "maret", "march"),
+         ("apr", "april"), ("mei", "may"), ("jun", "juni", "june"), ("jul", "juli", "july"),
+         ("agu", "agt", "ags", "agustus", "aug", "august"), ("sep", "sept", "september"),
+         ("okt", "oct", "oktober", "october"), ("nov", "nopember", "november"),
+         ("des", "dec", "desember", "december")], 1)
+    for n in names
+}
+_PERIOD_LINE = re.compile(r"(?i)\b(?:periode|period)\b(?P<rest>.*)")
+_FULL_DATE = re.compile(r"(\d{1,2})[/.\-](\d{1,2})[/.\-](\d{4})")
+_MONTH_YEAR = re.compile(r"([A-Za-z]+)\.?\s+(\d{4})")
+
+
+def _period(text: str) -> tuple[date, date] | None:
+    """(start, end) from a Periode/Period line, as dd/mm/yyyy - dd/mm/yyyy or month name and year; else None."""
+    for line in _PERIOD_LINE.finditer(text):
+        rest = line["rest"]
+        try:
+            days = [date(int(y), int(m), int(d)) for d, m, y in _FULL_DATE.findall(rest)]
+        except ValueError:
+            continue
+        if len(days) >= 2:
+            return min(days), max(days)
+        my = [(_MONTHS[n.lower()], int(y)) for n, y in _MONTH_YEAR.findall(rest) if n.lower() in _MONTHS]
+        if my:
+            (m0, y0), (m1, y1) = my[0], my[-1]
+            return date(y0, m0, 1), date(y1, m1, calendar.monthrange(y1, m1)[1])
+    return None
+
+
+def _row_date(token: str, period: tuple[date, date] | None) -> str:
+    """ISO date; a year-less dd/mm takes its year from the period (ValueError if it fits none of them)."""
+    if len(token) > 5:
+        return parse_date(token, "dmy")
+    d, mo = int(token[:2]), int(token[3:])
+    for y in range(period[0].year, period[1].year + 1):
+        try:
+            day = date(y, mo, d)
+        except ValueError:
+            continue
+        if period[0] <= day <= period[1]:
+            return day.isoformat()
+    raise ValueError("outside the period")
+
+
+def _fmt_like(d: Decimal, sep: str) -> str:
+    """d with two decimals, grouped in the file's own style ("." decimals: 1,234.50; "," decimals: 1.234,50)."""
+    s = f"{d:,.2f}"
+    return s if sep == "." else s.translate({44: 46, 46: 44})
+
+
+def parse_pdf_statement(data: bytes, password: str | None, *, account_currency: str) -> Parsed:
+    """A text PDF statement into candidate rows, or a refusal with a numeric reason.
+
+    Accepted only when opening + rows == closing and, wherever a running balance
+    is printed, previous + amount == balance, all in exact Decimal (footer totals
+    too when printed). A row's sign comes from its DB/CR marker, else from the
+    balance delta; BCA-like layouts print no marker on credits, so an unmarked
+    amount there is a credit. Otherwise the file is refused, never guessed. White text is
+    counted and kept; characters under 2 pt or off the page are dropped and
+    counted (D-09a). Raises NeedsPassword. `account_currency` is the picked
+    account's: statements are not currency-detected.
+    """
+    meta = {"layout": "generic", "invariant": "none", "hidden_white_chars": 0, "dropped_chars": 0}
+    with open_pdf(data, password) as pdf:
+        meta["pages"] = len(pdf.pages)
+        if meta["pages"] > MAX_PDF_PAGES:
+            return Parsed("pdf_text", "refused", [], "", meta, f"{meta['pages']} pages exceed the {MAX_PDF_PAGES}-page limit.")
+        texts = []
+        for page in pdf.pages:
+            x0, top, x1, bottom = page.bbox
+
+            def gone(c):
+                return c["size"] < 2 or c["x1"] < x0 or c["x0"] > x1 or c["bottom"] < top or c["top"] > bottom
+
+            meta["dropped_chars"] += sum(map(gone, page.chars))
+            meta["hidden_white_chars"] += sum(_is_white(c) and not gone(c) for c in page.chars)
+            texts.append(page.filter(lambda o: o.get("object_type") != "char" or not gone(o)).extract_text() or "")
+    return _reconcile("\n".join(texts)[:MAX_TEXT_CHARS], meta)
+
+
+def _is_white(char: dict) -> bool:
+    color = char.get("non_stroking_color")
+    color = tuple(color) if isinstance(color, (list, tuple)) else (color,)
+    return bool(color) and all(v == 1 for v in color)
+
+
+def _reconcile(text: str, meta: dict) -> Parsed:
+    """Read the statement lines in `text` and apply the balance invariants."""
+    low = text.casefold()
+    layout = next(L for L in LAYOUTS if all(w in low for w in L["header_words"]))
+    period = _period(text)
+    meta.update(layout=layout["name"], period=period and {"start": period[0].isoformat(), "end": period[1].isoformat()})
+
+    def refuse(note: str) -> Parsed:
+        return Parsed("pdf_text", "refused", [], text, meta, note)
+
+    opening = closing = prev = None
+    foot, rows = {}, []
+    for line in (ln.strip() for ln in text.splitlines()):
+        lowline = line.casefold()
+        if any(w in lowline for w in _CARRIED):
+            prev = None
+        elif m := _OPEN.search(line):
+            opening, prev = m["a"], None
+        elif m := _CLOSE.search(line):
+            closing, prev = m["a"], None
+        elif m := _FOOT.search(line):
+            foot[_FOOT_KIND[m["label"].casefold()]] = (int(m["n"]), m["a"])
+            prev = None
+        elif m := _TX.match(line):
+            prev = {"d": m["d"], "desc": m["desc"], "a1": m["a1"], "a2": m["a2"], "lines": [line]}
+            rows.append(prev)
+        elif any(w in lowline for w in _SKIP):
+            prev = None
+        elif prev:  # a continuation line joins the row above
+            prev["desc"] += " " + line
+            prev["lines"].append(line)
+
+    if opening is None:
+        return refuse("No opening balance found.")
+    if closing is None:
+        return refuse("No closing balance found.")
+    meta["row_count"] = len(rows)
+    if not rows:
+        return refuse("No transaction rows were recognised.")
+    if len(rows) > MAX_ROWS:
+        return refuse(f"{len(rows)} rows exceed the {MAX_ROWS}-row batch limit.")
+    if period is None and any(len(r["d"]) == 5 for r in rows):
+        return refuse("No statement period found, so the year of each row is unknown.")
+
+    tokens = [opening, closing] + [t for r in rows for t in (r["a1"], r["a2"]) if t] + [a for _, a in foot.values()]
+    sep, evidence = infer_decimal_sep_with_evidence(tokens)
+    meta["separator"] = {"sep": sep, "evidence": evidence}
+
+    def show(d):
+        return _fmt_like(d, sep)
+
+    try:
+        start, end = parse_amount(opening, sep), parse_amount(closing, sep)
+        footer = {k: (n, abs(parse_amount(a, sep))) for k, (n, a) in foot.items()}
+    except ValueError:
+        return refuse("A balance or footer total can't be read.")
+    meta.update(opening=format(start, "f"), closing=format(end, "f"))
+
+    out, running, checked = [], start, 0
+    for n, r in enumerate(rows, 1):
+        try:
+            iso = _row_date(r["d"], period)
+        except ValueError:
+            return refuse(f"Row {n} ({r['d']}) has a date that can't be read or lies outside the statement period.")
+        try:
+            sign, amt = _clean(r["a1"])[0], parse_amount(r["a1"], sep)
+            bal = parse_amount(r["a2"], sep) if r["a2"] else None
+        except ValueError:
+            return refuse(f"Row {n} ({iso}) has an amount that can't be read.")
+        if sign is None and not layout.get("unmarked_credit"):
+            if bal is None:
+                return refuse(f"Row {n} ({iso}) has no debit or credit marker and no balance to tell its direction.")
+            amt = next((s for s in (amt, -amt) if running + s == bal), None)  # credit first
+            if amt is None:
+                return refuse(f"Running balance off at {iso}: {show(bal)} fits neither a credit nor a debit of {r['a1']}.")
+        if bal is not None:
+            if running + amt != bal:
+                return refuse(f"Running balance off at {iso}: expected {show(running + amt)} got {show(bal)}.")
+            checked += 1
+        running += amt
+        out.append({
+            "date": iso,
+            "amount": format(amt, "f"),
+            "merchant": _clean_text(r["desc"], None) or None,
+            "notes": None,
+            "category": None,
+            "raw_line": _clean_text(" / ".join(r["lines"]), 200),
+            "llm_read": False,
+            "assumptions": [],
+        })
+
+    if running != end:
+        return refuse(f"Closing balance off by {show(running - end)}.")
+    amounts = [Decimal(r["amount"]) for r in out]
+    for kind, vals in (("cr", [a for a in amounts if a > 0]), ("db", [-a for a in amounts if a < 0])):
+        if kind in footer and footer[kind] != (len(vals), sum(vals)):
+            return refuse("The statement's footer totals don't match its rows.")
+    meta["invariant"] = "running balance verified" if checked == len(rows) else "balance verified"
+    return Parsed("pdf_text", "ok", out, text, meta)
 
 
 # ---------------------------------------------------------------------------
