@@ -119,6 +119,29 @@ test.describe("plan bar and Approve all (LOOP-04)", () => {
     await expect(page.getByText("Applied successfully.")).toHaveCount(2);
   });
 
+  test("clears the plan-bar error once that card is applied by hand", async ({ page }) => {
+    await setup(page, three(), allTokens);
+    let failB = true;
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const calls = await mockConfirm(page, async (id) => {
+      if (id === ids.b && failB) return { status: 409, json: { detail: "Synthetic conflict" } };
+      if (id === ids.b) await held;
+      return { status: 200, json: { id, status: "confirmed" } };
+    });
+    await page.goto(`/chat?thread=${TID}`);
+    await approveAll(page).click();
+    await expect(page.getByText("Synthetic conflict")).toBeVisible();
+
+    failB = false;
+    await approve(page).nth(0).click(); // card b, the first still pending
+    await expect.poll(() => calls.length).toBe(3);
+    await expect(page.getByText("Synthetic conflict")).toHaveCount(0); // hidden while retrying
+    release();
+    await expect(page.getByText("Applied successfully.")).toHaveCount(2);
+    await expect(page.getByText("Synthetic conflict")).toHaveCount(0);
+  });
+
   test("locks every Approve and Reject while it runs", async ({ page }) => {
     await setup(page, three(), allTokens);
     let release!: () => void;

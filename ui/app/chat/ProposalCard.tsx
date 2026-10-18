@@ -198,6 +198,7 @@ export default function ProposalCard({
   }, [terminal, proposal.id]);
 
   const pending = view === "pending";
+  const shownExternal = pending && !busy ? externalError : null;
   const readOnly = pending && !expired && tokenChecked && token === null;
   const noticeId = `unapprovable-${proposal.id}`;
   const rejectDisabled = busy || !!locked || !pending || expired;
@@ -328,11 +329,12 @@ export default function ProposalCard({
             : "Rejected — no changes made."}
         </div>
       )}
-      {(error ?? externalError) && (
+      {/* A plan-bar error is stale once the card leaves pending or retries itself. */}
+      {(error ?? shownExternal) && (
         <div
           style={{ color: tokens.color.terracottaText, fontSize: 12, marginTop: 8 }}
         >
-          {error ?? externalError}
+          {error ?? shownExternal}
         </div>
       )}
 
