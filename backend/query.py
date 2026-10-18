@@ -155,7 +155,8 @@ class Turn:
     """Per-turn tool state, one per agent_stream call (D-11, D-12).
 
     `lock` serialises the turn's write tools; `seen` maps a write call's
-    canonical key to its first (token-stripped) result so a repeat returns it.
+    canonical key to its first (token-stripped) result so a repeat returns it,
+    marked duplicate_of_earlier_call (WR-02).
     Created inside the running loop, never at import.
     """
 
@@ -217,7 +218,14 @@ def _llm_tool(name: str, fn):
             key = _call_key(name, kwargs)
             if key not in turn.seen:
                 turn.seen[key] = _strip_token(await asyncio.to_thread(fn, *args, **kwargs))
-            return turn.seen[key]
+                return turn.seen[key]
+            first = turn.seen[key]
+        if not isinstance(first, dict):
+            return first
+        # A replay is marked so the model cannot claim a second change (WR-02).
+        note = "identical change already proposed this turn; no new proposal was created"
+        return {**first, "duplicate_of_earlier_call": True,
+                "note": f"{first['note']} ({note})" if first.get("note") else note}
 
     async def _cap(raw):
         from backend.agent_loop import cap_for_llm

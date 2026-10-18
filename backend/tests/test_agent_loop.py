@@ -451,6 +451,8 @@ async def test_dedupe_one_row(monkeypatch, cleanup):
     assert len(rows) == 1
     results = _of_type(payloads, "tool_result")
     assert [r["step"]["result"]["proposal_id"] for r in results] == [str(rows[0].id)] * 2
+    assert [r["step"]["result"].get("duplicate_of_earlier_call") for r in results] == [None, True]
+    assert "no new proposal was created" in "".join(llm.seen[2])
     answer = _of_type(payloads, "answer")[0]
     assert [p["id"] for p in answer["proposals"]] == [str(rows[0].id)]
     assert run.proposal_ids == [str(rows[0].id)]
