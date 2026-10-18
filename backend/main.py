@@ -1528,10 +1528,15 @@ async def query_stream(req: QueryRequest):
     active (checked first), 422 for a missing thread_id or a target that is not
     a user message of the thread, 409 when a proposal on the removed turns was
     already applied. Otherwise pending chat proposals there are superseded.
+
+    `attachment_ids` bind to this question; an id from another thread (or ids
+    without a thread_id) is 422 and nothing is stored (Phase 39 D-03).
     """
     from backend import chat_service, query
     try:
-        run = await chat_service.start_turn(req.question, req.thread_id, req.replace_from)
+        run = await chat_service.start_turn(
+            req.question, req.thread_id, req.replace_from, req.attachment_ids
+        )
     except LookupError:
         raise HTTPException(404, "Thread not found")
     except chat_service.ReplaceConflict:

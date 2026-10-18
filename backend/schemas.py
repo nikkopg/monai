@@ -525,6 +525,7 @@ class QueryRequest(BaseModel):
     question: str
     thread_id: _uuid.UUID | None = None
     replace_from: _uuid.UUID | None = None  # the user message to replace (regenerate and edit, Phase 37 D-18)
+    attachment_ids: list[_uuid.UUID] = Field(default_factory=list, max_length=20)  # bound to this question (Phase 39 D-03)
 
 
 class ThreadTitleUpdate(BaseModel):

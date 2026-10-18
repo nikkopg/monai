@@ -26,7 +26,7 @@ import anyio
 from llama_index.core.llms import ChatMessage, MessageRole
 from sqlalchemy import delete, func, or_, select, text, update
 
-from backend import agent_loop, config, query, tools
+from backend import agent_loop, chat_tools, config, query, tools
 from backend.chat_history import _pairs, _provenance, _stamp, plan_history
 from backend.db import get_session_sync
 from backend.models import AuditLog, Message, Proposal, Thread
@@ -109,11 +109,16 @@ def _replace_branch(db, thread_id: uuid.UUID, question: str, replace_from: uuid.
     db.flush()
 
 
-def _begin_turn(thread_id: uuid.UUID, new: bool, question: str, replace_from: uuid.UUID | None = None):
+def _begin_turn(
+    thread_id: uuid.UUID, new: bool, question: str, replace_from: uuid.UUID | None = None,
+    attachment_ids=(),
+):
     """Create/find the thread and store the user message; return
     (user_message_id, seq, prior messages as dicts with seq, thread summary,
-    summary boundary). One short session; with
-    `replace_from` the old branch is superseded and deleted in the same commit."""
+    summary boundary, the thread's attachments for the manifest). One short session; with
+    `replace_from` the old branch is superseded and deleted in the same commit.
+    `attachment_ids` bind to the new message in that same commit; one that is not
+    on this thread raises ValueError and nothing is stored (D-03)."""
     with get_session_sync() as db:
         if new:
             db.add(Thread(id=thread_id, title=title_from(question)))
@@ -147,37 +152,61 @@ def _begin_turn(thread_id: uuid.UUID, new: bool, question: str, replace_from: uu
         )
         db.add(user)
         db.flush()
+        if attachment_ids:
+            ids = set(attachment_ids)
+            n = db.execute(
+                text("UPDATE attachments SET message_id = :m WHERE thread_id = :t AND id = ANY(:ids)"),
+                {"m": user.id, "t": thread_id, "ids": list(ids)},
+            ).rowcount
+            if n != len(ids):
+                raise ValueError("Unknown attachment for this chat.")  # no commit: all rolled back
         db.execute(text("UPDATE threads SET updated_at = now() WHERE id = :t"), {"t": thread_id})
+        atts = [
+            dict(r) for r in db.execute(
+                text("SELECT id, filename, kind, parse_status, parse_note, meta, "
+                     "jsonb_array_length(rows) AS row_count FROM attachments "
+                     "WHERE thread_id = :t ORDER BY created_at, id"),
+                {"t": thread_id},
+            ).mappings()
+        ]
         db.commit()
         t = db.get(Thread, thread_id)
-        return user.id, seq, prior, t.summary, t.summary_upto_seq or 0
+        return user.id, seq, prior, t.summary, t.summary_upto_seq or 0, atts
 
 
 async def start_turn(
-    question: str, thread_id: uuid.UUID | None = None, replace_from: uuid.UUID | None = None
+    question: str, thread_id: uuid.UUID | None = None, replace_from: uuid.UUID | None = None,
+    attachment_ids=(),
 ) -> query.Run | None:
     """Start a persisted turn; None when the thread already has a run (D-05).
 
     The run guard goes first (409). Raises LookupError for an unknown thread
     id, ValueError for a bad `replace_from` (needs thread_id; must be a user
-    message of that thread) and ReplaceConflict when a change was applied.
+    message of that thread), for `attachment_ids` without a thread or not on it,
+    and ReplaceConflict when a change was applied.
+    A thread holding any attachment runs the reduced tool set and starts with the
+    ephemeral manifest; both come from the database, never the request (D-16, D-18).
     Must run inside the event loop.
     """
     if replace_from is not None and thread_id is None:
         raise ValueError("replace_from needs thread_id")
+    if attachment_ids and thread_id is None:
+        raise ValueError("attachment_ids need a thread_id.")
     tid = thread_id or uuid.uuid4()
     run = query.start_run(str(tid))
     if run is None:
         return None
     try:
-        user_id, seq, prior, summary, upto = await asyncio.to_thread(
-            _begin_turn, tid, thread_id is None, question, replace_from
+        user_id, seq, prior, summary, upto, atts = await asyncio.to_thread(
+            _begin_turn, tid, thread_id is None, question, replace_from, attachment_ids
         )
         # Module attribute reads so tests can monkeypatch the budget and the date.
         history, to_compact = plan_history(
             prior, config.CHAT_HISTORY_TOKEN_BUDGET, query._today(), summary=summary, upto_seq=upto
         )
-        tool_names = agent_loop.tools_for_turn(question, prior)
+        tool_names = agent_loop.tools_for_turn(question, prior, attachment_thread=bool(atts))
+        if atts:
+            history = [ChatMessage(role=MessageRole.SYSTEM, content=chat_tools.manifest(atts)), *history]
         run.thread_id, run.user_message_id, run.user_seq = tid, user_id, seq
         run.assistant_message_id = uuid.uuid4()
         query.push(
@@ -272,6 +301,7 @@ async def _pump(
     # create_task copied the context, so no reset is needed; tool executor
     # threads inherit the value (D-12a).
     tools.CURRENT_TURN_ID.set(uuid.UUID(run.id))
+    tools.CURRENT_THREAD_ID.set(run.thread_id)
     state: dict = {
         "steps": [], "text": "", "answered": False, "error": None,
         "model": None, "provider": None,
