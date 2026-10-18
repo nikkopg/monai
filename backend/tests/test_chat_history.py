@@ -56,16 +56,30 @@ def test_provenance_line():
             "args": {"period": "this_month", "category": "ZZTest Food"}}]
     out = build_history([_msg("user", "q"), _msg("assistant", "a", steps=one)], 6000, TODAY)
     assert out[1].content == (
-        "a\n[tools used: spending_in_category(category=ZZTest Food, period=this_month)]"
+        "a\n[tools used: spending_in_category(category=ZZTest Food, "
+        "period=this_month (2026-10-01 to 2026-10-31))]"
     )
     two = one + [{"tool": "spending_total", "args": {"period": "last_month"}}]
     out = build_history([_msg("user", "q"), _msg("assistant", "a", steps=two)], 6000, TODAY)
     assert out[1].content.endswith(
-        "spending_in_category(category=ZZTest Food, period=this_month), "
-        "spending_total(period=last_month)]"
+        "spending_in_category(category=ZZTest Food, period=this_month (2026-10-01 to 2026-10-31)), "
+        "spending_total(period=last_month (2026-09-01 to 2026-09-30))]"
     )
     out = build_history([_msg("user", "q"), _msg("assistant", "a", steps=[])], 6000, TODAY)
     assert out[1].content == "a"
+
+
+def test_provenance_resolves_named_period_as_of_the_turn_date():
+    """'last month' in a turn sent on 2026-08-15 meant July, whatever today is, so a
+    follow-up 'the month before that' can count from a real month (eval case 17)."""
+    old = datetime.datetime(2026, 8, 15, 5, 0, tzinfo=UTC)
+    steps = [{"tool": "spending_in_category", "args": {"category": "ZZTest Food", "period": "last_month"}}]
+    out = build_history(
+        [_msg("user", "q", at=old), _msg("assistant", "a", steps=steps, at=old)], 6000, TODAY)
+    assert "period=last_month (2026-07-01 to 2026-07-31)" in out[1].content
+    custom = [{"tool": "spending_total", "args": {"period": "custom", "start_date": "2026-01-01"}}]
+    out = build_history([_msg("user", "q"), _msg("assistant", "a", steps=custom)], 6000, TODAY)
+    assert "period=custom," in out[1].content and " to " not in out[1].content
 
 
 def test_no_results_or_tokens_replayed():

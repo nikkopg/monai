@@ -44,12 +44,29 @@ def _stamp(created_at: datetime.datetime) -> str:
     return created_at.astimezone().date().isoformat()
 
 
-def _provenance(steps: list[dict] | None) -> str:
-    """'[tools used: tool(k=v, ...)]' from tool + args only; '' when no steps."""
+def _resolved(period, asked_on: datetime.date | None) -> str:
+    """' (YYYY-MM-DD to YYYY-MM-DD)' for a named period as of the turn's own date, so a
+    follow-up such as "the month before that" can count from a real month; '' otherwise."""
+    if asked_on is None or not isinstance(period, str) or period.lower() in ("custom", "all_time"):
+        return ""
+    from backend.tools import resolve_period
+
+    try:
+        s, e = resolve_period(period, today=asked_on)
+    except ValueError:
+        return ""
+    return f" ({s.isoformat()} to {(e - datetime.timedelta(days=1)).isoformat()})"
+
+
+def _provenance(steps: list[dict] | None, asked_on: datetime.date | None = None) -> str:
+    """'[tools used: tool(k=v, ...)]' from tool + args only; '' when no steps. A named
+    period also shows the dates it meant on asked_on (the turn's stamp date)."""
     calls: list[str] = []
     for s in steps or []:
         args = s.get("args") or {}
-        rendered = ", ".join(f"{k}={args[k]}" for k in sorted(args))[:PROVENANCE_ARG_CHARS]
+        rendered = ", ".join(
+            f"{k}={args[k]}{_resolved(args[k], asked_on) if k == 'period' else ''}" for k in sorted(args)
+        )[:PROVENANCE_ARG_CHARS]
         call = f"{s.get('tool')}({rendered})"
         if not calls or calls[-1] != call:  # collapse consecutive exact duplicates
             calls.append(call)
@@ -87,7 +104,7 @@ def plan_history(
             continue
         stamp = _stamp(u["created_at"])
         u_text = f"[{stamp}] {u['content']}"
-        prov = _provenance((a.get("parts") or {}).get("steps"))
+        prov = _provenance((a.get("parts") or {}).get("steps"), datetime.date.fromisoformat(stamp))
         a_text = f"{a['content']}\n{prov}" if prov else a["content"]
         rows.append((u, a, stamp, u_text, a_text, len(u_text) // 4 + len(a_text) // 4))
     out: list[ChatMessage] = []

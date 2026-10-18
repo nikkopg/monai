@@ -47,9 +47,12 @@ def resolve_period(
     period: str = "all_time",
     start_date: str | None = None,
     end_date: str | None = None,
+    *,
+    today: datetime.date | None = None,
 ) -> tuple[datetime.date | None, datetime.date | None]:
-    """Return [start_inclusive, end_exclusive). None means unbounded."""
-    today = datetime.date.today()
+    """Return [start_inclusive, end_exclusive). None means unbounded. `today` anchors
+    the named periods (default: the real today); history passes an old turn's date."""
+    today = today or datetime.date.today()
     period = (period or "all_time").lower()
 
     if period == "all_time":
