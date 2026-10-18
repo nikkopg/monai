@@ -603,6 +603,17 @@ class ImportResponse(BaseModel):
     currency: str
 
 
+class AttachmentUploadOut(BaseModel):
+    """Upload answer (Phase 39 D-03). `attachment_id` is None when nothing was stored (a password is needed)."""
+
+    attachment_id: _uuid.UUID | None
+    thread_id: _uuid.UUID
+    kind: str
+    status: str  # ok | refused | llm_read | needs_password | wrong_password
+    summary: str
+    row_count: int
+
+
 class ProposalOut(BaseModel):
     """Proposal serialized for API responses.
 

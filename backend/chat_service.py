@@ -124,8 +124,12 @@ def _begin_turn(
         if new:
             db.add(Thread(id=thread_id, title=title_from(question)))
             db.flush()
-        elif db.get(Thread, thread_id) is None:
-            raise LookupError("Thread not found")  # never an FK IntegrityError
+        else:
+            t = db.get(Thread, thread_id)
+            if t is None:
+                raise LookupError("Thread not found")  # never an FK IntegrityError
+            if not t.title:  # an upload created the thread untitled (Phase 39 D-03)
+                t.title = title_from(question)
         if replace_from is not None:
             _replace_branch(db, thread_id, question, replace_from)
         prior = [

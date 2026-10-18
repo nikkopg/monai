@@ -27,6 +27,8 @@ Endpoints:
     PUT  /portfolio-events/{id}  edit a buy/sell/dividend event + its cash leg (requires API key)
     DELETE /portfolio-events/{id}  delete an event + its cash leg (requires API key)
     POST /import                multipart CSV upload (Wallet export)
+    POST /threads/{id}/attachments  upload one CSV, PDF or image to a chat, parsed once in code; creates the thread if new (requires API key)
+    GET  /attachments/locality  {local, destination}: where an attached file would be sent (requires API key)
     POST /query-stream          streaming SSE agent response; one run per thread, optional thread_id, 409 if busy (requires API key)
     POST /query-stream/{run_id}/cancel  stop a run and reject its pending chat proposals (requires API key)
     GET  /threads               list chat threads, newest first (requires API key)
@@ -49,6 +51,7 @@ import asyncio
 import copy
 import hmac
 import logging
+import re
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -63,6 +66,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
 from backend import auth
+from backend.attachments import MAX_UPLOAD_BYTES
+from backend.attachments_api import router as attachments_router
 from backend.auth import optional_approver, require_api_key, require_approver_key, require_reject_scope
 from backend.mcp_server import build_mcp
 from backend.db import get_session, get_session_sync
@@ -278,7 +283,27 @@ async def mcp_api_key_guard(request: Request, call_next):
     return await call_next(request)
 
 
+_UPLOAD_PATH = re.compile(r"^/threads/[0-9a-fA-F-]{36}/attachments$")
+
+
+@app.middleware("http")
+async def upload_size_guard(request: Request, call_next):
+    """Refuse an oversize upload before FastAPI parses (and spools) the form (Phase 39 D-06a).
+
+    The handler re-checks `UploadFile.size` exactly; this only bounds the body
+    (file + 64 KiB of multipart envelope) so a huge request never reaches it.
+    """
+    if request.method == "POST" and _UPLOAD_PATH.match(request.url.path):
+        length = request.headers.get("content-length")
+        if length is None or not length.isdigit():
+            return JSONResponse({"detail": "Content-Length required"}, status_code=411)
+        if int(length) > MAX_UPLOAD_BYTES + 64 * 1024:
+            return JSONResponse({"detail": "File is larger than 10 MB"}, status_code=413)
+    return await call_next(request)
+
+
 app.mount("/mcp", mcp_app)
+app.include_router(attachments_router)
 
 
 @app.get("/health")
