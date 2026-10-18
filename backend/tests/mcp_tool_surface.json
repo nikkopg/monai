@@ -185,7 +185,7 @@
     "name": "find_platforms"
   },
   {
-    "description": "Search/filter individual transactions by merchant, category, period, and kind (all | expense | income); returns ids, dates, amounts, categories, merchants, and account ids. Rows are ordered most-recent-first. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive).",
+    "description": "Search/filter individual transactions by merchant, category, period, and kind (all | expense | income); returns ids, dates, amounts, categories, merchants, and account ids. Rows are ordered most-recent-first. A category or group name goes in category, not merchant (merchant is only a payee name). period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive).",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {

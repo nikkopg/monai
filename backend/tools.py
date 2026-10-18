@@ -610,7 +610,9 @@ def find_transactions(
     always excluded (is_transfer = false), matching the other read tools. Rows are
     ordered most-recent-first, so rows[0] is "my last X". Category names match
     case-insensitively (exact first, then substring) and include every
-    subcategory, so a parent/group name returns its whole subtree.
+    subcategory, so a parent/group name returns its whole subtree. When the
+    owner names a category or group ("my last transaction in Groceries"), pass
+    it as category, not merchant; merchant is only for a payee name.
     """
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {"lim": max(1, min(int(limit), 50))}

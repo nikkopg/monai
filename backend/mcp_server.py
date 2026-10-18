@@ -94,7 +94,8 @@ MCP_DESCRIPTIONS: dict[str, str] = {
     "find_transactions": (
         "Search/filter individual transactions by merchant, category, period, and kind (all | expense | "
         "income); returns ids, dates, amounts, categories, merchants, and account ids. Rows are ordered "
-        "most-recent-first. " + _PERIOD_HELP
+        "most-recent-first. A category or group name goes in category, not merchant (merchant is "
+        "only a payee name). " + _PERIOD_HELP
     ),
     "find_platforms": "Search/filter investment platforms by name substring; returns ids, names, and kinds.",
     "find_accounts": "Search/filter accounts by name substring; returns ids, names, types, and currencies.",
