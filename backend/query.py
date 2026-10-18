@@ -223,7 +223,9 @@ def _llm_tool(name: str, fn):
         if not isinstance(first, dict):
             return first
         # A replay is marked so the model cannot claim a second change (WR-02).
-        note = "identical change already proposed this turn; no new proposal was created"
+        note = ("identical change already proposed this turn; no new proposal was created. If the "
+                "owner wants another identical one, call again with a distinguishing notes value "
+                "(for example '2 of 2'); otherwise say only one was proposed")
         return {**first, "duplicate_of_earlier_call": True,
                 "note": f"{first['note']} ({note})" if first.get("note") else note}
 
