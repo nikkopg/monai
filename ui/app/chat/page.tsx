@@ -228,6 +228,11 @@ function stoppedLine(m: AsstItem): string {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (id: string) => UUID_RE.test(id);
+// crypto.randomUUID needs a secure context; the app may be opened over plain http on a LAN.
+const newUuid = () =>
+  "10000000-1000-4000-8000-100000000000".replace(/[018]/g, (c) =>
+    (Number(c) ^ (crypto.getRandomValues(new Uint8Array(1))[0] & (15 >> (Number(c) / 4)))).toString(16)
+  );
 
 type SendOpts = { retry?: boolean; replaceFrom?: string; mode?: "regenerate" | "edit" };
 
@@ -782,7 +787,7 @@ function ChatInner() {
   // A chat with no thread yet uploads into a client-made id; the returned thread is
   // adopted like the one a first /query-stream announces (URL replace, no refetch).
   async function submitAttach(file: File, accountId: number, password: string) {
-    const tid = loadedRef.current ?? (newThreadRef.current ??= crypto.randomUUID());
+    const tid = loadedRef.current ?? (newThreadRef.current ??= newUuid());
     const res = await att.submit(tid, file, accountId, password);
     if (res.outcome === "done" && loadedRef.current === null) {
       newThreadRef.current = null;
