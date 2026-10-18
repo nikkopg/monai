@@ -404,6 +404,15 @@ async def _halt(handler, task) -> None:
 # Proposal extraction from tool trace
 # ---------------------------------------------------------------------------
 
+def slim_payload(row) -> dict | None:
+    """What a proposal's payload shows the chat: all of it for a chat proposal,
+    but for an upload only the operation and the attachment meta, never the rows
+    (they are reviewed in the Inbox; D-21a)."""
+    if row.channel == "chat":
+        return row.payload
+    return {"operation": row.operation, "attachment": (row.payload or {}).get("attachment")}
+
+
 def _extract_proposals(tool_trace: list) -> list[dict]:
     """Return one entry per propose_* call, in call order.
 
@@ -415,7 +424,9 @@ def _extract_proposals(tool_trace: list) -> list[dict]:
     None when there is no row (or the lookup fails: a DB hiccup must never
     hide the answer; the UI then shows its cannot-approve notice). Tokens
     surface only in the terminal answer/error event to the originating chat
-    session — never in a tool_result event or the public trace (T-02-07).
+    session — never in a tool_result event or the public trace (T-02-07), and
+    only for chat proposals: upload and MCP proposals are never token-confirmable
+    (D-20), so their token is None and an upload payload is slim.
     A proposal id listed twice (a deduped replay, D-12a) contributes once.
     """
     proposals = []
@@ -428,7 +439,7 @@ def _extract_proposals(tool_trace: list) -> list[dict]:
             seen_ids.add(str(result["proposal_id"]))
             proposals.append({
                 "id": result["proposal_id"], "token": result.get("proposal_token"),
-                "operation": None, "payload": None, "expires_at": None,
+                "operation": None, "payload": None, "expires_at": None, "channel": None,
             })
     if not proposals:
         return proposals
@@ -453,9 +464,10 @@ def _extract_proposals(tool_trace: list) -> list[dict]:
             ).scalars().all()
             for row in rows:
                 for p in by_uuid[row.id]:
-                    p["token"] = p["token"] or row.token
+                    p["token"] = (p["token"] or row.token) if row.channel == "chat" else None
+                    p["channel"] = row.channel
                     p["operation"] = row.operation
-                    p["payload"] = row.payload
+                    p["payload"] = slim_payload(row)
                     p["expires_at"] = row.expires_at.isoformat()
     except Exception as e:
         logger.warning("proposal hydration failed: %s: %s", type(e).__name__, e)

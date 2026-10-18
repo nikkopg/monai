@@ -29,7 +29,8 @@ from sqlalchemy import delete, func, or_, select, text, update
 from backend import agent_loop, chat_tools, config, query, tools
 from backend.chat_history import _pairs, _provenance, _stamp, plan_history
 from backend.db import get_session_sync
-from backend.models import AuditLog, Message, Proposal, Thread
+from backend.attachments import purge_expired
+from backend.models import Attachment, AuditLog, Message, Proposal, Thread
 from backend.proposals import expire_stale, transition
 
 logger = logging.getLogger(__name__)
@@ -548,9 +549,11 @@ def thread_detail(db, thread_id: uuid.UUID) -> dict | None:
     """Thread with its messages; each referenced proposal joined live (D-16).
 
     Proposal entries are built field by field: the row also holds `token` and
-    `code`, which must never leave the server here (T-02-07).
+    `code`, which must never leave the server here (T-02-07). Also lists the
+    thread's attachments (never raw, text or rows) after the lazy purge (D-07).
     """
     expire_stale(db)  # lazy expiry so a stale pending card reads expired
+    purge_expired(db)
     t = db.get(Thread, thread_id)
     if t is None:
         return None
@@ -584,20 +587,29 @@ def thread_detail(db, thread_id: uuid.UUID) -> dict | None:
             if row is None:
                 entries.append(
                     {"id": p.get("id"), "operation": p.get("operation"), "payload": None,
-                     "status": "missing", "expires_at": None}
+                     "status": "missing", "expires_at": None, "channel": None}
                 )
             else:
                 entries.append(
-                    {"id": str(row.id), "operation": row.operation, "payload": row.payload,
-                     "status": row.status, "expires_at": row.expires_at}
+                    {"id": str(row.id), "operation": row.operation, "payload": query.slim_payload(row),
+                     "status": row.status, "expires_at": row.expires_at, "channel": row.channel}
                 )
         parts["proposals"] = entries
         out.append(
             {"id": m.id, "seq": m.seq, "role": m.role, "content": m.content,
              "status": m.status, "created_at": m.created_at, "parts": parts}
         )
+    atts = db.execute(
+        select(Attachment).where(Attachment.thread_id == thread_id).order_by(Attachment.created_at, Attachment.id)
+    ).scalars()
     return {
         **_thread_row(t), "messages": out,
+        "attachments": [
+            {"id": a.id, "filename": a.filename, "kind": a.kind, "status": a.parse_status,
+             "summary": (a.meta or {}).get("summary", ""), "row_count": len(a.rows or []),
+             "message_id": a.message_id, "purged_at": a.purged_at}
+            for a in atts
+        ],
         "summary_upto_seq": t.summary_upto_seq or 0, "has_summary": bool(t.summary),
     }
 

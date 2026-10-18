@@ -549,6 +549,7 @@ class ProposalLiveOut(BaseModel):
     payload: dict | None = None
     status: str
     expires_at: datetime | None = None
+    channel: str | None = None
 
 
 class MessagePartsOut(BaseModel):
@@ -572,6 +573,17 @@ class ActiveRunOut(BaseModel):
     run_id: str
 
 
+class AttachmentOut(BaseModel):
+    id: _uuid.UUID
+    filename: str
+    kind: str
+    status: str
+    summary: str = ""
+    row_count: int
+    message_id: _uuid.UUID | None = None
+    purged_at: datetime | None = None
+
+
 class ThreadDetailOut(ThreadOut):
     """Thread with messages and live proposal status. The typed shape has no
     token or code field, so even a stray key from the service is dropped on
@@ -579,6 +591,7 @@ class ThreadDetailOut(ThreadOut):
 
     active_run: ActiveRunOut | None = None
     messages: list[MessageOut]
+    attachments: list[AttachmentOut] = []
     summary_upto_seq: int = 0
     has_summary: bool = False  # flags only: the summary text never leaves the server
 

@@ -184,3 +184,91 @@ async def test_question_about_a_file_is_answered_from_read_attachment(monkeypatc
     assert steps and SECRET in json.dumps(steps[0]["step"]["result"]) and "untrusted_document" in json.dumps(steps[0]["step"]["result"])
     assert _of_type(ev, "answer")[0]["text"] == "Two rows."
     await run.pump
+
+
+# ---------------------------------------------------------------------------
+# Upload proposals in the SSE answer and the thread detail (D-07, D-20, D-21a)
+# ---------------------------------------------------------------------------
+
+
+async def _propose_turn(monkeypatch, tid, aid, tool="propose_statement_rows", args=None):
+    llm = StubLLM(mode="script", script=[[(tool, args if args is not None else {"attachment_id": str(aid)})]])
+    _install_stub_workflow(monkeypatch, llm, extra_tools=chat_tools.CHAT_ONLY_TOOLS)
+    run = await chat_service.start_turn("import this file", tid, None, [aid])
+    answer = _of_type(_payloads(await _collect(q.run_stream(run))), "answer")[0]
+    await run.pump
+    return run, answer
+
+
+def _keys(o, acc=None):
+    acc = set() if acc is None else acc
+    if isinstance(o, dict):
+        for k, v in o.items():
+            acc.add(k)
+            _keys(v, acc)
+    elif isinstance(o, list):
+        for v in o:
+            _keys(v, acc)
+    return acc
+
+
+async def test_upload_proposal_in_answer_is_tokenless_and_slim(monkeypatch, world):
+    _, t, _, a, _ = world
+    _, answer = await _propose_turn(monkeypatch, t.id, a.id)
+    p = answer["proposals"][0]
+    assert p["token"] is None and p["channel"] == "upload" and p["operation"] == "add_transaction"
+    assert set(p["payload"]) == {"operation", "attachment"} and "rows" not in p["payload"]
+    assert {"row_count", "flagged_count", "invariant", "filename"} <= set(p["payload"]["attachment"])
+
+
+async def test_chat_proposal_keeps_its_token(monkeypatch, world):
+    _, t, _, _, _ = world
+    llm = StubLLM(mode="script", script=[[("seed_proposal", {})]])
+    _install_stub_workflow(monkeypatch, llm)
+    run = await chat_service.start_turn("ZZ39 add it", t.id)
+    answer = _of_type(_payloads(await _collect(q.run_stream(run))), "answer")[0]
+    await run.pump
+    p = answer["proposals"][0]
+    assert p["channel"] == "chat" and p["token"] and p["payload"]["rows"]
+
+
+async def test_thread_detail_lists_upload_card_and_attachments(monkeypatch, client, api_key, world):
+    _, t, _, a, _ = world
+    run, _answer = await _propose_turn(monkeypatch, t.id, a.id)
+    d = client.get(f"/threads/{t.id}", headers={"MONAI_API_KEY": api_key}).json()
+    prop = d["messages"][-1]["parts"]["proposals"][0]
+    assert prop["channel"] == "upload" and prop["status"] == "pending"
+    assert set(prop["payload"]) == {"operation", "attachment"}
+    att = d["attachments"][0]
+    assert att == {"id": str(a.id), "filename": "zz39-march.pdf", "kind": "pdf_text", "status": "ok",
+                   "summary": META["summary"], "row_count": 2, "message_id": str(run.user_message_id),
+                   "purged_at": None}
+    assert not ({"token", "code", "raw", "extracted_text", "rows", "askable"} & _keys(d))
+    assert SECRET not in json.dumps(d)
+
+
+def test_thread_detail_runs_the_lazy_purge(client, api_key, world):
+    db, t, _, a, _ = world
+    db.execute(text("UPDATE attachments SET created_at = now() - interval '8 days' WHERE id = :i"), {"i": a.id})
+    db.commit()
+    d = client.get(f"/threads/{t.id}", headers={"MONAI_API_KEY": api_key}).json()
+    assert d["attachments"][0]["purged_at"] is not None
+
+
+async def test_stop_and_confirm_leave_the_upload_proposal_alone(monkeypatch, client, api_key, world):
+    db, t, _, a, _ = world
+    run, answer = await _propose_turn(monkeypatch, t.id, a.id)
+    pid = answer["proposals"][0]["id"]
+    assert q.reject_run_proposals(run) == []
+    row = db.execute(text("SELECT status, token FROM proposals WHERE id = :i"), {"i": pid}).one()
+    assert row.status == "pending"
+    r = client.post(f"/proposals/{pid}/confirm", json={"token": row.token}, headers={"MONAI_API_KEY": api_key})
+    assert r.status_code == 403
+
+
+async def test_regenerate_leaves_the_upload_proposal_pending(monkeypatch, world):
+    db, t, _, a, _ = world
+    run, answer = await _propose_turn(monkeypatch, t.id, a.id)
+    pid = answer["proposals"][0]["id"]
+    got, _r = await _turn(monkeypatch, "import this file", t.id, replace_from=run.user_message_id)
+    assert db.execute(text("SELECT status FROM proposals WHERE id = :i"), {"i": pid}).scalar() == "pending"
