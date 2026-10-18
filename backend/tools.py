@@ -1035,6 +1035,13 @@ CURRENT_TURN_ID: contextvars.ContextVar[uuid.UUID | None] = contextvars.ContextV
     "current_turn_id", default=None
 )
 
+# Thread the current chat turn belongs to (39-07). Set per turn by the chat pump
+# (39-08) and carried into tool threads like the turn id; it lets the chat-only
+# attachment tools refuse another thread's file without a tool parameter.
+CURRENT_THREAD_ID: contextvars.ContextVar[uuid.UUID | None] = contextvars.ContextVar(
+    "current_thread_id", default=None
+)
+
 
 def _make_proposal(
     operation: str,
