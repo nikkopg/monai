@@ -14,14 +14,18 @@ image predates pdfplumber.
 import codecs
 import csv
 import io
+import ipaddress
+import os
 import re
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from urllib.parse import urlsplit
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from backend import settings
 from backend.importer import REQUIRED_COLUMNS
 from backend.mcp_writes import _clean_text
 
@@ -31,6 +35,7 @@ MAX_ROWS = 500
 MAX_TEXT_CHARS = 500_000
 SEP_ASSUMPTION = 'Amounts read with "." as the thousands separator and "," as decimals.'
 DMY_ASSUMPTION = "Dates read day first."
+ALLOWED_TYPES_TEXT = "Allowed types: CSV, PDF, PNG, JPEG, WebP"
 
 
 def purge_expired(db: Session) -> int:
@@ -373,3 +378,86 @@ def parse_csv_attachment(data: bytes, *, account_name: str, account_currency: st
             "assumptions": list(assumptions),
         })
     return Parsed("csv", "ok", rows, text, meta, note)
+
+
+# ---------------------------------------------------------------------------
+# File type and name (D-06)
+# ---------------------------------------------------------------------------
+
+def sniff(data: bytes) -> tuple[str, str] | None:
+    """(kind, mime) from magic bytes only, or None; the client's type and name are never consulted.
+
+    A PDF may carry up to 1 KiB of leading junk, as Acrobat allows. A CSV is
+    anything that decodes, has no NUL in the first 8 KiB (unless UTF-16 with a
+    BOM) and has a delimiter in its first line.
+    """
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image", "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image", "image/jpeg"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image", "image/webp"
+    if b"%PDF-" in data[:1024]:
+        return "pdf", "application/pdf"
+    if b"\x00" in data[:8192] and not data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return None
+    text = _decode(data)[0].lstrip()
+    if text and _detect_delimiter(text.splitlines()[0]):
+        return "csv", "text/csv"
+    return None
+
+
+def safe_filename(name: str) -> str:
+    """Basename without control or bidi characters, at most 80 characters; "file" if nothing is left.
+
+    Display only: attachments are stored by generated id, never by this name.
+    """
+    return _clean_text(os.path.basename(name.replace("\\", "/")), 80) or "file"
+
+
+# ---------------------------------------------------------------------------
+# Locality (D-14, D-14a): where would this file go?
+# ---------------------------------------------------------------------------
+
+_CLOUD_TAG = re.compile(r"(?:^|[-:])cloud$", re.I)
+_DOCKER_HOSTS = {"localhost", "host.docker.internal", "gateway.docker.internal"}
+
+
+def _host(base_url: str) -> str:
+    return (urlsplit(base_url if "//" in base_url else "//" + base_url).hostname or "").lower()
+
+
+def _is_loopback(base_url: str) -> bool:
+    h = _host(base_url)
+    if h in _DOCKER_HOSTS:
+        return True
+    try:
+        return ipaddress.ip_address(h).is_loopback
+    except ValueError:
+        return False
+
+
+def locality(provider: str, model: str, base_url: str) -> dict:
+    """{"local": bool, "destination": str | None}; destination names where the file would be sent."""
+    if provider == "ollama":
+        if not _CLOUD_TAG.search(model) and _is_loopback(base_url):
+            return {"local": True, "destination": None}
+        dest = f"Ollama Cloud ({model})" if _CLOUD_TAG.search(model) else f"Ollama at {_host(base_url)} ({model})"
+    else:
+        dest = {"claude": "Anthropic", "openai": "OpenAI"}.get(provider, provider) + f" ({model})"
+    return {"local": False, "destination": dest}
+
+
+def current_locality(db: Session) -> dict:
+    """locality() for the configured provider and model.
+
+    Provider and model come from the effective settings (the Settings page
+    overrides env); the base URL from OLLAMA_BASE_URL, the same default
+    configure_llm uses. The compose stack runs with network_mode: host, so
+    localhost is the host's own Ollama daemon. The default config is NOT local
+    (D-14): its model tag ends in -cloud.
+    """
+    eff = settings.get_effective_settings(db)
+    return locality(
+        eff["llm_provider"], eff["llm_model"], os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    )
