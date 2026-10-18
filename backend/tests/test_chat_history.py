@@ -202,7 +202,7 @@ def test_plan_history_summary_is_labelled_user_message_first():
     out, _ = plan_history(_seq_pairs(2), 6000, TODAY, summary="ZZ synthetic summary", upto_seq=2)
     assert out[0].role == MessageRole.USER
     assert out[0].content.startswith("Summary of earlier conversation (as of 2026-10-09;")
-    assert "it holds no figures, re-query any figure" in out[0].content
+    assert "any figure in it may be stale, re-query any figure" in out[0].content
     assert "ZZ synthetic summary" in out[0].content
     assert len(out) == 3 and out[1].role == MessageRole.USER
     # No message at the boundary seq: the date falls back to today.

@@ -31,7 +31,7 @@ from llama_index.core.llms import ChatMessage, MessageRole
 
 PROVENANCE_ARG_CHARS = 200
 
-SUMMARY_LABEL = "Summary of earlier conversation (as of {date}; it holds no figures, re-query any figure):"
+SUMMARY_LABEL = "Summary of earlier conversation (as of {date}; any figure in it may be stale, re-query any figure):"
 
 EARLIER_DATES_NOTE = (
     "(Earlier messages were sent on the dates shown; relative periods in them are "
