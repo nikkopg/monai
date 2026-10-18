@@ -13,11 +13,14 @@ import { btn, tokens } from "../styles";
 
 export default function PlanBar({
   proposals,
+  locked,
   onApplied,
   onFailed,
   onRunning,
 }: {
   proposals: Proposal[];
+  /** A card's own confirm/reject is in flight: hide Approve all. */
+  locked?: boolean;
   onApplied: (id: string) => void;
   onFailed: (id: string, text: string) => void;
   onRunning: (running: boolean) => void;
@@ -99,7 +102,7 @@ export default function PlanBar({
           Applying {running} of {n}…
         </span>
       ) : (
-        ready && (
+        ready && !locked && (
           <button
             type="button"
             style={{ ...btn, minHeight: 36, marginLeft: "auto" }}

@@ -399,6 +399,8 @@ function ChatInner() {
     running: boolean;
     failed: { id: string; text: string } | null;
   } | null>(null);
+  // Cards with their own confirm/reject in flight: the plan bar hides meanwhile (D-17).
+  const [busyCards, setBusyCards] = useState<Set<string>>(() => new Set());
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(null);
   const [confirmEdit, setConfirmEdit] = useState<{ n: number; text: string } | null>(null);
   const [actionError, setActionError] = useState<{
@@ -1118,15 +1120,16 @@ function ChatInner() {
   }
 
   // /cashflow re-fetches its own list on mount. Mark the proposal applied here so
-  // Regenerate / Edit lock for this point at once (D-19). Card and plan bar share it.
-  function markApplied(msgId: string, pid: string) {
+  // Regenerate / Edit lock for this point at once (D-19). Card and plan bar share it;
+  // a card's own reject lands here too, so Approve all hides (D-17).
+  function markStatus(msgId: string, pid: string, status: LiveStatus) {
     setMessages((ms) =>
       ms.map((x) =>
         x.kind === "assistant" && x.id === msgId
           ? {
               ...x,
               proposals: x.proposals.map((q) =>
-                q.id === pid ? { ...q, liveStatus: "confirmed" as LiveStatus } : q
+                q.id === pid ? { ...q, liveStatus: status } : q
               ),
             }
           : x
@@ -1279,7 +1282,8 @@ function ChatInner() {
         {m.proposals.length >= 2 && (
           <PlanBar
             proposals={m.proposals}
-            onApplied={(id) => markApplied(m.id, id)}
+            locked={m.proposals.some((p) => busyCards.has(p.id))}
+            onApplied={(id) => markStatus(m.id, id, "confirmed")}
             onFailed={(id, text) => setBulk({ msgId: m.id, running: false, failed: { id, text } })}
             onRunning={(r) =>
               setBulk((b) => ({
@@ -1299,10 +1303,16 @@ function ChatInner() {
             locked={bulk?.msgId === m.id && bulk.running}
             externalError={bulk?.msgId === m.id && bulk.failed?.id === p.id ? bulk.failed.text : null}
             step={m.proposals.length >= 2 ? i + 1 : undefined}
-            onApplied={() => markApplied(m.id, p.id)}
-            onRejected={() => {
-              // nothing extra needed
-            }}
+            onApplied={() => markStatus(m.id, p.id, "confirmed")}
+            onRejected={() => markStatus(m.id, p.id, "rejected")}
+            onBusy={(b) =>
+              setBusyCards((s) => {
+                const next = new Set(s);
+                if (b) next.add(p.id);
+                else next.delete(p.id);
+                return next;
+              })
+            }
           />
         ))}
       </div>

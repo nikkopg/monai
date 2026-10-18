@@ -151,6 +151,38 @@ test.describe("plan bar and Approve all (LOOP-04)", () => {
     await expect(approveAll(page)).toHaveCount(0);
   });
 
+  test("hides Approve all once a card is rejected on its own", async ({ page }) => {
+    await setup(page, three(), allTokens);
+    const calls = await mockConfirm(page);
+    await page.route(/\/api\/proposals\/[0-9a-f-]{36}\/reject$/, (route) =>
+      route.fulfill({ json: { status: "rejected" } }),
+    );
+    await page.goto(`/chat?thread=${TID}`);
+    await expect(approveAll(page)).toBeVisible();
+    await reject(page).nth(1).click();
+    await expect(page.getByText("Rejected — no changes made.")).toBeVisible();
+    await expect(approveAll(page)).toHaveCount(0);
+    expect(calls).toEqual([]);
+  });
+
+  test("hides Approve all while a card's own confirm is in flight", async ({ page }) => {
+    await setup(page, three(), allTokens);
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    const calls = await mockConfirm(page, async (id) => {
+      await held;
+      return { status: 200, json: { id, status: "confirmed" } };
+    });
+    await page.goto(`/chat?thread=${TID}`);
+    await expect(approveAll(page)).toBeVisible();
+    await approve(page).nth(0).click();
+    await expect.poll(() => calls.length).toBe(1);
+    await expect(approveAll(page)).toHaveCount(0);
+    release();
+    await expect(page.getByText("Applied successfully.")).toHaveCount(1);
+    expect(calls.map((c) => c.id)).toEqual([ids.a]);
+  });
+
   test("a single proposal has no bar and approves one-by-one", async ({ page }) => {
     await setup(page, [proposal(ids.a)], [ids.a]);
     const calls = await mockConfirm(page);

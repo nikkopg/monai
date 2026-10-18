@@ -122,6 +122,7 @@ export default function ProposalCard({
   locked,
   externalError,
   step,
+  onBusy,
 }: {
   proposal: Proposal;
   onApplied: () => void;
@@ -134,11 +135,17 @@ export default function ProposalCard({
   externalError?: string | null;
   /** 1-based position in a multi-step plan. */
   step?: number;
+  /** Own confirm/reject in flight, so the plan bar can hide Approve all. */
+  onBusy?: (busy: boolean) => void;
 }) {
   const [status, setStatus] = useState<"pending" | "applied" | "rejected">(
     "pending"
   );
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusyState] = useState(false);
+  const setBusy = (b: boolean) => {
+    setBusyState(b);
+    onBusy?.(b);
+  };
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(new Date());
   // undefined = storage not read yet (it is only read in an effect, never
