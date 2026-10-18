@@ -71,6 +71,83 @@ export function proposal(o: Partial<InboxProposal> = {}): InboxProposal {
 export const chatTx = (o: Partial<InboxProposal> = {}) =>
   proposal({ channel: "chat", code: undefined, expires_at: iso(NOW + 12 * MIN), ...o });
 
+/**
+ * A synthetic upload proposal (channel "upload"), shaped like backend/mcp_writes.py:
+ * pdf = running-balance-verified statement with one duplicate-flagged row,
+ * csv = no balance check with one format-assumed row, image = LLM-read.
+ */
+export function uploadProposal(
+  variant: "pdf" | "csv" | "image" = "pdf",
+  o: Partial<InboxProposal> = {}
+): InboxProposal {
+  const prov = (after: Record<string, unknown> = {}) => ({
+    llm_read: false,
+    raw_line: null,
+    assumptions: [] as string[],
+    ...after,
+  });
+  const assumed = ["Dates read day first."];
+  const base = { id: "att-1", opening: null, closing: null, llm_read: false, assumptions: [] as string[] };
+  const spec = {
+    pdf: {
+      attachment: {
+        ...base,
+        filename: "march-statement.pdf",
+        kind: "pdf_text",
+        invariant: "running balance verified",
+        opening: "5000000.00",
+        closing: "5034500.00",
+        flagged_count: 1,
+      },
+      rows: [
+        txRow({
+          after: prov({ amount: "50000.00", merchant: "Gaji Contoh", raw_line: "01/03 GAJI CONTOH 50,000.00" }),
+          duplicates: [{ kind: "transaction", id: 7, date: "2026-03-01", amount: "50000.00", merchant: "Gaji Contoh" }],
+        }),
+        txRow({ after: prov({ amount: "-20000.00", merchant: "Warung Contoh", raw_line: "02/03 WARUNG CONTOH 20,000.00 DB" }) }),
+        txRow({ after: prov({ amount: "4500.00", merchant: "Bunga Contoh", raw_line: "31/03 BUNGA 4,500.00" }) }),
+      ],
+    },
+    csv: {
+      attachment: {
+        ...base,
+        filename: "export-contoh.csv",
+        kind: "csv",
+        invariant: "none",
+        assumptions: assumed,
+        flagged_count: 1,
+      },
+      rows: [
+        txRow({ after: prov({ merchant: "Kopi Contoh", raw_line: "07/10/2026;Kopi Contoh;-35000", assumptions: assumed }) }),
+        txRow({ after: prov({ merchant: "Toko Contoh", raw_line: "08/10/2026;Toko Contoh;-12000" }) }),
+      ],
+    },
+    image: {
+      attachment: {
+        ...base,
+        filename: "receipt-contoh.png",
+        kind: "image",
+        invariant: "none",
+        llm_read: true,
+        flagged_count: 1,
+      },
+      rows: [txRow({ after: prov({ merchant: "Toko Contoh", llm_read: true, raw_line: "TOKO CONTOH 35.000" }) })],
+    },
+  }[variant];
+  return proposal({
+    id: ids.f,
+    channel: "upload",
+    code: undefined,
+    expires_at: iso(NOW + 12 * MIN),
+    payload: {
+      operation: "add_transaction",
+      rows: spec.rows,
+      attachment: { ...spec.attachment, row_count: spec.rows.length },
+    },
+    ...o,
+  });
+}
+
 export const transferProposal = (o: Partial<InboxProposal> = {}) =>
   proposal({
     operation: "add_transfer",
