@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import {
   assumptionLines,
   invariantBadge,
@@ -10,7 +10,7 @@ import {
   visibleRowIndices,
   type UploadMeta,
 } from "../app/lib/inbox";
-import { chatTx, uploadProposal } from "./inbox-fixtures";
+import { NOW, chatTx, mockInbox, uploadProposal } from "./inbox-fixtures";
 
 // ---------------------------------------------------------------------------
 // Phase 39 plan 13 — Inbox upload cards (D-21, D-23). Synthetic values only.
@@ -124,5 +124,79 @@ test.describe("upload helpers", () => {
     const plain = uploadProposal("pdf").payload.rows[1];
     const rows = Array.from({ length: 12 }, (_, i) => (i === 9 ? flagged : plain));
     expect(visibleRowIndices(rows, false)).toEqual([0, 1, 2, 3, 4, 9]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Rendered card
+// ---------------------------------------------------------------------------
+
+async function open(page: Page, variant: "pdf" | "csv" | "image", title: string) {
+  const inbox = await mockInbox(page, { list: [uploadProposal(variant)] });
+  await page.clock.setFixedTime(NOW);
+  await page.goto("/inbox");
+  const card = page.getByRole("article", { name: title, exact: true });
+  await expect(card).toBeVisible();
+  return { inbox, card };
+}
+
+test.describe("upload card", () => {
+  test("pdf: source, file line, running-balance badge, duplicate flag kept", async ({ page }) => {
+    const { card } = await open(page, "pdf", "Add 3 transactions to Account A");
+    await expect(card.getByText("Upload", { exact: true })).toBeVisible();
+    await expect(card.getByTestId("inbox-upload-file")).toHaveText("march-statement.pdf");
+    await expect(card).toContainText("PDF · 3 rows");
+    await expect(card.getByTestId("inbox-invariant-badge")).toHaveText("Running balance verified");
+    await expect(card).toContainText(
+      "Opening 5,000,000 + 3 rows = closing 5,034,500, and every row's running balance matches."
+    );
+    await expect(card.getByText("Possible duplicate")).toBeVisible();
+    // the source line sits on the flagged row only
+    await expect(card.getByText("From the file:")).toHaveCount(1);
+    await expect(card.getByText("From the file: 01/03 GAJI CONTOH 50,000.00")).toBeVisible();
+    await expect(card.getByText("Format assumed")).toHaveCount(0);
+    await expect(card.getByText("LLM-read")).toHaveCount(0);
+  });
+
+  test("csv: no balance check, batch and row 'Format assumed'", async ({ page }) => {
+    const { card } = await open(page, "csv", "Add 2 transactions to Account A");
+    await expect(card.getByTestId("inbox-upload-file")).toHaveText("export-contoh.csv");
+    await expect(card).toContainText("CSV · 2 rows");
+    await expect(card.getByTestId("inbox-invariant-badge")).toHaveText("No balance check");
+    await expect(card).toContainText("A CSV has no balance to verify. Review the rows before approving.");
+    // one batch chip in the header, one on the flagged row
+    await expect(card.getByText("Format assumed", { exact: true })).toHaveCount(2);
+    await expect(card.getByText("Dates read day first.")).toHaveCount(2);
+    await expect(card.getByText("From the file: 07/10/2026;Kopi Contoh;-35000")).toBeVisible();
+    await expect(card.getByText("From the file:")).toHaveCount(1);
+  });
+
+  test("image: LLM-read badge and row block", async ({ page }) => {
+    const { card } = await open(page, "image", "Add 1 transaction to Account A");
+    await expect(card).toContainText("Image · 1 rows");
+    await expect(card.getByTestId("inbox-invariant-badge")).toHaveText("LLM-read");
+    await expect(card).toContainText("Read by the model from an image. No balance check was possible.");
+    await expect(card.getByText("Read by the model. Check the date and amount against the original.")).toBeVisible();
+    await expect(card.getByText("From the file: TOKO CONTOH 35.000")).toBeVisible();
+  });
+
+  test("skip and approve behave as before", async ({ page }) => {
+    const { inbox, card } = await open(page, "pdf", "Add 3 transactions to Account A");
+    await card.getByRole("button", { name: "Skip row 1: Gaji Contoh, +50,000" }).click();
+    const after = page.getByRole("article", { name: "Add 2 transactions to Account A", exact: true }); // the title follows the skip
+    await expect(after.getByRole("button", { name: /^Approve/ })).toContainText("Add 2 transactions, 1 skipped");
+    await expect(after.getByText("Possible duplicate")).toBeVisible(); // a skipped row keeps its flags
+    await after.getByRole("button", { name: /^Approve/ }).click();
+    await expect.poll(() => inbox.sent("POST", "/approve").length).toBe(1);
+  });
+
+  test("a hostile filename stays text", async ({ page }) => {
+    const p = uploadProposal("pdf");
+    p.payload.attachment!.filename = '<img src=x onerror="window.__xss=1">.pdf';
+    await mockInbox(page, { list: [p] });
+    await page.clock.setFixedTime(NOW);
+    await page.goto("/inbox");
+    await expect(page.getByTestId("inbox-upload-file")).toHaveText('<img src=x onerror="window.__xss=1">.pdf');
+    await expect(page.locator("img[src=x]")).toHaveCount(0);
   });
 });

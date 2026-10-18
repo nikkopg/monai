@@ -17,6 +17,7 @@ import {
   NETWORK_FAIL_MSG,
   approveLabel,
   approvedFooter,
+  assumptionLines,
   cardTitle,
   duplicateChipText,
   fmtAbsolute,
@@ -25,15 +26,21 @@ import {
   fmtSigned,
   fmtUnsigned,
   hhmm,
+  invariantBadge,
   isLocked,
   isUuid,
+  KIND_LABEL,
   mapActionResponse,
   mergeSkip,
   pendingStatus,
   proposalFlagText,
   relativeAge,
+  rowProvenance,
   skipAriaLabel,
+  sourceLabel,
+  sourceLine,
   transactionFlagText,
+  uploadMeta,
   visibleRowIndices,
   type CardPhase,
   type DuplicateFlag,
@@ -83,6 +90,10 @@ const warmChip: React.CSSProperties = {
   background: c.tintWarm,
   border: `1px solid ${c.border2}`,
 };
+
+const greenChip: React.CSSProperties = { ...chip, color: c.ink, background: c.tintGreen };
+const TONE = { green: greenChip, warm: warmChip, neutral: neutralChip };
+const sentenceStyle: React.CSSProperties = { fontSize: 14, color: c.muted3 };
 
 const cell: React.CSSProperties = {
   fontSize: 14,
@@ -353,7 +364,8 @@ export default function InboxCard({
     status = "Decided elsewhere";
   }
 
-  const sourceLabel = p.channel === "mcp" ? "Claude" : p.channel === "chat" ? "monai chat" : p.channel;
+  const upload = uploadMeta(p);
+  const badge = upload && invariantBadge(upload, rows.length, text(rows[0]?.after?.currency));
   const code = typeof p.code === "string" && p.code !== "" ? p.code : null;
   const blockedDescribedBy = offline ? offlineBannerId : undefined;
 
@@ -388,7 +400,7 @@ export default function InboxCard({
           >
             {cardTitle(op, rows)}
           </h2>
-          <span style={neutralChip}>{sourceLabel}</span>
+          <span style={neutralChip}>{sourceLabel(p.channel)}</span>
         </div>
         <span
           id={`inbox-status-${id}`}
@@ -402,6 +414,35 @@ export default function InboxCard({
       <div style={{ marginTop: 4, fontSize: 12, color: c.muted3 }}>
         Proposed {relativeAge(Date.parse(p.created_at), nowMs)}
       </div>
+
+      {/* upload provenance: before the rows, so the trust statement is read first (D-23) */}
+      {upload && badge && (
+        <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+          <span style={{ fontSize: 12, color: c.muted3 }}>File</span>
+          <span
+            data-testid="inbox-upload-file"
+            style={{ fontSize: 14, fontWeight: 600, color: c.ink, overflowWrap: "anywhere" }}
+          >
+            {text(upload.filename)}
+          </span>
+          <span style={{ ...sentenceStyle, fontVariantNumeric: "tabular-nums" }}>
+            {" · "}
+            {KIND_LABEL[upload.kind] ?? text(upload.kind)} · {rows.length} rows
+          </span>
+          <span data-testid="inbox-invariant-badge" style={TONE[badge.tone]}>
+            {badge.text}
+          </span>
+          <span style={sentenceStyle}>{badge.sentence}</span>
+          {assumptionLines(upload).length > 0 && (
+            <>
+              <span style={warmChip}>Format assumed</span>
+              {assumptionLines(upload).map((line, k) => (
+                <span key={k} style={sentenceStyle}>{line}</span>
+              ))}
+            </>
+          )}
+        </div>
+      )}
 
       {/* MCP code */}
       {live && p.channel === "mcp" && code && (
@@ -472,6 +513,8 @@ export default function InboxCard({
                   const tone = skipped ? c.muted3 : c.ink;
                   const struck: React.CSSProperties = skipped ? { textDecoration: "line-through" } : {};
                   const flags = flagsOf(row);
+                  const prov = rowProvenance(row);
+                  const src = sourceLine(row);
                   return [
                     <tr key={`r${i}`} className="inbox-row">
                       <td className="inbox-c-num" style={{ ...cell, color: tone }}>{i + 1}</td>
@@ -514,10 +557,21 @@ export default function InboxCard({
                         )}
                       </td>
                     </tr>,
-                    flags.length > 0 && (
+                    (flags.length > 0 || prov.length > 0) && (
                       <tr key={`f${i}`} className="inbox-flag-row">
                         <td colSpan={7} style={{ padding: "0 8px 12px" }}>
-                          <DuplicateFlags flags={flags} selfId={id} onPageIds={onPageIds} />
+                          {flags.length > 0 && <DuplicateFlags flags={flags} selfId={id} onPageIds={onPageIds} />}
+                          {prov.map((item, k) => (
+                            <div key={k} style={{ marginTop: 4 }}>
+                              <span style={warmChip}>{item.chip}</span>{" "}
+                              <span style={{ fontSize: 12, color: c.muted3 }}>{item.line}</span>
+                            </div>
+                          ))}
+                          {src && (
+                            <div style={{ marginTop: 4, fontSize: 12, color: c.muted3, overflowWrap: "anywhere" }}>
+                              {src}
+                            </div>
+                          )}
                         </td>
                       </tr>
                     ),

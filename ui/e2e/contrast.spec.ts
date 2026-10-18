@@ -21,7 +21,7 @@ type Key = keyof typeof tokens.color;
 const SIX: Key[] = ["panel", "card", "sidebar", "tintNeutral", "tintWarm", "inputBg"];
 const FIVE: Key[] = ["panel", "card", "sidebar", "tintNeutral", "tintWarm"];
 
-// Exactly the UI-SPEC table: 6 + 12 + 5 + 2 + 2.
+// Exactly the UI-SPEC table: 6 + 12 + 5 + 2 + 2, plus ink on tintGreen (Phase 39 Inbox badge).
 const PAIRS: [Key, Key][] = [
   ...SIX.map((b): [Key, Key] => ["muted3", b]),
   ...SIX.map((b): [Key, Key] => ["ink", b]),
@@ -31,10 +31,11 @@ const PAIRS: [Key, Key][] = [
   ["green", "card"],
   ["inkText", "ink"],
   ["inkTextMuted", "ink"],
+  ["ink", "tintGreen"],
 ];
 
 test("pair list matches the UI-SPEC table", () => {
-  expect(PAIRS).toHaveLength(27);
+  expect(PAIRS).toHaveLength(28);
 });
 
 for (const [fg, bg] of PAIRS) {
