@@ -20,6 +20,7 @@ import calendar
 import codecs
 import csv
 import asyncio
+import hashlib
 import io
 import ipaddress
 import json
@@ -38,6 +39,7 @@ from sqlalchemy.orm import Session
 from backend import settings
 from backend.importer import REQUIRED_COLUMNS
 from backend.mcp_writes import _clean_text
+from backend.models import Attachment
 
 log = logging.getLogger(__name__)
 
@@ -953,3 +955,62 @@ async def read_receipt(images: list[bytes], *, kind: str, account_currency: str,
         "notes": None, "category": None, "raw_line": None, "llm_read": True, "assumptions": assumptions,
     }
     return Parsed(kind, "llm_read", [row], text, meta)
+
+
+# ---------------------------------------------------------------------------
+# The upload pipeline (D-04, D-12): one parse, one stored row, a summary built in code.
+# ---------------------------------------------------------------------------
+
+async def ingest(
+    data: bytes, *, kind_hint: str, account_name: str, account_currency: str, password: str | None,
+    target: tuple[str, str, str],
+) -> Parsed:
+    """Parse a sniffed file once, off the event loop. `kind_hint` is sniff()'s kind.
+
+    Raises NeedsPassword. The password is only ever passed down to pdfplumber.
+    """
+    if kind_hint == "csv":
+        return await asyncio.to_thread(
+            parse_csv_attachment, data, account_name=account_name, account_currency=account_currency
+        )
+    kind = "image"
+    try:
+        if kind_hint == "pdf":
+            kind, _ = await asyncio.to_thread(classify_pdf, data, password)
+            if kind == "pdf_text":
+                return await asyncio.to_thread(
+                    parse_pdf_statement, data, password, account_currency=account_currency
+                )
+        images = await asyncio.to_thread(prepare_images, data, kind, password)
+    except ImageRefused as e:
+        return Parsed(kind, "refused", [], "", {}, str(e))
+    return await read_receipt(images, kind=kind, account_currency=account_currency, target=target)
+
+
+def summary_for(parsed: Parsed) -> str:
+    """The one-line chip text, built in code (never by the model)."""
+    n = len(parsed.rows)
+    if parsed.status == "refused":
+        return parsed.note or ""
+    if parsed.status == "llm_read":
+        return "1 row read by the model from an image. It will be flagged for review."
+    if parsed.kind == "csv":
+        return f"{_n(n, 'row')}. Parsed on this computer."
+    word = "Running balance" if parsed.meta.get("invariant") == "running balance verified" else "Balance"
+    return f"{_n(n, 'row')}. {word} verified."
+
+
+def store(
+    db: Session, *, thread_id, filename: str, mime: str, kind: str, data: bytes, parsed: Parsed,
+    account_id: int | None,
+) -> Attachment:
+    """Insert the attachment row (flushed; the caller commits). Never given the password."""
+    a = Attachment(
+        thread_id=thread_id, filename=safe_filename(filename), mime=mime, kind=kind, size_bytes=len(data),
+        sha256=hashlib.sha256(data).hexdigest(), raw=data, extracted_text=parsed.text, rows=parsed.rows,
+        meta={**parsed.meta, "summary": summary_for(parsed)}, parse_status=parsed.status,
+        parse_note=parsed.note, account_id=account_id,
+    )
+    db.add(a)
+    db.flush()
+    return a
