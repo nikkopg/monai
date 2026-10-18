@@ -130,6 +130,14 @@ export function useAttachments(onAnnounce?: (text: string) => void) {
     [chips, onAnnounce]
   );
 
+  /** Leaving the thread: abort what is in flight and empty the tray. */
+  const clear = useCallback(() => {
+    ctl.current.forEach((ac) => ac.abort());
+    ctl.current.clear();
+    setChips([]);
+    setPending(null);
+  }, []);
+
   /**
    * On Ask: every chip the server stored goes with the question (the server
    * decides what a refused file contributes). Those chips leave the tray; a chip
@@ -146,6 +154,7 @@ export function useAttachments(onAnnounce?: (text: string) => void) {
     pendingPassword,
     submit,
     remove,
+    clear,
     clearSent,
     anyUploading: chips.some((c) => c.state === "uploading"),
   };

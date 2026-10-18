@@ -19,6 +19,11 @@ import ProposalCard, {
 } from "./ProposalCard";
 import type { LiveStatus, Proposal, ServerProposal } from "./ProposalCard";
 import Markdown from "./Markdown";
+import { AttachPanel, AttachToggle, useAttachments } from "./AttachControl";
+import { AttachmentTray, MessageAttachments } from "./AttachmentChip";
+import UploadCard from "./UploadCard";
+import { cardSentence, placeholderFor, type AttachChip } from "./attachLabels";
+import { tooltipStyle } from "./MessageActions";
 import ThreadSidebar from "./ThreadSidebar";
 import ToolSteps from "./ToolSteps";
 import SourceChips, { dedupeSources } from "./SourceChips";
@@ -44,7 +49,7 @@ type TraceStep = {
   result: Record<string, unknown>;
 };
 
-type UserItem = { kind: "user"; id: string; text: string; seq?: number };
+type UserItem = { kind: "user"; id: string; text: string; seq?: number; attachments?: AttachChip[] };
 
 type AsstItem = {
   kind: "assistant";
@@ -88,12 +93,24 @@ type PersistedMessage = {
   };
 };
 
+type ServerAttachment = {
+  id: string;
+  filename: string;
+  kind: string;
+  status: string;
+  summary: string;
+  row_count: number;
+  message_id: string | null;
+  purged_at: string | null;
+};
+
 type ThreadDetail = {
   id: string;
   active_run: { run_id: string } | null;
   messages: PersistedMessage[];
   summary_upto_seq?: number;
   has_summary?: boolean;
+  attachments?: ServerAttachment[];
 };
 
 type Boundary = { upto: number; summarized: boolean };
@@ -117,11 +134,27 @@ async function fetchThread(id: string): Promise<ThreadDetail | typeof NOT_FOUND 
   }
 }
 
-function mapMessages(list: PersistedMessage[]): Item[] {
+// A stored attachment as a read-only pill; the server status is ok | llm_read | refused.
+const toChip = (a: ServerAttachment): AttachChip => ({
+  localId: a.id,
+  attachmentId: a.id,
+  filename: a.filename,
+  kind: a.kind,
+  state: a.status === "ok" || a.status === "llm_read" ? a.status : "refused",
+  summary: a.summary,
+  rowCount: a.row_count,
+  purgedAt: a.purged_at,
+  messageId: a.message_id,
+});
+
+function mapMessages(list: PersistedMessage[], atts: ServerAttachment[] = []): Item[] {
   return [...list]
     .sort((a, b) => a.seq - b.seq)
     .map((m): Item => {
-      if (m.role !== "assistant") return { kind: "user", id: m.id, text: m.content, seq: m.seq };
+      if (m.role !== "assistant") {
+        const attachments = atts.filter((a) => a.message_id === m.id).map(toChip);
+        return { kind: "user", id: m.id, text: m.content, seq: m.seq, ...(attachments.length ? { attachments } : {}) };
+      }
       const parts = m.parts ?? {};
       const status: AsstItem["status"] =
         m.status === "error" || m.status === "cancelled" ? m.status : "complete";
@@ -377,6 +410,13 @@ function ChatInner() {
   const composerRef = useRef<HTMLInputElement | null>(null);
   const focusComposerRef = useRef(false);
   const bumpSidebar = () => setSidebarKey((k) => k + 1);
+  // Attachments (39): the page owns the panel, the thread id for uploads and focus.
+  const att = useAttachments(announce);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const newThreadRef = useRef<string | null>(null); // client id for a first upload (D-03)
+  useEffect(() => {
+    if (att.pendingPassword) setAttachOpen(true);
+  }, [att.pendingPassword]);
 
   const stream = useChatStream();
   const loadedRef = useRef<string | null>(null); // thread this view shows or is loading
@@ -430,7 +470,7 @@ function ChatInner() {
 
   // D-17: a delivered single-use token is kept for this tab only.
   function keepTokens(ps?: ServerProposal[]) {
-    for (const p of ps ?? []) if (p.token) saveProposalToken(p.id, p.token);
+    for (const p of ps ?? []) if (p.token && p.channel !== "upload") saveProposalToken(p.id, p.token);
   }
 
   function updateLive(fn: (m: AsstItem) => AsstItem) {
@@ -570,7 +610,7 @@ function ChatInner() {
       endRun();
       return;
     }
-    const next = mapMessages(r.messages);
+    const next = mapMessages(r.messages, r.attachments);
     setBoundary(boundaryOf(r));
     if (r.active_run && tries > 0) {
       void startAttach(tid, r.active_run.run_id, next, tries);
@@ -656,7 +696,7 @@ function ChatInner() {
     if (status === 409 && tid) {
       const r = await fetchThread(tid);
       if (typeof r !== "string") {
-        const fresh = mapMessages(r.messages);
+        const fresh = mapMessages(r.messages, r.attachments);
         setBoundary(boundaryOf(r));
         const at = fresh.findIndex((m) => m.id === userId);
         if (
@@ -677,7 +717,7 @@ function ChatInner() {
     if ((status === null || status >= 500) && tid) {
       const r = await fetchThread(tid);
       if (typeof r !== "string") {
-        restore = mapMessages(r.messages);
+        restore = mapMessages(r.messages, r.attachments);
         setBoundary(boundaryOf(r));
         if (loadedRef.current === tid && r.active_run) {
           editPendingRef.current = false;
@@ -715,7 +755,7 @@ function ChatInner() {
         setQuestion("");
         const r = await fetchThread(tid);
         if (typeof r !== "string" && loadedRef.current === tid) {
-          setMessages(mapMessages(r.messages));
+          setMessages(mapMessages(r.messages, r.attachments));
           setBoundary(boundaryOf(r));
         }
       } else {
@@ -739,6 +779,31 @@ function ChatInner() {
     }
   }
 
+  // A chat with no thread yet uploads into a client-made id; the returned thread is
+  // adopted like the one a first /query-stream announces (URL replace, no refetch).
+  async function submitAttach(file: File, accountId: number, password: string) {
+    const tid = loadedRef.current ?? (newThreadRef.current ??= crypto.randomUUID());
+    const res = await att.submit(tid, file, accountId, password);
+    if (res.outcome === "done" && loadedRef.current === null) {
+      newThreadRef.current = null;
+      loadedRef.current = res.threadId;
+      bumpSidebar();
+      router.replace("/chat?thread=" + res.threadId);
+    }
+    return res;
+  }
+
+  function removeChip(localId: string) {
+    const c = att.chips.find((x) => x.localId === localId);
+    att.remove(localId);
+    composerRef.current?.focus();
+    if (c?.attachmentId) {
+      const text = `Removed ${c.filename} from your question. It stays stored with this chat for 7 days.`;
+      setNote({ text, error: false });
+      setTimeout(() => setNote((n) => (n?.text === text ? null : n)), 5000);
+    }
+  }
+
   async function sendQuestion(text?: string, opts: SendOpts = {}) {
     const { retry = false, replaceFrom, mode = "regenerate" } = opts;
     if (text === undefined && !replaceFrom && !retry) {
@@ -747,6 +812,7 @@ function ChatInner() {
         void runSlash(cmd);
         return;
       }
+      if (att.anyUploading) return; // Ask is aria-disabled with the same reason
     }
     const q = (text ?? question).trim();
     // A turn during /compact or /clear would be clobbered by its refetch (WR-05).
@@ -756,6 +822,8 @@ function ChatInner() {
       : -1;
     if (replaceFrom && (target < 0 || !loadedRef.current)) return;
     const replacing = replaceFrom !== undefined;
+    // Only a fresh question carries chips; Ask again resends text (already bound server-side).
+    const sent = retry || replacing ? { ids: [], sent: [] } : att.clearSent();
 
     tokenBuf.cancel();
     const aid = nextId("a");
@@ -797,7 +865,11 @@ function ChatInner() {
           ms[ms.length - 2]?.kind === "user"
             ? ms.slice(0, -2)
             : ms;
-        return [...base, { kind: "user", id: uid, text: q }, runningItem(aid)];
+        return [
+          ...base,
+          { kind: "user", id: uid, text: q, ...(sent.sent.length ? { attachments: sent.sent } : {}) },
+          runningItem(aid),
+        ];
       });
       scrollNextRef.current = true;
       followingRef.current = true;
@@ -819,7 +891,7 @@ function ChatInner() {
       handleEvent(m);
     };
 
-    const out = await stream.send(q, loadedRef.current, onEvent, replaceFrom);
+    const out = await stream.send(q, loadedRef.current, onEvent, replaceFrom, sent.ids);
     if (replacing && !accepted && (out.kind === "status" || out.kind === "error")) {
       await refuseReplace(out.kind === "status" ? out.status : null, snapshot, replaceFrom, mode);
       return;
@@ -848,6 +920,7 @@ function ChatInner() {
     const cards: Proposal[] = traceRef.current
       .filter(
         (s) =>
+          s.tool !== "propose_statement_rows" && // an Inbox upload card has no Stop copy
           typeof s.result?.proposal_id === "string" &&
           rejected.includes(s.result.proposal_id as string)
       )
@@ -895,6 +968,8 @@ function ChatInner() {
     tokenBuf.cancel();
     setOpenSteps({});
     stream.detach(); // client-side only; never cancels the run (D-06)
+    att.clear();
+    setAttachOpen(false);
     loadedRef.current = id;
     endRun();
     setStopping(false);
@@ -921,7 +996,7 @@ function ChatInner() {
     scrollNextRef.current = true;
     followingRef.current = true;
     setShowJump(false);
-    const next = mapMessages(r.messages);
+    const next = mapMessages(r.messages, r.attachments);
     setBoundary(boundaryOf(r));
     if (r.active_run) void startAttach(id, r.active_run.run_id, next, 2);
     else setMessages(next);
@@ -938,6 +1013,9 @@ function ChatInner() {
     tokenBuf.cancel();
     setOpenSteps({});
     stream.detach();
+    att.clear();
+    setAttachOpen(false);
+    newThreadRef.current = null;
     loadedRef.current = null;
     endRun();
     setStopping(false);
@@ -994,6 +1072,12 @@ function ChatInner() {
       if (m.status === "complete") {
         const t = document.querySelector(`[data-mid="${m.id}"]`)?.textContent?.trim();
         if (t) text = `monai: ${t}`;
+        const cards = m.proposals.flatMap((p) => {
+          const a = p.channel === "upload" ? p.payload?.attachment : undefined;
+          const c = a && cardSentence(a.row_count, a.flagged_count, undefined);
+          return c ? [c.lead + c.tail] : [];
+        });
+        if (cards.length) text = [text, ...cards].join(" ");
       } else if (m.status === "error" && m.error) {
         const c = errorCopy(m.error);
         text = `${c.title}. ${c.body}`;
@@ -1057,6 +1141,7 @@ function ChatInner() {
     el.setSelectionRange(el.value.length, el.value.length);
   }, [question]);
 
+  const waitUpload = att.anyUploading && !asking; // Ask is aria-disabled, not disabled (37)
   const last = messages[messages.length - 1];
   const orphan = last?.kind === "user" && !asking && !loading && !loadError;
   // The divider goes after the last persisted message at or before the boundary (D-24).
@@ -1155,6 +1240,9 @@ function ChatInner() {
     const prevUser = messages[index - 1]?.kind === "user" ? (messages[index - 1] as UserItem) : null;
     const lastAsst = messages.map((x) => x.kind).lastIndexOf("assistant") === index;
     const redoReason = prevUser ? redoDisabled(index - 1) : null;
+    // Upload proposals are Inbox-only: never in PlanBar, Approve all or a token card (D-22).
+    const uploads = m.proposals.filter((p) => p.channel === "upload");
+    const chatPs = m.proposals.filter((p) => p.channel !== "upload");
     return (
       <div key={m.id} className="chat-msg">
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
@@ -1282,10 +1370,10 @@ function ChatInner() {
         />
 
         {/* Inline ProposalCards — one per proposal in this turn (D-01, AGENT-06) */}
-        {m.proposals.length >= 2 && (
+        {chatPs.length >= 2 && (
           <PlanBar
-            proposals={m.proposals}
-            locked={m.proposals.some((p) => busyCards.has(p.id))}
+            proposals={chatPs}
+            locked={chatPs.some((p) => busyCards.has(p.id))}
             onApplied={(id) => markStatus(m.id, id, "confirmed")}
             onFailed={(id, text) => setBulk({ msgId: m.id, running: false, failed: { id, text } })}
             onRunning={(r) =>
@@ -1297,7 +1385,7 @@ function ChatInner() {
             }
           />
         )}
-        {m.proposals.map((p, i) => (
+        {chatPs.map((p, i) => (
           <ProposalCard
             key={p.id}
             proposal={p}
@@ -1305,7 +1393,7 @@ function ChatInner() {
             inCancelledMessage={m.status === "cancelled"}
             locked={bulk?.msgId === m.id && bulk.running}
             externalError={bulk?.msgId === m.id && bulk.failed?.id === p.id ? bulk.failed.text : null}
-            step={m.proposals.length >= 2 ? i + 1 : undefined}
+            step={chatPs.length >= 2 ? i + 1 : undefined}
             onApplied={() => markStatus(m.id, p.id, "confirmed")}
             onRejected={() => markStatus(m.id, p.id, "rejected")}
             onBusy={(b) =>
@@ -1317,6 +1405,9 @@ function ChatInner() {
               })
             }
           />
+        ))}
+        {uploads.map((p) => (
+          <UploadCard key={p.id} proposal={p} status={p.liveStatus} />
         ))}
       </div>
     );
@@ -1573,6 +1664,7 @@ function ChatInner() {
                           >
                             {m.text}
                           </div>
+                          <MessageAttachments items={m.attachments ?? []} />
                           <MessageActions
                             questionText={m.text}
                             onEdit={() => startEdit(m)}
@@ -1645,7 +1737,8 @@ function ChatInner() {
               position: "sticky",
               bottom: 0,
               display: "flex",
-              gap: 10,
+              flexDirection: "column",
+              gap: 8,
               background: tokens.color.panel,
               paddingTop: 8,
               paddingBottom: 2,
@@ -1699,6 +1792,30 @@ function ChatInner() {
                 {slash ? (slash === "compacting" ? "Compacting…" : "Clearing…") : note?.text}
               </div>
             )}
+            <AttachmentTray chips={att.chips} onRemove={removeChip} />
+            <AttachPanel
+              open={attachOpen}
+              onClose={(sentOk) => {
+                setAttachOpen(false);
+                if (sentOk) composerRef.current?.focus();
+              }}
+              onSubmit={submitAttach}
+              pendingPassword={att.pendingPassword}
+            />
+            <div style={{ display: "flex", gap: 10 }}>
+            <AttachToggle
+              expanded={attachOpen}
+              onToggle={() => setAttachOpen((o) => !o)}
+              disabledReason={
+                asking
+                  ? WAIT_REASON
+                  : loading
+                  ? "Wait for the chat to finish loading."
+                  : slash !== null
+                  ? "Wait for the command to finish."
+                  : null
+              }
+            />
             <label htmlFor="chat-composer" className="sr-only">
               Ask monai a question
             </label>
@@ -1708,7 +1825,7 @@ function ChatInner() {
               style={{ ...input, borderRadius: 14, padding: "14px 18px", fontSize: 15 }}
               value={question}
               disabled={slash !== null}
-              placeholder="Ask anything about your finances…"
+              placeholder={placeholderFor(att.chips.length) ?? "Ask anything about your finances…"}
               onChange={(e) => {
                 setQuestion(e.target.value);
                 setNote(null);
@@ -1727,8 +1844,10 @@ function ChatInner() {
                 void sendQuestion();
               }}
             />
+            <span className="action-wrap" style={{ position: "relative", display: "flex" }}>
             <button
               type="button"
+              {...(waitUpload ? { "aria-disabled": true as const, "aria-describedby": "ask-wait" } : {})}
               style={{
                 background: asking ? tokens.color.sidebar : tokens.color.ink,
                 color: asking ? tokens.color.ink : tokens.color.inkText,
@@ -1737,8 +1856,8 @@ function ChatInner() {
                 padding: "0 24px",
                 fontSize: 15,
                 fontWeight: 600,
-                cursor: stopping || (loading && !asking) || slash ? "not-allowed" : "pointer",
-                opacity: stopping || (loading && !asking) || slash ? 0.5 : 1,
+                cursor: stopping || (loading && !asking) || slash || waitUpload ? "not-allowed" : "pointer",
+                opacity: stopping || (loading && !asking) || slash || waitUpload ? 0.5 : 1,
               }}
               onClick={asking ? stop : () => void sendQuestion()}
               disabled={stopping || (loading && !asking) || slash !== null}
@@ -1753,6 +1872,13 @@ function ChatInner() {
                 "Ask"
               )}
             </button>
+            {waitUpload && (
+              <span role="tooltip" id="ask-wait" className="action-tooltip" style={{ ...tooltipStyle, left: "auto", right: 0 }}>
+                Wait for the file to finish uploading.
+              </span>
+            )}
+            </span>
+            </div>
           </div>
         </div>
       </div>

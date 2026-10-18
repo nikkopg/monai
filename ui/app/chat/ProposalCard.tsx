@@ -7,6 +7,7 @@ import { tokens, btn, btnGhost } from "../styles";
 import ProposalDiff from "../components/ProposalDiff";
 import type { DiffRow } from "../components/ProposalDiff";
 import { hhmm } from "../lib/inbox";
+import type { UploadMeta } from "./UploadCard";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -18,17 +19,19 @@ export type ServerProposal = {
   id: string;
   token?: string | null;
   operation?: string | null;
-  payload?: { operation: string; rows: DiffRow[] } | null;
+  payload?: { operation: string; rows: DiffRow[]; attachment?: UploadMeta } | null;
   expires_at?: string | null;
   status?: string | null;
+  channel?: string | null; // "upload": a card for the Inbox, never token-confirmable here (39 D-22)
 };
 
 export type Proposal = {
   id: string;
   token: string | null;
   operation: string | null;
-  payload: { operation: string; rows: DiffRow[] } | null;
+  payload: { operation: string; rows: DiffRow[]; attachment?: UploadMeta } | null;
   expiresAt: Date | null;
+  channel?: string | null;
   rejectedByStop?: boolean;
   // Live status joined by GET /threads/{id}; undefined for the in-view turn.
   liveStatus?: LiveStatus;
@@ -53,6 +56,7 @@ export function toProposal(p: ServerProposal): Proposal {
     operation: p.operation ?? null,
     payload: p.payload ?? null,
     expiresAt: Number.isNaN(ms) ? null : new Date(ms),
+    channel: p.channel ?? null,
   };
 }
 

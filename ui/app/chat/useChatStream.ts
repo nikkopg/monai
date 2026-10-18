@@ -126,11 +126,13 @@ export function useChatStream() {
     question: string,
     threadId: string | null,
     onEvent: (msg: SseMessage) => void,
-    replaceFrom?: string | null
+    replaceFrom?: string | null,
+    attachmentIds: string[] = []
   ) {
     runIdRef.current = null;
-    const body: Record<string, string> = threadId ? { question, thread_id: threadId } : { question };
+    const body: Record<string, unknown> = threadId ? { question, thread_id: threadId } : { question };
     if (replaceFrom && threadId) body.replace_from = replaceFrom; // D-18: regenerate / edit
+    if (attachmentIds.length) body.attachment_ids = attachmentIds; // 39 D-03: bound to this question
     return open(
       "/api/query-stream",
       {
