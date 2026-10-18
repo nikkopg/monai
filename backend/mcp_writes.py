@@ -1,7 +1,8 @@
 """Curated MCP write wrappers (Phase 32) plus the duplicate-flag helper.
 
 The wrappers fix channel "mcp" themselves and are registered on FastMCP only,
-never in tools.TOOLS (D-02, D-03). Every refusal is a fixed-text ToolError and
+never in tools.TOOLS (D-02, D-03). propose_batch is shared with the upload
+channel (Phase 39, D-20). Every refusal is a fixed-text ToolError and
 no token, code or key is ever returned or logged (D-21). backend.main imports
 this module's helper, so anything from backend.main is imported lazily inside
 functions.
@@ -181,6 +182,10 @@ def _safe(fn):
     return wrapper
 
 
+class BatchRefused(ValueError):
+    """Fixed-text refusal from propose_batch; the MCP wrapper re-raises it as a ToolError."""
+
+
 class TxnRow(BaseModel):
     """One proposed transaction row; no currency or is_transfer (D-04)."""
 
@@ -297,14 +302,15 @@ def _supersede(db: Session, replaces: str) -> uuid.UUID:
     return old.id
 
 
-def _create(db: Session, operation: str, payload: dict, replaces: str | None, summary: str, many: bool) -> dict:
-    """Insert one mcp proposal (superseding `replaces`) and commit once.
+def _create(db: Session, operation: str, payload: dict, replaces: str | None, summary: str, many: bool,
+            *, channel: str = "mcp") -> dict:
+    """Insert one proposal (mcp by default; superseding `replaces`) and commit once.
 
     The token _make_proposal returns is discarded; flags are computed after the
     supersede flush so a replacement is not flagged against its predecessor.
     """
     old_id = _supersede(db, replaces) if replaces else None
-    pid, _ = _make_proposal(operation, payload, "mcp", db=db, supersedes_id=old_id)
+    pid, _ = _make_proposal(operation, payload, channel, db=db, supersedes_id=old_id)
     p = db.get(Proposal, uuid.UUID(pid))
     flags = duplicate_flags(db, [p])[p.id]
     dups = [{"row": i, "matches": f} for i, f in enumerate(flags) if f]
@@ -316,58 +322,80 @@ def _create(db: Session, operation: str, payload: dict, replaces: str | None, su
         "row_count": len(payload["rows"]),
         "expires_at": p.expires_at.isoformat(),
         "duplicates": dups,
-        "next_step": NEXT_STEP,
     }
+    if channel == "mcp":
+        result["next_step"] = NEXT_STEP
     db.commit()
     return result
 
 
-@_safe
-def propose_transactions(rows: list[TxnRow], replaces: str | None = None) -> dict:
+def propose_batch(
+    db: Session,
+    rows: list[TxnRow],
+    *,
+    channel: str,
+    replaces: str | None = None,
+    account: tuple[int, str, str] | None = None,
+    provenance: dict | None = None,
+    attachment: dict | None = None,
+) -> dict:
+    """Validate a batch of transaction rows and create one proposal (D-20).
+
+    Shared by the MCP tool (channel "mcp") and the upload channel. Raises
+    BatchRefused with a fixed text; the caller commits nothing on refusal.
+    """
     if not rows:
-        _refuse("Send at least one row.")
+        raise BatchRefused("Send at least one row.")
     if len(rows) > MAX_BATCH_ROWS:
-        _refuse(f"Too many rows ({len(rows)}). Send at most {MAX_BATCH_ROWS} rows per call; "
-                "split the batch into several calls.")
+        raise BatchRefused(f"Too many rows ({len(rows)}). Send at most {MAX_BATCH_ROWS} rows per call; "
+                           "split the batch into several calls.")
     today = datetime.now(_JAKARTA).date()
     errors: list[str] = []
     out: list[dict] = []
     names: set[str] = set()
+    accounts, cats = _load_refs(db)
+    for i, r in enumerate(rows):
+        errs = []
+        acct, err = _resolve_account(accounts, r.account)
+        if err:
+            errs.append(err)
+        category = None
+        if r.category:
+            category = cats.get(r.category.strip().casefold())
+            if category is None:
+                errs.append("unknown category, call list_categories")
+        amount = _parse_amount(r.amount)
+        if amount is None or amount == 0:
+            errs.append("amount must be a non-zero number with at most 2 decimals")
+        errs += [e for e in (_date_error(r.date, today),
+                             _text_error("merchant", r.merchant, _MERCHANT_MAX),
+                             _text_error("notes", r.notes)) if e]
+        if errs:
+            errors += [f"row {i}: {e}" for e in errs]
+            continue
+        names.add(acct[1])
+        out.append({"before": None, "after": {
+            "date": r.date, "amount": str(amount), "account": acct[1], "category": category,
+            # External-LLM text enters the ledger here: strip control/bidi chars (WR-03).
+            "merchant": _clean_text(r.merchant, None), "notes": _clean_text(r.notes, None),
+            "currency": acct[2], "is_transfer": False,
+        }})
+    if errors:
+        more = f", and {len(errors) - 20} more" if len(errors) > 20 else ""
+        raise BatchRefused("Nothing was proposed. Fix these rows (numbered from 0) and call again: "
+                           + "; ".join(errors[:20]) + more)
+    n = len(out)
+    return _create(db, "add_transaction", {"operation": "add_transaction", "rows": out}, replaces,
+                   f"Add {n} transaction(s) to {', '.join(sorted(names))}", many=True, channel=channel)
+
+
+@_safe
+def propose_transactions(rows: list[TxnRow], replaces: str | None = None) -> dict:
     with get_session_sync() as db:
-        accounts, cats = _load_refs(db)
-        for i, r in enumerate(rows):
-            errs = []
-            acct, err = _resolve_account(accounts, r.account)
-            if err:
-                errs.append(err)
-            category = None
-            if r.category:
-                category = cats.get(r.category.strip().casefold())
-                if category is None:
-                    errs.append("unknown category, call list_categories")
-            amount = _parse_amount(r.amount)
-            if amount is None or amount == 0:
-                errs.append("amount must be a non-zero number with at most 2 decimals")
-            errs += [e for e in (_date_error(r.date, today),
-                                 _text_error("merchant", r.merchant, _MERCHANT_MAX),
-                                 _text_error("notes", r.notes)) if e]
-            if errs:
-                errors += [f"row {i}: {e}" for e in errs]
-                continue
-            names.add(acct[1])
-            out.append({"before": None, "after": {
-                "date": r.date, "amount": str(amount), "account": acct[1], "category": category,
-                # External-LLM text enters the ledger here: strip control/bidi chars (WR-03).
-                "merchant": _clean_text(r.merchant, None), "notes": _clean_text(r.notes, None),
-                "currency": acct[2], "is_transfer": False,
-            }})
-        if errors:
-            more = f", and {len(errors) - 20} more" if len(errors) > 20 else ""
-            _refuse("Nothing was proposed. Fix these rows (numbered from 0) and call again: "
-                    + "; ".join(errors[:20]) + more)
-        n = len(out)
-        return _create(db, "add_transaction", {"operation": "add_transaction", "rows": out}, replaces,
-                       f"Add {n} transaction(s) to {', '.join(sorted(names))}", many=True)
+        try:
+            return propose_batch(db, rows, channel="mcp", replaces=replaces)
+        except BatchRefused as e:
+            _refuse(str(e))
 
 
 @_safe

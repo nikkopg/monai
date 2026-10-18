@@ -71,9 +71,9 @@ def test_ttl_for_table():
 
     assert ttl_for("chat") == timedelta(minutes=15)
     assert ttl_for("mcp") == timedelta(hours=48)
-    for ch in ("discord", "upload"):
-        with pytest.raises(ValueError):
-            ttl_for(ch)
+    assert ttl_for("upload") == timedelta(hours=48)
+    with pytest.raises(ValueError):
+        ttl_for("discord")
 
 
 def test_ttl_make_proposal_chat_default(db_session):
