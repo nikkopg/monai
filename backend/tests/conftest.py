@@ -205,6 +205,14 @@ def approver_key(monkeypatch: pytest.MonkeyPatch) -> str:
     return _TEST_APPROVER_KEY
 
 
+@pytest.fixture(autouse=True)
+def _no_ambient_skills(tmp_path_factory, monkeypatch):
+    """Phase 40 WR-03: tools_for_turn and the workflow scan MONAI_SKILLS_DIR (default
+    /app/skills, the owner's real mount in the container). Point every test at an
+    empty folder; tests that need packs set their own."""
+    monkeypatch.setenv("MONAI_SKILLS_DIR", str(tmp_path_factory.mktemp("no-skills")))
+
+
 # ---------------------------------------------------------------------------
 # Session teardown: purge test-created platforms from the shared monai_test DB.
 #

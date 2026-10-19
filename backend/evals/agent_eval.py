@@ -44,6 +44,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
@@ -1599,6 +1600,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.self_check:
         _self_check()
         return 0
+
+    # The probes and cases 1-20 must never see the owner's real skills (WR-03):
+    # scan an empty folder; _fixture_skill scopes case 21's own and restores this.
+    os.environ["MONAI_SKILLS_DIR"] = tempfile.mkdtemp(prefix="monai-eval-no-skills-")
 
     if args.seed_check:
         return _do_seed_check()

@@ -421,6 +421,25 @@ async def test_load_skill_refusal_flows_through_a_stub_turn(monkeypatch):
     assert _of_type(payloads, "answer") and not _of_type(payloads, "error")
 
 
+def test_suite_never_sees_ambient_skills():
+    # WR-03: conftest points every test at an empty folder unless it sets its own.
+    d = skills.skills_dir()
+    assert d != Path("/app/skills") and d.is_dir() and not any(d.iterdir())
+
+
+def test_eval_scans_an_empty_skills_folder(monkeypatch):
+    # WR-03: the eval must not inherit an ambient MONAI_SKILLS_DIR for its probes and cases.
+    from backend.evals import agent_eval
+
+    monkeypatch.setenv("MONAI_SKILLS_DIR", "/app/skills")
+    seen = []
+    monkeypatch.setattr(agent_eval, "_do_seed_check", lambda: seen.append(skills.skills_dir()) or 0)
+    assert agent_eval.main(["--seed-check"]) == 0
+    (d,) = seen
+    assert d != Path("/app/skills") and d.is_dir() and not any(d.iterdir())
+    d.rmdir()
+
+
 def test_load_skill_stays_out_of_the_shared_registries():
     from backend import chat_tools, tools
 
