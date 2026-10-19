@@ -822,6 +822,34 @@ def test_skills_fingerprint_rebuilds_the_workflow(monkeypatch):
     assert wf2 is not wf1 and len(q._agent_workflows) == 1
 
 
+async def test_turn_setup_scans_skills_off_the_event_loop(monkeypatch, thread_id):
+    # WR-02: the scan reads files and the DB, so it must never run on the loop thread.
+    import threading
+
+    from llama_index.core.llms import MockLLM
+
+    loop_thread = threading.get_ident()
+    calls = []
+
+    def eff():
+        calls.append(threading.get_ident() != loop_thread)
+        return [FAKE]
+
+    monkeypatch.setattr(skills, "effective", eff)
+    agent_stream = q.agent_stream  # _start stubs it
+    await _start(monkeypatch, "how much did I spend?", thread_id)  # start_turn's tools_for_turn
+
+    monkeypatch.setattr(q, "_agent_workflows", {})
+    monkeypatch.setattr(q, "_get_llm", lambda: MockLLM())
+
+    def stop(wf):  # the workflow is built; end the turn before any model call
+        raise RuntimeError("synthetic")
+
+    monkeypatch.setattr(q, "_llm_label", stop)
+    [line async for line in agent_stream("how much did I spend?")]  # tools_for_turn + workflow
+    assert len(calls) == 3 and all(calls)
+
+
 NOTICE = "This thread has a document. Start a new thread for other changes."
 
 

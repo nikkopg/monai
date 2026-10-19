@@ -587,8 +587,9 @@ async def agent_stream(
         if tool_names is None:
             from backend.agent_loop import tools_for_turn
 
-            tool_names = tools_for_turn(question)
-        workflow = _get_agent_workflow(tool_names)
+            tool_names = await asyncio.to_thread(tools_for_turn, question)
+        # Off the loop: the skills scan reads files and the DB (Phase 40 WR-02).
+        workflow = await asyncio.to_thread(_get_agent_workflow, tool_names)
         model, provider = _llm_label(workflow)
         # Before workflow.run: the run's tasks copy the context at creation, so
         # the tool step tasks see this Turn. No reset: an async generator can be

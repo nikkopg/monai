@@ -384,7 +384,12 @@ async def test_stream_ends_if_producer_dies_before_first_step(monkeypatch):
     run = Run(key="synthetic")
     gen = agent_stream("q", run=run, ping_interval=0.05)
     first = asyncio.ensure_future(gen.__anext__())
-    await asyncio.sleep(0)  # the generator runs up to its first queue wait
+    # The generator runs up to its first queue wait. Setup hops through worker
+    # threads (Phase 40 WR-02), so spin the loop until the producer exists; it
+    # is queued behind this task, so it still has not run its first step.
+    deadline = asyncio.get_running_loop().time() + 2
+    while run.task is None and asyncio.get_running_loop().time() < deadline:
+        await asyncio.sleep(0)
     assert run.task is not None and not run.task.done()
     run.task.cancel()  # before the producer's first step
 

@@ -209,7 +209,10 @@ async def start_turn(
         history, to_compact = plan_history(
             prior, config.CHAT_HISTORY_TOKEN_BUDGET, query._today(), summary=summary, upto_seq=upto
         )
-        tool_names = agent_loop.tools_for_turn(question, prior, attachment_thread=bool(atts))
+        # Off the loop: the skills scan reads files and the DB (Phase 40 WR-02).
+        tool_names = await asyncio.to_thread(
+            agent_loop.tools_for_turn, question, prior, attachment_thread=bool(atts)
+        )
         if atts:
             history = [ChatMessage(role=MessageRole.SYSTEM, content=chat_tools.manifest(atts)), *history]
         run.thread_id, run.user_message_id, run.user_seq = tid, user_id, seq
