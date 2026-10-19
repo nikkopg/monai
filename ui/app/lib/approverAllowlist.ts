@@ -100,6 +100,9 @@ export function buildForwardHeaders(
   headers.set("MONAI_API_KEY", apiKey);
   // The backend sees its own host, not the Next.js host.
   headers.delete("host");
+  // Node's fetch (undici) throws on an Expect header, which curl adds to bodies
+  // over 1 MB; the proxy already holds the whole body, so drop it (else a 502).
+  headers.delete("expect");
   // A client-supplied approver header is never forwarded (D-03, T-33-01).
   headers.delete("MONAI_APPROVER_KEY");
   if (

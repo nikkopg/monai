@@ -167,6 +167,11 @@ test.describe("forward headers", () => {
     expect(h.has("host")).toBe(false);
     expect(h.get("accept")).toBe("application/json");
   });
+  test("Expect is dropped (undici's fetch throws on it; curl sends it on large uploads)", () => {
+    const req = incoming();
+    req.set("expect", "100-continue");
+    expect(buildForwardHeaders(req, "api-synthetic", "", "POST", `threads/${U}/attachments`, "").has("expect")).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
