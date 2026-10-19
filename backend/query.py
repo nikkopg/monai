@@ -159,7 +159,14 @@ def _today() -> datetime.date:
 def _get_llm():
     global _llm
     if _llm is None:
-        configure_llm()
+        # Rebuild from the effective settings (Settings page over env), as PUT
+        # /settings does; a bare configure_llm() here silently dropped the
+        # override after every reset_engine(), so the attach locality notice
+        # (which reads the same settings) could name a model chat wasn't using.
+        from backend.db import get_session_sync
+        from backend.settings import get_effective_settings
+        with get_session_sync() as db:
+            configure_llm(overrides=get_effective_settings(db, raw_keys=True))
         from llama_index.core import Settings
         _llm = Settings.llm
     return _llm

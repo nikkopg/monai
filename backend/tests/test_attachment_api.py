@@ -357,3 +357,9 @@ def test_locality_default_config(env, monkeypatch):
     r = env.client.get("/attachments/locality", headers=env.h)
     assert r.status_code == 200
     assert r.json() == {"local": False, "destination": "Ollama Cloud (gemma4:31b-cloud)"}
+
+
+def test_parsed_note_is_capped_and_cleaned():
+    # A refused CSV lists file-derived headers in its note, which reaches the model unpaged (T-39-07-06).
+    p = Parsed("csv", "refused", [], "x", {}, "Headers found: " + "zz‮," * 5000)
+    assert len(p.note) <= 300 and "‮" not in p.note

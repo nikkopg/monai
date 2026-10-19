@@ -193,6 +193,11 @@ class Parsed:
     meta: dict
     note: str | None = None
 
+    def __post_init__(self):
+        # The note reaches the model unpaged (read_attachment, manifest), and a
+        # refused CSV lists file-derived headers in it: cap it once, here (T-39-07-06).
+        self.note = _clean_text(self.note, 300)
+
     @property
     def askable(self) -> bool:
         return bool(self.text.strip())

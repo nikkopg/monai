@@ -251,3 +251,19 @@ def test_llm_change_resets_engine(client, api_key, monkeypatch):
     )
     assert resp2.status_code == 200
     assert calls["count"] == 1
+
+
+def test_get_llm_rebuilds_from_effective_settings_after_reset(monkeypatch):
+    """reset_engine() must not drop a Settings-page override: _get_llm rebuilds with it."""
+    from backend import query, settings
+
+    seen = []
+    monkeypatch.setattr(settings, "get_effective_settings",
+                        lambda db, raw_keys=False: {"llm_provider": "ollama", "llm_model": "zz-local:1b"})
+    monkeypatch.setattr(query, "configure_llm", lambda overrides=None: seen.append(overrides))
+    query.reset_engine()
+    try:
+        query._get_llm()
+    finally:
+        query.reset_engine()
+    assert seen == [{"llm_provider": "ollama", "llm_model": "zz-local:1b"}]
