@@ -3,7 +3,7 @@ Opt-in golden-question eval for the production agent loop.
 
 What this is: a standalone script, NOT a pytest test and NOT collected by
 default pytest or CI (backend/evals/ sits outside pyproject.toml's
-testpaths). It sends ~20 scripted questions through backend.query.agent_stream
+testpaths). It sends ~21 scripted questions through backend.query.agent_stream
 — the real, production agent loop — driven by whatever real LLM is
 configured via LLM_PROVIDER / the matching model env var. It runs only
 against monai_test, never the live monai database; a module-top guard
@@ -19,6 +19,8 @@ also runs on Ctrl-C. It never approves a proposal.
 Cases 15-17 and 20 are multi-turn: their history is built in memory with
 plan_history and they create no threads. Cases 18-20 cover Phase 38 (a
 read-only tool subset, an ordered two-write request, a long summarised thread).
+Case 21 covers Phase 40: an enabled synthetic skill that must be loaded first; the
+skill (env var and app_settings row) exists only around that one case.
 
 Usage:
     env -u DATABASE_URL .venv/bin/python -m backend.evals.agent_eval \
@@ -27,7 +29,7 @@ Usage:
     --self-check   run the answer-number parser's asserts only. No DB, no LLM.
     --seed-check   run the DB guard, head check, seed, probes and teardown.
                    No LLM.
-    --case N       run only case N (repeatable). Default: run all 20 cases.
+    --case N       run only case N (repeatable). Default: run all 21 cases.
 
 Exit code 0 means every selected case passed (or, for --self-check /
 --seed-check, that check passed). Exit code 1 otherwise.
@@ -36,6 +38,7 @@ Exit code 0 means every selected case passed (or, for --self-check /
 import argparse
 import asyncio
 import calendar
+import contextlib
 import datetime
 import json
 import os
@@ -343,6 +346,27 @@ def _self_check() -> None:
     assert _check_case(fake_case, {"text": "You spent 43,000", "trace": [right, wrong]})["passed"]
     assert not _check_case(fake_case, {"text": "You spent 134,000", "trace": [right, wrong]})["passed"]
 
+    # Case 21 trace checker (pure). `_period_range` is stubbed so no backend
+    # import (and so no DB) is needed to compare ranges.
+    def st(tool, **args):
+        return {"tool": tool, "args": args}
+
+    sp, mt = st("spending_total", period="this_month"), st("monthly_trend")
+    ls = st("load_skill", name=SKILL_NAME)
+    saved_pr = globals()["_period_range"]
+    globals()["_period_range"] = lambda p="all_time", s=None, e=None: (p, s, e)
+    try:
+        assert _args_skill_first([ls, sp, mt], {})
+        assert _args_skill_first([ls, mt, sp], {})
+        assert not _args_skill_first([sp, ls, mt], {})
+        assert not _args_skill_first([ls, sp], {})
+        assert not _args_skill_first([ls, st("spending_total", period="last_month"), mt], {})
+        assert not _args_skill_first([st("load_skill", name="other"), sp, mt], {})
+    finally:
+        globals()["_period_range"] = saved_pr
+    digits = [p.name for p in SKILLS_FIXTURE.rglob("*") if p.is_file() and re.search(r"\d", p.read_text())]
+    assert SKILLS_FIXTURE.is_dir() and not digits, digits
+
     # Multi-turn helpers (pure): history markers and the calendar-month maths.
     assert _has_marker("[2026-10-11] You spent 5")
     assert _has_marker("You spent 5 [tools used: x()]")
@@ -408,6 +432,11 @@ TRANSFER_DECOY = "ZZEval Transfer Out"
 LINKED_DECOY = "ZZEval Broker Topup"
 EVAL_PLATFORM = "ZZEval Platform"
 EVAL_TICKER = "ZZEVAL"
+# Phase 40 (case 21). SKILLS_KEY mirrors skills.KEY_SKILLS_ENABLED as a literal so
+# _purge/_leftovers need no backend import.
+SKILLS_FIXTURE = Path(__file__).parent / "skills_fixture"
+SKILL_NAME = "zzeval-monthly-review"
+SKILLS_KEY = "skills_enabled"
 _EVAL_CATS = [PARENT, CHILD, RECUR_CAT]
 
 
@@ -545,6 +574,8 @@ def _purge(proposal_ids: list[str]) -> None:
         c.execute(sa_text("DELETE FROM categories WHERE name = :name"), {"name": PARENT})
         c.execute(sa_text("DELETE FROM categories WHERE name = :name"), {"name": RECUR_CAT})
         c.execute(sa_text("DELETE FROM accounts WHERE name = :name"), {"name": ACCOUNT})
+        # Phase 40: the scoped-skill row (normally already gone via _fixture_skill).
+        c.execute(sa_text("DELETE FROM app_settings WHERE key = :sk"), {"sk": SKILLS_KEY})
         # Guard (research C6): the eval creates no threads (D-22a), but drop any
         # eval-titled one; messages cascade, proposals keep their rows.
         c.execute(sa_text("DELETE FROM threads WHERE title LIKE :tp"), {"tp": MARKER + "%"})
@@ -652,11 +683,12 @@ def _leftovers(proposal_ids: list[str]) -> int:
                 "(SELECT count(*) FROM portfolio_events WHERE ticker = :tick) + "
                 "(SELECT count(*) FROM platforms WHERE name = :plat) + "
                 "(SELECT count(*) FROM threads WHERE title LIKE :tp) + "
+                "(SELECT count(*) FROM app_settings WHERE key = :sk) + "
                 "(SELECT count(*) FROM proposals WHERE status IN ('pending', 'expired') AND "
                 "id = ANY(CAST(:ids AS uuid[])))"
             ),
             {"acct": ACCOUNT, "cats": _EVAL_CATS, "tick": EVAL_TICKER, "plat": EVAL_PLATFORM,
-             "tp": MARKER + "%", "ids": [pid for pid in proposal_ids if pid]},
+             "tp": MARKER + "%", "sk": SKILLS_KEY, "ids": [pid for pid in proposal_ids if pid]},
         ).scalar()
     return int(n or 0)
 
@@ -664,10 +696,11 @@ def _leftovers(proposal_ids: list[str]) -> int:
 # ---------------------------------------------------------------------------
 # Probes — no LLM. Prove the subtree, case-insensitive,
 # unknown-category and period data paths the 20 cases rely on, plus the
-# Phase 38 subset (P11) and summary-aware history (P12) wiring.
+# Phase 38 subset (P11), summary-aware history (P12) and Phase 40 scoped
+# skill (P13) wiring.
 # ---------------------------------------------------------------------------
 
-_PROBE_COUNT = 12
+_PROBE_COUNT = 13
 
 
 def _run_probes() -> list[str]:
@@ -826,6 +859,30 @@ def _run_probes() -> list[str]:
     if re.search(r"\d", LONG_SUMMARY):
         failures.append("P12: LONG_SUMMARY holds a digit")
 
+    # P13: the case-21 skill is valid, effective, offered and loadable inside
+    # the scope, and fully gone after it (D-19, A-06), no LLM.
+    from backend import skills
+    from backend.chat_tools import load_skill
+
+    prior_dir = os.environ.get("MONAI_SKILLS_DIR")
+    with _fixture_skill():
+        found = skills.scan()
+        if [(s.name, s.valid) for s in found] != [(SKILL_NAME, True)]:
+            failures.append(f"P13: fixture scan = {[(s.name, s.valid, s.reason) for s in found]!r}")
+        if [s.name for s in skills.effective()] != [SKILL_NAME]:
+            failures.append("P13: fixture skill is not effective inside the scope")
+        if "load_skill" not in tools_for_turn("Run my monthly review."):
+            failures.append("P13: load_skill not offered inside the scope")
+        main_text = load_skill(SKILL_NAME).get("text", "")
+        if "monthly_trend" not in main_text:
+            failures.append("P13: load_skill text lacks monthly_trend")
+        if "error" in load_skill(SKILL_NAME, "references/format.md"):
+            failures.append("P13: references/format.md did not load")
+    if skills.effective() or os.environ.get("MONAI_SKILLS_DIR") != prior_dir:
+        failures.append("P13: skill or MONAI_SKILLS_DIR leaked past the scope")
+    if _skills_rows() != 0:
+        failures.append("P13: skills_enabled row left after the scope")
+
     return failures
 
 
@@ -852,7 +909,7 @@ def _do_seed_check() -> int:
 
 
 # ---------------------------------------------------------------------------
-# The 20 golden cases.
+# The 21 golden cases (21 is the Phase 40 skill case).
 # ---------------------------------------------------------------------------
 
 
@@ -1058,6 +1115,66 @@ def _args_two_ordered(trace, payload):
     )
 
 
+def _args_skill_first(trace, payload):
+    """Case 21: load_skill(SKILL_NAME) comes first, then spending_total over
+    this_month and monthly_trend after it (their relative order is free: the
+    spike saw both)."""
+    first = next(
+        (i for i, s in enumerate(trace)
+         if s.get("tool") == "load_skill" and (s.get("args") or {}).get("name") == SKILL_NAME),
+        None,
+    )
+    if first is None:
+        return False
+    later = trace[first + 1:]
+    return any(s.get("tool") == "monthly_trend" for s in later) and any(
+        s.get("tool") == "spending_total" and _range_is("this_month")(s) for s in later
+    )
+
+
+def _skills_rows() -> int:
+    from sqlalchemy import text as sa_text
+    from backend.db import engine
+
+    with engine.connect() as c:
+        return int(c.execute(
+            sa_text("SELECT count(*) FROM app_settings WHERE key = :sk"), {"sk": SKILLS_KEY}
+        ).scalar() or 0)
+
+
+@contextlib.contextmanager
+def _fixture_skill():
+    """Scope the synthetic skill to one case: env var + enabled row, both
+    removed in `finally` so cases 1-20 never see a catalog (A-06)."""
+    from sqlalchemy import text as sa_text
+    from backend import skills
+    from backend.db import engine
+
+    old = os.environ.get("MONAI_SKILLS_DIR")
+    os.environ["MONAI_SKILLS_DIR"] = str(SKILLS_FIXTURE)
+    try:
+        found = [s for s in skills.scan() if s.name == SKILL_NAME]
+        if not (found and found[0].valid):
+            raise RuntimeError(f"eval fixture skill invalid: {found!r}")
+        with engine.begin() as c:
+            c.execute(
+                sa_text(
+                    "INSERT INTO app_settings (key, value, updated_at) "
+                    "VALUES (:sk, CAST(:v AS jsonb), now()) "
+                    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()"
+                ),
+                {"sk": SKILLS_KEY, "v": json.dumps({SKILL_NAME: found[0].hash})},
+            )
+        yield
+    finally:
+        with engine.begin() as c:
+            c.execute(sa_text("DELETE FROM app_settings WHERE key = :sk"), {"sk": SKILLS_KEY})
+        if old is None:
+            os.environ.pop("MONAI_SKILLS_DIR", None)
+        else:
+            os.environ["MONAI_SKILLS_DIR"] = old
+
+
 LONG_SUMMARY = (
     "The owner asked several times about ZZEval Hobbies spending by month and about "
     "ZZEval Streaming charges; no changes were proposed."
@@ -1227,6 +1344,12 @@ CASES: list[dict] = [
         "args_desc": "long budget-trimmed thread with a summary; this_month PARENT re-query; no figure from history",
         "answer": "numbers", "needs_number": True,
     },
+    {
+        "id": 21, "skill": True, "question": "Run my monthly review.",
+        "tools": ["load_skill"], "args": _args_skill_first,
+        "args_desc": "load_skill(zzeval-monthly-review) before spending_total(this_month) and monthly_trend; their order is not asserted",
+        "answer": "numbers", "needs_number": True, "no_writes": True,
+    },
 ]
 
 
@@ -1381,6 +1504,9 @@ async def _run_all_cases(selected: list[dict], proposal_ids: list[str]) -> list[
             r["prior_error"] = result.get("prior_error")
             r["marker"] = _has_marker(r["text"])
             r["passed"] = r["passed"] and not r["prior_error"] and not r["marker"]
+        elif case.get("skill"):
+            with _fixture_skill():
+                r = _check_case(case, await _run_case(case["question"], proposal_ids))
         else:
             r = _check_case(case, await _run_case(case["question"], proposal_ids))
         results.append(r)
@@ -1466,7 +1592,7 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         type=int,
         default=None,
-        help="run only this case id (repeatable). Default: run all 20 cases.",
+        help="run only this case id (repeatable). Default: run all 21 cases.",
     )
     args = parser.parse_args(argv)
 
