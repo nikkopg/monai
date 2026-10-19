@@ -68,6 +68,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from backend import auth
 from backend.attachments import MAX_UPLOAD_BYTES
 from backend.attachments_api import router as attachments_router
+from backend.skills_api import router as skills_router
 from backend.auth import optional_approver, require_api_key, require_approver_key, require_reject_scope
 from backend.mcp_server import build_mcp
 from backend.db import get_session, get_session_sync
@@ -304,6 +305,7 @@ async def upload_size_guard(request: Request, call_next):
 
 app.mount("/mcp", mcp_app)
 app.include_router(attachments_router)
+app.include_router(skills_router)
 
 
 @app.get("/health")

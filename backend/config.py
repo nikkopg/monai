@@ -22,6 +22,8 @@ Env vars:
                       letting Ollama default to the model's maximum. Whether a
                       cloud model honours it is unverified (assumption A1,
                       retuned by the Phase 38 spike).
+  MONAI_SKILLS_DIR    (default: /app/skills) — folder of SKILL.md packs, read at call
+                      time by backend/skills.py.
 """
 
 import os

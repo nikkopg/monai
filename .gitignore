@@ -49,3 +49,7 @@ graphify-out/
 
 # GSD planning is local-only (may reference personal data) — never push
 .planning/
+
+# Owner's personal skill packs: never publish (folder kept via .gitkeep)
+/skills/*
+!/skills/.gitkeep
