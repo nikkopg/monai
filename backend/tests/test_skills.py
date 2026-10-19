@@ -180,6 +180,8 @@ def _refusals():
         pytest.param("/etc/passwd", None, "relative", id="absolute"),
         pytest.param("a\x00b", None, "relative", id="nul"),
         pytest.param("", None, "relative", id="empty"),
+        pytest.param(".", None, "relative", id="dot"),  # Path(".").parts == (): was an AttributeError
+        pytest.param("./", None, "relative", id="dot-slash"),
         pytest.param(".hidden.md", lambda d: (d / ".hidden.md").write_text("x"), "hidden", id="hidden"),
         pytest.param("link.md", symfile, "symlink", id="symlink-file"),
         pytest.param("ln/x.md", symdir, "symlink", id="symlink-dir"),
@@ -325,6 +327,8 @@ def _load_refusals():
     return [
         ("zzeval-other", None, None, "not enabled"),
         ("zzeval-alpha", "../x", None, "stay inside the skill"),
+        ("zzeval-alpha", ".", None, "stay inside the skill"),
+        ("zzeval-alpha", "./", None, "stay inside the skill"),
         ("zzeval-alpha", "references/link.md", symlink, "symlinks"),
         ("zzeval-alpha", "references/missing.md", None, "no such file"),
         ("zzeval-alpha", "references/big.md", big, "6000"),

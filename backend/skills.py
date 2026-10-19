@@ -57,7 +57,7 @@ def skills_dir() -> Path:
 def _read_bytes(skill_dir: Path, rel: str) -> bytes:
     """The bytes of one regular, non-hidden file inside the skill, or ValueError."""
     p = Path(rel)
-    if not rel or p.is_absolute() or ".." in p.parts or "\x00" in rel:
+    if not rel or not p.parts or p.is_absolute() or ".." in p.parts or "\x00" in rel:
         raise ValueError("path must be relative and stay inside the skill")
     if any(part.startswith(".") for part in p.parts):  # "hashed" and "servable" stay the same set
         raise ValueError("hidden files are not served")
