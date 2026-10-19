@@ -89,7 +89,11 @@ def tools_for_turn(
     CURRENT question matches WRITE_RE or ATTACH_RE. The thread is tainted, so no
     other write and no history or assistant offer can open the proposer: a
     poisoned document cannot steer a later read turn into a proposal.
+
+    Phase 40: on any other turn `load_skill` is unioned in when an enabled,
+    unchanged skill exists. An attachment thread never gets it (D-16).
     """
+    from backend import skills
     from backend.chat_history import _pairs
     from backend.tools import READ_TOOL_NAMES, TOOLS
 
@@ -117,9 +121,8 @@ def tools_for_turn(
     last_user = next((m for m in reversed(prior or []) if m["role"] == "user"), None)
     if last_user is not None and WRITE_RE.search(last_user["content"] or ""):
         sticky = True
-    if sticky or WRITE_RE.search(question or ""):
-        return frozenset(TOOLS)
-    return READ_TOOL_NAMES
+    base = frozenset(TOOLS) if sticky or WRITE_RE.search(question or "") else READ_TOOL_NAMES
+    return base | {"load_skill"} if skills.effective() else base
 
 
 # D-27: the never-fabricate rule, restated as the last input of every model step.

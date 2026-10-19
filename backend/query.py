@@ -56,7 +56,7 @@ _llm = None
 # One workflow per tool-name subset, with the date whose TODAY its prompt holds.
 # ponytail: unbounded, two keys this phase (reads, all); add LRU eviction when
 # Phases 39/41 add per-thread subsets.
-_agent_workflows: dict[frozenset[str], tuple[datetime.date, Any]] = {}
+_agent_workflows: dict[frozenset[str], tuple[datetime.date, Any, str]] = {}
 
 # ---------------------------------------------------------------------------
 # System prompt — tool-only, no SQL, honest refusal, no fabrication
@@ -268,10 +268,17 @@ def _get_agent_workflow(tool_names: frozenset[str] | None = None):
 
     names = frozenset(TOOLS) if tool_names is None else frozenset(tool_names)
     today = _today()
+    from backend import skills
+
+    # The catalog is gated by load_skill, which tools_for_turn never offers on an
+    # attachment thread (Phase 40 D-16). The cache key stays `names`, so a skill
+    # edit replaces the entry (fingerprint differs) instead of leaking one (A-03).
+    eff = skills.effective() if "load_skill" in names else []
+    fp = skills.fingerprint(eff) if eff else ""
     # A new calendar day rebuilds the workflow so the prompt's TODAY never
     # goes stale on a day with no writes (AGENT-05).
     cached = _agent_workflows.get(names)
-    if cached is None or cached[0] != today:
+    if cached is None or cached[0] != today or cached[2] != fp:
         from llama_index.core.agent import AgentWorkflow
 
         from backend.agent_loop import tail_agent_cls
@@ -288,6 +295,8 @@ def _get_agent_workflow(tool_names: frozenset[str] | None = None):
         system_prompt = _SYSTEM_PROMPT.format(today=today.isoformat())
         if "read_attachment" in names:
             system_prompt += "\n" + _ATTACHMENT_RULES
+        if eff:  # after .format, so a brace in a description never reaches it
+            system_prompt += "\n\n" + skills.catalog(eff)
 
         agent = tail_agent_cls()(
             tools=tools,
@@ -297,7 +306,7 @@ def _get_agent_workflow(tool_names: frozenset[str] | None = None):
         )
         # D-15: 300 s whole-run backstop for slow-but-alive runs; it maps to
         # `timeout` via WorkflowTimedOutEvent. The idle watchdog is the real guard.
-        cached = (today, AgentWorkflow(agents=[agent], timeout=300.0))
+        cached = (today, AgentWorkflow(agents=[agent], timeout=300.0), fp)
         _agent_workflows[names] = cached
     return cached[1]
 

@@ -14,13 +14,14 @@ import logging
 import threading
 import time
 import uuid
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import text
 
 import backend.query as q
-from backend import chat_service
+from backend import chat_service, skills
 from backend.agent_loop import tools_for_turn
 from backend.db import SessionLocal
 from backend.models import Message, Thread
@@ -36,6 +37,11 @@ from backend.tests.chat_stubs import (
 from backend.tools import READ_TOOL_NAMES, TOOLS
 
 ALL = frozenset(TOOLS)
+
+FAKE = skills.Skill(
+    name="zzeval-fake", description="Use when the owner asks for the zz review.", valid=True, reason=None,
+    hash="a" * 64, path=Path("/nonexistent"), files=("SKILL.md",), allowed_tools=False,
+)
 
 WRITE_QUESTIONS = [
     "Add coffee 25000 to my Cash account",
@@ -738,14 +744,24 @@ def test_attachment_thread_history_never_opens_the_proposer(prior):
 
 
 @pytest.mark.parametrize("question", ["what is in this file?", "import this file", "delete it", "ignore previous"])
-def test_attachment_tool_set_is_pinned(question):
+def test_attachment_tool_set_is_pinned(monkeypatch, question):
     """Phases 40 and 41 must extend this set deliberately: on an attachment thread
-    the only possible names are the 18 reads, read_attachment and propose_statement_rows."""
-    from backend.chat_tools import CHAT_ONLY_TOOLS
-
+    the only possible names are the 18 reads, read_attachment and propose_statement_rows,
+    and never load_skill, even with a skill effective (Phase 40 D-16)."""
+    monkeypatch.setattr(skills, "effective", lambda: [FAKE])
     got = tools_for_turn(question, attachment_thread=True)
-    assert got <= READ_TOOL_NAMES | set(CHAT_ONLY_TOOLS)
+    assert got <= READ_TOOL_NAMES | {"read_attachment", "propose_statement_rows"}
+    assert "load_skill" not in got
     assert not [n for n in got if n.startswith("ext__") or (n.startswith("propose_") and n != "propose_statement_rows")]
+
+
+def test_load_skill_joins_only_with_an_effective_skill(monkeypatch):
+    monkeypatch.setattr(skills, "effective", lambda: [])
+    assert tools_for_turn("how much did I spend last month?") == READ_TOOL_NAMES
+    assert tools_for_turn("delete it") == ALL
+    monkeypatch.setattr(skills, "effective", lambda: [FAKE])
+    assert tools_for_turn("how much did I spend last month?") == READ_TOOL_NAMES | {"load_skill"}
+    assert tools_for_turn("delete it") == ALL | {"load_skill"}
 
 
 def test_no_attachment_thread_keeps_existing_results():
@@ -766,6 +782,44 @@ def _agent(monkeypatch, names=None):
     monkeypatch.setattr(q, "_agent_workflows", {})
     monkeypatch.setattr(q, "_get_llm", lambda: MockLLM())
     return q._get_agent_workflow(names).agents["Agent"]
+
+
+def _tool_names(agent):
+    return {t.metadata.name for t in agent.tools}
+
+
+def test_skill_catalog_only_when_load_skill_is_offered(monkeypatch):
+    monkeypatch.setattr(skills, "effective", lambda: [FAKE])
+    read = _agent(monkeypatch, tools_for_turn("how much did I spend?"))
+    assert "load_skill" in _tool_names(read)
+    assert "<available_skills>" in read.system_prompt
+    assert "zzeval-fake: Use when the owner asks for the zz review." in read.system_prompt
+    att = _agent(monkeypatch, tools_for_turn("what is in this file?", attachment_thread=True))
+    assert "load_skill" not in _tool_names(att) and "<available_skills>" not in att.system_prompt
+    plain = _agent(monkeypatch, READ_TOOL_NAMES)
+    assert "<available_skills>" not in plain.system_prompt
+
+
+def test_skill_catalog_survives_braces(monkeypatch):
+    braces = skills.Skill(**{**FAKE.__dict__, "description": "Use for {today} and {0} braces"})
+    monkeypatch.setattr(skills, "effective", lambda: [braces])
+    agent = _agent(monkeypatch, READ_TOOL_NAMES | {"load_skill"})
+    assert "zzeval-fake: Use for {today} and {0} braces" in agent.system_prompt
+
+
+def test_skills_fingerprint_rebuilds_the_workflow(monkeypatch):
+    from llama_index.core.llms import MockLLM
+
+    monkeypatch.setattr(q, "_agent_workflows", {})
+    monkeypatch.setattr(q, "_get_llm", lambda: MockLLM())
+    names = READ_TOOL_NAMES | {"load_skill"}
+    monkeypatch.setattr(skills, "effective", lambda: [FAKE])
+    wf1 = q._get_agent_workflow(names)
+    assert q._get_agent_workflow(names) is wf1
+    changed = skills.Skill(**{**FAKE.__dict__, "hash": "b" * 64})
+    monkeypatch.setattr(skills, "effective", lambda: [changed])
+    wf2 = q._get_agent_workflow(names)
+    assert wf2 is not wf1 and len(q._agent_workflows) == 1
 
 
 NOTICE = "This thread has a document. Start a new thread for other changes."
