@@ -225,8 +225,8 @@ def test_csv_provenance_source(env):
 
 
 def test_chat_only_tools_stay_out_of_the_registries():
-    assert set(chat_tools.CHAT_ONLY_TOOLS) == {"read_attachment", "propose_statement_rows"}
-    assert chat_tools.CHAT_READ_NAMES == {"read_attachment"}
+    assert set(chat_tools.CHAT_ONLY_TOOLS) == {"read_attachment", "propose_statement_rows", "load_skill"}
+    assert chat_tools.CHAT_READ_NAMES == {"read_attachment", "load_skill"}
     assert not set(chat_tools.CHAT_ONLY_TOOLS) & set(tools.TOOLS)
     assert not set(chat_tools.CHAT_ONLY_TOOLS) & tools.READ_TOOL_NAMES
     assert len(tools.TOOLS) == 34 and len(tools.READ_TOOL_NAMES) == 18

@@ -284,3 +284,125 @@ def test_no_exec_primitives():
             assert node.func.id not in {"exec", "eval", "compile", "__import__"}
         elif isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "os":
             assert not re.match(r"system|popen|exec|spawn|fork|posix_spawn", node.attr), node.attr
+
+
+# --- Phase 40-03: load_skill (chat-only tool) ---------------------------------------------------
+
+
+def _enabled(monkeypatch, s):
+    monkeypatch.setattr(skills, "read_enabled", lambda db=None: {s.name: s.hash})
+
+
+@pytest.fixture()
+def alpha(root):
+    d = _pack(root, "zzeval-alpha", body="Step one: look.\n",
+              files={"references/format.md": "Format: plain.\n"})
+    return d
+
+
+def test_load_skill_serves_body_and_reference(alpha, monkeypatch):
+    from backend import chat_tools
+
+    _enabled(monkeypatch, _one(alpha.parent))
+
+    out = chat_tools.load_skill("zzeval-alpha")
+    assert out == {"tool": "load_skill", "name": "zzeval-alpha", "file": "SKILL.md",
+                   "text": chat_tools._clean_doc(skills.read_text(alpha, "SKILL.md"))}
+    ref = chat_tools.load_skill("zzeval-alpha", "references/format.md")
+    assert ref["text"] == "Format: plain.\n" and ref["file"] == "references/format.md"
+
+
+def _load_refusals():
+    def symlink(d, mp):
+        (d / "references" / "link.md").symlink_to(d / "SKILL.md")
+
+    def big(d, mp):
+        (d / "references" / "big.md").write_bytes(b"x" * 6001)
+
+    def binary(d, mp):
+        (d / "references" / "bin.md").write_bytes(b"\xff\xfe")
+
+    return [
+        ("zzeval-other", None, None, "not enabled"),
+        ("zzeval-alpha", "../x", None, "stay inside the skill"),
+        ("zzeval-alpha", "references/link.md", symlink, "symlinks"),
+        ("zzeval-alpha", "references/missing.md", None, "no such file"),
+        ("zzeval-alpha", "references/big.md", big, "6000"),
+        ("zzeval-alpha", "references/bin.md", binary, "UTF-8"),
+    ]
+
+
+@pytest.mark.parametrize("name,file,setup,needle", _load_refusals())
+def test_load_skill_refuses(alpha, monkeypatch, name, file, setup, needle):
+    from backend import chat_tools
+
+    if setup:
+        setup(alpha, monkeypatch)
+    _enabled(monkeypatch, _one(alpha.parent))
+    out = chat_tools.load_skill(name, file)
+    assert set(out) == {"error"} and needle in out["error"]
+
+
+def test_load_skill_refuses_a_skill_edited_after_approval(alpha, monkeypatch):
+    from backend import chat_tools
+
+    _enabled(monkeypatch, _one(alpha.parent))
+    (alpha / "SKILL.md").write_text((alpha / "SKILL.md").read_text() + "edit\n")
+    out = chat_tools.load_skill("zzeval-alpha")
+    assert set(out) == {"error"} and "changed since it was enabled" in out["error"]
+
+
+def test_load_skill_strips_control_and_bidi(root, monkeypatch):
+    from backend import chat_tools
+
+    _pack(root, "zzeval-alpha", files={"references/x.md": "a\u202eb\x07c\nd\n"})
+    _enabled(monkeypatch, _one(root))
+    assert chat_tools.load_skill("zzeval-alpha", "references/x.md")["text"] == "abc\nd\n"
+
+
+def test_load_skill_result_at_cap_is_not_truncated(root, monkeypatch):
+    from backend import chat_tools
+    from backend.agent_loop import cap_for_llm
+
+    line = "- step with 'single' and \"double\" quotes\n"
+    body = (line * (6000 // len(line) + 1))[:6000]
+    _pack(root, "zzeval-alpha", files={"references/cap.md": body})
+    _enabled(monkeypatch, _one(root))
+    out = chat_tools.load_skill("zzeval-alpha", "references/cap.md")
+    assert "error" not in out and cap_for_llm(out) is None
+
+
+def test_skill_script_is_never_executed(root, tmp_path_factory, monkeypatch):
+    from backend import chat_tools
+
+    marker = root / "zz-marker"
+    py = f"from pathlib import Path\nPath({str(marker)!r}).write_text('ran')\n"
+    sh = f"#!/bin/sh\ntouch {marker}\n"
+    d = _pack(root, "zzeval-alpha", files={"scripts/zz_marker.py": py, "scripts/zz_marker.sh": sh})
+    (d / "scripts" / "zz_marker.sh").chmod(0o755)
+    s = _one(root)
+    skills.detail(s)
+    _enabled(monkeypatch, s)
+    chat_tools.load_skill("zzeval-alpha")
+    out = chat_tools.load_skill("zzeval-alpha", "scripts/zz_marker.py")
+    assert "write_text" in out["text"] and not marker.exists()
+
+
+async def test_load_skill_refusal_flows_through_a_stub_turn(monkeypatch):
+    import backend.query as q
+    from backend import chat_tools
+    from backend.tests.chat_stubs import StubLLM, _collect, _install_stub_workflow, _of_type, _payloads
+
+    llm = StubLLM(mode="script", script=[[("load_skill", {"name": "zzeval-missing"})]], final_text="done")
+    _install_stub_workflow(monkeypatch, llm, extra_tools={"load_skill": chat_tools.load_skill})
+    payloads = _payloads(await _collect(q.agent_stream("ZZ load a skill")))
+    (res,) = _of_type(payloads, "tool_result")
+    assert "error" in res["step"]["result"]
+    assert _of_type(payloads, "answer") and not _of_type(payloads, "error")
+
+
+def test_load_skill_stays_out_of_the_shared_registries():
+    from backend import chat_tools, tools
+
+    assert "load_skill" in chat_tools.CHAT_ONLY_TOOLS and "load_skill" in chat_tools.CHAT_READ_NAMES
+    assert "load_skill" not in tools.TOOLS and "load_skill" not in tools.READ_TOOL_NAMES

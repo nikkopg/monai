@@ -1,4 +1,4 @@
-"""Phase 39 (39-07): pins what the model sees of the two chat-only attachment tools.
+"""Phase 39 (39-07): pins what the model sees of the chat-only tools (attachments, Phase 40 load_skill).
 
 Regenerate deliberately, under Python 3.12 in its own commit (see 35-03):
     UPDATE_TOOL_SNAPSHOT=1 pytest backend/tests/test_attachment_tool_surface.py
@@ -47,3 +47,5 @@ def test_attachment_tools_are_id_only():
     assert set(schemas["read_attachment"]["properties"]) == {"attachment_id", "page"}
     assert schemas["propose_statement_rows"]["required"] == ["attachment_id"]
     assert set(schemas["propose_statement_rows"]["properties"]) == {"attachment_id"}
+    assert schemas["load_skill"]["required"] == ["name"]
+    assert set(schemas["load_skill"]["properties"]) == {"name", "file"}
