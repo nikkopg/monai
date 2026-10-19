@@ -130,3 +130,22 @@ def test_disable_removes_and_audits(env):
     after = _audit()[1][2]
     assert after == {"name": "zzeval-alpha", "enabled": False, "hash": None}
     assert _listed(env)["zzeval-alpha"]["enabled"] is False
+
+
+def test_approval_of_an_invalid_or_removed_pack_can_be_revoked(env):
+    # WR-04: an approval must stay revocable after its pack turns invalid or its folder goes.
+    import shutil
+
+    h = env.client.get("/skills/zzeval-alpha", headers=env.h).json()["hash"]
+    _enable(env, hash=h)
+    (env.alpha / "SKILL.md").write_text("no frontmatter here\n")
+    row = _listed(env)["zzeval-alpha"]
+    assert (row["valid"], row["enabled"]) == (False, True)
+    shutil.rmtree(env.alpha)
+    assert _listed(env)["zzeval-alpha"] == {
+        "name": "zzeval-alpha", "description": "", "valid": False, "reason": "skill folder not found",
+        "enabled": True, "changed": True, "declares_allowed_tools": False}
+    r = env.client.put("/skills/zzeval-alpha", json={"enabled": False}, headers=env.h)
+    assert r.status_code == 200 and _stored() == {}
+    assert "zzeval-alpha" not in _listed(env)
+    assert env.client.put("/skills/zzeval-alpha", json={"enabled": False}, headers=env.h).status_code == 404

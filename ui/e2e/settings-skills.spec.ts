@@ -161,6 +161,27 @@ test.describe("/settings Skills card", () => {
     await expect(rowOf(page, ON).getByTestId("skill-status")).toHaveText("Off");
   });
 
+  test("an enabled pack that went invalid or missing can still be disabled", async ({ page }) => {
+    // WR-04: the approval survives invalidity, so revoking it must stay possible.
+    const GONE = "zzeval-gone";
+    const m = await boot(page, {
+      list: [
+        row(BROKEN, { description: "", valid: false, reason: "no frontmatter", enabled: true }),
+        row(GONE, { description: "", valid: false, reason: "skill folder not found", enabled: true, changed: true }),
+      ],
+    });
+    const note = "Still enabled: it turns back on if the files return to the text you approved. Disable it to revoke that.";
+    for (const name of [BROKEN, GONE]) {
+      await expect(rowOf(page, name).getByRole("button")).toHaveText(["Disable"]);
+      await expect(rowOf(page, name)).toContainText(note);
+    }
+    await page.getByRole("button", { name: `Disable ${GONE}` }).click();
+    await expect(page.getByTestId("skills-status")).toHaveText(`${GONE} is now off.`);
+    expect(m.puts).toEqual([{ name: GONE, body: { enabled: false } }]);
+    await expect(rowOf(page, GONE).getByRole("button")).toHaveCount(0);
+    await expect(rowOf(page, GONE)).not.toContainText(note);
+  });
+
   test("list load error offers Try again", async ({ page }) => {
     const m = await boot(page, { listStatus: 500 });
     await expect(page.getByTestId("skills-load-error")).toContainText(

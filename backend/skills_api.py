@@ -37,7 +37,8 @@ def _find(name: str) -> skills.Skill:
 @router.get("/skills", dependencies=[Depends(require_api_key)])
 def list_skills(db: Session = Depends(get_session)):
     enabled = skills.read_enabled(db)
-    return [
+    found = skills.scan()
+    rows = [
         {
             "name": s.name,
             "description": s.description,
@@ -47,8 +48,16 @@ def list_skills(db: Session = Depends(get_session)):
             "changed": s.name in enabled and enabled[s.name] != s.hash,
             "declares_allowed_tools": s.allowed_tools,
         }
-        for s in skills.scan()
+        for s in found
     ]
+    # WR-04: an approval whose folder is gone is still listed, so it can be revoked.
+    names = {s.name for s in found}
+    rows += [
+        {"name": n, "description": "", "valid": False, "reason": "skill folder not found",
+         "enabled": True, "changed": True, "declares_allowed_tools": False}
+        for n in sorted(enabled) if n not in names
+    ]
+    return rows
 
 
 @router.get("/skills/{name}", dependencies=[Depends(require_api_key)])
@@ -64,16 +73,20 @@ def get_skill(name: str):
 
 @router.put("/skills/{name}", dependencies=[Depends(require_api_key)])
 def put_skill(name: str, body: SkillToggle, db: Session = Depends(get_session)):
-    s = _find(name)
     cur = dict(skills.read_enabled(db))
     prior = cur.get(name)
     if body.enabled:
+        s = _find(name)
         if not s.valid:
             raise HTTPException(422, s.reason)
         if body.hash != s.hash:
             raise HTTPException(409, "This skill changed after you opened it. Review it again.")
         cur[name] = s.hash
     else:
+        # WR-04: revoking needs no valid pack, or any folder at all, so an
+        # approval can always be withdrawn. Only an unknown, unapproved name is 404.
+        if prior is None:
+            _find(name)
         cur.pop(name, None)
     row = db.get(AppSetting, skills.KEY_SKILLS_ENABLED) or AppSetting(key=skills.KEY_SKILLS_ENABLED)
     row.value = cur  # a new dict: in-place JSONB mutation is not tracked

@@ -411,24 +411,26 @@ export default function SkillsCard() {
           <span data-testid="skill-status" style={{ ...chipBase, ...c.style }}>
             {c.text}
           </span>
-          {s.valid && (
+          {(s.valid || s.enabled) && (
             <span style={{ marginLeft: "auto", display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <button
-                type="button"
-                ref={(el) => {
-                  if (el) viewBtns.current.set(s.name, el);
-                  else viewBtns.current.delete(s.name);
-                }}
-                style={rowBtn}
-                className="coarse-tap"
-                data-testid="skill-view"
-                aria-label={`${opener} ${s.name}`}
-                aria-expanded={open === s.name}
-                aria-controls={`skill-panel-${s.name}`}
-                onClick={() => void openPanel(s.name)}
-              >
-                {opener}
-              </button>
+              {s.valid && (
+                <button
+                  type="button"
+                  ref={(el) => {
+                    if (el) viewBtns.current.set(s.name, el);
+                    else viewBtns.current.delete(s.name);
+                  }}
+                  style={rowBtn}
+                  className="coarse-tap"
+                  data-testid="skill-view"
+                  aria-label={`${opener} ${s.name}`}
+                  aria-expanded={open === s.name}
+                  aria-controls={`skill-panel-${s.name}`}
+                  onClick={() => void openPanel(s.name)}
+                >
+                  {opener}
+                </button>
+              )}
               {s.enabled && (
                 <button
                   type="button"
@@ -457,6 +459,11 @@ export default function SkillsCard() {
         {!s.valid && (
           <div style={{ ...errText, marginTop: 4, overflowWrap: "anywhere" }}>
             {`${cap(s.reason ?? "invalid")}. Fix the file in the skills folder, then reload this page.`}
+          </div>
+        )}
+        {!s.valid && s.enabled && (
+          <div style={{ ...body14, color: tokens.color.ink, marginTop: 4 }}>
+            Still enabled: it turns back on if the files return to the text you approved. Disable it to revoke that.
           </div>
         )}
         {rowErr[s.name] && (
