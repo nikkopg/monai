@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { tokens, card, input, btn } from "../styles";
 import CategoryManager from "./CategoryManager";
+import SkillsCard from "./SkillsCard";
 import AccountManager, { type Account } from "../cashflow/AccountManager";
 
 // ---------------------------------------------------------------------------
@@ -361,6 +362,9 @@ export default function SettingsPage() {
       {/* Card: Accounts — balances, rename/delete, adjust balance (moved from
           the Cashflow page). AccountManager renders its own card section. */}
       <AccountManager accounts={accounts} onChanged={loadAccounts} />
+
+      {/* Card: Skills (Phase 40) */}
+      <SkillsCard />
 
       {/* Card 4: Preferences */}
       <div style={{ ...card, marginBottom: 0 }}>
