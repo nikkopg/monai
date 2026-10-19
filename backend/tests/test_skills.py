@@ -356,6 +356,22 @@ def test_load_skill_refuses_a_skill_edited_after_approval(alpha, monkeypatch):
     assert set(out) == {"error"} and "changed since it was enabled" in out["error"]
 
 
+def test_load_skill_serves_only_the_hashed_bytes(alpha, monkeypatch):
+    # WR-01: an edit landing between the effective() hash check and the read
+    # must not be served. The scan is frozen first, then both files change.
+    from backend import chat_tools
+
+    s = _one(alpha.parent)
+    monkeypatch.setattr(skills, "effective", lambda: [s])
+    (alpha / "SKILL.md").write_text((alpha / "SKILL.md").read_text() + "injected\n")
+    (alpha / "references" / "format.md").write_text("Format: injected.\n")
+    (alpha / "references" / "new.md").write_text("added after the scan\n")
+    assert "injected" not in chat_tools.load_skill("zzeval-alpha")["text"]
+    assert chat_tools.load_skill("zzeval-alpha", "./references/format.md")["text"] == "Format: plain.\n"
+    out = chat_tools.load_skill("zzeval-alpha", "references/new.md")
+    assert set(out) == {"error"} and "changed since the skill was enabled" in out["error"]
+
+
 def test_load_skill_strips_control_and_bidi(root, monkeypatch):
     from backend import chat_tools
 

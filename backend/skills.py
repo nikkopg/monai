@@ -16,7 +16,7 @@ import hashlib
 import os
 import re
 import stat
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -47,6 +47,9 @@ class Skill:
     path: Path
     files: tuple[str, ...]
     allowed_tools: bool  # declared in the frontmatter; recorded for the UI, never honoured
+    # {rel: bytes} from the very read that produced `hash`, so load_skill serves
+    # only approved bytes and never reads a file a second time (WR-01).
+    data: dict[str, bytes] = field(default_factory=dict, repr=False, compare=False)
 
 
 def skills_dir() -> Path:
@@ -103,6 +106,17 @@ def _decode(data: bytes) -> str:
 
 def read_text(skill_dir: Path, rel: str) -> str:
     return _decode(_read_bytes(skill_dir, rel))
+
+
+def read_hashed(s: Skill, rel: str) -> str:
+    """One file's text from the read that produced s.hash (WR-01): no second read, so
+    no edit between the hash check and the read can slip through. A path that was not
+    hashed gets _read_bytes' own refusal reason."""
+    data = s.data.get(Path(rel).as_posix()) if rel else None
+    if data is None:
+        _read_bytes(s.path, rel)  # raises the reason: outside, hidden, symlink, oversize...
+        raise ValueError("file changed since the skill was enabled")
+    return _decode(data)
 
 
 def _walk(skill_dir: Path) -> list[str]:
@@ -180,7 +194,9 @@ def _load(path: Path) -> Skill:
         return _invalid(name, path, str(e))
     except OSError:
         return _invalid(name, path, "cannot be read")
-    return Skill(name, desc, True, None, _hash(_read_all(path, files)), path, tuple(files), "allowed-tools" in meta)
+    entries = _read_all(path, files)
+    return Skill(name, desc, True, None, _hash(entries), path, tuple(files), "allowed-tools" in meta,
+                 {rel: data for rel, data, _ in entries if data is not None})
 
 
 def scan() -> list[Skill]:

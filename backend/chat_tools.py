@@ -182,7 +182,7 @@ def load_skill(name: str, file: str | None = None) -> dict:
         return {"error": f"Skill '{name}' is not enabled, or it changed since it was enabled. "
                          "Only skills in available_skills can be loaded."}
     try:
-        text = skills.read_text(eff[name].path, file or "SKILL.md")
+        text = skills.read_hashed(eff[name], file or "SKILL.md")
     except ValueError as e:
         return {"error": str(e)}
     return {"tool": "load_skill", "name": name, "file": file or "SKILL.md", "text": _clean_doc(text)}
