@@ -252,3 +252,46 @@ def test_019_cascades(scratch_url):
         assert scalar("SELECT count(*) FROM mcp_servers") == 1  # the server itself survives
     finally:
         engine.dispose()
+
+
+# --- model parity (conftest's monai_test, already migrated to head) ---------
+
+
+def test_models_match_019_columns():
+    from backend.db import engine
+    from backend.models import ExtCall, McpServer, ThreadMcpServer
+
+    for model in (McpServer, ThreadMcpServer, ExtCall):
+        with engine.connect() as c:
+            db_cols = {
+                r[0]: r[1]
+                for r in c.execute(
+                    text(
+                        "SELECT column_name, is_nullable FROM information_schema.columns "
+                        "WHERE table_name=:t"
+                    ),
+                    {"t": model.__tablename__},
+                )
+            }
+        model_cols = {c.name: ("YES" if c.nullable else "NO") for c in model.__table__.columns}
+        assert model_cols == db_cols, model.__tablename__
+
+
+def test_mcp_server_orm_defaults():
+    from backend.db import SessionLocal
+    from backend.models import McpServer
+
+    db = SessionLocal()
+    try:
+        row = McpServer(slug="zz-orm", transport="http", url="https://zz.example.com/mcp")
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        assert row.enabled is False
+        assert (row.headers, row.args, row.env) == ({}, [], {})
+        assert (row.approved_tools, row.tool_policies, row.changed_count) == ([], {}, None)
+    finally:
+        db.rollback()
+        db.execute(text("DELETE FROM mcp_servers WHERE slug = 'zz-orm'"))
+        db.commit()
+        db.close()

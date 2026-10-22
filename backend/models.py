@@ -16,6 +16,9 @@ New tables (Phase 1 — consumed in Phase 2+5):
   - Holding       — current investment positions; quantity Numeric(28,8), avg_cost Numeric(18,2) (D-09)
   - PortfolioEvent — buy/sell/dividend history
   - PriceCache    — last known price; source='manual'|'coingecko'/etc (D-12)
+
+Phase 41 (migration 019, external MCP):
+  - McpServer, ThreadMcpServer, ExtCall
 """
 
 import uuid
@@ -343,6 +346,115 @@ class Attachment(Base):
     )
     purged_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class McpServer(Base):
+    """An owner-registered external MCP server (migration 019, Phase 41). Off by default.
+
+    headers and env hold secrets: mask them on every read (settings.mask_key) and
+    never put them in audit_log, the model's context or an approval card (D-04).
+    approved_tools is the reviewed snapshot [{name, description, inputSchema,
+    sha256}] that Enable stores; tool_policies maps a tool name to ask, always or
+    deny, a missing key meaning ask; changed_count is a cache of the last-seen
+    count of new or changed tools (NULL until checked).
+    """
+
+    __tablename__ = "mcp_servers"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    slug: Mapped[str] = mapped_column(String(24), unique=True, nullable=False)
+    transport: Mapped[str] = mapped_column(String(8), nullable=False)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    headers: Mapped[dict] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb"), nullable=False
+    )
+    command: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    args: Mapped[list] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb"), nullable=False
+    )
+    env: Mapped[dict] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb"), nullable=False
+    )
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false"), nullable=False
+    )
+    approved_tools: Mapped[list] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb"), nullable=False
+    )
+    tool_policies: Mapped[dict] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb"), nullable=False
+    )
+    changed_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
+    )
+
+
+class ThreadMcpServer(Base):
+    """Which external MCP servers a thread uses (migration 019, Phase 41)."""
+
+    __tablename__ = "thread_mcp_servers"
+
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("threads.id", ondelete="CASCADE"), primary_key=True
+    )
+    server_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("mcp_servers.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+
+class ExtCall(Base):
+    """One external tool call: both the approval and the receipt (D-13, D-21).
+
+    args are what the owner saw and what is sent; only the result's sha256 and
+    size are kept, never the result (D-03). error holds an exception class or
+    fixed copy, never exception text.
+    """
+
+    __tablename__ = "ext_calls"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("threads.id", ondelete="CASCADE"), nullable=False
+    )
+    turn_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+    server_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("mcp_servers.id", ondelete="SET NULL"), nullable=True
+    )
+    server_slug: Mapped[str] = mapped_column(String(24), nullable=False)
+    tool: Mapped[str] = mapped_column(Text, nullable=False)
+    args: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    args_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    destination: Mapped[str] = mapped_column(Text, nullable=False)
+    leaves_machine: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    approval: Mapped[str] = mapped_column(
+        String(8), server_default="pending", nullable=False
+    )
+    decided_via: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    receipt: Mapped[str | None] = mapped_column(String(9), nullable=True)
+    result_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    result_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
     )
 
 

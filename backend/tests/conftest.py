@@ -283,3 +283,25 @@ def _purge_test_threads():
         db.rollback()  # test-DB hygiene must never fail the suite
     finally:
         db.close()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _purge_test_mcp_servers():
+    """Delete synthetic external MCP servers after the run. Every Phase 41 test
+    server uses a `zz-` slug; ext_calls and thread_mcp_servers rows go with their
+    threads through the cascade (and with the server for links)."""
+    yield
+    try:
+        from sqlalchemy import text
+        from backend.db import SessionLocal
+
+        db = SessionLocal()
+    except Exception:
+        return
+    try:
+        db.execute(text("DELETE FROM mcp_servers WHERE slug LIKE 'zz-%'"))
+        db.commit()
+    except Exception:
+        db.rollback()  # test-DB hygiene must never fail the suite
+    finally:
+        db.close()
