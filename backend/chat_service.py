@@ -30,7 +30,7 @@ from backend import agent_loop, chat_tools, config, query, tools
 from backend.chat_history import _pairs, _provenance, _stamp, plan_history
 from backend.db import get_session_sync
 from backend.attachments import purge_expired
-from backend.models import Attachment, AuditLog, Message, Proposal, Thread
+from backend.models import Attachment, AuditLog, McpServer, Message, Proposal, Thread, ThreadMcpServer
 from backend.proposals import expire_stale, transition
 
 logger = logging.getLogger(__name__)
@@ -112,18 +112,24 @@ def _replace_branch(db, thread_id: uuid.UUID, question: str, replace_from: uuid.
 
 def _begin_turn(
     thread_id: uuid.UUID, new: bool, question: str, replace_from: uuid.UUID | None = None,
-    attachment_ids=(),
+    attachment_ids=(), mcp_server_ids=(),
 ):
     """Create/find the thread and store the user message; return
     (user_message_id, seq, prior messages as dicts with seq, thread summary,
     summary boundary, the thread's attachments for the manifest). One short session; with
     `replace_from` the old branch is superseded and deleted in the same commit.
     `attachment_ids` bind to the new message in that same commit; one that is not
-    on this thread raises ValueError and nothing is stored (D-03)."""
+    on this thread raises ValueError and nothing is stored (D-03). `mcp_server_ids`
+    link external servers to a NEW thread in that commit; an unknown id raises
+    ValueError first, and they are ignored for an existing thread (PC-03)."""
     with get_session_sync() as db:
         if new:
             db.add(Thread(id=thread_id, title=title_from(question)))
             db.flush()
+            for sid in dict.fromkeys(mcp_server_ids):
+                if db.get(McpServer, sid) is None:  # explicit: an FK error would be a 500
+                    raise ValueError("Unknown MCP server.")
+                db.add(ThreadMcpServer(thread_id=thread_id, server_id=sid))
         else:
             t = db.get(Thread, thread_id)
             if t is None:
@@ -181,7 +187,7 @@ def _begin_turn(
 
 async def start_turn(
     question: str, thread_id: uuid.UUID | None = None, replace_from: uuid.UUID | None = None,
-    attachment_ids=(),
+    attachment_ids=(), mcp_server_ids=(),
 ) -> query.Run | None:
     """Start a persisted turn; None when the thread already has a run (D-05).
 
@@ -189,6 +195,8 @@ async def start_turn(
     id, ValueError for a bad `replace_from` (needs thread_id; must be a user
     message of that thread), for `attachment_ids` without a thread or not on it,
     and ReplaceConflict when a change was applied.
+    `mcp_server_ids` pick the external servers of a new thread; after that the
+    selection comes from the database (PUT /threads/{id}/mcp-servers), never the request.
     A thread holding any attachment runs the reduced tool set and starts with the
     ephemeral manifest; both come from the database, never the request (D-16, D-18).
     Must run inside the event loop.
@@ -203,7 +211,8 @@ async def start_turn(
         return None
     try:
         user_id, seq, prior, summary, upto, atts = await asyncio.to_thread(
-            _begin_turn, tid, thread_id is None, question, replace_from, attachment_ids
+            _begin_turn, tid, thread_id is None, question, replace_from, attachment_ids,
+            mcp_server_ids,
         )
         # Module attribute reads so tests can monkeypatch the budget and the date.
         history, to_compact = plan_history(
@@ -609,8 +618,11 @@ def thread_detail(db, thread_id: uuid.UUID) -> dict | None:
     atts = db.execute(
         select(Attachment).where(Attachment.thread_id == thread_id).order_by(Attachment.created_at, Attachment.id)
     ).scalars()
+    servers = db.execute(
+        select(ThreadMcpServer.server_id).where(ThreadMcpServer.thread_id == thread_id)
+    ).scalars().all()
     return {
-        **_thread_row(t), "messages": out,
+        **_thread_row(t), "messages": out, "mcp_server_ids": list(servers),
         "attachments": [
             {"id": a.id, "filename": a.filename, "kind": a.kind, "status": a.parse_status,
              "summary": (a.meta or {}).get("summary", ""), "row_count": len(a.rows or []),

@@ -526,6 +526,7 @@ class QueryRequest(BaseModel):
     thread_id: _uuid.UUID | None = None
     replace_from: _uuid.UUID | None = None  # the user message to replace (regenerate and edit, Phase 37 D-18)
     attachment_ids: list[_uuid.UUID] = Field(default_factory=list, max_length=20)  # bound to this question (Phase 39 D-03)
+    mcp_server_ids: list[_uuid.UUID] = Field(default_factory=list, max_length=20)  # external servers for a NEW thread only (Phase 41 PC-03)
 
 
 class ThreadTitleUpdate(BaseModel):
@@ -594,6 +595,7 @@ class ThreadDetailOut(ThreadOut):
     attachments: list[AttachmentOut] = []
     summary_upto_seq: int = 0
     has_summary: bool = False  # flags only: the summary text never leaves the server
+    mcp_server_ids: list[_uuid.UUID] = []  # external MCP servers this thread uses (Phase 41)
 
 
 class ImportResponse(BaseModel):
@@ -769,3 +771,32 @@ class McpServerOut(BaseModel):
     env: list[McpSecretOut]
     enabled: bool
     changed_count: int | None
+
+
+class McpToolOut(BaseModel):
+    name: str
+    description: str
+    input_schema: dict
+    annotations: dict | None  # what the server claims; never a guarantee (D-09)
+    usable_name: bool
+    status: Literal["new", "changed", "unchanged"]
+
+
+class McpTestOut(BaseModel):
+    tools_hash: str
+    tools: list[McpToolOut]
+    removed: list[str]
+    policies: dict[str, str]
+
+
+class McpEnableIn(BaseModel):
+    enabled: bool
+    tools_hash: str | None = None
+
+
+class McpPolicyIn(BaseModel):
+    policy: Literal["ask", "always", "deny"]
+
+
+class ThreadServersIn(BaseModel):
+    server_ids: list[_uuid.UUID] = Field(max_length=20)

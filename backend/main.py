@@ -1568,11 +1568,14 @@ async def query_stream(req: QueryRequest):
 
     `attachment_ids` bind to this question; an id from another thread (or ids
     without a thread_id) is 422 and nothing is stored (Phase 39 D-03).
+
+    `mcp_server_ids` choose the external MCP servers of a NEW thread; an unknown id
+    is 422 and nothing is stored. For an existing thread they are ignored (PC-03).
     """
     from backend import chat_service, query
     try:
         run = await chat_service.start_turn(
-            req.question, req.thread_id, req.replace_from, req.attachment_ids
+            req.question, req.thread_id, req.replace_from, req.attachment_ids, req.mcp_server_ids
         )
     except LookupError:
         raise HTTPException(404, "Thread not found")
