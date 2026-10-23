@@ -38,3 +38,31 @@ export async function checkBasic(
   const okPass = same(await sha(pass), await sha(password));
   return okUser && okPass ? "ok" : "unauthorized";
 }
+
+/**
+ * The 401/503 response init for a non-ok verdict, shared by the middleware and
+ * the /api proxy route so the route still refuses if the middleware is skipped
+ * (CVE-2025-29927 defence in depth). Returns null for "ok".
+ */
+export function basicDenial(verdict: BasicVerdict): { body: string; init: ResponseInit } | null {
+  if (verdict === "ok") return null;
+  if (verdict === "locked") {
+    return {
+      body: "monai UI locked: set MONAI_UI_PASSWORD in .env (it must differ from MONAI_API_KEY and MONAI_APPROVER_KEY), then restart the frontend",
+      init: { status: 503, headers: { "Cache-Control": "no-store" } },
+    };
+  }
+  return {
+    body: "Authentication required",
+    init: { status: 401, headers: { "WWW-Authenticate": 'Basic realm="monai", charset="UTF-8"', "Cache-Control": "no-store" } },
+  };
+}
+
+/** Verdict for a request from the process env, read per request. */
+export const checkBasicEnv = (authz: string | null) =>
+  checkBasic(
+    authz,
+    process.env.MONAI_UI_PASSWORD ?? "",
+    process.env.MONAI_API_KEY ?? "",
+    process.env.MONAI_APPROVER_KEY ?? ""
+  );
