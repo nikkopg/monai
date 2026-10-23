@@ -36,6 +36,7 @@ Endpoints:
     POST /mcp-servers/{id}/test connect, list the tools and their review status; stores only changed_count (requires API key)
     PUT  /mcp-servers/{id}/enabled  enable bound to the reviewed tools_hash, 409 if it changed; disable needs none (requires API key)
     PUT  /mcp-servers/{id}/tools/{tool}  set one tool's policy: ask, always or deny (requires API key)
+    POST /threads/{id}/ext-calls/{call_id}  allow or deny a waiting external call; 409 if answered, expired or its turn ended (requires API key)
     PUT  /threads/{id}/mcp-servers  set the thread's external servers, applies from the next turn (requires API key)
     POST /query-stream          streaming SSE agent response; one run per thread, optional thread_id, 409 if busy (requires API key)
     POST /query-stream/{run_id}/cancel  stop a run and reject its pending chat proposals (requires API key)
@@ -73,7 +74,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-from backend import auth
+from backend import auth, ext_calls
 from backend.attachments import MAX_UPLOAD_BYTES
 from backend.attachments_api import router as attachments_router
 from backend.skills_api import router as skills_router
@@ -229,6 +230,10 @@ async def lifespan(app: FastAPI):
     leader election (or an external scheduler) to avoid N duplicate snapshots.
     """
     _check_timezone(get_session_sync)
+    try:  # no external call survives a restart (PC-14); never blocks boot
+        ext_calls.sweep_at_boot()
+    except Exception as exc:
+        logger.warning("ext_calls boot sweep failed: %s", type(exc).__name__)
 
     from backend.scheduler import build_scheduler
 

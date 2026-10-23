@@ -17,11 +17,13 @@ import logging
 import os
 import urllib.parse
 import uuid
+from datetime import datetime, timezone
 
+import anyio
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
-from backend import config
+from backend import config, mcp_client
 from backend.db import get_session_sync
 from backend.models import AuditLog, ExtCall
 
@@ -240,3 +242,142 @@ def wake(call_id) -> None:
 def wake_all(ids) -> None:
     for i in ids:
         wake(i)
+
+
+# ── the wrapper every external tool goes through ───────────────────────────
+
+def _error(name: str, message: str) -> dict:
+    return {"tool": name, "external": True, "error": message}
+
+
+def _failed(name: str, slug: str, error_class: str) -> dict:
+    """What the model sees when a call did not succeed: it can never claim success (D-21).
+    Only a class name or fixed copy, never exception text (Pitfall 8)."""
+    return {"tool": name, "source": f"external:{slug}", "external": True,
+            "label": "external, unverified", "receipt": "failed", "error": error_class}
+
+
+def _guard_hit(args) -> bool:
+    with get_session_sync() as db:
+        return outbound_hit(args, guard_secrets(db))
+
+
+async def _await_decision(turn, conn, call_id, row: dict) -> dict:
+    """Park until the row leaves 'pending'. The Event is registered before the card goes
+    out; the 5 s re-read covers a lost wake and the TTL (D-13, D-15)."""
+    key = str(call_id)
+    ev = _WAKE[key] = asyncio.Event()
+    card = {
+        "type": "approval_required", "call_id": key, "server": row["server_slug"],
+        "tool": row["tool"], "args": row["args"], "destination": conn.destination,
+        "leaves_machine": conn.leaves_machine, "expires_at": row["expires_at"].isoformat(),
+    }
+    if row["reason"]:
+        card["reason"] = row["reason"]
+    turn.emit(card)
+    turn.hold_idle()
+    try:
+        while row is not None and row["approval"] == "pending":
+            left = (row["expires_at"] - datetime.now(timezone.utc)).total_seconds()
+            if left <= 0:
+                await asyncio.to_thread(expire_one, call_id)
+            else:
+                try:
+                    await asyncio.wait_for(ev.wait(), timeout=max(0.05, min(5, left)))
+                except TimeoutError:
+                    pass
+                ev.clear()
+            row = await asyncio.to_thread(read_call, call_id)
+    finally:
+        turn.release_idle()
+        _WAKE.pop(key, None)
+    return row
+
+
+async def _receipt(turn, call_id, receipt: str, **kw) -> None:
+    await asyncio.to_thread(set_receipt, call_id, receipt, **kw)
+    turn.emit({"type": "ext_call", "call_id": str(call_id), "receipt": receipt,
+               "error_class": kw.get("error")})
+
+
+async def _send(turn, conn, tool: str, call_id, args: dict, name: str, reopen: bool) -> dict:
+    """Send exactly the stored args. A call that may have been sent is never retried (A-09)."""
+    if reopen:  # the session sat parked through the approval wait
+        try:
+            await asyncio.wait_for(conn.client.ping(), timeout=5)
+        except Exception:
+            try:
+                same = await mcp_client.reopen(conn, tool)
+            except Exception:
+                same, why = False, "Unreachable"
+            else:
+                why = "ToolChanged"
+            if not same:
+                await _receipt(turn, call_id, "failed", error=why)
+                return _failed(name, conn.slug, why)
+    await _receipt(turn, call_id, "pending")
+    try:
+        res = await conn.client.call_tool(
+            tool, args, timeout=config.EXT_CALL_TIMEOUT_SECONDS, raise_on_error=False)
+    except asyncio.CancelledError:
+        with anyio.CancelScope(shield=True):
+            await asyncio.to_thread(set_receipt, call_id, "unknown")
+        raise
+    except Exception as e:
+        await _receipt(turn, call_id, "failed", error=type(e).__name__)
+        return _failed(name, conn.slug, type(e).__name__)
+    if res.is_error:
+        await _receipt(turn, call_id, "failed", error="ToolError")
+        return _failed(name, conn.slug, "ToolError")
+    digest, size = mcp_client.result_digest(res)
+    await _receipt(turn, call_id, "confirmed", result_sha256=digest, result_bytes=size)
+    return mcp_client.wrap_result(conn.slug, tool, res, "confirmed")
+
+
+async def _approve_and_send(turn, conn, tool: str, args: dict, name: str, thread_id, turn_id) -> dict:
+    decision, reason = effective(conn.policies.get(tool, "ask"), turn.ledger_touched)
+    if decision == "deny":
+        return _error(name, "this tool is turned off")
+    call_id = await asyncio.to_thread(
+        insert_call, thread_id=thread_id, turn_id=turn_id, conn=conn, tool=tool, args=args,
+        approved=decision == "always", reason=reason)
+    row = await asyncio.to_thread(read_call, call_id)
+    if decision == "ask":
+        row = await _await_decision(turn, conn, call_id, row)
+    if row is None:  # the thread was deleted while the call waited
+        return _error(name, "approval expired")
+    turn.emit({"type": "ext_call", "call_id": str(call_id), "approval": row["approval"],
+               "decided_via": row["decided_via"]})
+    if row["approval"] == "denied":
+        return _error(name, "denied by owner")
+    if row["approval"] != "approved":
+        return _error(name, "approval expired")
+    if row["decided_via"] == "user":
+        turn.ledger_touched = False  # only an owner approval clears the taint (A-07)
+    # shown == sent == hashed: the args come back from the row, not from the model (D-13)
+    return await _send(turn, conn, tool, call_id, row["args"], name, reopen=decision == "ask")
+
+
+async def run_call(turn, conn, tool: str, args: dict, *, thread_id, turn_id) -> dict:
+    """Validate, guard, serialise, ask or apply policy, wait on the stored decision, send
+    the stored args, receipt the outcome. `turn` supplies lock, seen, ledger_touched,
+    emit, hold_idle and release_idle."""
+    from backend.query import _call_key
+
+    name = mcp_client.ext_name(conn.slug, tool)
+    errors = mcp_client.validate_args(conn.approved[tool]["inputSchema"], args)
+    if errors:  # no row, no card: the model retries (A-06)
+        return _error(name, "invalid arguments: " + "; ".join(errors))
+    if await asyncio.to_thread(_guard_hit, args):
+        await asyncio.to_thread(audit_blocked, conn, tool, args)
+        turn.emit({"type": "notice", "code": "blocked", "server": conn.slug,
+                   "message": f"monai blocked a call to {conn.slug} because its arguments contained a monai secret."})
+        return _error(name, "refused: the arguments contained a monai secret")
+    async with turn.lock:  # one external call at a time (D-17)
+        key = _call_key(name, args)
+        if key in turn.seen:
+            return {**turn.seen[key], "duplicate_of_earlier_call": True,
+                    "note": "identical call already made this turn; no second call was sent"}
+        result = await _approve_and_send(turn, conn, tool, args, name, thread_id, turn_id)
+        turn.seen[key] = result
+        return result

@@ -269,3 +269,364 @@ def test_audit_rows_hold_hash_only(th):
     for a in rows:
         assert set(a.after) == {"server", "tool", "args_sha256"}
         assert secret_arg not in json.dumps(a.after)
+
+
+# ── run_call: the wrapper (in-memory synthetic server) ──────────────────────
+
+import asyncio  # noqa: E402
+import logging  # noqa: E402
+import time  # noqa: E402
+
+from fastmcp.client.transports import FastMCPTransport  # noqa: E402
+
+from backend import main, mcp_client as mc, query  # noqa: E402
+from backend.evals import ext_test_server as srv  # noqa: E402
+
+
+class FakeTurn:
+    def __init__(self, touched=False):
+        self.lock = asyncio.Lock()
+        self.seen = {}
+        self.ledger_touched = touched
+        self.events = []
+        self.holds = self.releases = 0
+
+    def emit(self, payload):
+        self.events.append(payload)
+
+    def hold_idle(self):
+        self.holds += 1
+
+    def release_idle(self):
+        self.releases += 1
+
+    def of(self, kind):
+        return [e for e in self.events if e["type"] == kind]
+
+
+@pytest.fixture()
+async def conn(monkeypatch):
+    monkeypatch.setattr(mc, "build_transport", lambda s: FastMCPTransport(srv.build()))
+    spec = mc.ServerSpec(id=None, slug=SLUG, transport="http", url="https://zz.example.com/mcp",
+                         headers={}, command=None, args=(), env={})
+    client = await mc.open_client(spec)
+    approved = {t.name: {"description": t.description, "inputSchema": t.inputSchema, "sha256": mc.tool_sha(t)}
+                for t in await mc.list_server_tools(client)}
+    c = mc.ServerConn(spec=spec, slug=SLUG, server_id=None, destination="zz.example.com",
+                      leaves_machine=True, policies={}, approved=approved, client=client)
+    srv.CALLS.clear()
+    yield c
+    await mc.close_client(c.client)
+
+
+async def _until(pred, limit=3.0):
+    end = time.monotonic() + limit
+    while not pred():
+        assert time.monotonic() < end, "condition not reached"
+        await asyncio.sleep(0.02)
+
+
+def _start(turn, conn, th, tool="echo", args=None):
+    return asyncio.create_task(ec.run_call(turn, conn, tool, args or {"text": "ZZhi"},
+                                           thread_id=th.id, turn_id=th.turn))
+
+
+async def _answer(turn, th, approve, n=0):
+    await _until(lambda: len(turn.of("approval_required")) > n)
+    cid = turn.of("approval_required")[n]["call_id"]
+    assert ec.decide(th.id, uuid.UUID(cid), approve) is not None
+    ec.wake(cid)
+    return uuid.UUID(cid)
+
+
+def _rows(th):
+    with SessionLocal() as db:
+        return db.execute(text("SELECT count(*) FROM ext_calls WHERE thread_id = :t"), {"t": th.id}).scalar()
+
+
+async def test_ask_flow_waits_then_sends(th, conn):
+    turn = FakeTurn()
+    task = _start(turn, conn, th)
+    await _until(lambda: turn.of("approval_required"))
+    card = turn.of("approval_required")[0]
+    assert set(card) == {"type", "call_id", "server", "tool", "args", "destination",
+                         "leaves_machine", "expires_at"}
+    assert (card["server"], card["tool"], card["args"]) == (SLUG, "echo", {"text": "ZZhi"})
+    assert (turn.holds, turn.releases) == (1, 0) and not task.done()
+    cid = await _answer(turn, th, True)
+    res = await asyncio.wait_for(task, 1)
+    assert res["receipt"] == "confirmed" and "ZZhi" in res["result"]
+    assert (turn.holds, turn.releases) == (1, 1)
+    r = _row(cid)
+    assert (r.receipt, r.result_bytes) == ("confirmed", 4) and len(r.result_sha256) == 64
+    receipts = [e.get("receipt") for e in turn.of("ext_call") if "receipt" in e]
+    assert receipts == ["pending", "confirmed"]
+    assert any(e.get("approval") == "approved" for e in turn.of("ext_call"))
+
+
+async def test_stored_args_are_what_is_sent(th, conn, monkeypatch):
+    real = ec.read_call
+    monkeypatch.setattr(ec, "read_call", lambda cid: {**real(cid), "args": {"text": "ZZstored"}})
+    turn = FakeTurn()
+    task = _start(turn, conn, th)
+    await _answer(turn, th, True)
+    res = await asyncio.wait_for(task, 1)
+    assert "ZZstored" in res["result"] and "ZZhi" not in res["result"]
+
+
+async def test_deny_sends_nothing(th, conn):
+    turn = FakeTurn()
+    task = _start(turn, conn, th, "send", {"text": "ZZx"})
+    cid = await _answer(turn, th, False)
+    assert await asyncio.wait_for(task, 1) == {"tool": "ext__zz-synth__send", "external": True,
+                                              "error": "denied by owner"}
+    assert srv.CALLS == [] and _row(cid).approval == "denied"
+
+
+async def test_expiry_returns_error_and_releases_the_hold(th, conn, monkeypatch):
+    monkeypatch.setattr(config, "EXT_APPROVAL_TTL_SECONDS", 1.0)
+    turn = FakeTurn()
+    res = await asyncio.wait_for(_start(turn, conn, th, "send", {"text": "ZZx"}), 5)
+    assert res["error"] == "approval expired" and srv.CALLS == []
+    cid = uuid.UUID(turn.of("approval_required")[0]["call_id"])
+    r = _row(cid)
+    assert (r.approval, r.decided_via) == ("expired", "expiry")
+    assert (turn.holds, turn.releases) == (1, 1) and str(cid) not in ec._WAKE
+
+
+async def test_always_policy_sends_with_no_card(th, conn):
+    conn.policies = {"echo": "always"}
+    turn = FakeTurn()
+    res = await asyncio.wait_for(_start(turn, conn, th), 3)
+    assert res["receipt"] == "confirmed" and turn.of("approval_required") == []
+    assert turn.of("ext_call")[0] == {"type": "ext_call", "call_id": turn.of("ext_call")[0]["call_id"],
+                                      "approval": "approved", "decided_via": "policy"}
+    assert (turn.holds, turn.releases) == (0, 0)
+
+
+async def test_taint_always_asks_after_a_ledger_read_and_approval_clears_it(th, conn):
+    conn.policies = {"echo": "always"}
+    turn = FakeTurn(touched=True)
+    task = _start(turn, conn, th, args={"text": "ZZone"})
+    await _until(lambda: turn.of("approval_required"))
+    assert turn.of("approval_required")[0]["reason"] == "ledger_read"
+    await _answer(turn, th, True)
+    assert (await asyncio.wait_for(task, 1))["receipt"] == "confirmed"
+    assert turn.ledger_touched is False
+    again = await asyncio.wait_for(_start(turn, conn, th, args={"text": "ZZtwo"}), 3)
+    assert again["receipt"] == "confirmed" and len(turn.of("approval_required")) == 1
+
+
+async def test_taint_a_denial_keeps_it(th, conn):
+    conn.policies = {"echo": "always"}
+    turn = FakeTurn(touched=True)
+    task = _start(turn, conn, th, args={"text": "ZZone"})
+    await _answer(turn, th, False)
+    assert (await asyncio.wait_for(task, 1))["error"] == "denied by owner"
+    assert turn.ledger_touched is True
+    task = _start(turn, conn, th, args={"text": "ZZtwo"})
+    await _until(lambda: len(turn.of("approval_required")) == 2)
+    await _answer(turn, th, False, n=1)
+    await asyncio.wait_for(task, 1)
+
+
+async def test_deny_policy_refuses_with_no_row(th, conn):
+    conn.policies = {"echo": "deny"}
+    res = await _start(FakeTurn(), conn, th)
+    assert "error" in res and _rows(th) == 0
+
+
+async def test_validation_error_returns_no_row_and_no_event(th, conn):
+    turn = FakeTurn()
+    res = await _start(turn, conn, th, "nested", {"filters": {"color": "purple", "inner": {"n": "x"}}})
+    assert res["error"].startswith("invalid arguments: ")
+    assert _rows(th) == 0 and turn.events == []
+
+
+async def test_guard_blocks_a_monai_secret(th, conn, monkeypatch):
+    monkeypatch.setenv("MONAI_API_KEY", KEY)
+    turn = FakeTurn()
+    res = await _start(turn, conn, th, "send", {"text": f"note {KEY}"})
+    assert "refused" in res["error"] and KEY not in json.dumps(res)
+    assert _rows(th) == 0 and srv.CALLS == []
+    assert [a.operation for a in _audits()] == ["blocked"]
+    assert len(turn.events) == 1
+    n = turn.events[0]
+    assert (n["type"], n["code"], n["server"]) == ("notice", "blocked", SLUG) and KEY not in n["message"]
+
+
+class Spy:
+    def __init__(self, inner):
+        self.inner, self.cur, self.peak = inner, 0, 0
+
+    async def call_tool(self, *a, **k):
+        self.cur += 1
+        self.peak = max(self.peak, self.cur)
+        try:
+            return await self.inner.call_tool(*a, **k)
+        finally:
+            self.cur -= 1
+
+    def __getattr__(self, n):
+        return getattr(self.inner, n)
+
+
+async def test_serial_external_calls_never_overlap(th, conn):
+    conn.policies = {"slow": "always"}
+    conn.client = spy = Spy(conn.client)
+    turn = FakeTurn()
+    await asyncio.wait_for(asyncio.gather(
+        _start(turn, conn, th, "slow", {"seconds": 0.2}),
+        _start(turn, conn, th, "slow", {"seconds": 0.21}),
+    ), 5)
+    assert spy.peak == 1
+
+
+async def test_dedupe_identical_call_returns_the_first_result(th, conn):
+    conn.policies = {"echo": "always"}
+    turn = FakeTurn()
+    first = await _start(turn, conn, th)
+    second = await _start(turn, conn, th)
+    assert second["duplicate_of_earlier_call"] is True and second["result"] == first["result"]
+    assert "duplicate_of_earlier_call" not in first and _rows(th) == 1
+
+
+class Stub:
+    """A client whose call_tool is scripted."""
+    def __init__(self, outcome):
+        self.outcome = outcome
+
+    async def call_tool(self, *a, **k):
+        if isinstance(self.outcome, Exception):
+            raise self.outcome
+        return self.outcome
+
+    async def ping(self):
+        return True
+
+
+async def test_receipt_failed_on_a_tool_error_result(th, conn):
+    conn.policies = {"echo": "always"}
+    conn.client = Stub(SimpleNamespace(is_error=True, content=[]))
+    turn = FakeTurn()
+    res = await _start(turn, conn, th)
+    assert (res["receipt"], res["error"]) == ("failed", "ToolError") and "result" not in res
+    cid = uuid.UUID(turn.of("ext_call")[0]["call_id"])
+    assert (_row(cid).receipt, _row(cid).error) == ("failed", "ToolError")
+    assert turn.of("ext_call")[-1]["error_class"] == "ToolError"
+
+
+async def test_receipt_failed_on_an_exception_keeps_only_the_class(th, conn):
+    conn.policies = {"echo": "always"}
+    conn.client = Stub(RuntimeError("boom https://secret.example.com/x"))
+    turn = FakeTurn()
+    res = await _start(turn, conn, th)
+    assert res["error"] == "RuntimeError" and "secret.example.com" not in json.dumps(turn.events + [res])
+
+
+async def test_receipt_cancel_during_the_call_is_unknown(th, conn):
+    conn.policies = {"slow": "always"}
+    turn = FakeTurn()
+    task = _start(turn, conn, th, "slow", {"seconds": 5})
+    await _until(lambda: any(e.get("receipt") == "pending" for e in turn.of("ext_call")))
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    cid = uuid.UUID(turn.of("ext_call")[0]["call_id"])
+    assert _row(cid).receipt == "unknown"
+
+
+async def test_stale_session_is_reopened_once_and_sends(th, conn):
+    turn = FakeTurn()
+    task = _start(turn, conn, th)
+    await _until(lambda: turn.of("approval_required"))
+    await mc.close_client(conn.client)  # the session went away while parked
+    await _answer(turn, th, True)
+    res = await asyncio.wait_for(task, 3)
+    assert res["receipt"] == "confirmed" and "ZZhi" in res["result"]
+
+
+async def test_stale_session_with_a_changed_tool_sends_nothing(th, conn, monkeypatch):
+    turn = FakeTurn()
+    task = _start(turn, conn, th)
+    await _until(lambda: turn.of("approval_required"))
+    await mc.close_client(conn.client)
+    monkeypatch.setattr(mc, "build_transport", lambda s: FastMCPTransport(srv.build("changed")))
+    cid = await _answer(turn, th, True)
+    res = await asyncio.wait_for(task, 3)
+    assert (res["receipt"], res["error"]) == ("failed", "ToolChanged") and "result" not in res
+    assert (_row(cid).receipt, _row(cid).error) == ("failed", "ToolChanged")
+
+
+# ── the decision route ──────────────────────────────────────────────────────
+
+def _url(th, cid):
+    return f"/threads/{th.id}/ext-calls/{cid}"
+
+
+@pytest.fixture()
+def active(th):
+    query._ACTIVE[str(th.id)] = SimpleNamespace(id=str(th.turn))
+    yield
+    query._ACTIVE.pop(str(th.id), None)
+
+
+def test_route_requires_the_api_key(client, api_key, th):
+    assert client.post(_url(th, uuid.uuid4()), json={"approve": True}).status_code == 401
+
+
+def test_route_404_for_unknown_and_other_thread(authed, th):
+    assert authed.post(_url(th, uuid.uuid4()), json={"approve": True}).status_code == 404
+    cid = _ask(th)
+    other = SimpleNamespace(id=uuid.uuid4())
+    assert authed.post(_url(other, cid), json={"approve": True}).status_code == 404
+
+
+def test_route_409_when_no_run_is_active_and_expires_the_row(authed, th):
+    cid = _ask(th)
+    assert authed.post(_url(th, cid), json={"approve": True}).status_code == 409
+    assert _row(cid).approval == "expired"
+
+
+def test_route_decides_once(authed, th, active):
+    cid = _ask(th)
+    r = authed.post(_url(th, cid), json={"approve": True})
+    assert (r.status_code, r.json()) == (200, {"approval": "approved"})
+    assert authed.post(_url(th, cid), json={"approve": False}).status_code == 409
+    assert _row(cid).approval == "approved"
+
+
+def test_route_409_for_an_expired_call(authed, th, active):
+    cid = _ask(th)
+    _age(cid)
+    assert authed.post(_url(th, cid), json={"approve": True}).status_code == 409
+
+
+async def test_route_wakes_the_waiter(async_client, api_key, th, conn, active):
+    turn = FakeTurn()
+    task = _start(turn, conn, th)
+    await _until(lambda: turn.of("approval_required"))
+    cid = turn.of("approval_required")[0]["call_id"]
+    r = await async_client.post(_url(th, cid), json={"approve": True}, headers={"MONAI_API_KEY": api_key})
+    assert r.status_code == 200
+    assert (await asyncio.wait_for(task, 1))["receipt"] == "confirmed"  # well inside the 5 s re-read
+
+
+# ── boot ────────────────────────────────────────────────────────────────────
+
+async def test_boot_sweeps_once_and_a_failure_only_logs(monkeypatch, caplog):
+    calls = []
+    monkeypatch.setattr(ec, "sweep_at_boot", lambda: calls.append(1))
+    async with main.lifespan(main.app):
+        pass
+    assert calls == [1]
+
+    def boom():
+        raise RuntimeError("db down https://secret.example.com")
+
+    monkeypatch.setattr(ec, "sweep_at_boot", boom)
+    with caplog.at_level(logging.WARNING):
+        async with main.lifespan(main.app):
+            pass
+    assert "ext_calls boot sweep failed: RuntimeError" in caplog.text
+    assert "secret.example.com" not in caplog.text

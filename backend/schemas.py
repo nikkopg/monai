@@ -798,5 +798,9 @@ class McpPolicyIn(BaseModel):
     policy: Literal["ask", "always", "deny"]
 
 
+class ExtDecisionIn(BaseModel):
+    approve: bool
+
+
 class ThreadServersIn(BaseModel):
     server_ids: list[_uuid.UUID] = Field(max_length=20)

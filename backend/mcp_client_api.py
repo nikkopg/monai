@@ -24,12 +24,12 @@ from fastapi import APIRouter, Depends, HTTPException, Path
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from backend import mcp_client, settings
+from backend import ext_calls, mcp_client, settings
 from backend.auth import require_api_key
 from backend.db import get_session, get_session_sync
 from backend.models import AuditLog, McpServer, Thread, ThreadMcpServer
 from backend.schemas import (
-    McpEnableIn, McpPolicyIn, McpServerCreate, McpServerOut, McpServerUpdate, McpTestOut,
+    ExtDecisionIn, McpEnableIn, McpPolicyIn, McpServerCreate, McpServerOut, McpServerUpdate, McpTestOut,
     ThreadServersIn,
 )
 
@@ -314,3 +314,30 @@ def set_thread_servers(thread_id: uuid.UUID, body: ThreadServersIn, db: Session 
     db.add_all(ThreadMcpServer(thread_id=thread_id, server_id=sid) for sid in ids)
     db.commit()
     return {"server_ids": ids}
+
+
+def _sweep_orphans(thread_id: uuid.UUID, active_turn: str | None) -> None:
+    with get_session_sync() as db:
+        ext_calls.sweep_thread(db, thread_id, active_turn)
+
+
+@router.post("/threads/{thread_id}/ext-calls/{call_id}", dependencies=[Depends(require_api_key)])
+async def decide_ext_call(thread_id: uuid.UUID, call_id: uuid.UUID, body: ExtDecisionIn):
+    """Allow or deny a waiting external call. Async because the waiter's Event must be set
+    on the loop thread (Pitfall 4). Not on the approver allowlist: the owner decides in
+    the app (D-14). The first answer wins; a replay, an expired call or a call whose turn
+    is no longer running answers 409."""
+    from backend import query
+
+    row = await asyncio.to_thread(ext_calls.read_call, call_id)
+    if row is None or row["thread_id"] != thread_id:
+        raise HTTPException(404, "Call not found.")
+    run = query._ACTIVE.get(str(thread_id))
+    if run is None or run.id != str(row["turn_id"]):
+        await asyncio.to_thread(_sweep_orphans, thread_id, run.id if run else None)
+        raise HTTPException(409, "This turn is no longer running.")
+    value = await asyncio.to_thread(ext_calls.decide, thread_id, call_id, body.approve)
+    if value is None:
+        raise HTTPException(409, "That request was already answered or has expired.")
+    ext_calls.wake(call_id)
+    return {"approval": value}
