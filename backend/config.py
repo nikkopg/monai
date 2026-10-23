@@ -25,6 +25,13 @@ Env vars:
                       retuned by the Phase 38 spike).
   MONAI_SKILLS_DIR    (default: /app/skills) — folder of SKILL.md packs, read at call
                       time by backend/skills.py.
+  EXT_CONNECT_TIMEOUT_SECONDS  (default: 20) — connect and initialize limit for an
+                      external MCP server (Phase 41).
+  EXT_CALL_TIMEOUT_SECONDS  (default: 60) — limit for one external tool call.
+  EXT_APPROVAL_TTL_SECONDS  (default: 600) — how long an external call waits for
+                      the owner's decision before it counts as expired.
+  MONAI_EXT_HOME      (default: ~/.cache/monai-ext) — home, tmp and npm/uv caches
+                      for stdio MCP servers; the image sets /var/lib/monai-ext.
 """
 
 import os
@@ -37,6 +44,12 @@ DATABASE_URL = os.getenv(
 
 # float so "90.5" parses; floored at 1 s so 0 or a negative cannot end every run at once.
 CHAT_IDLE_TIMEOUT_SECONDS = max(1.0, float(os.getenv("CHAT_IDLE_TIMEOUT_SECONDS", "120")))
+
+# Floored at 1 s, like the idle timeout.
+EXT_CONNECT_TIMEOUT_SECONDS = max(1.0, float(os.getenv("EXT_CONNECT_TIMEOUT_SECONDS", "20")))
+EXT_CALL_TIMEOUT_SECONDS = max(1.0, float(os.getenv("EXT_CALL_TIMEOUT_SECONDS", "60")))
+EXT_APPROVAL_TTL_SECONDS = max(1.0, float(os.getenv("EXT_APPROVAL_TTL_SECONDS", "600")))
+MONAI_EXT_HOME = os.getenv("MONAI_EXT_HOME", os.path.expanduser("~/.cache/monai-ext"))
 
 # 0 disables replayed history; negatives clamp to 0.
 CHAT_HISTORY_TOKEN_BUDGET = max(0, int(os.getenv("CHAT_HISTORY_TOKEN_BUDGET", "6000")))
