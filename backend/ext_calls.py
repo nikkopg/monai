@@ -335,6 +335,7 @@ async def _send(turn, conn, tool: str, call_id, args: dict, name: str, reopen: b
 
 
 async def _approve_and_send(turn, conn, tool: str, args: dict, name: str, thread_id, turn_id) -> dict:
+    seq = turn.ledger_seq  # reads that land during the wait are not covered by the approval
     decision, reason = effective(conn.policies.get(tool, "ask"), turn.ledger_touched)
     if decision == "deny":
         return _error(name, "this tool is turned off")
@@ -353,14 +354,16 @@ async def _approve_and_send(turn, conn, tool: str, args: dict, name: str, thread
     if row["approval"] != "approved":
         return _error(name, "approval expired")
     if row["decided_via"] == "user":
-        turn.ledger_touched = False  # only an owner approval clears the taint (A-07)
+        # only an owner approval clears the taint (A-07), and only the ledger reads seen
+        # before it: a read finishing while the card waits keeps the turn tainted
+        turn.ledger_cleared = max(turn.ledger_cleared, seq)
     # shown == sent == hashed: the args come back from the row, not from the model (D-13)
     return await _send(turn, conn, tool, call_id, row["args"], name, reopen=decision == "ask")
 
 
 async def run_call(turn, conn, tool: str, args: dict, *, thread_id, turn_id) -> dict:
     """Validate, guard, serialise, ask or apply policy, wait on the stored decision, send
-    the stored args, receipt the outcome. `turn` supplies lock, seen, ledger_touched,
+    the stored args, receipt the outcome. `turn` supplies lock, seen, ledger_touched, ledger_seq, ledger_cleared,
     emit, hold_idle and release_idle."""
     from backend.query import _call_key
 

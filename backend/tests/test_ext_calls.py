@@ -287,9 +287,14 @@ class FakeTurn:
     def __init__(self, touched=False):
         self.lock = asyncio.Lock()
         self.seen = {}
-        self.ledger_touched = touched
+        self.ledger_seq = int(touched)
+        self.ledger_cleared = 0
         self.events = []
         self.holds = self.releases = 0
+
+    @property
+    def ledger_touched(self):
+        return self.ledger_seq > self.ledger_cleared
 
     def emit(self, payload):
         self.events.append(payload)
@@ -415,6 +420,23 @@ async def test_taint_always_asks_after_a_ledger_read_and_approval_clears_it(th, 
     assert turn.ledger_touched is False
     again = await asyncio.wait_for(_start(turn, conn, th, args={"text": "ZZtwo"}), 3)
     assert again["receipt"] == "confirmed" and len(turn.of("approval_required")) == 1
+
+
+async def test_taint_a_read_during_a_pending_card_is_not_cleared_by_its_approval(th, conn):
+    conn.policies = {"echo": "ask"}
+    turn = FakeTurn()
+    task = _start(turn, conn, th, args={"text": "ZZone"})
+    await _until(lambda: turn.of("approval_required"))
+    turn.ledger_seq += 1  # a ledger read lands while the card waits
+    await _answer(turn, th, True)
+    assert (await asyncio.wait_for(task, 1))["receipt"] == "confirmed"
+    assert turn.ledger_touched is True
+    conn.policies = {"echo": "always"}
+    task = _start(turn, conn, th, args={"text": "ZZtwo"})
+    await _until(lambda: len(turn.of("approval_required")) == 2)
+    assert turn.of("approval_required")[1]["reason"] == "ledger_read"
+    await _answer(turn, th, False, n=1)
+    await asyncio.wait_for(task, 1)
 
 
 async def test_taint_a_denial_keeps_it(th, conn):

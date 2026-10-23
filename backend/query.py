@@ -178,12 +178,40 @@ class Turn:
     `lock` serialises the turn's write tools; `seen` maps a write call's
     canonical key to its first (token-stripped) result so a repeat returns it,
     marked duplicate_of_earlier_call (WR-02).
+
+    The rest serves external MCP calls (Phase 41). hold_idle/release_idle
+    suspend the producer's idle watchdog while an approval card waits, so the
+    approval TTL bounds the wait instead (D-15, A-03). `ledger_seq` counts the
+    ledger tool calls this turn made (reads included, D-19); `ledger_cleared`
+    is the count an owner approval has covered, so `ledger_touched` stays true
+    for a read that landed during the approval (A-07). `emit` puts an SSE event
+    on the run's stream; agent_stream replaces the no-op default.
     Created inside the running loop, never at import.
     """
 
     def __init__(self) -> None:
         self.lock = asyncio.Lock()
         self.seen: dict[tuple[str, str], Any] = {}
+        self.idle_cm = None  # the producer's asyncio.timeout, set in produce()
+        self.idle = 0.0
+        self.holds = 0
+        self.ledger_seq = 0
+        self.ledger_cleared = 0
+        self.emit = lambda payload: None
+
+    @property
+    def ledger_touched(self) -> bool:
+        return self.ledger_seq > self.ledger_cleared
+
+    def hold_idle(self) -> None:
+        self.holds += 1
+        if self.idle_cm is not None:
+            self.idle_cm.reschedule(None)
+
+    def release_idle(self) -> None:
+        self.holds = max(0, self.holds - 1)
+        if not self.holds and self.idle_cm is not None:
+            self.idle_cm.reschedule(asyncio.get_running_loop().time() + self.idle)
 
 
 TURN: contextvars.ContextVar["Turn | None"] = contextvars.ContextVar("monai_turn", default=None)
@@ -233,7 +261,10 @@ def _llm_tool(name: str, fn):
 
     @functools.wraps(fn)
     async def hidden(*args, **kwargs):
-        turn = TURN.get() if write else None
+        t = TURN.get()
+        if t is not None and name != "load_skill":
+            t.ledger_seq += 1  # taint for external Always tools, reads included (D-19)
+        turn = t if write else None
         if turn is None:
             return _strip_token(await asyncio.to_thread(fn, *args, **kwargs))
         async with turn.lock:
@@ -595,7 +626,8 @@ async def agent_stream(
         # the tool step tasks see this Turn. No reset: an async generator can be
         # closed from another context, and the pump task's context is per run
         # (36 D-12a).
-        TURN.set(Turn())
+        turn = Turn()
+        TURN.set(turn)
         if history:
             handler = workflow.run(user_msg=question, chat_history=history, max_iterations=10)
         else:
@@ -607,6 +639,7 @@ async def agent_stream(
         return
 
     queue: asyncio.Queue = asyncio.Queue()
+    turn.emit = lambda payload: queue.put_nowait(_sse(payload))  # no await since TURN.set
     tool_trace: list = []
     terminal = False  # a terminal event (answer / error / cancel) was handled
     iteration = -1  # LLM turn counter, bumped at each AgentInput
@@ -626,10 +659,14 @@ async def agent_stream(
         try:
             try:
                 async with asyncio.timeout(idle) as cm:
+                    turn.idle_cm, turn.idle = cm, idle
                     async for event in handler.stream_events():
                         # D-14: ANY workflow event (incl. streamed deltas we do
                         # not forward) proves liveness. Pings never reach here.
-                        cm.reschedule(asyncio.get_running_loop().time() + idle)
+                        # Not while an approval is held: a parallel read's result
+                        # must not re-arm the timer mid-wait (A-03).
+                        if not turn.holds:
+                            cm.reschedule(asyncio.get_running_loop().time() + idle)
                         if isinstance(event, AgentInput):
                             iteration += 1
                             n_in_iter = 0
