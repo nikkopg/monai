@@ -71,6 +71,26 @@ export function uploadOriginAllowed(method: string, path: string, incoming: Head
   return isLocalSameOrigin(incoming);
 }
 
+const EXT_SERVERS_PATH = /^mcp-servers(\/|$)/;
+const THREAD_SERVERS_PATH = new RegExp(`^threads/${UUID}/mcp-servers$`);
+const EXT_DECISION_PATH = new RegExp(`^threads/${UUID}/ext-calls/${UUID}$`);
+
+/**
+ * False for a cross-site request that would create or change an external MCP
+ * server (including its stdio command), a thread's server set, or an approval
+ * (PC-08). The proxy injects MONAI_API_KEY on every request, so a foreign page
+ * must not drive these routes with it; the check runs before the body is read.
+ * Reads (GET) and every unrelated path are untouched.
+ */
+export function extOriginAllowed(method: string, path: string, incoming: Headers): boolean {
+  const m = method.toUpperCase();
+  const guarded =
+    (m !== "GET" && EXT_SERVERS_PATH.test(path)) ||
+    (m === "PUT" && THREAD_SERVERS_PATH.test(path)) ||
+    (m === "POST" && EXT_DECISION_PATH.test(path));
+  return guarded ? isLocalSameOrigin(incoming) : true;
+}
+
 /**
  * Marker the Inbox sends on its own list/approve/reject/skip calls. Not a
  * secret (the allowlist and the same-origin check still apply); it only stops

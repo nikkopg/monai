@@ -28,7 +28,7 @@ export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
 import { basicDenial, checkBasicEnv } from "../../lib/basicAuth";
-import { buildForwardHeaders, uploadOriginAllowed } from "../../lib/approverAllowlist";
+import { buildForwardHeaders, extOriginAllowed, uploadOriginAllowed } from "../../lib/approverAllowlist";
 import { isNullBodyStatus, isStreamPath } from "../../lib/proxyStream";
 
 const BACKEND = process.env.MONAI_API || "http://127.0.0.1:8001";
@@ -66,6 +66,11 @@ async function forwardRequest(
   // refuse before the body is read.
   if (!uploadOriginAllowed(method, path, req.headers)) {
     return NextResponse.json({ detail: "Uploads must come from monai itself." }, { status: 403 });
+  }
+  // Same for creating or changing an external MCP server, a thread's server set
+  // or an approval (PC-08): refuse a cross-site caller before the body is read.
+  if (!extOriginAllowed(method, path, req.headers)) {
+    return NextResponse.json({ detail: "External MCP changes must come from monai itself." }, { status: 403 });
   }
 
   // Inject the API key; strip any client approver header, then attach the
