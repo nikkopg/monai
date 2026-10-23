@@ -29,6 +29,14 @@ Endpoints:
     POST /import                multipart CSV upload (Wallet export)
     POST /threads/{id}/attachments  upload one CSV, PDF or image to a chat, parsed once in code; creates the thread if new (requires API key)
     GET  /attachments/locality  {local, destination}: where an attached file would be sent (requires API key)
+    GET  /mcp-servers           list external MCP servers, secrets masked (requires API key)
+    POST /mcp-servers           add a server, created disabled; a local command needs acknowledged_local_read (requires API key)
+    PUT  /mcp-servers/{id}      edit a server; slug and transport are fixed (requires API key)
+    DELETE /mcp-servers/{id}    delete a server (requires API key)
+    POST /mcp-servers/{id}/test connect, list the tools and their review status; stores only changed_count (requires API key)
+    PUT  /mcp-servers/{id}/enabled  enable bound to the reviewed tools_hash, 409 if it changed; disable needs none (requires API key)
+    PUT  /mcp-servers/{id}/tools/{tool}  set one tool's policy: ask, always or deny (requires API key)
+    PUT  /threads/{id}/mcp-servers  set the thread's external servers, applies from the next turn (requires API key)
     POST /query-stream          streaming SSE agent response; one run per thread, optional thread_id, 409 if busy (requires API key)
     POST /query-stream/{run_id}/cancel  stop a run and reject its pending chat proposals (requires API key)
     GET  /threads               list chat threads, newest first (requires API key)
@@ -69,6 +77,7 @@ from backend import auth
 from backend.attachments import MAX_UPLOAD_BYTES
 from backend.attachments_api import router as attachments_router
 from backend.skills_api import router as skills_router
+from backend.mcp_client_api import router as mcp_client_router
 from backend.auth import optional_approver, require_api_key, require_approver_key, require_reject_scope
 from backend.mcp_server import build_mcp
 from backend.db import get_session, get_session_sync
@@ -306,6 +315,7 @@ async def upload_size_guard(request: Request, call_next):
 app.mount("/mcp", mcp_app)
 app.include_router(attachments_router)
 app.include_router(skills_router)
+app.include_router(mcp_client_router)
 
 
 @app.get("/health")

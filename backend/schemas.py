@@ -717,3 +717,55 @@ class SettingsUpdate(BaseModel):
                 f"Invalid price_data_source={v!r}. Valid: {sorted(_VALID_PRICE_SOURCES)}"
             )
         return v
+
+
+# ── External MCP servers (Phase 41) ─────────────────────────────────────────
+
+class McpSecretIn(BaseModel):
+    """A header or env entry. A value that is still the masked form keeps the stored secret (D-04)."""
+
+    name: str = Field(min_length=1, max_length=64)
+    value: str = Field(max_length=4096)
+
+
+class McpServerCreate(BaseModel):
+    slug: str = Field(pattern=r"^[a-z0-9-]{1,24}$")
+    transport: Literal["http", "sse", "stdio"]
+    url: str | None = None
+    headers: list[McpSecretIn] = Field(default_factory=list, max_length=20)
+    command: Literal["npx", "uvx"] | None = None
+    args: list[Annotated[str, Field(min_length=1, max_length=512)]] = Field(default_factory=list, max_length=32)
+    env: list[McpSecretIn] = Field(default_factory=list, max_length=20)
+    acknowledged_local_read: bool = False
+
+
+class McpServerUpdate(BaseModel):
+    """Slug and transport are fixed at creation: a sent value is dropped (D-03)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    url: str | None = None
+    headers: list[McpSecretIn] | None = Field(default=None, max_length=20)
+    command: Literal["npx", "uvx"] | None = None
+    args: list[Annotated[str, Field(min_length=1, max_length=512)]] | None = Field(default=None, max_length=32)
+    env: list[McpSecretIn] | None = Field(default=None, max_length=20)
+    acknowledged_local_read: bool = False
+
+
+class McpSecretOut(BaseModel):
+    name: str
+    value_masked: str | None
+
+
+class McpServerOut(BaseModel):
+    id: _uuid.UUID
+    slug: str
+    transport: str
+    url: str | None
+    destination: str
+    command: str | None
+    args: list[str]
+    headers: list[McpSecretOut]
+    env: list[McpSecretOut]
+    enabled: bool
+    changed_count: int | None
