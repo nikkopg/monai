@@ -46,6 +46,8 @@ services:
     volumes:
       # The owner's SKILL.md packs, read-only (Phase 40). Gitignored; the folder is kept via skills/.gitkeep.
       - ./skills:/app/skills:ro
+      # npm and uv caches plus work dirs for stdio MCP servers (Phase 41); a cold npx/uvx start is slow.
+      - monai_ext:/var/lib/monai-ext
     depends_on:
       db:
         condition: service_healthy
@@ -75,3 +77,4 @@ services:
 
 volumes:
   monai_pgdata:
+  monai_ext:
