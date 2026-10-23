@@ -26,6 +26,18 @@ import { cardSentence, placeholderFor, type AttachChip } from "./attachLabels";
 import { tooltipStyle } from "./MessageActions";
 import ThreadSidebar from "./ThreadSidebar";
 import ToolSteps from "./ToolSteps";
+import ExtApprovalCard from "./ExtApprovalCard";
+import { ExtFooter, ExtNotices } from "./ExtNotice";
+import ServersMenu, { type MenuServer } from "./ServersMenu";
+import {
+  footerServers,
+  isExt,
+  joinSteps,
+  mergeCallEvent,
+  type ExtCall,
+  type ExtEvent,
+  type ExtNotice,
+} from "./extLabels";
 import SourceChips, { dedupeSources } from "./SourceChips";
 import type { Source } from "./labels";
 import {
@@ -37,7 +49,7 @@ import {
   useChatStream,
   useTokenBuffer,
 } from "./useChatStream";
-import type { Lane, StreamOutcome } from "./useChatStream";
+import type { Lane, StepEntry, StreamOutcome } from "./useChatStream";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -58,6 +70,7 @@ type AsstItem = {
   text: string;
   lane: Lane; // streamed draft + steps / working notes (D-24)
   stoppedPartial?: string; // live view only: the partial text kept after Stop (D-03a)
+  notices?: ExtNotice[]; // 41 C3: turn notices, live or from parts.notices
   proposals: Proposal[];
   error: ChatError | null;
   model: { name: string | null; provider: string | null } | null;
@@ -90,6 +103,7 @@ type PersistedMessage = {
     proposals?: (ServerProposal & { status?: string })[];
     error?: { code?: string } | null;
     provider?: { name?: string | null; model?: string | null } | null;
+    notices?: ExtNotice[];
   };
 };
 
@@ -111,6 +125,8 @@ type ThreadDetail = {
   summary_upto_seq?: number;
   has_summary?: boolean;
   attachments?: ServerAttachment[];
+  ext_calls?: ExtCall[]; // 41: server state replaces local state on every read
+  mcp_server_ids?: string[];
 };
 
 type Boundary = { upto: number; summarized: boolean };
@@ -182,6 +198,7 @@ function mapMessages(list: PersistedMessage[], atts: ServerAttachment[] = []): I
         createdAt: m.created_at,
         live: false,
         seq: m.seq,
+        ...(parts.notices?.length ? { notices: parts.notices } : {}),
       };
     });
 }
@@ -423,6 +440,44 @@ function ChatInner() {
     if (att.pendingPassword) setAttachOpen(true);
   }, [att.pendingPassword]);
 
+  // External MCP (41): the open thread's ext_calls (server state wins on every read),
+  // the calls first seen pending in this view (live: Deny may take focus; kept: a card
+  // answered here stays on screen), and the composer's Servers choice.
+  const [extCalls, setExtCalls] = useState<ExtCall[]>([]);
+  const extRef = useRef<ExtCall[]>([]);
+  const liveCallIds = useRef<Set<string>>(new Set());
+  const keptCallIds = useRef<Set<string>>(new Set());
+  const [servers, setServers] = useState<MenuServer[]>([]);
+  const [selectedServers, setSelectedServers] = useState<string[]>([]);
+  useEffect(() => {
+    fetch("/api/mcp-servers")
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows: (MenuServer & { enabled?: boolean })[]) => setServers(rows.filter((x) => x.enabled)))
+      .catch(() => {});
+  }, []);
+  function setCalls(next: ExtCall[]) {
+    extRef.current = next;
+    setExtCalls(next);
+  }
+  function resetExt() {
+    setCalls([]);
+    liveCallIds.current = new Set();
+    keptCallIds.current = new Set();
+    setSelectedServers([]); // D-12 / UI-SPEC decision 12: a new chat starts with none on
+  }
+  function syncExt(r: ThreadDetail) {
+    const calls = r.ext_calls ?? [];
+    for (const c of calls) if (c.approval === "pending") keptCallIds.current.add(c.id);
+    setCalls(calls);
+    setSelectedServers(r.mcp_server_ids ?? []);
+  }
+  async function rereadExt() {
+    const tid = loadedRef.current;
+    if (!tid) return;
+    const r = await fetchThread(tid);
+    if (typeof r !== "string" && loadedRef.current === tid) syncExt(r);
+  }
+
   const stream = useChatStream();
   const loadedRef = useRef<string | null>(null); // thread this view shows or is loading
   const loadSeqRef = useRef(0);
@@ -465,6 +520,10 @@ function ChatInner() {
     setAnnouncement("");
     setTimeout(() => setAnnouncement(text), 0);
   }
+
+  // D-26: Deny may take focus only when it will not interrupt a half-typed question.
+  const canTakeFocus = () =>
+    document.activeElement === document.body || (composerRef.current?.value ?? "") === "";
 
   const nextId = (p: string) => `${p}-live-${++idCounter.current}`;
 
@@ -577,6 +636,17 @@ function ChatInner() {
         };
       });
       keepTokens(proposals);
+    } else if (msg.type === "approval_required" || msg.type === "ext_call") {
+      // An old approval_required never reverts a decided call (mergeCallEvent, D-16).
+      const ev = msg as unknown as ExtEvent;
+      if (ev.type === "approval_required" && !extRef.current.some((c) => c.id === ev.call_id)) {
+        liveCallIds.current.add(ev.call_id);
+        keptCallIds.current.add(ev.call_id);
+      }
+      setCalls(mergeCallEvent(extRef.current, ev));
+    } else if (msg.type === "notice" && typeof msg.code === "string") {
+      const n = msg as unknown as ExtNotice;
+      updateLive((m) => ({ ...m, notices: [...(m.notices ?? []), n] }));
     } else if (msg.type === "error") {
       // Proposals created before the failure stay actionable (D-05).
       failLive(
@@ -617,6 +687,7 @@ function ChatInner() {
     }
     const next = mapMessages(r.messages, r.attachments);
     setBoundary(boundaryOf(r));
+    syncExt(r);
     if (r.active_run && tries > 0) {
       void startAttach(tid, r.active_run.run_id, next, tries);
       return;
@@ -896,7 +967,7 @@ function ChatInner() {
       handleEvent(m);
     };
 
-    const out = await stream.send(q, loadedRef.current, onEvent, replaceFrom, sent.ids);
+    const out = await stream.send(q, loadedRef.current, onEvent, replaceFrom, sent.ids, selectedServers);
     if (replacing && !accepted && (out.kind === "status" || out.kind === "error")) {
       await refuseReplace(out.kind === "status" ? out.status : null, snapshot, replaceFrom, mode);
       return;
@@ -984,6 +1055,7 @@ function ChatInner() {
     setMessages([]);
     setBoundary(null);
     setNote(null);
+    resetExt();
     const r = await fetchThread(id);
     if (seq !== loadSeqRef.current) return;
     setLoading(false);
@@ -1003,6 +1075,7 @@ function ChatInner() {
     setShowJump(false);
     const next = mapMessages(r.messages, r.attachments);
     setBoundary(boundaryOf(r));
+    syncExt(r);
     if (r.active_run) void startAttach(id, r.active_run.run_id, next, 2);
     else setMessages(next);
   }
@@ -1029,6 +1102,7 @@ function ChatInner() {
     setMessages([]);
     setBoundary(null);
     setNote(null);
+    resetExt();
     followingRef.current = true;
     setShowJump(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1248,6 +1322,10 @@ function ChatInner() {
     // Upload proposals are Inbox-only: never in PlanBar, Approve all or a token card (D-22).
     const uploads = m.proposals.filter((p) => p.channel === "upload");
     const chatPs = m.proposals.filter((p) => p.channel !== "upload");
+    // Calls with no message_id yet belong to the turn in view (back-filled at its end).
+    const msgCalls = extCalls.filter((c) =>
+      c.message_id ? c.message_id === m.id : m.id === liveIdRef.current
+    );
     return (
       <div key={m.id} className="chat-msg">
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
@@ -1289,7 +1367,31 @@ function ChatInner() {
           onToggle={(key) =>
             setOpenSteps((o) => ({ ...o, [index]: { ...o[index], [key]: !o[index]?.[key] } }))
           }
+          extCalls={joinSteps(
+            m.lane.timeline.filter((e): e is StepEntry => e.kind === "step"),
+            msgCalls
+          )}
         />
+
+        {m.notices?.length ? <ExtNotices notices={m.notices} /> : null}
+
+        {/* 41 B1: a pending card, or one decided while it was on screen here; a decided
+            card from history is only a step row (decision 5). */}
+        {msgCalls
+          .filter((c) => c.approval === "pending" || keptCallIds.current.has(c.id))
+          .map((c) =>
+            loadedRef.current ? (
+              <ExtApprovalCard
+                key={c.id}
+                threadId={loadedRef.current}
+                call={c}
+                live={liveCallIds.current.has(c.id)}
+                canTakeFocus={canTakeFocus}
+                onReread={rereadExt}
+                onAnnounce={announce}
+              />
+            ) : null
+          )}
 
         {/* Answer lane: the streaming draft, the final text, or a dimmed Stopped
             partial. All through the safe Markdown component (D-10). */}
@@ -1346,10 +1448,13 @@ function ChatInner() {
         {m.status === "complete" && (
           <SourceChips
             sources={dedupeSources(
-              m.lane.timeline.flatMap((e) => (e.kind === "step" ? e.sources : []))
+              // D-25: chips are ledger-only, never from an external step
+              m.lane.timeline.flatMap((e) => (e.kind === "step" && !isExt(e.tool) ? e.sources : []))
             )}
           />
         )}
+
+        <ExtFooter slugs={footerServers(msgCalls)} />
 
         {/* Actions: Copy on a completed answer, Regenerate on the last (UI-SPEC section 5) */}
         <MessageActions
@@ -1797,6 +1902,15 @@ function ChatInner() {
                 {slash ? (slash === "compacting" ? "Compacting…" : "Clearing…") : note?.text}
               </div>
             )}
+            <ServersMenu
+              servers={servers}
+              selected={selectedServers}
+              threadId={param}
+              attachmentThread={
+                att.chips.length > 0 || messages.some((x) => x.kind === "user" && !!x.attachments?.length)
+              }
+              onChange={setSelectedServers}
+            />
             <AttachmentTray chips={att.chips} onRemove={removeChip} />
             <AttachPanel
               open={attachOpen}
