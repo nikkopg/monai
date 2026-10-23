@@ -326,3 +326,144 @@ async def reopen(conn: ServerConn, tool: str) -> bool:
         _field(t, "name") == tool and tool_sha(t) == conn.approved[tool]["sha256"]
         for t in await list_server_tools(conn.client)
     )
+
+
+# ── one turn's session ──────────────────────────────────────────────────────
+
+def _load_selected(thread_id) -> list[tuple]:
+    """(spec, policies, approved list) for the thread's enabled, selected servers in slug
+    order. Anything else is never loaded, so never constructed (D-12, D-27)."""
+    from sqlalchemy import select
+
+    from backend.db import get_session_sync
+    from backend.models import McpServer, ThreadMcpServer
+
+    with get_session_sync() as db:
+        rows = db.execute(
+            select(McpServer)
+            .join(ThreadMcpServer, ThreadMcpServer.server_id == McpServer.id)
+            .where(ThreadMcpServer.thread_id == thread_id, McpServer.enabled.is_(True))
+            .order_by(McpServer.slug)
+        ).scalars().all()
+        return [(spec_from_row(r), dict(r.tool_policies or {}), list(r.approved_tools or [])) for r in rows]
+
+
+def _store_changed(counts: dict) -> None:
+    from sqlalchemy import update
+
+    from backend.db import get_session_sync
+    from backend.models import McpServer
+
+    with get_session_sync() as db:
+        for server_id, n in counts.items():
+            db.execute(update(McpServer).where(McpServer.id == server_id).values(changed_count=n))
+        db.commit()
+
+
+def _bind(conn: ServerConn, tool: str):
+    """The call for one tool, bound to its own conn and name (no late-binding closure)."""
+
+    async def call(**kwargs):
+        from backend import ext_calls, query, tools
+
+        turn = query.TURN.get()
+        if turn is None:
+            return {"error": "external tools need a chat turn"}
+        return await ext_calls.run_call(
+            turn, conn, tool, kwargs,
+            thread_id=tools.CURRENT_THREAD_ID.get(), turn_id=tools.CURRENT_TURN_ID.get(),
+        )
+
+    return call
+
+
+class ExtSession:
+    """One turn's external tools. Opened by chat_service._pump on non-attachment threads
+    and closed in its shielded finally; never cached across turns (D-11, D-12).
+
+    tools are per-run FunctionTools; notices are fixed copy built here, never server or
+    exception text (T-41-07-07)."""
+
+    def __init__(self):
+        self.tools: list = []
+        self.names: frozenset = frozenset()
+        self.notices: list[dict] = []
+        self._conns: list[ServerConn] = []
+
+    @classmethod
+    async def open(cls, thread_id) -> "ExtSession":
+        self = cls()
+        opened: list = []  # every client any connect task got, to close if we are cancelled
+
+        async def connect(spec):
+            client = await open_client(spec)
+            opened.append(client)
+            try:
+                return client, await list_server_tools(client)
+            except BaseException:
+                await close_client(client)
+                raise
+
+        try:
+            await self._build(thread_id, connect)
+        except BaseException:
+            await asyncio.gather(*(close_client(c) for c in opened), *(close_client(c.client) for c in self._conns))
+            raise
+        return self
+
+    async def _build(self, thread_id, connect) -> None:
+        selected = await asyncio.to_thread(_load_selected, thread_id)
+        results = await asyncio.gather(*(connect(spec) for spec, _, _ in selected), return_exceptions=True)
+        cands, counts = [], {}
+        for (spec, policies, approved), res in zip(selected, results):
+            if isinstance(res, BaseException):
+                if not isinstance(res, Exception):
+                    raise res
+                self.notices.append(
+                    {"code": "too_many_tools", "server": spec.slug,
+                     "message": f"{spec.slug} offers too many tools (over {MAX_TOOLS}), so none of them were used."}
+                    if isinstance(res, TooManyTools) else
+                    {"code": "unreachable", "server": spec.slug,
+                     "message": f"Couldn't reach {spec.slug}, so its tools were left out of this answer."}
+                )
+                continue
+            client, live = res
+            known = {a["name"]: a for a in approved}
+            conn = ServerConn(
+                spec=spec, slug=spec.slug, server_id=spec.id, destination=destination(spec),
+                leaves_machine=leaves_machine(spec), policies=policies, approved=known, client=client,
+            )
+            self._conns.append(conn)
+            held = 0
+            for t in live:
+                name = _field(t, "name")
+                a = known.get(name)
+                if a is None or a["sha256"] != tool_sha(t):
+                    held += 1  # new or changed since the owner approved it (D-10)
+                elif ext_name(spec.slug, name) and policies.get(name) != "deny":
+                    cands.append((spec.slug, name, conn))
+            if approved:
+                counts[spec.id] = held
+            if held:
+                self.notices.append({"code": "tools_changed", "server": spec.slug,
+                                     "message": f"{spec.slug} changed its tools; review them in Settings."})
+        if counts:
+            await asyncio.to_thread(_store_changed, counts)
+        cands.sort(key=lambda c: (c[0], c[1]))
+        if len(cands) > EXT_TOOL_CAP:
+            self.notices.append(
+                {"code": "cap", "limit": EXT_TOOL_CAP,
+                 "message": f"Only the first {EXT_TOOL_CAP} external tools were offered this time. "
+                            "Set the ones you don't need to Deny in Settings."}
+            )
+        for slug, name, conn in cands[:EXT_TOOL_CAP]:
+            a = conn.approved[name]
+            self.tools.append(make_tool(ext_name(slug, name), a["description"], a["inputSchema"], _bind(conn, name)))
+        self.names = frozenset(t.metadata.name for t in self.tools)
+        used = {id(c) for _, _, c in cands[:EXT_TOOL_CAP]}
+        idle = [c for c in self._conns if id(c) not in used]
+        self._conns = [c for c in self._conns if id(c) in used]
+        await asyncio.gather(*(close_client(c.client) for c in idle))
+
+    async def aclose(self) -> None:
+        await asyncio.gather(*(close_client(c.client) for c in self._conns))
