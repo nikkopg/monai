@@ -99,7 +99,11 @@ export default function McpToolReview(props: {
     if (d) setFailed(d);
   }
 
+  // Once per open: dev Strict Mode re-runs effects, and a second Test would spawn a second local command.
+  const started = useRef(false);
   useEffect(() => {
+    if (started.current) return;
+    started.current = true;
     void connect();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
