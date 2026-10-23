@@ -245,7 +245,7 @@ def test_duplicate_flag_cap_and_text_cleaning(db_session, wallets, mcp_proposal)
     assert not any(c in merchant for c in "\x07\n‮")
 
 
-def test_get_proposals_duplicates_per_row_without_mutating_stored_payload(client, db_session, wallets, mcp_proposal):
+def test_get_proposals_duplicates_per_row_without_mutating_stored_payload(client, db_session, wallets, mcp_proposal, authed):
     w = wallets()
     _ledger(db_session, w.id, D, -12500)
     p = mcp_proposal(_txn_payload((w.name, -12500, _d(0)), (w.name, -1, _d(0))))

@@ -104,7 +104,7 @@ def _cleanup(db, *, category_ids=(), tx_ids=()):
 # GET /categories/{name}/affected-count
 # ---------------------------------------------------------------------------
 
-def test_affected_count(client, db_session):
+def test_affected_count(client, db_session, authed):
     cat = _make_category(db_session, _unique_cat("CatCount"))
     ids = [_make_transaction(db_session, cat.id) for _ in range(3)]
     try:

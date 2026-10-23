@@ -480,7 +480,7 @@ def test_system_row_color_icon_edit_succeeds(client, api_key, db_session):
 # GET /categories — tree shape, effective color, kind filter
 # ---------------------------------------------------------------------------
 
-def test_get_categories_tree_shape_and_effective_color(client, db_session):
+def test_get_categories_tree_shape_and_effective_color(client, db_session, authed):
     root = _make_category(db_session, _unique_cat("TreeRoot"), kind="expense", color="#abcdef")
     child = _make_category(db_session, _unique_cat("TreeChild"), parent_id=root.id, color=None)
     tx_ids = [_make_transaction(db_session, child.id)]
@@ -502,7 +502,7 @@ def test_get_categories_tree_shape_and_effective_color(client, db_session):
         _cleanup(db_session, category_ids=[root.id, child.id], tx_ids=tx_ids)
 
 
-def test_get_categories_kind_filter(client, db_session):
+def test_get_categories_kind_filter(client, db_session, authed):
     income_root = _make_category(db_session, _unique_cat("FilterIncome"), kind="income", color="#111111")
     expense_root = _make_category(db_session, _unique_cat("FilterExpense"), kind="expense", color="#222222")
     try:

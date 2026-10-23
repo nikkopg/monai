@@ -88,6 +88,12 @@ def _seed():
         c.execute(text("DELETE FROM categories WHERE id = ANY(:i)"), {"i": [_IDS["food"], _IDS["salary"]]})
 
 
+@pytest.fixture(autouse=True)
+def _keyed(authed):
+    """Phase 40.1: GET /transactions needs the key; every test reads through _rows."""
+    yield
+
+
 def _rows(client, params: dict) -> list[dict]:
     """Page GET /transactions (500-row cap) until a short page."""
     out: list[dict] = []

@@ -427,7 +427,7 @@ def test_transfer_missing_api_key_401(client, api_key, db_session):
 # transfer_pair_id is absent from TransactionOut JSON — until 17-03 lands.
 # ---------------------------------------------------------------------------
 
-def test_transactions_filter(client, db_session):
+def test_transactions_filter(client, db_session, authed):
     """Each GET /transactions filter param narrows results: account_id, q
     (merchant/notes ilike), type=expense/income, amount_min/amount_max
     (abs), date_from/date_to, include_transfers=false (D-01/REC-02)."""
@@ -490,7 +490,7 @@ def test_transactions_filter(client, db_session):
         _cleanup_account(db_session, name)
 
 
-def test_transaction_paging(client, db_session):
+def test_transaction_paging(client, db_session, authed):
     """offset+limit page correctly (date-desc), and the 500-row hard cap
     holds regardless of a larger requested limit (Pitfall 4)."""
     import datetime as _dt
@@ -531,13 +531,13 @@ def test_transaction_paging(client, db_session):
         _cleanup_account(db_session, name)
 
 
-def test_transactions_impossible_date_is_422_not_500(client):
+def test_transactions_impossible_date_is_422_not_500(client, authed):
     for qs in ("date_from=2001-02-31", "date_to=2001-13-45", "date_from=nope"):
         assert client.get(f"/transactions?{qs}").status_code == 422
     assert client.get("/transactions?date_from=2001-02-28&date_to=2001-03-01").status_code == 200
 
 
-def test_category_filter_hierarchy(client, db_session):
+def test_category_filter_hierarchy(client, db_session, authed):
     """category filter matches the node + ALL descendants (hierarchy), not
     exact-string-only — derives the expected count live from the category
     tree, never a hard-coded number (Pitfall 3, critical item #3)."""
@@ -590,7 +590,7 @@ def test_category_filter_hierarchy(client, db_session):
         _cleanup_account(db_session, name)
 
 
-def test_transfer_pair_id_exposed(client, db_session):
+def test_transfer_pair_id_exposed(client, db_session, authed):
     """transfer_pair_id key present in TransactionOut JSON (D-02); the
     type=transfer filter keys off transfer_pair_id IS NOT NULL, not
     is_transfer — an Adjustment row (is_transfer=true, transfer_pair_id=
@@ -850,7 +850,7 @@ def test_o3y_edit_and_delete_unfunded_event(client, api_key, db_session):
         _cleanup_platform(db_session, plat_id)
 
 
-def test_o3y_funded_event_edit_delete_moves_cash_leg(client, api_key, db_session):
+def test_o3y_funded_event_edit_delete_moves_cash_leg(client, api_key, db_session, authed):
     from backend.models import AuditLog, PortfolioEvent, Transaction
 
     name = "zzo3y-FundedSource"

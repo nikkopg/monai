@@ -777,7 +777,7 @@ def test_portfolio_summary_asset_type_grouping(db_session, monkeypatch):
 # 404 until 17-03 adds them.
 # ---------------------------------------------------------------------------
 
-def test_platform_detail(client, db_session):
+def test_platform_detail(client, db_session, authed):
     """GET /platforms/{id}/detail returns the group whose platform_id == id,
     with subtotal + holdings carrying realized_pnl and unrealized_pnl
     (PLAT-01/D-05); a non-existent platform id returns 404."""
@@ -811,7 +811,7 @@ def test_platform_detail(client, db_session):
         _cleanup_ticker(db_session, t)
 
 
-def test_portfolio_events_by_platform(client, db_session):
+def test_portfolio_events_by_platform(client, db_session, authed):
     """GET /portfolio-events?platform_id={id} returns ONLY that platform's
     events, ordered date-desc, each row carrying date/ticker/event_type/
     quantity/price (PLAT-01/D-05)."""

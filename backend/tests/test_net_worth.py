@@ -204,7 +204,7 @@ def test_net_worth_is_read_only():
 # NW-02: GET /net-worth endpoint
 # ---------------------------------------------------------------------------
 
-def test_get_net_worth_endpoint(client, db_session):
+def test_get_net_worth_endpoint(client, db_session, authed):
     """GET /net-worth returns 200 with the full composed payload; total ==
     liquid_total + investment_total."""
     resp = client.get("/net-worth")

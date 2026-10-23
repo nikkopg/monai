@@ -500,7 +500,7 @@ def _has_key(obj, names) -> bool:
     return False
 
 
-def test_expired_never_reads_pending(client, seed):
+def test_expired_never_reads_pending(client, seed, authed):
     pid, _ = seed(expires_delta=timedelta(minutes=-1))
     r = client.get("/proposals?status=pending")
     assert r.status_code == 200
@@ -511,14 +511,14 @@ def test_expired_never_reads_pending(client, seed):
     assert [p["status"] for p in r.json() if p["id"] == pid] == ["expired"]
 
 
-def test_expired_flip_then_confirm_410(client, api_key, seed):
+def test_expired_flip_then_confirm_410(client, api_key, seed, authed):
     pid, tok = seed(expires_delta=timedelta(minutes=-1))
     client.get("/proposals")
     r = client.post(f"/proposals/{pid}/confirm", json={"token": tok}, headers=_api(api_key))
     assert (r.status_code, r.json()["detail"]) == (410, EXPIRED_MSG)
 
 
-def test_counts_returns_pending_after_lazy_expiry(client, seed):
+def test_counts_returns_pending_after_lazy_expiry(client, seed, authed):
     r = client.get("/proposals/counts")
     assert r.status_code == 200 and set(r.json()) == {"pending"}
     base = r.json()["pending"]
@@ -529,7 +529,7 @@ def test_counts_returns_pending_after_lazy_expiry(client, seed):
     assert set(r.json()) == {"pending"} and r.json()["pending"] == base + 2
 
 
-def test_code_visibility_list_requires_approver_and_mcp(client, api_key, approver_key, seed, monkeypatch):
+def test_code_visibility_list_requires_approver_and_mcp(client, api_key, approver_key, seed, monkeypatch, authed):
     import backend.auth as auth
 
     mcp_id, _ = seed(channel="mcp", expires_delta=timedelta(hours=48), code=CODE)

@@ -6,6 +6,7 @@ Provides:
   async_client — httpx.AsyncClient for async endpoint tests (query-stream, proposals)
   api_key      — sets MONAI_API_KEY env var for tests that exercise write endpoints
   approver_key — sets MONAI_APPROVER_KEY for approve/reject tests; differs from api_key
+  authed       — opt-in: client + api_key, with the MONAI_API_KEY header set for one test
 
 Import-time note:
   backend.auth reads _CONFIGURED_KEY (from the MONAI_API_KEY env var, default
@@ -191,6 +192,20 @@ def api_key(monkeypatch: pytest.MonkeyPatch) -> str:
 
     monkeypatch.setattr(auth_mod, "_CONFIGURED_KEY", _TEST_API_KEY)
     return _TEST_API_KEY
+
+
+@pytest.fixture()
+def authed(client: TestClient, api_key: str):
+    """
+    Opt-in keyed reads (Phase 40.1 D-06): yield the shared client with the synthetic
+    MONAI_API_KEY header set for this one test, then pop it in teardown.
+
+    The plain `client` stays header-less on purpose, so the missing-key and
+    wrong-key tests still prove 401.
+    """
+    client.headers["MONAI_API_KEY"] = api_key
+    yield client
+    client.headers.pop("MONAI_API_KEY", None)
 
 
 _TEST_APPROVER_KEY = "test-approver-key-fixture"

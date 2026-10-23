@@ -55,15 +55,23 @@ def db_session(db_available):
         db.close()
 
 
+_LIVE_AUDIT_KEY = "live-audit-synthetic-key"
+
+
 @pytest.fixture(scope="module")
 def client():
     """This file no longer sees backend/tests/conftest.py's session-scoped
     `client` fixture (it lives outside testpaths), so define it locally --
-    same TestClient(app) the guarded conftest builds."""
+    same TestClient(app) the guarded conftest builds. Phase 40.1: every route needs
+    the key, so patch the in-process configured key to a synthetic one and send it
+    (the app is called in-process; the owner's real key is never read)."""
+    import backend.auth as auth_mod
     from backend.main import app
     from fastapi.testclient import TestClient
 
-    return TestClient(app)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(auth_mod, "_CONFIGURED_KEY", _LIVE_AUDIT_KEY)
+        yield TestClient(app, headers={"MONAI_API_KEY": _LIVE_AUDIT_KEY})
 
 
 def _current_month() -> str:
