@@ -65,7 +65,7 @@ from sqlalchemy.engine.url import make_url
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEFAULT_TEST_URL = "postgresql+psycopg://monai:monai@localhost:5434/monai_test"
+_DEFAULT_TEST_URL = f"postgresql+psycopg://monai:{os.environ.get('POSTGRES_PASSWORD') or 'monai'}@localhost:5434/monai_test"
 os.environ.setdefault("DATABASE_URL", _DEFAULT_TEST_URL)
 
 _TEST_DB = make_url(os.environ["DATABASE_URL"])
@@ -523,8 +523,9 @@ def _check_db() -> None:
 
     remediation = (
         "Run the backend suite once (env -u DATABASE_URL .venv/bin/pytest "
-        f"backend/tests -q), or run `DATABASE_URL={_DEFAULT_TEST_URL} "
-        "alembic upgrade head`. Always spell out DATABASE_URL — bare "
+        "backend/tests -q), or run `DATABASE_URL=postgresql+psycopg://monai:"
+        "$POSTGRES_PASSWORD@localhost:5434/monai_test alembic upgrade head`. "
+        "Always spell out DATABASE_URL — bare "
         "alembic defaults to the live DB."
     )
     try:

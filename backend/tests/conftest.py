@@ -37,7 +37,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine.url import make_url
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEFAULT_TEST_URL = "postgresql+psycopg://monai:monai@localhost:5434/monai_test"
+_DEFAULT_TEST_URL = f"postgresql+psycopg://monai:{os.environ.get('POSTGRES_PASSWORD') or 'monai'}@localhost:5434/monai_test"
 os.environ.setdefault("DATABASE_URL", _DEFAULT_TEST_URL)
 
 _TEST_DB = make_url(os.environ["DATABASE_URL"])

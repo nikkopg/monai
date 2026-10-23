@@ -4,8 +4,9 @@ services:
     container_name: monai-db
     environment:
       POSTGRES_USER: monai
-      POSTGRES_PASSWORD: monai
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set - add it to .env}
       POSTGRES_DB: monai
+    # Keep the db on the default bridge: host networking would make pg_hba trust loopback and void the password.
     ports:
       - "127.0.0.1:5434:5432"
     volumes:
@@ -27,7 +28,7 @@ services:
     # rebind to 0.0.0.0. Linux-only; on Mac/Windows switch to bridge + host.docker.internal.
     network_mode: host
     environment:
-      DATABASE_URL: postgresql+psycopg://monai:monai@127.0.0.1:5434/monai
+      DATABASE_URL: postgresql+psycopg://monai:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set - add it to .env}@127.0.0.1:5434/monai
       LLM_PROVIDER: ollama
       OLLAMA_BASE_URL: http://127.0.0.1:11434
       OLLAMA_MODEL: gemma4:31b-cloud
@@ -65,6 +66,9 @@ services:
       # Inbox list, approve, reject and row-skip requests and nothing else; it is never
       # exposed to the browser. Empty means Inbox actions answer with the approver-key message.
       MONAI_APPROVER_KEY: ${MONAI_APPROVER_KEY:-}
+      # Read only by ui/middleware.ts for HTTP Basic sign-in (user monai). Must differ from
+      # both keys, or the UI answers 503. Never give it the client-inlined public prefix.
+      MONAI_UI_PASSWORD: ${MONAI_UI_PASSWORD:?MONAI_UI_PASSWORD must be set - add it to .env}
     depends_on:
       - backend
     restart: unless-stopped

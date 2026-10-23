@@ -5,7 +5,8 @@ Reads DATABASE_URL from the environment (same var used by the app) and wires
 Base.metadata so autogenerate sees all ORM models.
 
 Env vars:
-  DATABASE_URL  (default: postgresql+psycopg://monai:monai@localhost:5434/monai)
+  DATABASE_URL  (default: postgresql+psycopg://monai:$POSTGRES_PASSWORD@localhost:5434/monai;
+                falls back to the dev default when POSTGRES_PASSWORD is unset)
 
 Programmatic override: a caller driving Alembic in-process (e.g.
 backend/tests/conftest.py) can set `config.attributes["sqlalchemy.url"]`
@@ -41,7 +42,7 @@ def run_migrations_offline() -> None:
     """
     db_url = config.attributes.get("sqlalchemy.url") or os.environ.get(
         "DATABASE_URL",
-        "postgresql+psycopg://monai:monai@localhost:5434/monai",
+        f"postgresql+psycopg://monai:{os.environ.get('POSTGRES_PASSWORD') or 'monai'}@localhost:5434/monai",
     )
     context.configure(
         url=db_url,
@@ -62,7 +63,7 @@ def run_migrations_online() -> None:
     """
     db_url = config.attributes.get("sqlalchemy.url") or os.environ.get(
         "DATABASE_URL",
-        "postgresql+psycopg://monai:monai@localhost:5434/monai",
+        f"postgresql+psycopg://monai:{os.environ.get('POSTGRES_PASSWORD') or 'monai'}@localhost:5434/monai",
     )
     # configparser treats % as interpolation — escape any % in the URL (e.g. passwords)
     configuration = config.get_section(config.config_ini_section)

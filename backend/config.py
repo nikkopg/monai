@@ -2,7 +2,8 @@
 Backend configuration — database URL and LLM provider.
 
 Env vars:
-  DATABASE_URL    (default: postgresql+psycopg://monai:monai@localhost:5434/monai)
+  DATABASE_URL    (default: postgresql+psycopg://monai:$POSTGRES_PASSWORD@localhost:5434/monai;
+                  falls back to the dev default when POSTGRES_PASSWORD is unset)
   LLM_PROVIDER    ollama (default) | claude | openai
   OLLAMA_MODEL        (default: gemma4:31b-cloud)
   OLLAMA_EMBED_MODEL  (default: gemma4:31b-cloud)
@@ -30,7 +31,7 @@ import os
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql+psycopg://monai:monai@localhost:5434/monai",
+    f"postgresql+psycopg://monai:{os.environ.get('POSTGRES_PASSWORD') or 'monai'}@localhost:5434/monai",
 )
 
 # float so "90.5" parses; floored at 1 s so 0 or a negative cannot end every run at once.
