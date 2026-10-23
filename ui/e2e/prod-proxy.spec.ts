@@ -2,19 +2,23 @@
 // path and the CSP through a real `next build` + `next start` in front of the
 // chunked fake backend (support/fake-sse-backend.cjs). Skipped unless
 // PROD_BASE_URL is set; see the 37-09 SUMMARY for the scratch-build recipe.
-// All values are synthetic.
+// All values are synthetic. Start the scratch production server with
+// MONAI_UI_PASSWORD set to UI_PASSWORD (playwright.config.ts): the UI is behind Basic auth.
 import { createHash, randomUUID } from "node:crypto";
 import http from "node:http";
 
 import { test, expect, type Page } from "@playwright/test";
 
+import { UI_PASSWORD } from "../playwright.config";
 import { cspViolations, watchCsp } from "./csp-fixture";
 
 const BASE = process.env.PROD_BASE_URL ?? "";
+const AUTH = "Basic " + Buffer.from("monai:" + UI_PASSWORD).toString("base64");
 const input = (page: Page) => page.getByLabel("Ask monai a question");
 const alertBox = (page: Page) => page.locator('[role="alert"]:not(#__next-route-announcer__)');
 
 test.describe("production proxy", () => {
+  test.use({ httpCredentials: { username: "monai", password: UI_PASSWORD, send: "always" } });
   test.skip(!process.env.PROD_BASE_URL, "needs the scratch production build (37-09 recipe)");
 
   test("SSE chunks arrive spread over time, uncompressed", async () => {
@@ -28,7 +32,7 @@ test.describe("production proxy", () => {
           port: url.port,
           path: url.pathname,
           method: "POST",
-          headers: { "content-type": "application/json", "accept-encoding": "gzip, deflate, br" },
+          headers: { "content-type": "application/json", "accept-encoding": "gzip, deflate, br", authorization: AUTH },
         },
         (res) => {
           res.on("data", (chunk: Buffer) => {
@@ -73,7 +77,7 @@ test.describe("production proxy", () => {
 
   test("the CSP header is on pages and API routes", async ({ request }) => {
     for (const path of ["/chat", "/api/threads"]) {
-      const csp = (await request.get(`${BASE}${path}`)).headers()["content-security-policy"] ?? "";
+      const csp = (await request.get(`${BASE}${path}`, { headers: { authorization: AUTH } })).headers()["content-security-policy"] ?? "";
       expect(csp, path).toContain("connect-src 'self'");
       expect(csp, path).toContain("img-src 'self' data:");
       expect(csp, path).not.toContain("unsafe-eval");
@@ -107,12 +111,12 @@ test.describe("production proxy", () => {
     const res = await fetch(`${BASE}/api/threads/${randomUUID()}/attachments`, {
       method: "POST",
       body,
-      headers: { "content-type": enc.headers.get("content-type") ?? "", ...headers },
+      headers: { "content-type": enc.headers.get("content-type") ?? "", authorization: AUTH, ...headers },
     });
     return { res, body, sha256: createHash("sha256").update(body).digest("hex") };
   };
   const SAME = { origin: BASE, "sec-fetch-site": "same-origin" };
-  const hits = async () => ((await (await fetch(`${BASE}/api/__upload_hits`)).json()) as { hits: number }).hits;
+  const hits = async () => ((await (await fetch(`${BASE}/api/__upload_hits`, { headers: { authorization: AUTH } })).json()) as { hits: number }).hits;
 
   for (const size of [MIB10, MIB10 + 1]) {
     test(`a ${size}-byte file reaches the backend byte-identical`, async () => {

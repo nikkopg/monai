@@ -6,7 +6,7 @@
       "runtimeExecutable": "bash",
       "runtimeArgs": [
         "-c",
-        "cd ui && MONAI_API=http://localhost:8001 MONAI_API_KEY=$(docker exec monai-backend printenv MONAI_API_KEY) npm run dev -- -p 3002"
+        "cd ui && MONAI_API=http://localhost:8001 MONAI_API_KEY=$(docker exec monai-backend printenv MONAI_API_KEY) MONAI_UI_PASSWORD=$(docker exec monai-frontend printenv MONAI_UI_PASSWORD) npm run dev -- -p 3002"
       ],
       "port": 3002
     }
