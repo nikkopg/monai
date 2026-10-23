@@ -167,6 +167,13 @@ test.describe("forward headers", () => {
     expect(h.has("host")).toBe(false);
     expect(h.get("accept")).toBe("application/json");
   });
+  test("the browser's Basic authorization is never forwarded (it is the UI password)", () => {
+    const req = incoming();
+    req.set("authorization", "Basic " + btoa("monai:pw"));
+    const h = buildForwardHeaders(req, "api-synthetic", "", "GET", "transactions", "");
+    expect(h.has("authorization")).toBe(false);
+    expect(h.get("MONAI_API_KEY")).toBe("api-synthetic");
+  });
   test("Expect is dropped (undici's fetch throws on it; curl sends it on large uploads)", () => {
     const req = incoming();
     req.set("expect", "100-continue");
