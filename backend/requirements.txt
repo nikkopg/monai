@@ -22,3 +22,5 @@ pytest-asyncio>=1.4,<2
 pdfplumber>=0.11.10,<0.12
 # Skill pack frontmatter (Phase 40). Already a dependency of llama-index-core; declared because backend/skills.py imports it.
 pyyaml>=6
+# Already installed via mcp; declared because backend/mcp_client.py imports it (Phase 41).
+jsonschema>=4.20,<5

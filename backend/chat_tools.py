@@ -41,14 +41,15 @@ def _load(db, attachment_id: str) -> Attachment | None:
     return a if a is not None and thread is not None and a.thread_id == thread else None
 
 
-def _clean_doc(text: str) -> str:
+def _clean_doc(text: str, word: str = "untrusted_document") -> str:
     """Drop control and bidi characters (newlines and tabs stay) and neutralise
-    the delimiter word so the document cannot close its own block (D-18a)."""
+    the delimiter word so the document cannot close its own block (D-18a).
+    External MCP results pass word="untrusted_external" (Phase 41)."""
     kept = "".join(c for c in text if c in "\n\t" or unicodedata.category(c)[0] != "C")
     out, low, i = [], kept.lower(), 0
-    while (j := low.find("untrusted_document", i)) != -1:
-        out += [kept[i:j], "untrusted-document"]
-        i = j + len("untrusted_document")
+    while (j := low.find(word, i)) != -1:
+        out += [kept[i:j], word.replace("_", "-")]
+        i = j + len(word)
     return "".join(out) + kept[i:]
 
 

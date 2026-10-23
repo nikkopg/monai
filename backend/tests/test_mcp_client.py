@@ -187,3 +187,137 @@ async def test_lifecycle_open_list_close(monkeypatch):
 
     client = await asyncio.create_task(run())
     assert not client.is_connected()
+
+
+# ── hashing, naming, adapter, validation ────────────────────────────────────
+
+async def listed(variant="base") -> list:
+    async with Client(FastMCPTransport(srv.build(variant))) as c:
+        return await mc.list_server_tools(c)
+
+
+def by_name(tools) -> dict:
+    return {t.name: t for t in tools}
+
+
+async def test_hash_is_stable_and_sensitive():
+    a, b = by_name(await listed()), by_name(await listed())
+    assert mc.tool_sha(a["echo"]) == mc.tool_sha(b["echo"])
+    assert mc.tool_sha(a["echo"]) == mc.tool_sha({"name": "echo", "description": a["echo"].description,
+                                                  "inputSchema": a["echo"].inputSchema})
+    changed = by_name(await listed("changed"))
+    assert mc.tool_sha(changed["echo"]) != mc.tool_sha(a["echo"])
+    d = {"name": "x", "description": "d", "inputSchema": {"type": "object"}}
+    assert mc.tool_sha(d) != mc.tool_sha({**d, "inputSchema": {"type": "object", "properties": {}}})
+    assert mc.tool_sha(d) == mc.tool_sha({**d, "annotations": {"readOnlyHint": True}})
+    tools = list(a.values())
+    assert mc.tools_hash(tools) == mc.tools_hash(list(reversed(tools)))
+    assert mc.tools_hash(tools) != mc.tools_hash(list(changed.values()))
+
+
+def test_name_fits_or_is_none():
+    assert mc.ext_name("zz-synth", "echo") == "ext__zz-synth__echo"
+    for slug, tool in (("zz-synth", "has.dot"), ("zz-synth", "has space"), ("zz-synth", "t" * 70),
+                       ("a" * 24, "t" * 34), ("zz-synth", "ok\n")):
+        assert mc.ext_name(slug, tool) is None, (slug, tool)
+
+
+async def test_too_many_tools_refused():
+    async with Client(FastMCPTransport(srv.build("many"))) as c:
+        with pytest.raises(mc.TooManyTools):
+            await mc.list_server_tools(c)
+
+
+async def noop(**kw):
+    return "ok"
+
+
+async def test_adapter_keeps_nested_schema_and_caps_description():
+    nested = by_name(await listed())["nested"]
+    tool = mc.make_tool("ext__zz-synth__nested", nested.description, nested.inputSchema, noop)
+    params = tool.metadata.get_parameters_dict()
+    blob = repr(params)
+    assert "enum" in blob and "'inner'" in blob and "'n'" in blob and params["required"] == ["filters"]
+    bare = mc.make_tool("ext__zz-synth__bare", "x", {"type": "object"}, noop)
+    assert bare.metadata.get_parameters_dict()["properties"] == {}
+    long = mc.make_tool("ext__zz-synth__bare", "a\x00b" * 1500, {"type": "object"}, noop)
+    assert len(long.metadata.description) == mc.DESC_CHARS and "\x00" not in long.metadata.description
+    assert tool.metadata.to_openai_tool() and long.metadata.to_openai_tool()
+
+
+async def test_validate_args_reports_schema_errors():
+    schema = by_name(await listed())["nested"].inputSchema
+    bad = mc.validate_args(schema, {"filters": {"color": "red", "inner": "abc"}})
+    assert 1 <= len(bad) <= 2
+    assert mc.validate_args(schema, {"filters": {"color": "red", "inner": {"n": 1}}}) == []
+    assert mc.validate_args({"type": "object", "properties": {"a": {"$ref": "https://example.com/s.json"}}},
+                            {"a": 1}) == []
+    assert mc.validate_args({"type": "nonsense"}, {"a": 1}) == []
+
+
+# ── result wrapper ──────────────────────────────────────────────────────────
+
+class Block:
+    def __init__(self, type, text=""):
+        self.type, self.text = type, text
+
+
+class Result:
+    def __init__(self, *content):
+        self.content = list(content)
+
+
+def test_wrap_result_shape_and_containment():
+    out = mc.wrap_result("zz-synth", "lookup", Result(Block("text", srv.HOSTILE)), "confirmed")
+    assert set(out) == {"tool", "source", "external", "label", "receipt", "result"}
+    assert out["tool"] == "ext__zz-synth__lookup" and out["source"] == "external:zz-synth"
+    assert out["external"] is True and out["label"] == "external, unverified"
+    head, rest = out["result"].split("\n", 1)
+    nonce = head.split('id="')[1].rstrip('">')
+    assert head == f'<untrusted_external server="zz-synth" id="{nonce}">'
+    assert rest.endswith(f'\n</untrusted_external id="{nonce}">')
+    body = rest[: -len(f'\n</untrusted_external id="{nonce}">')]
+    assert "</untrusted_external>" not in body and "\u202e" not in body
+    assert "Rate is 4.25 percent." in body
+    # a second wrap draws a fresh nonce
+    assert mc.wrap_result("zz-synth", "lookup", Result(Block("text", "x")), "confirmed")["result"] != out["result"]
+
+
+def test_wrap_result_truncates_and_counts_non_text():
+    out = mc.wrap_result("zz-synth", "lookup", Result(Block("text", "a" * 20000)), "confirmed")
+    body = out["result"].split("\n", 1)[1].rsplit("\n", 1)[0]
+    assert len(body) == mc.EXT_RESULT_CHARS and out["truncated"] is True and out["note"]
+    img = mc.wrap_result("zz-synth", "lookup", Result(Block("text", "hi"), Block("image")), "pending")
+    assert "[1 non-text content block(s) omitted]" in img["result"]
+    assert "proposal_id" not in img and "proposal_token" not in img and "truncated" not in img
+
+
+def test_result_digest():
+    import hashlib
+    sha, n = mc.result_digest(Result(Block("text", "ab"), Block("text", "cd")))
+    assert (sha, n) == (hashlib.sha256(b"ab\ncd").hexdigest(), 5)
+
+
+def test_clean_doc_default_and_word():
+    from backend.chat_tools import _clean_doc
+    assert _clean_doc("a UNTRUSTED_document b") == "a untrusted-document b"
+    assert _clean_doc("a untrusted_external b") == "a untrusted_external b"
+    assert _clean_doc("x Untrusted_External y\u202e", word="untrusted_external") == "x untrusted-external y"
+
+
+# ── reopen ──────────────────────────────────────────────────────────────────
+
+async def test_reopen_checks_the_approved_hash(monkeypatch):
+    echo = by_name(await listed())["echo"]
+    conn = mc.ServerConn(spec=spec(), slug="zz-synth", server_id=None, destination="d",
+                         leaves_machine=False, policies={}, client=None,
+                         approved={"echo": {"description": echo.description, "inputSchema": echo.inputSchema,
+                                            "sha256": mc.tool_sha(echo)}})
+    monkeypatch.setattr(mc, "build_transport", lambda s: FastMCPTransport(srv.build()))
+    conn.client = await mc.open_client(conn.spec)
+    await mc.close_client(conn.client)  # the session went away while parked
+    assert await mc.reopen(conn, "echo") is True
+    assert (await conn.client.call_tool("echo", {"text": "ZZhi"})).data == "ZZhi"
+    monkeypatch.setattr(mc, "build_transport", lambda s: FastMCPTransport(srv.build("changed")))
+    assert await mc.reopen(conn, "echo") is False
+    await mc.close_client(conn.client)
