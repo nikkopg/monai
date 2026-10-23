@@ -24,7 +24,9 @@ export async function checkBasic(
   let user = "";
   let pass = "";
   try {
-    const d = atob(m?.[1] ?? "");
+    // atob yields a binary string: rebuild the bytes and decode them as UTF-8
+    // so a non-ASCII password matches what the browser encoded.
+    const d = new TextDecoder().decode(Uint8Array.from(atob(m?.[1] ?? ""), (c) => c.charCodeAt(0)));
     const i = d.indexOf(":");
     if (i >= 0) {
       user = d.slice(0, i);

@@ -34,6 +34,13 @@ test.describe("helper", () => {
     expect(await checkBasic(basic("monai", API), API, API, APPR)).toBe("locked");
     expect(await checkBasic(basic("monai", APPR), APPR, API, APPR)).toBe("locked");
   });
+  test("a non-ASCII password matches as UTF-8", async () => {
+    const pw = "pässwörd-日本-synthetic"; // pii-ok synthetic
+    const utf8 = (u: string, p: string) =>
+      "Basic " + btoa(String.fromCharCode.apply(null, Array.from(new TextEncoder().encode(`${u}:${p}`))));
+    expect(await checkBasic(utf8("monai", pw), pw, API, APPR)).toBe("ok");
+    expect(await checkBasic(utf8("monai", "pässwörd"), pw, API, APPR)).toBe("unauthorized");
+  });
   test("empty keys do not lock a set password", async () => {
     expect(await checkBasic(basic("monai", PW), PW, "", "")).toBe("ok");
   });
