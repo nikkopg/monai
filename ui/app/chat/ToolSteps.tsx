@@ -5,6 +5,7 @@ import { useEffect, useId, useState } from "react";
 import { tokens } from "../styles";
 import { argRows, formatDuration, formatElapsed, toolLabel } from "./labels";
 import type { StepEntry, TimelineEntry } from "./useChatStream";
+import { decisionLabel, parseExt, receiptLabel, stepSuffix, type ExtCall } from "./extLabels";
 
 // Tool steps for one assistant message (STRM-02, D-06..D-09). One toggle: a live
 // line while the turn runs, "Used N tools" afterwards. The panel lists steps and
@@ -30,20 +31,49 @@ const glyph = (c: string, color?: string) => (
   </span>
 );
 
+// 41 C1: external steps read "{tool} on {slug}" with a fixed badge. Server strings
+// are text nodes only; "Sent to" comes only from stepSuffix/receiptLabel (D-21).
+const extBadge = (
+  <span
+    data-testid="ext-badge"
+    style={{
+      marginLeft: 8,
+      padding: "4px 8px",
+      fontSize: 12,
+      fontWeight: 600,
+      background: tokens.color.tintWarm,
+      color: tokens.color.ink,
+      border: `1px solid ${tokens.color.border2}`,
+      borderRadius: tokens.radius.pill,
+    }}
+  >
+    external, unverified
+  </span>
+);
+
+const extName = (tool: string) => {
+  const p = parseExt(tool);
+  return p ? `${p.tool} on ${p.slug}` : tool;
+};
+
 export default function ToolSteps({
   timeline,
   running,
   open,
   onToggle,
+  extCalls,
 }: {
   timeline: TimelineEntry[];
   running: boolean;
   open: Record<string, boolean>;
   onToggle: (key: string) => void;
+  /** Per step (in step order), the ext_calls row it ran as; see extLabels.joinSteps. */
+  extCalls?: (ExtCall | null)[];
 }) {
   const uid = useId();
   const [, setTick] = useState(0);
   const steps = timeline.filter((e): e is StepEntry => e.kind === "step");
+  const callOf = (s: StepEntry) => extCalls?.[steps.indexOf(s)] ?? null;
   // A step still "running" in a message that is no longer running (stopped,
   // errored) is shown as finished, without a duration.
   const live = (s: StepEntry) => running && s.status === "running";
@@ -65,7 +95,11 @@ export default function ToolSteps({
     const cur = runningSteps[0];
     const shown = cur ?? [...steps].reverse().find((s) => s.status === "done") ?? steps[steps.length - 1];
     const doneCount = steps.filter((s) => !live(s)).length;
-    const time = cur
+    const shownCall = callOf(shown);
+    const waiting = shownCall?.approval === "pending";
+    const time = waiting
+      ? null
+      : cur
       ? formatElapsed(Date.now() - (cur.startedAt ?? Date.now()))
       : typeof shown.ms === "number"
       ? formatDuration(shown.ms)
@@ -73,7 +107,11 @@ export default function ToolSteps({
     label = (
       <>
         {glyph("›", tokens.color.green)}
-        <span style={{ color: tokens.color.ink }}>{toolLabel(shown.tool)}</span>
+        <span style={{ color: tokens.color.ink }}>
+          {parseExt(shown.tool) ? extName(shown.tool) : toolLabel(shown.tool)}
+        </span>
+        {parseExt(shown.tool) && extBadge}
+        {waiting && <span style={{ color: tokens.color.muted3 }}>{stepSuffix(shownCall)}</span>}
         {time && (
           <span style={{ color: tokens.color.muted3, fontVariantNumeric: "tabular-nums" }}>
             {" "}
@@ -167,7 +205,48 @@ export default function ToolSteps({
               </div>
             );
           }
-          const rows = argRows(e.args, e.sources);
+          const ext = parseExt(e.tool);
+          const call = ext ? callOf(e) : null;
+          const rows = ext
+            ? [
+                { label: "Server", value: ext.slug },
+                ...(call
+                  ? [
+                      { label: "Decision", value: decisionLabel(call) },
+                      { label: "Receipt", value: receiptLabel(call) },
+                    ]
+                  : []),
+                ...(Object.keys(e.args).length
+                  ? [
+                      {
+                        label: "Sent",
+                        value: (
+                          <pre
+                            tabIndex={0}
+                            role="region"
+                            aria-label="Arguments sent"
+                            style={{
+                              margin: 0,
+                              padding: 8,
+                              fontSize: 12,
+                              lineHeight: 1.5,
+                              maxHeight: 160,
+                              overflow: "auto",
+                              whiteSpace: "pre-wrap",
+                              overflowWrap: "anywhere",
+                              background: tokens.color.tintWarm,
+                              border: `1px solid ${tokens.color.border2}`,
+                              borderRadius: tokens.radius.sm,
+                            }}
+                          >
+                            {JSON.stringify(e.args, null, 2)}
+                          </pre>
+                        ),
+                      },
+                    ]
+                  : []),
+              ]
+            : argRows(e.args, e.sources);
           return (
             <div key={key}>
               <button
@@ -181,15 +260,22 @@ export default function ToolSteps({
               >
                 {glyph("›", tokens.color.green)}
                 <span className="step-label" style={{ color: tokens.color.ink }}>
-                  {toolLabel(e.tool)}
+                  {ext ? extName(e.tool) : toolLabel(e.tool)}
                 </span>
+                {ext && extBadge}
                 {typeof e.ms === "number" && !live(e) && (
                   <span style={{ color: tokens.color.muted3, fontVariantNumeric: "tabular-nums" }}>
                     {" "}
                     · {formatDuration(e.ms)}
                   </span>
                 )}
-                {e.failed && <span style={{ color: tokens.color.muted3 }}> · no result</span>}
+                {ext ? (
+                  <span style={{ color: tokens.color.muted3 }}>
+                    {call ? stepSuffix(call) : e.failed ? " · no result" : ""}
+                  </span>
+                ) : (
+                  e.failed && <span style={{ color: tokens.color.muted3 }}> · no result</span>
+                )}
                 {glyph(isOpen ? "▴" : "▾", tokens.color.muted3)}
               </button>
               <dl
@@ -224,6 +310,11 @@ export default function ToolSteps({
                     </dd>
                   </div>
                 ))}
+                {ext && (
+                  <div style={{ gridColumn: "1 / -1", fontSize: 12, color: tokens.color.muted3 }}>
+                    monai doesn&apos;t keep what the server sent back.
+                  </div>
+                )}
               </dl>
             </div>
           );

@@ -127,12 +127,15 @@ export function useChatStream() {
     threadId: string | null,
     onEvent: (msg: SseMessage) => void,
     replaceFrom?: string | null,
-    attachmentIds: string[] = []
+    attachmentIds: string[] = [],
+    mcpServerIds: string[] = []
   ) {
     runIdRef.current = null;
     const body: Record<string, unknown> = threadId ? { question, thread_id: threadId } : { question };
     if (replaceFrom && threadId) body.replace_from = replaceFrom; // D-18: regenerate / edit
     if (attachmentIds.length) body.attachment_ids = attachmentIds; // 39 D-03: bound to this question
+    // 41 D-12: a new thread's server selection rides its first question; an existing thread has its own PUT.
+    if (!threadId && mcpServerIds.length) body.mcp_server_ids = mcpServerIds;
     return open(
       "/api/query-stream",
       {
