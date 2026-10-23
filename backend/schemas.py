@@ -553,9 +553,28 @@ class ProposalLiveOut(BaseModel):
     channel: str | None = None
 
 
+class ExtCallOut(BaseModel):
+    """One external tool call as card and receipt (Phase 41). Never the result."""
+
+    id: _uuid.UUID
+    message_id: _uuid.UUID | None = None
+    server_slug: str
+    tool: str
+    args: dict
+    destination: str
+    leaves_machine: bool
+    reason: str | None = None
+    approval: str
+    decided_via: str | None = None
+    expires_at: datetime
+    receipt: str | None = None
+    error_class: str | None = None
+
+
 class MessagePartsOut(BaseModel):
     steps: list[dict] = []
     proposals: list[ProposalLiveOut] = []
+    notices: list[dict] = []
     error: dict | None = None
     provider: dict | None = None
 
@@ -596,6 +615,7 @@ class ThreadDetailOut(ThreadOut):
     summary_upto_seq: int = 0
     has_summary: bool = False  # flags only: the summary text never leaves the server
     mcp_server_ids: list[_uuid.UUID] = []  # external MCP servers this thread uses (Phase 41)
+    ext_calls: list[ExtCallOut] = []
 
 
 class ImportResponse(BaseModel):

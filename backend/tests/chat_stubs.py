@@ -238,7 +238,8 @@ class GullibleLLM(StubLLM):
             calls = [("read_attachment", {"attachment_id": i}) for i in ids]
         else:
             for role, c in msgs:
-                for hit in re.findall(r"CALL (\w+) (\{[^{}]*\})", c) if role != "system" else []:
+                # [\w-]+: Phase 41 tool names carry the server slug, which may contain a hyphen
+                for hit in re.findall(r"CALL ([\w-]+) (\{[^{}]*\})", c) if role != "system" else []:
                     if hit not in self.done:
                         self.done.append(hit)
                         # a CSV cell doubles its quotes; a model would read through that, so the stub does too

@@ -242,3 +242,161 @@ async def test_closure(env, monkeypatch):
     finally:
         q.TURN.set(None)
         await s.aclose()
+
+
+# ── the pump: real start_turn, GullibleLLM, in-memory servers ──────────────
+
+import asyncio  # noqa: E402
+import logging  # noqa: E402
+import time  # noqa: E402
+
+from backend import chat_service  # noqa: E402
+from backend.models import Attachment  # noqa: E402
+from backend.tests.chat_stubs import GullibleLLM, _collect, _of_type, _payloads  # noqa: E402
+
+ECHO = 'CALL ext__zz-synth__echo {"text": "zz hello"}'
+
+
+@pytest.fixture(autouse=True)
+def _clean():
+    q._ACTIVE.clear()
+    q._LAST.clear()
+    yield
+    q._ACTIVE.clear()
+    q._LAST.clear()
+    q._agent_workflows.clear()
+
+
+async def _until(pred, limit=5.0):
+    end = time.monotonic() + limit
+    while not pred():
+        assert time.monotonic() < end, "condition not reached"
+        await asyncio.sleep(0.02)
+
+
+def _calls(tid):
+    with SessionLocal() as db:
+        return [dict(r) for r in db.execute(
+            text("SELECT id, approval FROM ext_calls WHERE thread_id = :t ORDER BY created_at"), {"t": tid}).mappings()]
+
+
+async def _start(env, mp, question):
+    llm = GullibleLLM()
+    mp.setattr(q, "_get_llm", lambda: llm)
+    q._agent_workflows.clear()
+    run = await chat_service.start_turn(question, env.tid)
+    return run, llm, asyncio.create_task(_collect(q.run_stream(run)))
+
+
+async def _approve(env, run, task):
+    await _until(lambda: any(c["approval"] == "pending" for c in _calls(env.tid)))
+    cid = next(c["id"] for c in _calls(env.tid) if c["approval"] == "pending")
+    assert ext_calls.decide(env.tid, cid, True) == "approved"
+    ext_calls.wake(cid)
+    events = _payloads(await task)
+    await run.pump
+    return events, cid
+
+
+def _detail(tid):
+    with SessionLocal() as db:
+        return chat_service.thread_detail(db, tid)
+
+
+async def test_turn_persist_and_detail(env, monkeypatch):
+    await env.add()
+    run, llm, task = await _start(env, monkeypatch, ECHO)
+    events, cid = await _approve(env, run, task)
+    (card,) = _of_type(events, "approval_required")
+    assert (card["server"], card["call_id"]) == ("zz-synth", str(cid))
+    assert _of_type(events, "ext_call") and _of_type(events, "answer")
+    assert "ext__zz-synth__echo" in llm.offered[0]
+    d = _detail(env.tid)
+    (c,) = d["ext_calls"]
+    assert c["id"] == cid and c["message_id"] == run.assistant_message_id
+    assert (c["approval"], c["decided_via"], c["receipt"]) == ("approved", "user", "confirmed")
+    assert c["destination"] == "zz-synth.example.com" and c["leaves_machine"] is True
+    assert c["server_slug"] == "zz-synth" and c["tool"] == "echo" and c["args"] == {"text": "zz hello"}
+    assert "notices" not in d["messages"][-1]["parts"]
+
+
+async def test_reload_shows_pending_from_server_state(env, monkeypatch):
+    await env.add()
+    run, llm, task = await _start(env, monkeypatch, ECHO)
+    await _until(lambda: any(c["approval"] == "pending" for c in _calls(env.tid)))
+    (c,) = _detail(env.tid)["ext_calls"]  # the run is active: the orphan sweep leaves it
+    assert c["approval"] == "pending" and c["message_id"] is None and c["receipt"] is None
+    seen = []
+    async for chunk in q.subscribe(run):
+        seen += _payloads([chunk])
+        if _of_type(seen, "approval_required"):
+            break
+    assert _of_type(seen, "approval_required")
+    await _approve(env, run, task)
+
+
+async def test_notices_stream_and_persist(env, monkeypatch):
+    await env.add(live="changed")
+    run, llm, task = await _start(env, monkeypatch, "hello")
+    events = _payloads(await task)
+    await run.pump
+    (n,) = _of_type(events, "notice")
+    assert (n["code"], n["server"]) == ("tools_changed", "zz-synth")
+    assert events.index(n) < events.index(_of_type(events, "answer")[0])
+    with SessionLocal() as db:
+        parts = db.execute(text("SELECT parts FROM messages WHERE id = :i"), {"i": run.assistant_message_id}).scalar()
+    assert parts["notices"] == [{"code": "tools_changed", "server": "zz-synth", "message": n["message"]}]
+    assert _detail(env.tid)["messages"][-1]["parts"]["notices"] == parts["notices"]
+
+
+async def test_attachment_thread_never_opens_a_session(env, monkeypatch):
+    await env.add()
+    with SessionLocal() as db:
+        db.add(Attachment(thread_id=env.tid, filename="zz41.csv", mime="text/csv", kind="csv",
+                          size_bytes=1, sha256="0" * 64, parse_status="ok"))
+        db.commit()
+    opened = []
+
+    async def spy(thread_id):
+        opened.append(thread_id)
+        raise AssertionError("must not open")
+
+    monkeypatch.setattr(mc.ExtSession, "open", spy)
+    run, llm, task = await _start(env, monkeypatch, "what is in this file?")
+    await task
+    await run.pump
+    assert opened == [] and env.built == []
+    assert llm.offered and not any(n.startswith("ext__") for names_ in llm.offered for n in names_)
+
+
+def _fake_agent(seen):
+    async def fake(question, *, run, history, tool_names):  # only the pre-Phase-41 keywords
+        seen.append(run.ext)
+        yield q._sse({"type": "answer", "text": "zz ok", "model": "m", "provider": "p"})
+    return fake
+
+
+async def test_no_session_tools_keeps_old_keywords(env, monkeypatch):
+    await env.add(selected=False)
+    seen = []
+    monkeypatch.setattr(q, "agent_stream", _fake_agent(seen))
+    run = await chat_service.start_turn("hello", env.tid)
+    await _collect(q.run_stream(run))
+    await run.pump
+    assert seen == [False] and env.built == []
+    assert _detail(env.tid)["messages"][-1]["status"] == "complete"
+
+
+async def test_session_failure_logs_class_only(env, monkeypatch, caplog):
+    async def boom(thread_id):
+        raise RuntimeError("secret-detail ZZ")
+
+    monkeypatch.setattr(mc.ExtSession, "open", boom)
+    monkeypatch.setattr(q, "agent_stream", _fake_agent([]))
+    with caplog.at_level(logging.WARNING, logger="backend.chat_service"):
+        run = await chat_service.start_turn("hello", env.tid)
+        await _collect(q.run_stream(run))
+        await run.pump
+    msgs = [r.getMessage() for r in caplog.records if "external session" in r.getMessage()]
+    assert msgs == ["external session failed: RuntimeError"]
+    assert _detail(env.tid)["messages"][-1]["status"] == "complete"

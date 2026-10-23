@@ -26,11 +26,11 @@ import anyio
 from llama_index.core.llms import ChatMessage, MessageRole
 from sqlalchemy import delete, func, or_, select, text, update
 
-from backend import agent_loop, chat_tools, config, query, tools
+from backend import agent_loop, chat_tools, config, ext_calls, mcp_client, query, tools
 from backend.chat_history import _pairs, _provenance, _stamp, plan_history
 from backend.db import get_session_sync
 from backend.attachments import purge_expired
-from backend.models import Attachment, AuditLog, McpServer, Message, Proposal, Thread, ThreadMcpServer
+from backend.models import Attachment, AuditLog, ExtCall, McpServer, Message, Proposal, Thread, ThreadMcpServer
 from backend.proposals import expire_stale, transition
 
 logger = logging.getLogger(__name__)
@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 def launch(
     run: query.Run, question: str, history: list | None = None,
     tool_names: frozenset[str] | None = None, compact: bool = False,
+    attachment_thread: bool = False,
 ) -> None:
     """Seed the buffer with the `run` event and start the detached pump.
 
@@ -46,7 +47,7 @@ def launch(
     on `run.pump` (asyncio keeps only weak ones).
     """
     query.push(run, query._sse({"type": "run", "run_id": run.id}))
-    run.pump = asyncio.create_task(_pump(run, question, history, tool_names, compact))
+    run.pump = asyncio.create_task(_pump(run, question, history, tool_names, compact, attachment_thread))
 
 
 def title_from(text_: str, limit: int = 60) -> str:
@@ -237,7 +238,7 @@ async def start_turn(
                 }
             ),
         )
-        launch(run, question, history, tool_names, compact=bool(to_compact))
+        launch(run, question, history, tool_names, compact=bool(to_compact), attachment_thread=bool(atts))
     except BaseException:
         # Not via release_run: a never-finished run must not become _LAST.
         if query._ACTIVE.get(run.key) is run:
@@ -266,6 +267,8 @@ def _persist_end(run: query.Run, state: dict) -> None:
         }
         if status == "error":
             parts["error"] = {"code": state["error"] or "unknown"}
+        if state["notices"]:
+            parts["notices"] = state["notices"]
         parts = json.loads(json.dumps(parts, default=str))  # no Decimal reaches JSONB
         db.add(
             Message(
@@ -278,6 +281,10 @@ def _persist_end(run: query.Run, state: dict) -> None:
         db.execute(text("UPDATE threads SET updated_at = now() WHERE id = :t"), {"t": run.thread_id})
         db.execute(
             text("UPDATE proposals SET message_id = :a WHERE turn_id = :t"),
+            {"a": run.assistant_message_id, "t": turn},
+        )
+        db.execute(
+            text("UPDATE ext_calls SET message_id = :a WHERE turn_id = :t"),
             {"a": run.assistant_message_id, "t": turn},
         )
         db.commit()
@@ -305,6 +312,8 @@ def _observe(state: dict, chunk: str) -> None:
         if p.get("sources"):
             rec["sources"] = p["sources"]
         state["steps"].append(rec)
+    elif t == "notice":
+        state["notices"].append({k: p[k] for k in ("code", "server", "message", "limit") if k in p})
     elif t == "answer":
         state.update(answered=True, text=p.get("text") or "", model=p.get("model"), provider=p.get("provider"))
     elif t == "error":
@@ -314,6 +323,7 @@ def _observe(state: dict, chunk: str) -> None:
 async def _pump(
     run: query.Run, question: str, history: list | None,
     tool_names: frozenset[str] | None = None, compact: bool = False,
+    attachment_thread: bool = False,
 ) -> None:
     # create_task copied the context, so no reset is needed; tool executor
     # threads inherit the value (D-12a).
@@ -321,13 +331,28 @@ async def _pump(
     tools.CURRENT_THREAD_ID.set(run.thread_id)
     state: dict = {
         "steps": [], "text": "", "answered": False, "error": None,
-        "model": None, "provider": None,
+        "model": None, "provider": None, "notices": [],
     }
+    session = None
     try:
+        # A thread holding an attachment never gets external tools (39 D-16, D-12).
+        if run.thread_id is not None and not attachment_thread:
+            try:
+                session = await mcp_client.ExtSession.open(run.thread_id)
+            except Exception as e:  # the turn still answers, with the built-in tools
+                logger.warning("external session failed: %s", type(e).__name__)
+        kw: dict = {}
+        if session is not None:
+            for n in session.notices:
+                chunk = query._sse({"type": "notice", **n})
+                _observe(state, chunk)
+                query.push(run, chunk)
+            if session.tools:
+                run.ext, kw["ext_tools"] = True, session.tools
         # Attribute lookup on the module, never a from-import: tests and
         # test_auth monkeypatch backend.query.agent_stream.
         async for chunk in query.agent_stream(
-            question, run=run, history=history, tool_names=tool_names
+            question, run=run, history=history, tool_names=tool_names, **kw
         ):
             if chunk.startswith(":") or chunk == query._DONE:
                 continue  # pings are the subscriber's own; [DONE] is withheld to the end
@@ -340,6 +365,8 @@ async def _pump(
         query.push(run, query._error_event("unknown", None, None, None))
     finally:
         with anyio.CancelScope(shield=True):
+            if session is not None:
+                await session.aclose()  # never raises
             try:
                 await asyncio.to_thread(_persist_end, run, state)
             except Exception as e:  # a persistence failure must never keep the slot
@@ -573,6 +600,8 @@ def thread_detail(db, thread_id: uuid.UUID) -> dict | None:
     t = db.get(Thread, thread_id)
     if t is None:
         return None
+    active = query._ACTIVE.get(str(thread_id))
+    ext_calls.sweep_thread(db, thread_id, active.id if active else None)  # A-08
     msgs = list(
         db.execute(
             select(Message).where(Message.thread_id == thread_id).order_by(Message.seq)
@@ -621,8 +650,19 @@ def thread_detail(db, thread_id: uuid.UUID) -> dict | None:
     servers = db.execute(
         select(ThreadMcpServer.server_id).where(ThreadMcpServer.thread_id == thread_id)
     ).scalars().all()
+    calls = db.execute(
+        select(ExtCall).where(ExtCall.thread_id == thread_id)
+        .order_by(ExtCall.created_at.desc(), ExtCall.id).limit(200)
+    ).scalars().all()
     return {
         **_thread_row(t), "messages": out, "mcp_server_ids": list(servers),
+        "ext_calls": [
+            {"id": c.id, "message_id": c.message_id, "server_slug": c.server_slug, "tool": c.tool,
+             "args": c.args, "destination": c.destination, "leaves_machine": c.leaves_machine,
+             "reason": c.reason, "approval": c.approval, "decided_via": c.decided_via,
+             "expires_at": c.expires_at, "receipt": c.receipt, "error_class": c.error}
+            for c in reversed(calls)
+        ],
         "attachments": [
             {"id": a.id, "filename": a.filename, "kind": a.kind, "status": a.parse_status,
              "summary": (a.meta or {}).get("summary", ""), "row_count": len(a.rows or []),
