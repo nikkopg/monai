@@ -18,6 +18,7 @@ without any behavior change for `alembic upgrade head` / entrypoint.sh.
 
 import os
 from logging.config import fileConfig
+from urllib.parse import quote
 
 from sqlalchemy import engine_from_config, pool
 from alembic import context
@@ -42,7 +43,7 @@ def run_migrations_offline() -> None:
     """
     db_url = config.attributes.get("sqlalchemy.url") or os.environ.get(
         "DATABASE_URL",
-        f"postgresql+psycopg://monai:{os.environ.get('POSTGRES_PASSWORD') or 'monai'}@localhost:5434/monai",
+        f"postgresql+psycopg://monai:{quote(os.environ.get('POSTGRES_PASSWORD') or 'monai', safe='')}@localhost:5434/monai",
     )
     context.configure(
         url=db_url,
@@ -63,7 +64,7 @@ def run_migrations_online() -> None:
     """
     db_url = config.attributes.get("sqlalchemy.url") or os.environ.get(
         "DATABASE_URL",
-        f"postgresql+psycopg://monai:{os.environ.get('POSTGRES_PASSWORD') or 'monai'}@localhost:5434/monai",
+        f"postgresql+psycopg://monai:{quote(os.environ.get('POSTGRES_PASSWORD') or 'monai', safe='')}@localhost:5434/monai",
     )
     # configparser treats % as interpolation — escape any % in the URL (e.g. passwords)
     configuration = config.get_section(config.config_ini_section)

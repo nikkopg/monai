@@ -46,7 +46,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from sqlalchemy.engine.url import make_url
 
@@ -65,7 +65,7 @@ from sqlalchemy.engine.url import make_url
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEFAULT_TEST_URL = f"postgresql+psycopg://monai:{os.environ.get('POSTGRES_PASSWORD') or 'monai'}@localhost:5434/monai_test"
+_DEFAULT_TEST_URL = f"postgresql+psycopg://monai:{quote(os.environ.get('POSTGRES_PASSWORD') or 'monai', safe='')}@localhost:5434/monai_test"
 os.environ.setdefault("DATABASE_URL", _DEFAULT_TEST_URL)
 
 _TEST_DB = make_url(os.environ["DATABASE_URL"])

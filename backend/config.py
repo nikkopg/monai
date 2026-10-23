@@ -28,10 +28,11 @@ Env vars:
 """
 
 import os
+from urllib.parse import quote
 
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    f"postgresql+psycopg://monai:{os.environ.get('POSTGRES_PASSWORD') or 'monai'}@localhost:5434/monai",
+    f"postgresql+psycopg://monai:{quote(os.environ.get('POSTGRES_PASSWORD') or 'monai', safe='')}@localhost:5434/monai",
 )
 
 # float so "90.5" parses; floored at 1 s so 0 or a negative cannot end every run at once.

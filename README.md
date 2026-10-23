@@ -61,7 +61,7 @@ echo "MONAI_UI_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(32
 chmod 600 .env
 ```
 
-`MONAI_UI_PASSWORD` is what the browser's sign-in prompt asks for (username `monai`, entered once per browser session). It must differ from `MONAI_API_KEY` and `MONAI_APPROVER_KEY`, otherwise the UI answers 503. `npm run dev` needs it in its environment too. `POSTGRES_PASSWORD` only applies when a fresh volume is initialised; an existing `monai_pgdata` needs the rotation runbook under Database migrations.
+`MONAI_UI_PASSWORD` is what the browser's sign-in prompt asks for (username `monai`, entered once per browser session). It must differ from `MONAI_API_KEY` and `MONAI_APPROVER_KEY`, otherwise the UI answers 503. `npm run dev` needs it in its environment too. Keep `POSTGRES_PASSWORD` URL-safe (hex, as generated above): Python URL-quotes it, but `docker-compose.yml` interpolates it into `DATABASE_URL` as-is. `POSTGRES_PASSWORD` only applies when a fresh volume is initialised; an existing `monai_pgdata` needs the rotation runbook under Database migrations.
 
 Optionally add a separate approver key. It approves or rejects any pending proposal whatever channel created it (`POST /proposals/{id}/approve` and `POST /proposals/{id}/reject`, sent in the `MONAI_APPROVER_KEY` header):
 
