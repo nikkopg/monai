@@ -325,10 +325,13 @@ def test_get_cashflow_summary_endpoint(client, db_session, authed):
             db_session.commit()
 
 
-def test_cashflow_summary_no_auth_required(client):
-    """GET /cashflow/summary is an open read — no API key needed (matches
-    existing GET /accounts, GET /transactions)."""
-    resp = client.get("/cashflow/summary?period=all_time")
+def test_cashflow_summary_requires_key(client, api_key):
+    """GET /cashflow/summary needs the API key since Phase 40.1 (it was an open
+    read before)."""
+    assert client.get("/cashflow/summary?period=all_time").status_code == 401
+    resp = client.get(
+        "/cashflow/summary?period=all_time", headers={"MONAI_API_KEY": api_key}
+    )
     assert resp.status_code == 200
 
 

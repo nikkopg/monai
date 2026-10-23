@@ -5,9 +5,12 @@ Tests:
   (a) POST /transactions without header → 401
   (b) POST /transactions with wrong key → 401
   (c) POST /transactions with correct key → not 401 (422 from body validation, proves key accepted)
-  (d) GET /accounts without key → 200 (public)
+  (d) GET /accounts requires the key: 401 without/wrong, 200 with, 503 unconfigured (Phase 40.1)
   (e) POST /query-stream requires the key (401 without/wrong, 503 unconfigured; agent stream stubbed)
   (h) POST /transactions with empty _CONFIGURED_KEY → 503 JSON error (fail-closed misconfiguration)
+  (i) GET /health is the only open route and returns exactly {"status": "ok"} (Phase 40.1)
+  (j) a walker over every APIRoute, including included routers, fails closed for any route
+      that lacks a key dependency (Phase 40.1)
 
 Note on test (c): We POST with an incomplete body to trigger 422 from body validation rather
 than writing to the live DB. A valid key yields 422 (body rejected before DB), while a wrong
@@ -22,6 +25,7 @@ so the dependency sees a valid non-empty key regardless of import order.
 import json
 
 import pytest
+from fastapi.routing import APIRoute
 
 
 # ---------------------------------------------------------------------------
@@ -72,14 +76,22 @@ def test_post_transactions_valid_key_not_401(client, api_key):
 
 
 # ---------------------------------------------------------------------------
-# (d) GET /accounts without key → 200 (public read)
+# (d) GET /accounts requires the key (Phase 40.1 supersedes the v1.0 public GETs)
 # ---------------------------------------------------------------------------
 
 
-def test_get_accounts_public_no_key(client):
-    """GET endpoints require no API key — reads stay public (D-06)."""
-    resp = client.get("/accounts")
-    assert resp.status_code == 200
+def test_get_accounts_requires_key(client, api_key, monkeypatch):
+    """401 without/wrong key, 200 with it, 503 when unconfigured; auth runs before validation."""
+    import backend.auth as auth_mod
+
+    assert client.get("/accounts").status_code == 401
+    assert client.get("/accounts", headers={"MONAI_API_KEY": "wrong"}).status_code == 401
+    assert client.get("/accounts", headers={"MONAI_API_KEY": api_key}).status_code == 200
+    # Auth runs before query validation: a bad query is 401, not 422.
+    assert client.get("/cashflow/networth-history?months=0").status_code == 401
+
+    monkeypatch.setattr(auth_mod, "_CONFIGURED_KEY", "")
+    assert client.get("/accounts", headers={"MONAI_API_KEY": api_key}).status_code == 503
 
 
 # ---------------------------------------------------------------------------
@@ -232,3 +244,67 @@ def test_every_thread_route_depends_on_api_key():
     assert len(routes) == 7
     for r in routes:
         assert require_api_key in [d.call for d in r.dependant.dependencies], r.path
+
+
+# ---------------------------------------------------------------------------
+# (i) /health is open and carries no ledger data
+# ---------------------------------------------------------------------------
+
+
+def test_health_is_open_and_carries_no_ledger_data(client, monkeypatch):
+    import backend.auth as auth_mod
+
+    monkeypatch.setattr(auth_mod, "_CONFIGURED_KEY", "")
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json() == {"status": "ok"}
+
+
+# ---------------------------------------------------------------------------
+# (j) Guard walker: every route needs a key, except the allowlist
+# ---------------------------------------------------------------------------
+
+_OPEN = {("GET", "/health")}
+# Starlette routes that are not APIRoutes: schema/docs pages carry no ledger data
+# (Phase 40.1 OQ-1), and /mcp is a mount with its own middleware guard.
+_NON_API = {"/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc", "/mcp"}
+
+
+def _api_routes(routes, inherited=()):
+    for r in routes:
+        inner = getattr(r, "original_router", None)  # FastAPI >= 0.14x _IncludedRouter wrapper
+        if inner is not None:
+            ctx = getattr(r, "include_context", None)
+            yield from _api_routes(
+                inner.routes, (*inherited, *(getattr(ctx, "dependencies", None) or []))
+            )
+        elif isinstance(r, APIRoute):  # older FastAPI flattens, so this covers both shapes
+            yield r, inherited
+
+
+def _calls(dep):
+    yield dep.call
+    for d in dep.dependencies:
+        yield from _calls(d)
+
+
+def test_every_route_requires_a_key_or_is_allowlisted():
+    import backend.auth as auth
+    from backend.main import app
+
+    # optional_approver never raises, so it is deliberately not in this set.
+    auth_deps = {auth.require_api_key, auth.require_approver_key, auth.require_reject_scope}
+    seen, bad = 0, []
+    for r, inherited in _api_routes(app.routes):
+        seen += 1
+        calls = set(_calls(r.dependant)) | {d.dependency for d in inherited}
+        if not calls & auth_deps:
+            bad += [(m, r.path) for m in r.methods if (m, r.path) not in _OPEN]
+    assert seen > 60, "walker lost the included routers"
+    assert not bad, f"unauthenticated routes: {sorted(bad)}"
+    others = {
+        getattr(r, "path", None)
+        for r in app.routes
+        if not isinstance(r, APIRoute) and getattr(r, "original_router", None) is None
+    }
+    assert others <= _NON_API, others - _NON_API
