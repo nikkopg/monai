@@ -1,5 +1,5 @@
 """
-Backend authentication — API-key guard for state-changing endpoints.
+Backend authentication — API-key guard for every route except /health.
 
 Env vars:
   MONAI_API_KEY   Required. Static API key that write endpoints validate against.
@@ -15,7 +15,10 @@ Env vars:
 
 Usage:
   Attach to write routes via dependencies=[Depends(require_api_key)].
-  Read-only GET routes stay public (D-06). POST /query-stream and its cancel
+  Every route requires the key except GET /health (Phase 40.1). This supersedes
+  the v1.0 decision (D-06 of that era) that read-only GET routes stay public: a
+  local process without the key must not read the ledger. A pytest walker fails
+  for any new route outside that allowlist. POST /query-stream and its cancel
   route require the key, as does every later chat, thread and upload route
   (standing rule REL-08). The Next proxy injects the key server-side.
 """

@@ -6,22 +6,22 @@ Run (dev):
     uv run --with-requirements backend/requirements.txt uvicorn backend.main:app --reload
 
 Endpoints:
-    GET  /health
-    GET  /cashflow/summary       aggregate dashboard payload (D-08)
-    GET  /cashflow/networth-history  composed monthly net-worth series, compute-on-read (NWH-02)
-    GET  /accounts
+    GET  /health                 the only open route (no ledger data); every other route requires the API key (Phase 40.1)
+    GET  /cashflow/summary       aggregate dashboard payload (D-08) (requires API key)
+    GET  /cashflow/networth-history  composed monthly net-worth series, compute-on-read (NWH-02) (requires API key)
+    GET  /accounts               (requires API key)
     POST /accounts               create an account (requires API key)
     PUT  /accounts/{id}          edit an account (requires API key)
     DELETE /accounts/{id}        delete (reassign-then-delete via ?reassign_to=) (requires API key)
-    GET  /transactions?limit=50
+    GET  /transactions?limit=50  (requires API key)
     POST /transactions          create one (logs new spending)
     PUT  /transactions/{id}     partial-update a transaction (requires API key)
     DELETE /transactions/{id}   delete a transaction (requires API key)
-    GET  /categories            category tree, tx_count + effective color, ?kind= filter (public)
+    GET  /categories            category tree, tx_count + effective color, ?kind= filter (requires API key)
     POST /categories            create a category (requires API key)
     PUT  /categories/{id}       edit a category (requires API key)
     DELETE /categories/{id}     delete (reassign-then-delete via ?reassign_to=) (requires API key)
-    GET  /categories/{name}/affected-count  tx count for a category + its descendants (public)
+    GET  /categories/{name}/affected-count  tx count for a category + its descendants (requires API key)
     POST /categories/rename     rename a category (single-row, D-11) (requires API key)
     POST /categories/merge      merge one category into another (requires API key)
     PUT  /portfolio-events/{id}  edit a buy/sell/dividend event + its cash leg (requires API key)
@@ -38,12 +38,12 @@ Endpoints:
     POST /threads/{id}/compact  summarise the older turns now, 409 while a run or compaction is active (requires API key)
     POST /threads/{id}/clear    hide every turn from the prompt and drop the summary, 409 while a run or compaction is active (requires API key)
     GET  /threads/{id}/stream   re-attach to the active or last-finished run (requires API key)
-    GET  /proposals             list pending proposals, lazy expiry first (public)
-    GET  /proposals/counts      {"pending": N} after lazy expiry (public)
+    GET  /proposals             list pending proposals, lazy expiry first (requires API key)
+    GET  /proposals/counts      {"pending": N} after lazy expiry (requires API key)
     POST /proposals/{id}/confirm  apply a pending chat proposal by token (requires API key)
     POST /proposals/{id}/approve  apply any pending proposal, any channel (requires MONAI_APPROVER_KEY)
     POST /proposals/{id}/reject   reject a pending proposal (API key: chat only; MONAI_APPROVER_KEY: any channel)
-    GET  /settings              effective settings, keys masked (public)
+    GET  /settings              effective settings, keys masked (requires API key)
     PUT  /settings              partial-update settings (requires API key)
 """
 
@@ -313,7 +313,7 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/accounts", response_model=list[AccountOut])
+@app.get("/accounts", response_model=list[AccountOut], dependencies=[Depends(require_api_key)])
 def list_accounts(db: Session = Depends(get_session)):
     return db.query(Account).order_by(Account.name).all()
 
@@ -421,11 +421,11 @@ def delete_account(
 
 # ---------------------------------------------------------------------------
 # Platforms (D-12) — managed investment-platform entity, mirrors /accounts.
-# GET is an open read; every write route requires the API key (T-05-02-AC).
+# Every route requires the API key except /health (Phase 40.1; keyed reads).
 # ---------------------------------------------------------------------------
 
 
-@app.get("/platforms", response_model=list[PlatformOut])
+@app.get("/platforms", response_model=list[PlatformOut], dependencies=[Depends(require_api_key)])
 def list_platforms(db: Session = Depends(get_session)):
     return db.query(Platform).order_by(Platform.name).all()
 
@@ -509,9 +509,9 @@ def delete_platform(
     return {"status": "deleted", "reassigned": reassigned}
 
 
-@app.get("/platforms/{platform_id}/detail")
+@app.get("/platforms/{platform_id}/detail", dependencies=[Depends(require_api_key)])
 def platform_detail(platform_id: int, db: Session = Depends(get_session)):
-    """Scoped PnL detail for one platform (PLAT-01/D-05) — open read.
+    """Scoped PnL detail for one platform (PLAT-01/D-05) — keyed read.
 
     Reuses portfolio.portfolio_summary(db)'s existing per-platform group dict
     (subtotal + holdings with realized_pnl/unrealized_pnl/current_value) — no
@@ -538,7 +538,7 @@ def platform_detail(platform_id: int, db: Session = Depends(get_session)):
 # ---------------------------------------------------------------------------
 # Investments (INV-01/06/07) — event ledger + direct holding override + summary.
 # Every write route requires the API key (T-05-03-AC); GET /investments/summary
-# is an open read composing holdings + price_cache + portfolio.py calculators.
+# is a keyed read composing holdings + price_cache + portfolio.py calculators.
 # ---------------------------------------------------------------------------
 
 
@@ -562,10 +562,10 @@ def create_portfolio_event(payload: PortfolioEventCreate, db: Session = Depends(
     return ev
 
 
-@app.get("/portfolio-events", response_model=list[PortfolioEventOut])
+@app.get("/portfolio-events", response_model=list[PortfolioEventOut], dependencies=[Depends(require_api_key)])
 def list_portfolio_events(platform_id: int, db: Session = Depends(get_session)):
     """One platform's buy/sell/dividend event ledger, date-desc (PLAT-01/D-05)
-    — open read. Reuses PortfolioEventOut directly, no new DTO. Not
+    — keyed read. Reuses PortfolioEventOut directly, no new DTO. Not
     registered in backend/tools.py TOOLS (D-05 — kept off the agent/MCP surface).
     """
     rows = (
@@ -753,9 +753,9 @@ def delete_holding(holding_id: int, db: Session = Depends(get_session)):
     return {"status": "deleted"}
 
 
-@app.get("/investments/summary", response_model=PortfolioSummary)
+@app.get("/investments/summary", response_model=PortfolioSummary, dependencies=[Depends(require_api_key)])
 def investments_summary(db: Session = Depends(get_session)):
-    """Composed portfolio payload (D-05, INV-06) — open read.
+    """Composed portfolio payload (D-05, INV-06) — keyed read.
 
     Reads every holding, joins the latest price_cache price per ticker, and
     hands them to portfolio.py's pure calculators: platform-grouped holdings
@@ -772,9 +772,9 @@ def investments_summary(db: Session = Depends(get_session)):
     return compose_portfolio_summary(db)
 
 
-@app.get("/investments/history", response_model=ValueHistoryResponse)
+@app.get("/investments/history", response_model=ValueHistoryResponse, dependencies=[Depends(require_api_key)])
 def investments_history(range: str = "All", db: Session = Depends(get_session)):
-    """Daily portfolio value + P&L series (VZ-02, INVX-01) — open read.
+    """Daily portfolio value + P&L series (VZ-02, INVX-01) — keyed read.
 
     Reads the already-populated portfolio_value_history (D-13/D-14); makes NO
     fx.get_rate call. range accepts 1M/3M/6M/All; an unrecognized token maps
@@ -830,7 +830,7 @@ def override_price(payload: PriceOverrideRequest, db: Session = Depends(get_sess
 _NON_PAIR_TRANSFER_CATEGORIES = ("Adjustment", "Investment")
 
 
-@app.get("/transactions", response_model=list[TransactionOut])
+@app.get("/transactions", response_model=list[TransactionOut], dependencies=[Depends(require_api_key)])
 def list_transactions(
     q: str | None = None,
     account_id: int | None = None,
@@ -846,7 +846,7 @@ def list_transactions(
     offset: int = 0,
     db: Session = Depends(get_session),
 ):
-    """Filtered, paged transaction ledger (D-01/D-02, REC-01/02/05) — open read.
+    """Filtered, paged transaction ledger (D-01/D-02, REC-01/02/05) — keyed read.
 
     Every param is one parameterized `.filter()` — never string-built SQL
     (T-17-04). `category` resolves a parent/group name to its node + all
@@ -976,7 +976,7 @@ def _category_rollup(db: Session, rows: list, children: dict) -> list[dict]:
     return result
 
 
-@app.get("/cashflow/summary", response_model=CashflowSummary)
+@app.get("/cashflow/summary", response_model=CashflowSummary, dependencies=[Depends(require_api_key)])
 def cashflow_summary(
     period: str = "this_month",
     start_date: str | None = None,
@@ -988,7 +988,7 @@ def cashflow_summary(
     Resolves the period exactly once and composes existing tools.py
     aggregations + account_balances/monthly_trend (Plan 02). trend always
     covers >=6 months regardless of the selected period (Pitfall 4). This is
-    an open read (no require_api_key), matching existing GET reads.
+    a keyed read (require_api_key, Phase 40.1).
     """
     try:
         s, e = resolve_period(period, start_date, end_date)
@@ -1009,9 +1009,9 @@ def cashflow_summary(
     return CashflowSummary(totals=totals, by_category=by_category, accounts=accounts, trend=trend)
 
 
-@app.get("/net-worth", response_model=NetWorth)
+@app.get("/net-worth", response_model=NetWorth, dependencies=[Depends(require_api_key)])
 def net_worth_endpoint(db: Session = Depends(get_session)):
-    """Composed net-worth payload (D-01/D-02/D-05, NW-01/NW-02) — open read.
+    """Composed net-worth payload (D-01/D-02/D-05, NW-01/NW-02) — keyed read.
 
     liquid side = account_balances() filtered to type='liquid'; investment
     side = portfolio_summary(db).total_value. The coverage-assertion
@@ -1025,9 +1025,9 @@ def net_worth_endpoint(db: Session = Depends(get_session)):
     return NetWorth(**result)
 
 
-@app.get("/cashflow/networth-history", response_model=NetWorthHistoryResponse)
+@app.get("/cashflow/networth-history", response_model=NetWorthHistoryResponse, dependencies=[Depends(require_api_key)])
 def networth_history_endpoint(months: int = 72, db: Session = Depends(get_session)):
-    """Composed monthly net-worth series (NWH-02) — open read, computes on read.
+    """Composed monthly net-worth series (NWH-02) — keyed read, computes on read.
 
     Nothing is persisted (D-03): every call re-composes Phase 20's liquid
     series and Phase 21's investment series fresh from one session. Every
@@ -1273,9 +1273,9 @@ def create_investment_transfer(payload: InvestmentTransferCreate, db: Session = 
     return {"transaction_id": tx.id, "portfolio_event_id": ev.id}
 
 
-@app.get("/categories", response_model=list[CategoryNode])
+@app.get("/categories", response_model=list[CategoryNode], dependencies=[Depends(require_api_key)])
 def list_categories(kind: str | None = None, db: Session = Depends(get_session)):
-    """Category tree (open read, CAT-01): per-node tx_count is the node's
+    """Category tree (keyed read, CAT-01): per-node tx_count is the node's
     OWN direct transaction count only (NOT summed into ancestors — that
     rollup lives in tools.py's spending_by_category for the chat/cashflow
     aggregates, not here); `color` is the row's own value, `effective_color`
@@ -1432,9 +1432,9 @@ def delete_category(category_id: int, reassign_to: int | None = None, db: Sessio
     return {"status": "deleted", "reassigned": reassigned}
 
 
-@app.get("/categories/{name}/affected-count", response_model=AffectedCountResponse)
+@app.get("/categories/{name}/affected-count", response_model=AffectedCountResponse, dependencies=[Depends(require_api_key)])
 def category_affected_count(name: str, db: Session = Depends(get_session)):
-    """Count of transactions in a category AND its descendants (open read,
+    """Count of transactions in a category AND its descendants (keyed read,
     D-09). Unknown name -> 0 (matches the pre-hierarchy endpoint's behavior
     of never 404ing on a read)."""
     row = db.execute(text("SELECT id FROM categories WHERE name = :name LIMIT 1"), {"name": name}).first()
@@ -1484,7 +1484,7 @@ def merge_category(req: CategoryMergeRequest, db: Session = Depends(get_session)
     return {"from_name": req.from_name, "into_name": req.into_name, "affected_count": count}
 
 
-@app.get("/settings", response_model=SettingsOut)
+@app.get("/settings", response_model=SettingsOut, dependencies=[Depends(require_api_key)])
 def read_settings(db: Session = Depends(get_session)):
     """Effective settings (DB overrides env defaults). Public — keys masked (UI-03)."""
     return get_effective_settings(db)
@@ -1823,7 +1823,7 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
 # Proposal endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/proposals")
+@app.get("/proposals", dependencies=[Depends(require_api_key)])
 def list_proposals(
     status: str = "pending",
     is_approver: bool = Depends(optional_approver),
@@ -1863,7 +1863,7 @@ def list_proposals(
 
 # Must stay above any GET route with a path parameter under /proposals so the
 # literal path wins (D-21).
-@app.get("/proposals/counts")
+@app.get("/proposals/counts", dependencies=[Depends(require_api_key)])
 def proposal_counts(db: Session = Depends(get_session)) -> dict[str, int]:
     """Pending proposal count for the sidebar badge, after lazy expiry. Public."""
     expire_stale(db)
