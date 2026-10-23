@@ -86,7 +86,8 @@ const fromInbox = (incoming: Headers) => incoming.get("x-monai-surface") === "in
  * is unit-tested: the API key is always set, the incoming Host is dropped, any
  * client-supplied approver header is deleted BEFORE the server's key is set, and
  * the key is attached only when it is non-empty, the Inbox sent the request,
- * the request is a local same-origin one, and it is allowlisted.
+ * the request is a local same-origin one, and it is allowlisted. The incoming
+ * Authorization header (the UI Basic password) is dropped, never forwarded.
  */
 export function buildForwardHeaders(
   incoming: Headers,
@@ -103,6 +104,8 @@ export function buildForwardHeaders(
   // Node's fetch (undici) throws on an Expect header, which curl adds to bodies
   // over 1 MB; the proxy already holds the whole body, so drop it (else a 502).
   headers.delete("expect");
+  // The browser's Basic credential is the UI password; it must never reach the backend.
+  headers.delete("authorization");
   // A client-supplied approver header is never forwarded (D-03, T-33-01).
   headers.delete("MONAI_APPROVER_KEY");
   if (
