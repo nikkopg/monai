@@ -84,6 +84,18 @@ def _mask_url(url: str | None) -> str | None:
     return urlunsplit(parts._replace(query=MASK)) if parts.query else url
 
 
+def _merge_url(old: str | None, new: str) -> str:
+    """A masked query sent back keeps the stored one, but only for the same address:
+    the stored secret never goes to a new host or path (D-04, CR-03)."""
+    parts = urlsplit(new)
+    if parts.query != MASK:
+        return new
+    was = urlsplit(old or "")
+    if not was.query or (parts.scheme, parts.netloc, parts.path) != (was.scheme, was.netloc, was.path):
+        raise ValueError("Enter the URL query again: the stored one is kept only for the same address.")
+    return urlunsplit(parts._replace(query=was.query))
+
+
 def _out(row: McpServer) -> dict:
     return {
         "id": row.id, "slug": row.slug, "transport": row.transport,
@@ -151,7 +163,7 @@ def update_server(server_id: uuid.UUID, body: McpServerUpdate, db: Session = Dep
     row = _get(db, server_id)
     before = _audit_view(row)
     try:
-        url = body.url if body.url is not None else row.url
+        url = _merge_url(row.url, body.url) if body.url is not None else row.url
         command = body.command if body.command is not None else row.command
         args = list(body.args) if body.args is not None else list(row.args or [])
         headers = (_merge_secrets(row.headers or {}, body.headers)

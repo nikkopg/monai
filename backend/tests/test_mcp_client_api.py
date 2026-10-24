@@ -108,6 +108,24 @@ def test_mask_hides_every_secret_and_keeps_stored_ones(env):
     assert _row("zz-notes")["headers"] == {}
 
 
+def test_mask_url_query_round_trip_keeps_the_stored_secret(env):
+    """CR-03: GET then PUT the masked URL with a changed header keeps the stored query."""
+    sid = _add(env, _http()).json()["id"]
+    got = next(s for s in env.client.get("/mcp-servers", headers=env.h).json() if s["id"] == sid)
+    put = lambda body: env.client.put(f"/mcp-servers/{sid}", json=body, headers=env.h)  # noqa: E731
+    r = put({"url": got["url"], "headers": [{"name": "Authorization", "value": "Bearer zz-canary-secret-8888"}]})
+    assert r.status_code == 200 and C1 not in r.text
+    row = _row("zz-notes")
+    assert row["url"] == f"https://notes.example.com/mcp?token={C1}"
+    assert row["headers"] == {"Authorization": "Bearer zz-canary-secret-8888"}
+    # the mask never carries the stored query to another address
+    assert put({"url": "https://other.example.com/mcp?••••"}).status_code == 422
+    assert _row("zz-notes")["url"] == f"https://notes.example.com/mcp?token={C1}"
+    # a genuinely new query replaces it
+    assert put({"url": "https://notes.example.com/mcp?token=zz-canary-secret-7777"}).status_code == 200
+    assert _row("zz-notes")["url"] == "https://notes.example.com/mcp?token=zz-canary-secret-7777"
+
+
 def test_mask_stdio_env_values(env):
     sid = _add(env, _stdio()).json()["id"]
     got = next(s for s in env.client.get("/mcp-servers", headers=env.h).json() if s["id"] == sid)
