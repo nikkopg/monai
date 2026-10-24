@@ -141,15 +141,16 @@ async def test_second_call_reaches_the_server_only_when_its_row_was_approved(lab
     assert srv.CALLS == ([("send", {"text": "ZZLEDGER 123"})] if approve else [])
 
 
-async def test_taint_always_plus_a_ledger_read_asks_and_an_approval_clears_it(lab):
+async def test_taint_always_plus_a_parallel_ledger_read_asks_and_an_approval_does_not_clear_it(lab):
+    """The read runs in the same step as both sends, so it is still in flight when the first
+    send's approval snapshot is taken: that approval cannot cover it (CR-01)."""
     await lab.env.add(policies={"send": "always"})
     q1 = (f'CALL spending_total {{"period": "this_month"}} CALL {SEND} {{"text": "ZZ one"}} '
           f'CALL {SEND} {{"text": "ZZ two"}}')
     events, _ = await lab.turn(q1, owner=lambda card: True)
-    first, second = lab.rows("send")
-    assert (first["approval"], first["decided_via"], first["reason"]) == ("approved", "user", "ledger_read")
-    assert (second["approval"], second["decided_via"], second["reason"]) == ("approved", "policy", None)
-    assert len(_of_type(events, "approval_required")) == 1  # the later Always send showed no card
+    assert [(r["approval"], r["decided_via"], r["reason"]) for r in lab.rows("send")] == \
+        [("approved", "user", "ledger_read")] * 2
+    assert len(_of_type(events, "approval_required")) == 2
     assert sorted(a["text"] for _, a in srv.CALLS) == ["ZZ one", "ZZ two"]
 
 

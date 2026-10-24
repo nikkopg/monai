@@ -439,6 +439,40 @@ async def test_taint_a_read_during_a_pending_card_is_not_cleared_by_its_approval
     await asyncio.wait_for(task, 1)
 
 
+async def test_taint_a_parallel_read_finishing_after_the_card_is_not_cleared(th, conn):
+    """CR-01: one step runs a ledger read and an Ask call concurrently; the read started
+    before the card but finishes after it, so the card's approval must not clear it."""
+    import threading
+
+    conn.policies = {"echo": "ask"}
+    turn = query.Turn()
+    turn.events = []
+    turn.emit = turn.events.append
+    turn.of = lambda kind: [e for e in turn.events if e["type"] == kind]
+    gate = threading.Event()
+    read = query._llm_tool("list_categories", lambda: gate.wait(3) and {"tool": "list_categories"})
+    token = query.TURN.set(turn)
+    try:
+        reading = asyncio.create_task(read.acall())
+        await asyncio.sleep(0.05)  # the read is running, not finished
+        task = _start(turn, conn, th, args={"text": "ZZone"})
+        await _until(lambda: turn.of("approval_required"))
+        gate.set()
+        await asyncio.wait_for(reading, 3)
+        await _answer(turn, th, True)
+        assert (await asyncio.wait_for(task, 1))["receipt"] == "confirmed"
+        assert turn.ledger_touched is True
+        conn.policies = {"echo": "always"}
+        task = _start(turn, conn, th, args={"text": "ZZtwo"})
+        await _until(lambda: len(turn.of("approval_required")) == 2)
+        assert turn.of("approval_required")[1]["reason"] == "ledger_read"
+        await _answer(turn, th, False, n=1)
+        await asyncio.wait_for(task, 1)
+    finally:
+        gate.set()
+        query.TURN.reset(token)
+
+
 async def test_taint_a_denial_keeps_it(th, conn):
     conn.policies = {"echo": "always"}
     turn = FakeTurn(touched=True)

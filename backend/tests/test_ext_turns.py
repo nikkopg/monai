@@ -45,6 +45,15 @@ async def test_taint_read_tool_touches_the_ledger():
     assert turn.ledger_touched is True and turn.ledger_seq == 1
 
 
+async def test_taint_counts_on_finish_even_when_the_tool_raises():
+    turn = q.Turn()
+    q.TURN.set(turn)
+    tool = q._llm_tool("list_categories", lambda: 1 / 0)
+    with pytest.raises(ZeroDivisionError):
+        await tool.async_fn()
+    assert (turn.ledger_running, turn.ledger_seq, turn.ledger_touched) == (0, 1, True)
+
+
 async def test_taint_load_skill_is_exempt():
     turn = q.Turn()
     q.TURN.set(turn)

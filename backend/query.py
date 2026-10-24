@@ -182,9 +182,10 @@ class Turn:
     The rest serves external MCP calls (Phase 41). hold_idle/release_idle
     suspend the producer's idle watchdog while an approval card waits, so the
     approval TTL bounds the wait instead (D-15, A-03). `ledger_seq` counts the
-    ledger tool calls this turn made (reads included, D-19); `ledger_cleared`
-    is the count an owner approval has covered, so `ledger_touched` stays true
-    for a read that landed during the approval (A-07). `emit` puts an SSE event
+    ledger tool calls this turn finished (reads included, D-19) and
+    `ledger_running` the ones still in flight; `ledger_cleared` is the count an
+    owner approval has covered, so `ledger_touched` stays true for a read that
+    was running or landed during the approval (A-07, CR-01). `emit` puts an SSE event
     on the run's stream; agent_stream replaces the no-op default.
     Created inside the running loop, never at import.
     """
@@ -196,12 +197,13 @@ class Turn:
         self.idle = 0.0
         self.holds = 0
         self.ledger_seq = 0
+        self.ledger_running = 0
         self.ledger_cleared = 0
         self.emit = lambda payload: None
 
     @property
     def ledger_touched(self) -> bool:
-        return self.ledger_seq > self.ledger_cleared
+        return self.ledger_running > 0 or self.ledger_seq > self.ledger_cleared
 
     def hold_idle(self) -> None:
         self.holds += 1
@@ -262,17 +264,26 @@ def _llm_tool(name: str, fn):
     @functools.wraps(fn)
     async def hidden(*args, **kwargs):
         t = TURN.get()
-        if t is not None and name != "load_skill":
-            t.ledger_seq += 1  # taint for external Always tools, reads included (D-19)
-        turn = t if write else None
-        if turn is None:
-            return _strip_token(await asyncio.to_thread(fn, *args, **kwargs))
-        async with turn.lock:
-            key = _call_key(name, kwargs)
-            if key not in turn.seen:
-                turn.seen[key] = _strip_token(await asyncio.to_thread(fn, *args, **kwargs))
-                return turn.seen[key]
-            first = turn.seen[key]
+        ledger = t is not None and name != "load_skill"
+        if ledger:
+            t.ledger_running += 1
+        try:
+            turn = t if write else None
+            if turn is None:
+                return _strip_token(await asyncio.to_thread(fn, *args, **kwargs))
+            async with turn.lock:
+                key = _call_key(name, kwargs)
+                if key not in turn.seen:
+                    turn.seen[key] = _strip_token(await asyncio.to_thread(fn, *args, **kwargs))
+                    return turn.seen[key]
+                first = turn.seen[key]
+        finally:
+            # Taint for external Always tools, reads included (D-19): it holds while the call
+            # runs and is counted once it finishes, so an approval snapshot taken before then
+            # never covers it (CR-01).
+            if ledger:
+                t.ledger_running -= 1
+                t.ledger_seq += 1
         if not isinstance(first, dict):
             return first
         # A replay is marked so the model cannot claim a second change (WR-02).

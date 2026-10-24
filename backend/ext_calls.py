@@ -334,8 +334,8 @@ async def _send(turn, conn, tool: str, call_id, args: dict, name: str, reopen: b
     return mcp_client.wrap_result(conn.slug, tool, res, "confirmed")
 
 
-async def _approve_and_send(turn, conn, tool: str, args: dict, name: str, thread_id, turn_id) -> dict:
-    seq = turn.ledger_seq  # reads that land during the wait are not covered by the approval
+async def _approve_and_send(turn, conn, tool: str, args: dict, name: str, thread_id, turn_id,
+                            seq: int) -> dict:
     decision, reason = effective(conn.policies.get(tool, "ask"), turn.ledger_touched)
     if decision == "deny":
         return _error(name, "this tool is turned off")
@@ -365,6 +365,9 @@ async def run_call(turn, conn, tool: str, args: dict, *, thread_id, turn_id) -> 
     """Validate, guard, serialise, ask or apply policy, wait on the stored decision, send
     the stored args, receipt the outcome. `turn` supplies lock, seen, ledger_touched, ledger_seq, ledger_cleared,
     emit, hold_idle and release_idle."""
+    # Before any await: an approval covers only the ledger reads finished by now. A read
+    # still running (or started later) counts when it finishes and keeps the taint (CR-01).
+    seq = turn.ledger_seq
     from backend.query import _call_key
 
     name = mcp_client.ext_name(conn.slug, tool)
@@ -381,6 +384,6 @@ async def run_call(turn, conn, tool: str, args: dict, *, thread_id, turn_id) -> 
         if key in turn.seen:
             return {**turn.seen[key], "duplicate_of_earlier_call": True,
                     "note": "identical call already made this turn; no second call was sent"}
-        result = await _approve_and_send(turn, conn, tool, args, name, thread_id, turn_id)
+        result = await _approve_and_send(turn, conn, tool, args, name, thread_id, turn_id, seq)
         turn.seen[key] = result
         return result
