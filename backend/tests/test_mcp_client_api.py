@@ -259,6 +259,34 @@ def test_enable_binds_to_the_hash_and_stores_the_reviewed_list(live):
     assert listed["enabled"] is True and listed["changed_count"] == 0
 
 
+def test_moving_an_enabled_server_disables_it_and_drops_its_review(live):
+    """WR-04: a new url, command or args needs Test and Enable again; policies stay."""
+    sid = _server(live)
+    assert _enable(live, sid, tools_hash=_test(live, sid).json()["tools_hash"]).status_code == 200
+    live.client.put(f"/mcp-servers/{sid}/tools/echo", json={"policy": "always"}, headers=live.h)
+    put = lambda body: live.client.put(f"/mcp-servers/{sid}", json=body, headers=live.h)  # noqa: E731
+    # a header change (masked URL sent back unchanged) keeps the approval
+    masked = "https://notes.example.com/mcp?••••"
+    assert put({"url": masked, "headers": [{"name": "Authorization", "value": "Bearer zz-x"}]}).status_code == 200
+    assert _state("zz-notes")["enabled"] is True
+    assert put({"url": "https://moved.example.com/mcp"}).status_code == 200
+    st = _state("zz-notes")
+    assert (st["enabled"], st["approved_tools"], st["changed_count"]) == (False, [], None)
+    assert st["tool_policies"] == {"echo": "always"}
+    assert _audit()[-1]["after"]["review_reset"] is True
+    # a stdio server whose package changes is reset the same way
+    lid = _add(live, _stdio()).json()["id"]
+    with SessionLocal() as db:
+        db.execute(text("UPDATE mcp_servers SET enabled = true, approved_tools = '[{\"name\": \"zz\"}]', "
+                        "changed_count = 0 WHERE id = :i"), {"i": lid})
+        db.commit()
+    r = live.client.put(f"/mcp-servers/{lid}", headers=live.h,
+                        json={"args": ["@example/notes-mcp@9.9.9"], "acknowledged_local_read": True})
+    assert r.status_code == 200
+    st = _state("zz-local")
+    assert (st["enabled"], st["approved_tools"], st["changed_count"]) == (False, [], None)
+
+
 def test_hash_mismatch_is_409_and_stores_nothing(live):
     sid = _server(live)
     old = _test(live, sid).json()["tools_hash"]

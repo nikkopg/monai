@@ -176,11 +176,18 @@ def update_server(server_id: uuid.UUID, body: McpServerUpdate, db: Session = Dep
     ack_needed = row.transport == "stdio" and (command != row.command or args != list(row.args or []))
     if ack_needed and not body.acknowledged_local_read:
         raise HTTPException(422, "Tick the acknowledgement to change a local command.")
+    # A new destination or package may serve the same tool definitions, so the old review
+    # no longer covers it: disable and drop the approved list until Test and Enable (D-09).
+    moved = (url, command, args) != (row.url, row.command, list(row.args or []))
     # New objects: in-place JSONB mutation is not tracked.
     row.url, row.command, row.args, row.headers, row.env = url, command, args, headers, env
+    if moved:
+        row.enabled, row.approved_tools, row.changed_count = False, [], None
     row.updated_at = datetime.now(timezone.utc)
-    db.add(AuditLog(entity="mcp_server", entity_id=None, operation="update", before=before,
-                    after=_audit_view(row, body.acknowledged_local_read if ack_needed else None)))
+    after = _audit_view(row, body.acknowledged_local_read if ack_needed else None)
+    if moved:
+        after["review_reset"] = True
+    db.add(AuditLog(entity="mcp_server", entity_id=None, operation="update", before=before, after=after))
     db.commit()
     return _out(row)
 
