@@ -212,14 +212,14 @@ def sweep_at_boot() -> None:
 def set_receipt(call_id, receipt: str, *, result_sha256: str | None = None,
                 result_bytes: int | None = None, error: str | None = None) -> None:
     """pending, then confirmed (hash and size of the result), failed (an error class) or
-    unknown. Confirmed and failed are audited in the same commit (D-21, D-22)."""
+    unknown. Confirmed, failed and unknown are audited in the same commit (D-21, D-22)."""
     with get_session_sync() as db:
         row = db.execute(
             text("UPDATE ext_calls SET receipt = :r, result_sha256 = :h, result_bytes = :b, error = :e "
                  "WHERE id = :id RETURNING server_slug, tool, args_sha256"),
             {"r": receipt, "h": result_sha256, "b": result_bytes, "e": error, "id": call_id},
         ).first()
-        if row is not None and receipt in ("confirmed", "failed"):
+        if row is not None and receipt in ("confirmed", "failed", "unknown"):
             _audit(db, receipt, row.server_slug, row.tool, row.args_sha256)
         db.commit()
 
@@ -250,11 +250,12 @@ def _error(name: str, message: str) -> dict:
     return {"tool": name, "external": True, "error": message}
 
 
-def _failed(name: str, slug: str, error_class: str) -> dict:
+def _failed(name: str, slug: str, error_class: str, receipt: str = "failed") -> dict:
     """What the model sees when a call did not succeed: it can never claim success (D-21).
-    Only a class name or fixed copy, never exception text (Pitfall 8)."""
+    Only a class name or fixed copy, never exception text (Pitfall 8). Receipt "unknown"
+    when the request may already have reached the server."""
     return {"tool": name, "source": f"external:{slug}", "external": True,
-            "label": "external, unverified", "receipt": "failed", "error": error_class}
+            "label": "external, unverified", "receipt": receipt, "error": error_class}
 
 
 def _guard_hit(args) -> bool:
@@ -323,9 +324,9 @@ async def _send(turn, conn, tool: str, call_id, args: dict, name: str, reopen: b
         with anyio.CancelScope(shield=True):
             await asyncio.to_thread(set_receipt, call_id, "unknown")
         raise
-    except Exception as e:
-        await _receipt(turn, call_id, "failed", error=type(e).__name__)
-        return _failed(name, conn.slug, type(e).__name__)
+    except Exception as e:  # a timeout or a dropped transport: the server may have acted (WR-02)
+        await _receipt(turn, call_id, "unknown", error=type(e).__name__)
+        return _failed(name, conn.slug, type(e).__name__, receipt="unknown")
     if res.is_error:
         await _receipt(turn, call_id, "failed", error="ToolError")
         return _failed(name, conn.slug, "ToolError")

@@ -572,12 +572,28 @@ async def test_receipt_failed_on_a_tool_error_result(th, conn):
     assert turn.of("ext_call")[-1]["error_class"] == "ToolError"
 
 
-async def test_receipt_failed_on_an_exception_keeps_only_the_class(th, conn):
+async def test_receipt_unknown_on_an_exception_keeps_only_the_class(th, conn):
+    """WR-02: an exception after the request went out (timeout, dropped transport) may have
+    let the server act, so the receipt is unknown, never failed."""
     conn.policies = {"echo": "always"}
     conn.client = Stub(RuntimeError("boom https://secret.example.com/x"))
     turn = FakeTurn()
     res = await _start(turn, conn, th)
-    assert res["error"] == "RuntimeError" and "secret.example.com" not in json.dumps(turn.events + [res])
+    assert (res["receipt"], res["error"]) == ("unknown", "RuntimeError")
+    assert "secret.example.com" not in json.dumps(turn.events + [res])
+    cid = uuid.UUID(turn.of("ext_call")[0]["call_id"])
+    assert (_row(cid).receipt, _row(cid).error) == ("unknown", "RuntimeError")
+    assert turn.of("ext_call")[-1] == {"type": "ext_call", "call_id": str(cid), "receipt": "unknown",
+                                       "error_class": "RuntimeError"}
+    assert [a.operation for a in _audits()][-1] == "unknown"
+
+
+async def test_receipt_unknown_on_a_call_timeout(th, conn, monkeypatch):
+    monkeypatch.setattr(config, "EXT_CALL_TIMEOUT_SECONDS", 0.2)
+    conn.policies = {"slow": "always"}
+    turn = FakeTurn()
+    res = await asyncio.wait_for(_start(turn, conn, th, "slow", {"seconds": 2}), 5)
+    assert res["receipt"] == "unknown" and "result" not in res
 
 
 async def test_receipt_cancel_during_the_call_is_unknown(th, conn):
