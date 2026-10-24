@@ -58,6 +58,39 @@ export function isLocalSameOrigin(incoming: Headers): boolean {
   return true;
 }
 
+const UPLOAD_PATH = new RegExp(`^threads/${UUID}/attachments$`);
+
+/**
+ * False for a cross-site POST to the attachment upload route (RESEARCH A3). The
+ * proxy injects MONAI_API_KEY on every request, so a foreign form post must not
+ * reach this route; the check runs before the body is read. Everything else is
+ * untouched (`/api/import` has the same gap, a recorded follow-up in 39-DESIGN).
+ */
+export function uploadOriginAllowed(method: string, path: string, incoming: Headers): boolean {
+  if (method.toUpperCase() !== "POST" || !UPLOAD_PATH.test(path)) return true;
+  return isLocalSameOrigin(incoming);
+}
+
+const EXT_SERVERS_PATH = /^mcp-servers(\/|$)/;
+const THREAD_SERVERS_PATH = new RegExp(`^threads/${UUID}/mcp-servers$`);
+const EXT_DECISION_PATH = new RegExp(`^threads/${UUID}/ext-calls/${UUID}$`);
+
+/**
+ * False for a cross-site request that would create or change an external MCP
+ * server (including its stdio command), a thread's server set, or an approval
+ * (PC-08). The proxy injects MONAI_API_KEY on every request, so a foreign page
+ * must not drive these routes with it; the check runs before the body is read.
+ * Reads (GET) and every unrelated path are untouched.
+ */
+export function extOriginAllowed(method: string, path: string, incoming: Headers): boolean {
+  const m = method.toUpperCase();
+  const guarded =
+    (m !== "GET" && EXT_SERVERS_PATH.test(path)) ||
+    (m === "PUT" && THREAD_SERVERS_PATH.test(path)) ||
+    (m === "POST" && EXT_DECISION_PATH.test(path));
+  return guarded ? isLocalSameOrigin(incoming) : true;
+}
+
 /**
  * Marker the Inbox sends on its own list/approve/reject/skip calls. Not a
  * secret (the allowlist and the same-origin check still apply); it only stops
@@ -73,7 +106,8 @@ const fromInbox = (incoming: Headers) => incoming.get("x-monai-surface") === "in
  * is unit-tested: the API key is always set, the incoming Host is dropped, any
  * client-supplied approver header is deleted BEFORE the server's key is set, and
  * the key is attached only when it is non-empty, the Inbox sent the request,
- * the request is a local same-origin one, and it is allowlisted.
+ * the request is a local same-origin one, and it is allowlisted. The incoming
+ * Authorization header (the UI Basic password) is dropped, never forwarded.
  */
 export function buildForwardHeaders(
   incoming: Headers,
@@ -87,6 +121,11 @@ export function buildForwardHeaders(
   headers.set("MONAI_API_KEY", apiKey);
   // The backend sees its own host, not the Next.js host.
   headers.delete("host");
+  // Node's fetch (undici) throws on an Expect header, which curl adds to bodies
+  // over 1 MB; the proxy already holds the whole body, so drop it (else a 502).
+  headers.delete("expect");
+  // The browser's Basic credential is the UI password; it must never reach the backend.
+  headers.delete("authorization");
   // A client-supplied approver header is never forwarded (D-03, T-33-01).
   headers.delete("MONAI_APPROVER_KEY");
   if (

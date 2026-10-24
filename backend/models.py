@@ -16,6 +16,9 @@ New tables (Phase 1 — consumed in Phase 2+5):
   - Holding       — current investment positions; quantity Numeric(28,8), avg_cost Numeric(18,2) (D-09)
   - PortfolioEvent — buy/sell/dividend history
   - PriceCache    — last known price; source='manual'|'coingecko'/etc (D-12)
+
+Phase 41 (migration 019, external MCP):
+  - McpServer, ThreadMcpServer, ExtCall
 """
 
 import uuid
@@ -29,6 +32,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    LargeBinary,
     Numeric,
     String,
     Text,
@@ -186,6 +190,9 @@ class Proposal(Base):
     the actual high-entropy confirm secret (D-11). Tokens are single-use
     and operation-scoped (enforced in Phase 2). `channel`, `supersedes_id`,
     `code`, `failed_attempts` and `status_changed_at` come from migration 015.
+    `turn_id` (the chat turn that created it, set from a ContextVar, D-12a) and
+    `message_id` (back-filled when the turn's assistant message is persisted)
+    come from migration 017; deleting a thread leaves the proposal row.
     """
 
     __tablename__ = "proposals"
@@ -222,6 +229,231 @@ class Proposal(Base):
     )
     # Every status change goes through backend/proposals.transition().
     status_changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
+    )
+    turn_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+
+
+class Thread(Base):
+    """One chat conversation (migration 017).
+
+    `summary` / `summary_upto_seq` are reserved for Phase 38 compaction and
+    unused until then. Deleting a thread cascades to its messages in the DB;
+    proposals survive (their message_id goes NULL).
+    """
+
+    __tablename__ = "threads"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    title: Mapped[str] = mapped_column(Text, server_default="", nullable=False)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary_upto_seq: Mapped[int] = mapped_column(
+        Integer, server_default="0", nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
+    )
+
+    messages: Mapped[list["Message"]] = relationship(
+        back_populates="thread",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="Message.seq",
+    )
+
+
+class Message(Base):
+    """One turn in a thread (migration 017): role user|assistant, status
+    complete|error|cancelled (CHECK-enforced), unique (thread_id, seq)."""
+
+    __tablename__ = "messages"
+    __table_args__ = (UniqueConstraint("thread_id", "seq", name="uq_messages_thread_seq"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("threads.id", ondelete="CASCADE"), nullable=False
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    content: Mapped[str] = mapped_column(Text, server_default="", nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), server_default="complete", nullable=False
+    )
+    # Never holds a proposal token or a tool result (D-11), and never a Decimal:
+    # JSON round-trip before insert (AuditLog hits the same serialisation limit).
+    parts: Mapped[dict] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
+    )
+
+    thread: Mapped["Thread"] = relationship(back_populates="messages")
+
+
+class Attachment(Base):
+    """A file attached to a chat thread (migration 018, Phase 39).
+
+    `raw` is purged after 7 days (backend/attachments.purge_expired sets it
+    NULL and stamps `purged_at`); `extracted_text`, `rows` and `meta` stay.
+    `rows` holds Decimal amounts as strings. Deleting the thread cascades;
+    deleting the message or account only NULLs the reference.
+    """
+
+    __tablename__ = "attachments"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("threads.id", ondelete="CASCADE"), nullable=False
+    )
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+    filename: Mapped[str] = mapped_column(Text, nullable=False)
+    mime: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    raw: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    extracted_text: Mapped[str] = mapped_column(Text, server_default="", nullable=False)
+    rows: Mapped[list] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb"), nullable=False
+    )
+    meta: Mapped[dict] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb"), nullable=False
+    )
+    parse_status: Mapped[str] = mapped_column(String(16), nullable=False)
+    parse_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
+    )
+    purged_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class McpServer(Base):
+    """An owner-registered external MCP server (migration 019, Phase 41). Off by default.
+
+    headers and env hold secrets: mask them on every read (settings.mask_key) and
+    never put them in audit_log, the model's context or an approval card (D-04).
+    approved_tools is the reviewed snapshot [{name, description, inputSchema,
+    sha256}] that Enable stores; tool_policies maps a tool name to ask, always or
+    deny, a missing key meaning ask; changed_count is a cache of the last-seen
+    count of new or changed tools (NULL until checked).
+    """
+
+    __tablename__ = "mcp_servers"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    slug: Mapped[str] = mapped_column(String(24), unique=True, nullable=False)
+    transport: Mapped[str] = mapped_column(String(8), nullable=False)
+    url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    headers: Mapped[dict] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb"), nullable=False
+    )
+    command: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    args: Mapped[list] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb"), nullable=False
+    )
+    env: Mapped[dict] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb"), nullable=False
+    )
+    enabled: Mapped[bool] = mapped_column(
+        Boolean, server_default=text("false"), nullable=False
+    )
+    approved_tools: Mapped[list] = mapped_column(
+        JSONB, server_default=text("'[]'::jsonb"), nullable=False
+    )
+    tool_policies: Mapped[dict] = mapped_column(
+        JSONB, server_default=text("'{}'::jsonb"), nullable=False
+    )
+    changed_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
+    )
+
+
+class ThreadMcpServer(Base):
+    """Which external MCP servers a thread uses (migration 019, Phase 41)."""
+
+    __tablename__ = "thread_mcp_servers"
+
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("threads.id", ondelete="CASCADE"), primary_key=True
+    )
+    server_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("mcp_servers.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+
+class ExtCall(Base):
+    """One external tool call: both the approval and the receipt (D-13, D-21).
+
+    args are what the owner saw and what is sent; only the result's sha256 and
+    size are kept, never the result (D-03). error holds an exception class or
+    fixed copy, never exception text.
+    """
+
+    __tablename__ = "ext_calls"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    thread_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("threads.id", ondelete="CASCADE"), nullable=False
+    )
+    turn_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("messages.id", ondelete="SET NULL"), nullable=True
+    )
+    server_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("mcp_servers.id", ondelete="SET NULL"), nullable=True
+    )
+    server_slug: Mapped[str] = mapped_column(String(24), nullable=False)
+    tool: Mapped[str] = mapped_column(Text, nullable=False)
+    args: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    args_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    destination: Mapped[str] = mapped_column(Text, nullable=False)
+    leaves_machine: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    reason: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    approval: Mapped[str] = mapped_column(
+        String(8), server_default="pending", nullable=False
+    )
+    decided_via: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    receipt: Mapped[str | None] = mapped_column(String(9), nullable=True)
+    result_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    result_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default="now()", nullable=False
     )
 
@@ -292,6 +524,13 @@ class PortfolioEvent(Base):
     # back to the liquid account that funded it.
     source_account_id: Mapped[int | None] = mapped_column(
         ForeignKey("accounts.id"), nullable=True, index=True,
+    )
+    # Migration 016: links a funded buy/sell to its cash-leg Transaction
+    # (source_account_id alone cannot identify the row). Unique: one cash row
+    # backs at most one event, so deleting an event can only remove its own.
+    transaction_id: Mapped[int | None] = mapped_column(
+        ForeignKey("transactions.id", ondelete="SET NULL"),
+        nullable=True, unique=True, index=True,
     )
 
 

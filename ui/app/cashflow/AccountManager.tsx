@@ -2,8 +2,9 @@
 
 import { useState } from "react";
 
-import { card, input, btn, label, tokens } from "../styles";
+import { card, input, btn, label } from "../styles";
 import { extractDetail } from "../lib/api";
+import RowMenu from "../components/RowMenu";
 import ConfirmDialog from "./ConfirmDialog";
 import AdjustBalanceModal from "./AdjustBalanceModal";
 
@@ -206,46 +207,29 @@ export default function AccountManager({ accounts, onChanged }: Props) {
                     </button>
                   </>
                 ) : (
-                  <>
-                    <span
-                      role="button"
-                      onClick={() => {
-                        setEditingId(a.id);
-                        setEditName(a.name);
-                      }}
-                      style={{ color: "#8b8474", cursor: "pointer", marginRight: 12, fontSize: 12 }}
-                    >
-                      Edit
-                    </span>
-                    {/* WR-04: only liquid accounts propagate to net_worth().
-                        WR-11: a real <button> is keyboard-operable (the span
-                        claimed role=button but had no tabIndex/onKeyDown) — the
-                        entry point to a balance-rewriting flow must be. */}
-                    {a.type === "liquid" && (
-                      <button
-                        type="button"
-                        onClick={() => setAdjustingAccount(a)}
-                        style={{
-                          background: "transparent",
-                          border: "none",
-                          padding: 0,
-                          color: tokens.color.muted3,
-                          cursor: "pointer",
-                          marginRight: 12,
-                          fontSize: 12,
-                        }}
-                      >
-                        Adjust balance
-                      </button>
-                    )}
-                    <span
-                      role="button"
-                      onClick={() => setDeleteFlow({ stage: "confirm", account: a })}
-                      style={{ color: "#b5503f", cursor: "pointer", fontSize: 12 }}
-                    >
-                      Delete
-                    </span>
-                  </>
+                  <RowMenu
+                    label={`Account options: ${a.name}`}
+                    items={[
+                      {
+                        label: "Edit",
+                        onSelect: () => {
+                          setEditingId(a.id);
+                          setEditName(a.name);
+                        },
+                      },
+                      // WR-04: only liquid accounts propagate to net_worth().
+                      // WR-11: menuitems are real <button>s, keyboard-operable;
+                      // this is the entry point to a balance-rewriting flow.
+                      ...(a.type === "liquid"
+                        ? [{ label: "Adjust balance", onSelect: () => setAdjustingAccount(a) }]
+                        : []),
+                      {
+                        label: "Delete",
+                        destructive: true,
+                        onSelect: () => setDeleteFlow({ stage: "confirm", account: a }),
+                      },
+                    ]}
+                  />
                 )}
               </td>
             </tr>

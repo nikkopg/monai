@@ -269,7 +269,7 @@ def test_summary_totals_shape(db_session):
 # Plan 03: GET /cashflow/summary HTTP endpoint (D-08, CASH-01/02/03)
 # ---------------------------------------------------------------------------
 
-def test_get_cashflow_summary_endpoint(client, db_session):
+def test_get_cashflow_summary_endpoint(client, db_session, authed):
     """GET /cashflow/summary returns 200 with totals/accounts/by_category/trend,
     trend has >=6 rows, accounts rows carry current_balance + period_net.
 
@@ -325,14 +325,17 @@ def test_get_cashflow_summary_endpoint(client, db_session):
             db_session.commit()
 
 
-def test_cashflow_summary_no_auth_required(client):
-    """GET /cashflow/summary is an open read — no API key needed (matches
-    existing GET /accounts, GET /transactions)."""
-    resp = client.get("/cashflow/summary?period=all_time")
+def test_cashflow_summary_requires_key(client, api_key):
+    """GET /cashflow/summary needs the API key since Phase 40.1 (it was an open
+    read before)."""
+    assert client.get("/cashflow/summary?period=all_time").status_code == 401
+    resp = client.get(
+        "/cashflow/summary?period=all_time", headers={"MONAI_API_KEY": api_key}
+    )
     assert resp.status_code == 200
 
 
-def test_cashflow_summary_by_category_is_hierarchy_rollup(client, db_session):
+def test_cashflow_summary_by_category_is_hierarchy_rollup(client, db_session, authed):
     """11-07/CAT-04: by_category entries are objects {id, name, color, icon,
     total, children: [...]}, sourced from the category hierarchy (not tuples),
     and no entry (root or child) is named Transfer (D-12)."""
@@ -420,7 +423,7 @@ def test_cashflow_summary_resolve_period_called_once():
 # the dashboard error state. These tests pin both halves of the fix.
 # ---------------------------------------------------------------------------
 
-def test_cashflow_summary_this_week_returns_200(client):
+def test_cashflow_summary_this_week_returns_200(client, authed):
     """period=this_week now resolves end-to-end through the endpoint (200)."""
     resp = client.get("/cashflow/summary?period=this_week")
     assert resp.status_code == 200, resp.text
@@ -428,7 +431,7 @@ def test_cashflow_summary_this_week_returns_200(client):
     assert set(("totals", "by_category", "accounts", "trend")) <= set(body.keys())
 
 
-def test_cashflow_summary_last_week_returns_200(client):
+def test_cashflow_summary_last_week_returns_200(client, authed):
     """period=last_week also resolves end-to-end (200)."""
     resp = client.get("/cashflow/summary?period=last_week")
     assert resp.status_code == 200, resp.text
@@ -436,7 +439,7 @@ def test_cashflow_summary_last_week_returns_200(client):
     assert set(("totals", "by_category", "accounts", "trend")) <= set(body.keys())
 
 
-def test_cashflow_summary_unknown_period_returns_422_not_500(client):
+def test_cashflow_summary_unknown_period_returns_422_not_500(client, authed):
     """An unrecognized period is a client error (422), never a raw 500, and the
     detail names the offending value."""
     resp = client.get("/cashflow/summary?period=fortnight")

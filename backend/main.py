@@ -6,43 +6,66 @@ Run (dev):
     uv run --with-requirements backend/requirements.txt uvicorn backend.main:app --reload
 
 Endpoints:
-    GET  /health
-    GET  /cashflow/summary       aggregate dashboard payload (D-08)
-    GET  /cashflow/networth-history  composed monthly net-worth series, compute-on-read (NWH-02)
-    GET  /accounts
+    GET  /health                 the only open route (no ledger data); every other route requires the API key (Phase 40.1)
+    GET  /cashflow/summary       aggregate dashboard payload (D-08) (requires API key)
+    GET  /cashflow/networth-history  composed monthly net-worth series, compute-on-read (NWH-02) (requires API key)
+    GET  /accounts               (requires API key)
     POST /accounts               create an account (requires API key)
     PUT  /accounts/{id}          edit an account (requires API key)
     DELETE /accounts/{id}        delete (reassign-then-delete via ?reassign_to=) (requires API key)
-    GET  /transactions?limit=50
+    GET  /transactions?limit=50  (requires API key)
     POST /transactions          create one (logs new spending)
     PUT  /transactions/{id}     partial-update a transaction (requires API key)
     DELETE /transactions/{id}   delete a transaction (requires API key)
-    GET  /categories            category tree, tx_count + effective color, ?kind= filter (public)
+    GET  /categories            category tree, tx_count + effective color, ?kind= filter (requires API key)
     POST /categories            create a category (requires API key)
     PUT  /categories/{id}       edit a category (requires API key)
     DELETE /categories/{id}     delete (reassign-then-delete via ?reassign_to=) (requires API key)
-    GET  /categories/{name}/affected-count  tx count for a category + its descendants (public)
+    GET  /categories/{name}/affected-count  tx count for a category + its descendants (requires API key)
     POST /categories/rename     rename a category (single-row, D-11) (requires API key)
     POST /categories/merge      merge one category into another (requires API key)
+    PUT  /portfolio-events/{id}  edit a buy/sell/dividend event + its cash leg (requires API key)
+    DELETE /portfolio-events/{id}  delete an event + its cash leg (requires API key)
     POST /import                multipart CSV upload (Wallet export)
-    POST /query-stream          streaming SSE agent response
-    GET  /proposals             list pending proposals, lazy expiry first (public)
-    GET  /proposals/counts      {"pending": N} after lazy expiry (public)
+    POST /threads/{id}/attachments  upload one CSV, PDF or image to a chat, parsed once in code; creates the thread if new (requires API key)
+    GET  /attachments/locality  {local, destination}: where an attached file would be sent (requires API key)
+    GET  /mcp-servers           list external MCP servers, secrets masked (requires API key)
+    POST /mcp-servers           add a server, created disabled; a local command needs acknowledged_local_read (requires API key)
+    PUT  /mcp-servers/{id}      edit a server; slug and transport are fixed (requires API key)
+    DELETE /mcp-servers/{id}    delete a server (requires API key)
+    POST /mcp-servers/{id}/test connect, list the tools and their review status; stores only changed_count (requires API key)
+    PUT  /mcp-servers/{id}/enabled  enable bound to the reviewed tools_hash, 409 if it changed; disable needs none (requires API key)
+    PUT  /mcp-servers/{id}/tools/{tool}  set one tool's policy: ask, always or deny (requires API key)
+    POST /threads/{id}/ext-calls/{call_id}  allow or deny a waiting external call; 409 if answered, expired or its turn ended (requires API key)
+    PUT  /threads/{id}/mcp-servers  set the thread's external servers, applies from the next turn (requires API key)
+    POST /query-stream          streaming SSE agent response; one run per thread, optional thread_id, 409 if busy (requires API key)
+    POST /query-stream/{run_id}/cancel  stop a run and reject its pending chat proposals (requires API key)
+    GET  /threads               list chat threads, newest first (requires API key)
+    GET  /threads/{id}          thread with messages and live proposal status (requires API key)
+    PATCH /threads/{id}         rename a thread (requires API key)
+    DELETE /threads/{id}        delete a thread, 409 while its run is active (requires API key)
+    POST /threads/{id}/compact  summarise the older turns now, 409 while a run or compaction is active (requires API key)
+    POST /threads/{id}/clear    hide every turn from the prompt and drop the summary, 409 while a run or compaction is active (requires API key)
+    GET  /threads/{id}/stream   re-attach to the active or last-finished run (requires API key)
+    GET  /proposals             list pending proposals, lazy expiry first (requires API key)
+    GET  /proposals/counts      {"pending": N} after lazy expiry (requires API key)
     POST /proposals/{id}/confirm  apply a pending chat proposal by token (requires API key)
     POST /proposals/{id}/approve  apply any pending proposal, any channel (requires MONAI_APPROVER_KEY)
     POST /proposals/{id}/reject   reject a pending proposal (API key: chat only; MONAI_APPROVER_KEY: any channel)
-    GET  /settings              effective settings, keys masked (public)
+    GET  /settings              effective settings, keys masked (requires API key)
     PUT  /settings              partial-update settings (requires API key)
 """
 
+import asyncio
 import copy
 import hmac
 import logging
+import re
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastmcp.utilities.lifespan import combine_lifespans
@@ -51,7 +74,11 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 
-from backend import auth
+from backend import auth, ext_calls
+from backend.attachments import MAX_UPLOAD_BYTES
+from backend.attachments_api import router as attachments_router
+from backend.skills_api import router as skills_router
+from backend.mcp_client_api import router as mcp_client_router
 from backend.auth import optional_approver, require_api_key, require_approver_key, require_reject_scope
 from backend.mcp_server import build_mcp
 from backend.db import get_session, get_session_sync
@@ -78,16 +105,19 @@ from backend.writes import (
     apply_delete_category,
     apply_delete_holding,
     apply_delete_platform,
+    apply_delete_portfolio_event,
     apply_delete_transaction,
     apply_delete_transaction_or_pair,
     apply_edit_account,
     apply_edit_category,
     apply_edit_holding,
     apply_edit_platform,
+    apply_edit_portfolio_event,
     apply_edit_transaction,
     apply_merge_category,
     apply_rename_category,
     apply_set_price,
+    _portfolio_event_snapshot,
     resolve_category_id,
 )
 from backend.schemas import (
@@ -121,6 +151,7 @@ from backend.schemas import (
     PlatformUpdate,
     PortfolioEventCreate,
     PortfolioEventOut,
+    PortfolioEventUpdate,
     PortfolioSummary,
     PriceOverrideRequest,
     ProposalApproverOut,
@@ -128,6 +159,9 @@ from backend.schemas import (
     QueryRequest,
     SettingsOut,
     SettingsUpdate,
+    ThreadDetailOut,
+    ThreadOut,
+    ThreadTitleUpdate,
     TransactionCreate,
     TransactionOut,
     TransactionUpdate,
@@ -155,6 +189,10 @@ from backend.settings import (
 )
 
 logging.basicConfig(level=logging.INFO)
+# httpx logs every request's full URL at INFO, and an external MCP URL may carry a
+# secret in its query (41 WR-01, D-04).
+for _name in ("httpx", "httpcore"):
+    logging.getLogger(_name).setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
@@ -196,6 +234,10 @@ async def lifespan(app: FastAPI):
     leader election (or an external scheduler) to avoid N duplicate snapshots.
     """
     _check_timezone(get_session_sync)
+    try:  # no external call survives a restart (PC-14); never blocks boot
+        ext_calls.sweep_at_boot()
+    except Exception as exc:
+        logger.warning("ext_calls boot sweep failed: %s", type(exc).__name__)
 
     from backend.scheduler import build_scheduler
 
@@ -260,7 +302,29 @@ async def mcp_api_key_guard(request: Request, call_next):
     return await call_next(request)
 
 
+_UPLOAD_PATH = re.compile(r"^/threads/[0-9a-fA-F-]{36}/attachments$")
+
+
+@app.middleware("http")
+async def upload_size_guard(request: Request, call_next):
+    """Refuse an oversize upload before FastAPI parses (and spools) the form (Phase 39 D-06a).
+
+    The handler re-checks `UploadFile.size` exactly; this only bounds the body
+    (file + 64 KiB of multipart envelope) so a huge request never reaches it.
+    """
+    if request.method == "POST" and _UPLOAD_PATH.match(request.url.path):
+        length = request.headers.get("content-length")
+        if length is None or not length.isdigit():
+            return JSONResponse({"detail": "Content-Length required"}, status_code=411)
+        if int(length) > MAX_UPLOAD_BYTES + 64 * 1024:
+            return JSONResponse({"detail": "File is larger than 10 MB"}, status_code=413)
+    return await call_next(request)
+
+
 app.mount("/mcp", mcp_app)
+app.include_router(attachments_router)
+app.include_router(skills_router)
+app.include_router(mcp_client_router)
 
 
 @app.get("/health")
@@ -268,7 +332,7 @@ def health():
     return {"status": "ok"}
 
 
-@app.get("/accounts", response_model=list[AccountOut])
+@app.get("/accounts", response_model=list[AccountOut], dependencies=[Depends(require_api_key)])
 def list_accounts(db: Session = Depends(get_session)):
     return db.query(Account).order_by(Account.name).all()
 
@@ -376,11 +440,11 @@ def delete_account(
 
 # ---------------------------------------------------------------------------
 # Platforms (D-12) — managed investment-platform entity, mirrors /accounts.
-# GET is an open read; every write route requires the API key (T-05-02-AC).
+# Every route requires the API key except /health (Phase 40.1; keyed reads).
 # ---------------------------------------------------------------------------
 
 
-@app.get("/platforms", response_model=list[PlatformOut])
+@app.get("/platforms", response_model=list[PlatformOut], dependencies=[Depends(require_api_key)])
 def list_platforms(db: Session = Depends(get_session)):
     return db.query(Platform).order_by(Platform.name).all()
 
@@ -464,9 +528,9 @@ def delete_platform(
     return {"status": "deleted", "reassigned": reassigned}
 
 
-@app.get("/platforms/{platform_id}/detail")
+@app.get("/platforms/{platform_id}/detail", dependencies=[Depends(require_api_key)])
 def platform_detail(platform_id: int, db: Session = Depends(get_session)):
-    """Scoped PnL detail for one platform (PLAT-01/D-05) — open read.
+    """Scoped PnL detail for one platform (PLAT-01/D-05) — keyed read.
 
     Reuses portfolio.portfolio_summary(db)'s existing per-platform group dict
     (subtotal + holdings with realized_pnl/unrealized_pnl/current_value) — no
@@ -493,7 +557,7 @@ def platform_detail(platform_id: int, db: Session = Depends(get_session)):
 # ---------------------------------------------------------------------------
 # Investments (INV-01/06/07) — event ledger + direct holding override + summary.
 # Every write route requires the API key (T-05-03-AC); GET /investments/summary
-# is an open read composing holdings + price_cache + portfolio.py calculators.
+# is a keyed read composing holdings + price_cache + portfolio.py calculators.
 # ---------------------------------------------------------------------------
 
 
@@ -517,18 +581,63 @@ def create_portfolio_event(payload: PortfolioEventCreate, db: Session = Depends(
     return ev
 
 
-@app.get("/portfolio-events", response_model=list[PortfolioEventOut])
+@app.get("/portfolio-events", response_model=list[PortfolioEventOut], dependencies=[Depends(require_api_key)])
 def list_portfolio_events(platform_id: int, db: Session = Depends(get_session)):
     """One platform's buy/sell/dividend event ledger, date-desc (PLAT-01/D-05)
-    — open read. Reuses PortfolioEventOut directly, no new DTO. Not
+    — keyed read. Reuses PortfolioEventOut directly, no new DTO. Not
     registered in backend/tools.py TOOLS (D-05 — kept off the agent/MCP surface).
     """
-    return (
-        db.query(PortfolioEvent)
+    rows = (
+        db.query(PortfolioEvent, Transaction.amount)
+        .outerjoin(Transaction, Transaction.id == PortfolioEvent.transaction_id)
         .filter(PortfolioEvent.platform_id == platform_id)
         .order_by(desc(PortfolioEvent.date))
         .all()
     )
+    out = []
+    for ev, amount in rows:
+        item = PortfolioEventOut.model_validate(ev)
+        item.cash_amount = abs(amount) if amount is not None else None
+        out.append(item)
+    return out
+
+
+@app.put("/portfolio-events/{event_id}", response_model=PortfolioEventOut, dependencies=[Depends(require_api_key)])
+def update_portfolio_event(event_id: int, payload: PortfolioEventUpdate, db: Session = Depends(get_session)):
+    """Partial-update a buy/sell/dividend event; its linked cash leg and the holding follow."""
+    ev = db.get(PortfolioEvent, event_id)
+    if ev is None:
+        raise HTTPException(status_code=404, detail=f"Portfolio event {event_id} not found")
+    before = _portfolio_event_snapshot(ev)
+    after = payload.model_dump(mode="json", exclude_none=True)  # MoneyDecimal -> float, safe for AuditLog JSON
+    try:
+        apply_edit_portfolio_event(db, event_id, after, before)
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    db.refresh(ev)
+    from backend.query import reset_engine
+    reset_engine()
+    return ev
+
+
+@app.delete("/portfolio-events/{event_id}", dependencies=[Depends(require_api_key)])
+def delete_portfolio_event(event_id: int, db: Session = Depends(get_session)):
+    """Delete a buy/sell/dividend event (and its linked cash leg); the holding is recomputed."""
+    ev = db.get(PortfolioEvent, event_id)
+    if ev is None:
+        raise HTTPException(status_code=404, detail=f"Portfolio event {event_id} not found")
+    before = _portfolio_event_snapshot(ev)
+    try:
+        deleted_tx_id = apply_delete_portfolio_event(db, event_id, before)
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    from backend.query import reset_engine
+    reset_engine()
+    return {"status": "deleted", "id": event_id, "deleted_transaction_id": deleted_tx_id}
 
 
 @app.post("/portfolio-events/funded-buy", status_code=201, dependencies=[Depends(require_api_key)])
@@ -663,9 +772,9 @@ def delete_holding(holding_id: int, db: Session = Depends(get_session)):
     return {"status": "deleted"}
 
 
-@app.get("/investments/summary", response_model=PortfolioSummary)
+@app.get("/investments/summary", response_model=PortfolioSummary, dependencies=[Depends(require_api_key)])
 def investments_summary(db: Session = Depends(get_session)):
-    """Composed portfolio payload (D-05, INV-06) — open read.
+    """Composed portfolio payload (D-05, INV-06) — keyed read.
 
     Reads every holding, joins the latest price_cache price per ticker, and
     hands them to portfolio.py's pure calculators: platform-grouped holdings
@@ -682,9 +791,9 @@ def investments_summary(db: Session = Depends(get_session)):
     return compose_portfolio_summary(db)
 
 
-@app.get("/investments/history", response_model=ValueHistoryResponse)
+@app.get("/investments/history", response_model=ValueHistoryResponse, dependencies=[Depends(require_api_key)])
 def investments_history(range: str = "All", db: Session = Depends(get_session)):
-    """Daily portfolio value + P&L series (VZ-02, INVX-01) — open read.
+    """Daily portfolio value + P&L series (VZ-02, INVX-01) — keyed read.
 
     Reads the already-populated portfolio_value_history (D-13/D-14); makes NO
     fx.get_rate call. range accepts 1M/3M/6M/All; an unrecognized token maps
@@ -740,7 +849,7 @@ def override_price(payload: PriceOverrideRequest, db: Session = Depends(get_sess
 _NON_PAIR_TRANSFER_CATEGORIES = ("Adjustment", "Investment")
 
 
-@app.get("/transactions", response_model=list[TransactionOut])
+@app.get("/transactions", response_model=list[TransactionOut], dependencies=[Depends(require_api_key)])
 def list_transactions(
     q: str | None = None,
     account_id: int | None = None,
@@ -749,13 +858,14 @@ def list_transactions(
     amount_min: float | None = None,
     amount_max: float | None = None,
     include_transfers: bool = True,
+    cashflow: bool = False,
     date_from: str | None = None,
     date_to: str | None = None,
     limit: int = 50,
     offset: int = 0,
     db: Session = Depends(get_session),
 ):
-    """Filtered, paged transaction ledger (D-01/D-02, REC-01/02/05) — open read.
+    """Filtered, paged transaction ledger (D-01/D-02, REC-01/02/05) — keyed read.
 
     Every param is one parameterized `.filter()` — never string-built SQL
     (T-17-04). `category` resolves a parent/group name to its node + all
@@ -767,7 +877,11 @@ def list_transactions(
     unclassified is_transfer row that isn't one of the known Adjustment/
     Investment bookkeeping categories (see _NON_PAIR_TRANSFER_CATEGORIES).
     Still queries the base `transactions` table, NOT `cashflow_transactions`
-    (a full ledger must include investment-account rows). Hard-capped at 500
+    (a full ledger must include investment-account rows). `cashflow=true` is
+    the "cash-flow view": the rows the chat chip tools aggregate (is_transfer
+    false, investment-account rows excluded, NULL-account rows kept), added so
+    a source chip opens exactly the rows behind a quoted number (Phase 37
+    D-14a); the default false keeps the full-ledger semantics. Hard-capped at 500
     rows regardless of the requested `limit` (Pitfall 4) — the Records page
     pages via `offset`. Open read (no require_api_key), matching the
     unmodified endpoint's existing convention.
@@ -801,17 +915,28 @@ def list_transactions(
         query = query.filter(Transaction.transfer_pair_id.isnot(None))  # LOCKED: pair-id, not is_transfer (Pitfall 5)
     elif not include_transfers:
         query = query.filter(Transaction.is_transfer == False)
+    if cashflow:
+        # NOT EXISTS (via .has) keeps NULL-account rows, like the
+        # cashflow_transactions view does (T-12-02).
+        query = query.filter(
+            Transaction.is_transfer.is_(False),
+            ~Transaction.account.has(Account.type == "investment"),
+        )
     if amount_min is not None:
         query = query.filter(func.abs(Transaction.amount) >= amount_min)
     if amount_max is not None:
         query = query.filter(func.abs(Transaction.amount) <= amount_max)
-    if date_from:
-        query = query.filter(Transaction.date >= datetime.fromisoformat(date_from))
-    if date_to:
+    try:
+        start = datetime.fromisoformat(date_from) if date_from else None
+        end = datetime.fromisoformat(date_to) + timedelta(days=1) if date_to else None
+    except ValueError:
+        raise HTTPException(status_code=422, detail="date_from/date_to must be valid ISO dates")
+    if start is not None:
+        query = query.filter(Transaction.date >= start)
+    if end is not None:
         # date_to is an inclusive calendar day from the caller's POV — widen
         # to an exclusive upper bound so a same-day timestamp isn't dropped
         # (mirrors resolve_period's [start, end) convention).
-        end = datetime.fromisoformat(date_to) + timedelta(days=1)
         query = query.filter(Transaction.date < end)
     return (
         query.order_by(desc(Transaction.date))
@@ -870,7 +995,7 @@ def _category_rollup(db: Session, rows: list, children: dict) -> list[dict]:
     return result
 
 
-@app.get("/cashflow/summary", response_model=CashflowSummary)
+@app.get("/cashflow/summary", response_model=CashflowSummary, dependencies=[Depends(require_api_key)])
 def cashflow_summary(
     period: str = "this_month",
     start_date: str | None = None,
@@ -882,7 +1007,7 @@ def cashflow_summary(
     Resolves the period exactly once and composes existing tools.py
     aggregations + account_balances/monthly_trend (Plan 02). trend always
     covers >=6 months regardless of the selected period (Pitfall 4). This is
-    an open read (no require_api_key), matching existing GET reads.
+    a keyed read (require_api_key, Phase 40.1).
     """
     try:
         s, e = resolve_period(period, start_date, end_date)
@@ -903,9 +1028,9 @@ def cashflow_summary(
     return CashflowSummary(totals=totals, by_category=by_category, accounts=accounts, trend=trend)
 
 
-@app.get("/net-worth", response_model=NetWorth)
+@app.get("/net-worth", response_model=NetWorth, dependencies=[Depends(require_api_key)])
 def net_worth_endpoint(db: Session = Depends(get_session)):
-    """Composed net-worth payload (D-01/D-02/D-05, NW-01/NW-02) — open read.
+    """Composed net-worth payload (D-01/D-02/D-05, NW-01/NW-02) — keyed read.
 
     liquid side = account_balances() filtered to type='liquid'; investment
     side = portfolio_summary(db).total_value. The coverage-assertion
@@ -919,9 +1044,9 @@ def net_worth_endpoint(db: Session = Depends(get_session)):
     return NetWorth(**result)
 
 
-@app.get("/cashflow/networth-history", response_model=NetWorthHistoryResponse)
+@app.get("/cashflow/networth-history", response_model=NetWorthHistoryResponse, dependencies=[Depends(require_api_key)])
 def networth_history_endpoint(months: int = 72, db: Session = Depends(get_session)):
-    """Composed monthly net-worth series (NWH-02) — open read, computes on read.
+    """Composed monthly net-worth series (NWH-02) — keyed read, computes on read.
 
     Nothing is persisted (D-03): every call re-composes Phase 20's liquid
     series and Phase 21's investment series fresh from one session. Every
@@ -1167,9 +1292,9 @@ def create_investment_transfer(payload: InvestmentTransferCreate, db: Session = 
     return {"transaction_id": tx.id, "portfolio_event_id": ev.id}
 
 
-@app.get("/categories", response_model=list[CategoryNode])
+@app.get("/categories", response_model=list[CategoryNode], dependencies=[Depends(require_api_key)])
 def list_categories(kind: str | None = None, db: Session = Depends(get_session)):
-    """Category tree (open read, CAT-01): per-node tx_count is the node's
+    """Category tree (keyed read, CAT-01): per-node tx_count is the node's
     OWN direct transaction count only (NOT summed into ancestors — that
     rollup lives in tools.py's spending_by_category for the chat/cashflow
     aggregates, not here); `color` is the row's own value, `effective_color`
@@ -1326,9 +1451,9 @@ def delete_category(category_id: int, reassign_to: int | None = None, db: Sessio
     return {"status": "deleted", "reassigned": reassigned}
 
 
-@app.get("/categories/{name}/affected-count", response_model=AffectedCountResponse)
+@app.get("/categories/{name}/affected-count", response_model=AffectedCountResponse, dependencies=[Depends(require_api_key)])
 def category_affected_count(name: str, db: Session = Depends(get_session)):
-    """Count of transactions in a category AND its descendants (open read,
+    """Count of transactions in a category AND its descendants (keyed read,
     D-09). Unknown name -> 0 (matches the pre-hierarchy endpoint's behavior
     of never 404ing on a read)."""
     row = db.execute(text("SELECT id FROM categories WHERE name = :name LIMIT 1"), {"name": name}).first()
@@ -1378,7 +1503,7 @@ def merge_category(req: CategoryMergeRequest, db: Session = Depends(get_session)
     return {"from_name": req.from_name, "into_name": req.into_name, "affected_count": count}
 
 
-@app.get("/settings", response_model=SettingsOut)
+@app.get("/settings", response_model=SettingsOut, dependencies=[Depends(require_api_key)])
 def read_settings(db: Session = Depends(get_session)):
     """Effective settings (DB overrides env defaults). Public — keys masked (UI-03)."""
     return get_effective_settings(db)
@@ -1432,12 +1557,198 @@ async def import_csv(file: UploadFile = File(...), db: Session = Depends(get_ses
     return ImportResponse(parsed=parsed, inserted=inserted, skipped=skipped, currency=currency)
 
 
-@app.post("/query-stream")
+@app.post("/query-stream", dependencies=[Depends(require_api_key)])
 async def query_stream(req: QueryRequest):
-    """Stream agent reasoning as SSE events (CHAT-01, D-08)."""
-    from backend.query import agent_stream
+    """Stream agent reasoning as SSE events (CHAT-01, D-08).
+
+    One run per thread: no thread_id starts a new thread, an unknown id is 404,
+    a second request while the thread's run is active is 409 before any
+    streaming starts (D-05, D-16). The key is required (D-18, REL-08).
+    The run is server-owned: a detached pump drives it and this response is
+    only a subscriber, so a disconnect detaches and the turn runs on; only the
+    cancel route stops it (D-05, D-06). The stream opens with the thread event
+    then the run event.
+
+    `replace_from` (a user message id; regenerate and edit-and-resend, Phase 37
+    D-18) truncates the thread from that message: 409 when the thread's run is
+    active (checked first), 422 for a missing thread_id or a target that is not
+    a user message of the thread, 409 when a proposal on the removed turns was
+    already applied. Otherwise pending chat proposals there are superseded.
+
+    `attachment_ids` bind to this question; an id from another thread (or ids
+    without a thread_id) is 422 and nothing is stored (Phase 39 D-03).
+
+    `mcp_server_ids` choose the external MCP servers of a NEW thread; an unknown id
+    is 422 and nothing is stored. For an existing thread they are ignored (PC-03).
+    """
+    from backend import chat_service, query
+    try:
+        run = await chat_service.start_turn(
+            req.question, req.thread_id, req.replace_from, req.attachment_ids, req.mcp_server_ids
+        )
+    except LookupError:
+        raise HTTPException(404, "Thread not found")
+    except chat_service.ReplaceConflict:
+        raise HTTPException(409, "This answer's changes were already applied")
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    if run is None:
+        raise HTTPException(
+            status_code=409, detail="A run is already in progress for this conversation"
+        )
     return StreamingResponse(
-        agent_stream(req.question),
+        query.run_stream(run),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/query-stream/{run_id}/cancel", dependencies=[Depends(require_api_key)])
+async def cancel_query_stream(run_id: uuid.UUID):
+    """Stop a run and reject its still-pending chat proposals (D-08, D-09, D-11).
+
+    Works for the active run or the last-finished one (a Stop that lands just
+    after the answer still rejects, and flips the persisted answer to
+    cancelled so it is never replayed, D-06a). Only chat-channel pending
+    proposals are rejected, with no audit row, exactly like
+    POST /proposals/{id}/reject. The key is MONAI_API_KEY only: rejecting chat
+    proposals is already within that key's authority, so this adds none. The
+    approver allowlist is deliberately untouched. Unknown or superseded run id
+    is 404.
+    """
+    from backend import chat_service, query
+    run = query.find_run(str(run_id))
+    if run is None:
+        raise HTTPException(404, "Run not found")
+    rejected = await query.stop_run(run)
+    # stop_run sets `stopped` before its first await, so a message not yet
+    # persisted is written as cancelled; one already persisted is flipped here.
+    if run.assistant_message_id is not None:
+        await asyncio.to_thread(chat_service.mark_cancelled, run.assistant_message_id)
+    return {"rejected": rejected}
+
+
+def _thread_detail_sync(thread_id: uuid.UUID) -> dict | None:
+    from backend import chat_service
+    with get_session_sync() as db:
+        return chat_service.thread_detail(db, thread_id)
+
+
+def _delete_thread_sync(thread_id: uuid.UUID) -> bool:
+    from backend import chat_service
+    with get_session_sync() as db:
+        return chat_service.delete_thread(db, thread_id)
+
+
+@app.get("/threads", response_model=list[ThreadOut], dependencies=[Depends(require_api_key)])
+def list_threads(db: Session = Depends(get_session)):
+    """Threads newest first, capped at 200 (D-18). Key required even for GET."""
+    from backend import chat_service
+    return chat_service.list_threads(db)
+
+
+@app.get(
+    "/threads/{thread_id}",
+    response_model=ThreadDetailOut,
+    dependencies=[Depends(require_api_key)],
+)
+async def get_thread(thread_id: uuid.UUID):
+    """Messages in seq order with live proposal status and the active run, if any.
+
+    The response model has no token or code field (T-02-07, D-16).
+    """
+    from backend import query
+    # WR-08: registry first. A run that finished before this read has already
+    # persisted (persist precedes release), so the detail read below includes it.
+    run = query._ACTIVE.get(str(thread_id))
+    detail = await asyncio.to_thread(_thread_detail_sync, thread_id)
+    if detail is None:
+        raise HTTPException(404, "Thread not found")
+    detail["active_run"] = {"run_id": run.id} if run is not None else None
+    return detail
+
+
+@app.patch(
+    "/threads/{thread_id}",
+    response_model=ThreadOut,
+    dependencies=[Depends(require_api_key)],
+)
+def rename_thread(
+    thread_id: uuid.UUID, body: ThreadTitleUpdate, db: Session = Depends(get_session)
+):
+    from backend import chat_service
+    try:
+        out = chat_service.rename_thread(db, thread_id, body.title)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    if out is None:
+        raise HTTPException(404, "Thread not found")
+    return out
+
+
+@app.delete("/threads/{thread_id}", status_code=204, dependencies=[Depends(require_api_key)])
+async def delete_thread(thread_id: uuid.UUID):
+    """Delete a thread; messages cascade, proposals keep their rows (D-18)."""
+    from backend import query
+    if str(thread_id) in query._ACTIVE:
+        raise HTTPException(409, "A run is in progress for this thread; stop it first")
+    if not await asyncio.to_thread(_delete_thread_sync, thread_id):
+        raise HTTPException(404, "Thread not found")
+    query._LAST.pop(str(thread_id), None)  # WR-07: drop the deleted thread's replay buffer
+    return Response(status_code=204)
+
+
+COMPACT_TIMEOUT_SECONDS = 120  # bounds the whole multi-chunk /compact; each chunk is saved by its CAS write
+
+_THREAD_BUSY = "A run or compaction is in progress for this thread"
+
+
+@app.post("/threads/{thread_id}/compact", dependencies=[Depends(require_api_key)])
+async def compact_thread_route(thread_id: uuid.UUID):
+    """Summarise every complete pair after the boundary now (D-23). Returns flags only."""
+    from backend import chat_service
+    if chat_service.thread_busy(str(thread_id)):
+        raise HTTPException(409, _THREAD_BUSY)
+    try:
+        async with asyncio.timeout(COMPACT_TIMEOUT_SECONDS):
+            res = await chat_service.compact_thread(thread_id, everything=True)
+    except chat_service.ThreadBusy:
+        raise HTTPException(409, _THREAD_BUSY)
+    except Exception as e:  # fixed message: never the provider's text
+        logger.warning("compact failed: %s", type(e).__name__)
+        raise HTTPException(503, "Couldn't compact this chat right now. Try again later.")
+    if res is None:
+        raise HTTPException(404, "Thread not found")
+    return res
+
+
+@app.post("/threads/{thread_id}/clear", dependencies=[Depends(require_api_key)])
+async def clear_thread_route(thread_id: uuid.UUID):
+    """Start fresh without deleting: every message stays, none is replayed (D-24)."""
+    from backend import chat_service
+    if chat_service.thread_busy(str(thread_id)):
+        raise HTTPException(409, _THREAD_BUSY)
+    res = await asyncio.to_thread(chat_service.clear_thread, thread_id)
+    if res is None:
+        raise HTTPException(404, "Thread not found")
+    return res
+
+
+@app.get("/threads/{thread_id}/stream", dependencies=[Depends(require_api_key)])
+async def thread_stream(thread_id: uuid.UUID):
+    """Re-attach to the thread's active or last-finished run (D-07).
+
+    Any API-key holder (including MCP clients) can call this, so replay strips
+    every proposal token (D-08). A finished run is replayed from _LAST until the
+    thread's next run. 204 when there is none.
+    """
+    from backend import query
+    key = str(thread_id)
+    run = query._ACTIVE.get(key) or query._LAST.get(key)
+    if run is None:
+        return Response(status_code=204)
+    return StreamingResponse(
+        query.subscribe(run, redact=True),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
@@ -1534,7 +1845,7 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
 # Proposal endpoints
 # ---------------------------------------------------------------------------
 
-@app.get("/proposals")
+@app.get("/proposals", dependencies=[Depends(require_api_key)])
 def list_proposals(
     status: str = "pending",
     is_approver: bool = Depends(optional_approver),
@@ -1574,7 +1885,7 @@ def list_proposals(
 
 # Must stay above any GET route with a path parameter under /proposals so the
 # literal path wins (D-21).
-@app.get("/proposals/counts")
+@app.get("/proposals/counts", dependencies=[Depends(require_api_key)])
 def proposal_counts(db: Session = Depends(get_session)) -> dict[str, int]:
     """Pending proposal count for the sidebar badge, after lazy expiry. Public."""
     expire_stale(db)

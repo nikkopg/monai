@@ -30,10 +30,24 @@ export type ProposalRow = {
   skip?: boolean;
 };
 
+/** payload.attachment on a channel "upload" proposal (backend/mcp_writes.py); built by code, never by the model. */
+export type UploadMeta = {
+  id?: string;
+  filename: string;
+  kind: string;
+  row_count: number;
+  invariant: string;
+  opening?: string | null;
+  closing?: string | null;
+  llm_read: boolean;
+  flagged_count?: number;
+  assumptions: string[];
+};
+
 export type InboxProposal = {
   id: string;
   operation: string;
-  payload: { operation?: string; rows: ProposalRow[] };
+  payload: { operation?: string; rows: ProposalRow[]; attachment?: UploadMeta };
   status: string;
   expires_at: string;
   created_at: string;
@@ -405,5 +419,86 @@ export function mapActionResponse(status: number, detail: string): ActionOutcome
 export function visibleRowIndices(rows: ProposalRow[], expanded: boolean): number[] {
   const all = rows.map((_, i) => i);
   if (rows.length <= 8 || expanded) return all;
-  return all.filter((i) => i < 5 || (rows[i].duplicates?.length ?? 0) > 0);
+  return all.filter((i) => i < 5 || isUploadRowFlagged(rows[i]));
+}
+
+// ---------------------------------------------------------------------------
+// Upload proposals (Phase 39, D-21/D-23). Copy is 39-UI-SPEC section 7 verbatim.
+// ---------------------------------------------------------------------------
+
+export const sourceLabel = (channel: string): string =>
+  channel === "mcp" ? "Claude" : channel === "chat" ? "monai chat" : channel === "upload" ? "Upload" : channel;
+
+export const KIND_LABEL: Record<string, string> = {
+  csv: "CSV",
+  pdf_text: "PDF",
+  pdf_scanned: "Scanned PDF",
+  image: "Image",
+};
+
+export const uploadMeta = (p: Pick<InboxProposal, "payload">): UploadMeta | null =>
+  p.payload.attachment ?? null;
+
+export type InvariantBadge = { text: string; tone: "green" | "warm" | "neutral"; sentence: string };
+
+// fmtMoney drops the sign; a statement balance can be an overdraft.
+const balance = (v: unknown, currency: string) =>
+  `${typeof v === "string" && v.startsWith("-") ? "-" : ""}${fmtMoney(v, currency)}`;
+
+/** The trust statement for an upload card. LLM-read always wins: a model reading is never "verified". */
+export function invariantBadge(meta: UploadMeta, n: number, currency: string): InvariantBadge {
+  if (meta.llm_read) {
+    return {
+      text: "LLM-read",
+      tone: "warm",
+      sentence:
+        "Read by the model from an image. No balance check was possible. Compare each row with the original.",
+    };
+  }
+  const running = meta.invariant === "running balance verified";
+  if (running || meta.invariant === "balance verified") {
+    return {
+      text: running ? "Running balance verified" : "Balance verified",
+      tone: "green",
+      sentence: `Opening ${balance(meta.opening, currency)} + ${n} rows = closing ${balance(
+        meta.closing,
+        currency
+      )}, ${running ? "and every row's running balance matches." : "as printed on the statement."}`,
+    };
+  }
+  return {
+    text: "No balance check",
+    tone: "neutral",
+    sentence: "A CSV has no balance to verify. Review the rows before approving.",
+  };
+}
+
+const assumptionsOf = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && x !== "") : [];
+
+export const assumptionLines = (meta: UploadMeta): string[] => assumptionsOf(meta.assumptions);
+
+/** Per-row reasons beyond duplicates: one chip plus one line each. */
+export function rowProvenance(row: ProposalRow): { chip: string; line: string }[] {
+  const out: { chip: string; line: string }[] = [];
+  if (row.after?.llm_read === true) {
+    out.push({
+      chip: "LLM-read",
+      line: "Read by the model. Check the date and amount against the original.",
+    });
+  }
+  for (const line of assumptionsOf(row.after?.assumptions)) out.push({ chip: "Format assumed", line });
+  return out;
+}
+
+/** The k in the chat sentence: duplicate-flagged, LLM-read or format-assumed. */
+export const isUploadRowFlagged = (row: ProposalRow): boolean =>
+  (row.duplicates?.length ?? 0) > 0 || rowProvenance(row).length > 0;
+
+export const uploadFlaggedCount = (rows: ProposalRow[]): number => rows.filter(isUploadRowFlagged).length;
+
+/** The source line sits beside a flagged value only; unflagged rows stay dense. */
+export function sourceLine(row: ProposalRow): string | null {
+  const raw = row.after?.raw_line;
+  return isUploadRowFlagged(row) && typeof raw === "string" && raw !== "" ? `From the file: ${raw}` : null;
 }

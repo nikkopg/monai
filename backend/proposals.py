@@ -4,7 +4,8 @@
 (a grep test in test_proposals_approval.py enforces it, D-09). Expiry is lazy
 (`expire_stale()`, run at the top of proposal reads); there is no background
 job (D-11). Status values are pending, confirmed, rejected, expired, superseded
-(superseded = replaced by a newer MCP proposal, Phase 32 D-14); there is
+(superseded = replaced by a newer MCP proposal, Phase 32 D-14, or a
+re-proposal of the same attachment, Phase 39); there is
 no `locked` status, Phase 32 derives MCP lockout from failed_attempts (D-04).
 """
 from datetime import datetime, timedelta, timezone
@@ -15,6 +16,7 @@ from sqlalchemy.orm import Session
 TTL: dict[str, timedelta] = {
     "chat": timedelta(minutes=15),
     "mcp": timedelta(hours=48),
+    "upload": timedelta(hours=48),
 }
 
 _TARGETS = ("confirmed", "rejected", "expired", "superseded")

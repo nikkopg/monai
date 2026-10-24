@@ -47,11 +47,21 @@ Not built yet: recurring-charge detection, arbitrary two-period comparison, toke
 
 Requires Docker + Docker Compose. Host networking is used so the backend can reach a local Ollama daemon — this is **Linux-only**; on Mac/Windows switch the compose services to bridge networking + `host.docker.internal`.
 
-**1. Set an API key** (required — guards all write endpoints):
+**1. Set the secrets** (required). `MONAI_API_KEY` guards every backend route except `/health`, reads included:
 
 ```sh
 echo "MONAI_API_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
 ```
+
+Add two more secrets. Compose refuses to start without either:
+
+```sh
+echo "POSTGRES_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
+echo "MONAI_UI_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
+chmod 600 .env
+```
+
+`MONAI_UI_PASSWORD` is what the browser's sign-in prompt asks for (username `monai`, entered once per browser session). It must differ from `MONAI_API_KEY` and `MONAI_APPROVER_KEY`, otherwise the UI answers 503. `npm run dev` needs it in its environment too. Keep `POSTGRES_PASSWORD` URL-safe (hex, as generated above): Python URL-quotes it, but `docker-compose.yml` interpolates it into `DATABASE_URL` as-is. `POSTGRES_PASSWORD` only applies when a fresh volume is initialised; an existing `monai_pgdata` needs the rotation runbook under Database migrations.
 
 Optionally add a separate approver key. It approves or rejects any pending proposal whatever channel created it (`POST /proposals/{id}/approve` and `POST /proposals/{id}/reject`, sent in the `MONAI_APPROVER_KEY` header):
 
@@ -85,12 +95,12 @@ The db, API and UI all listen on `127.0.0.1` only — nothing is reachable from 
 
 ## Development
 
-**Tests.** Run `pytest` from the repo root. It defaults to a separate `monai_test` database on the same Postgres, creating and migrating it on the first run, and it refuses to run against the live `monai` database. Tests use synthetic data only. `backend/tests_live_audit/` holds read-only checks against live data, run by hand only.
+**Tests.** Run `pytest` from the repo root. It defaults to a separate `monai_test` database on the same Postgres, creating and migrating it on the first run, and it refuses to run against the live `monai` database. Host pytest, evals and alembic connect to the same Postgres role, so after the password is set they need it exported (nothing loads `.env` for Python; export only this one variable, not the whole file): `export POSTGRES_PASSWORD="$(grep '^POSTGRES_PASSWORD=' .env | tail -1 | cut -d= -f2-)"`. Tests use synthetic data only. `backend/tests_live_audit/` holds read-only checks against live data, run by hand only.
 
-**UI tests.** `cd ui && CI=1 npm run e2e` runs the Playwright suite on port 3099 against mocked APIs. The Inbox live spec `e2e/inbox-live.spec.ts` is opt-in and writes real rows, so it needs a scratch backend on `monai_test` with synthetic, different API and approver keys. It refuses ports 8001 and 3001 but cannot see which database the backend uses, so it also requires `E2E_SCRATCH_DB_CONFIRMED=monai_test`: set it only after checking the backend's `DATABASE_URL` ends in `/monai_test`. Start the scratch backend, then run the spec with the same values in `E2E_*` and in `MONAI_API`, `MONAI_API_KEY`, `MONAI_APPROVER_KEY`:
+**UI tests.** `cd ui && CI=1 npm run e2e` runs the Playwright suite on port 3099 against mocked APIs; it signs in with a synthetic Basic password set in `ui/playwright.config.ts`. The Inbox live spec `e2e/inbox-live.spec.ts` is opt-in and writes real rows, so it needs a scratch backend on `monai_test` with synthetic, different API and approver keys. It refuses ports 8001 and 3001 but cannot see which database the backend uses, so it also requires `E2E_SCRATCH_DB_CONFIRMED=monai_test`: set it only after checking the backend's `DATABASE_URL` ends in `/monai_test`. Start the scratch backend, then run the spec with the same values in `E2E_*` and in `MONAI_API`, `MONAI_API_KEY`, `MONAI_APPROVER_KEY`:
 
 ```sh
-DATABASE_URL=postgresql+psycopg://monai:monai@127.0.0.1:5434/monai_test MONAI_API_KEY=e2e-api-key-synthetic-0001 MONAI_APPROVER_KEY=e2e-approver-key-synthetic-0002 TZ=Asia/Jakarta PGTZ=Asia/Jakarta .venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8011
+DATABASE_URL=postgresql+psycopg://monai:$POSTGRES_PASSWORD@127.0.0.1:5434/monai_test MONAI_API_KEY=e2e-api-key-synthetic-0001 MONAI_APPROVER_KEY=e2e-approver-key-synthetic-0002 TZ=Asia/Jakarta PGTZ=Asia/Jakarta .venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8011
 cd ui && CI=1 E2E_LIVE=1 E2E_SCRATCH_DB_CONFIRMED=monai_test E2E_BACKEND=http://127.0.0.1:8011 E2E_API_KEY=e2e-api-key-synthetic-0001 E2E_APPROVER_KEY=e2e-approver-key-synthetic-0002 MONAI_API=http://127.0.0.1:8011 MONAI_API_KEY=e2e-api-key-synthetic-0001 MONAI_APPROVER_KEY=e2e-approver-key-synthetic-0002 npx playwright test e2e/inbox-live.spec.ts
 ```
 
@@ -153,6 +163,27 @@ docker exec monai-db psql -U monai -d monai -c "SELECT count(*) FROM transaction
 docker exec monai-db psql -U monai -d monai -c "\dt"   # audit_log, proposals, holdings, portfolio_events, price_cache, platforms, ... present
 docker exec monai-db psql -U monai -d monai -c "\dv"   # date_helpers present
 ```
+
+### Rotating the database password (existing volume)
+
+`POSTGRES_PASSWORD` in `.env` only takes effect on a fresh volume. To switch an existing `monai_pgdata` off the old default, run this from the repo root:
+
+```sh
+df -h /                                     # a full disk breaks the rebuild; free ~3 GB first
+mkdir -p ~/monai-backups && chmod 700 ~/monai-backups    # outside the repo
+D=~/monai-backups/monai_pre_rotation_$(date +%F).dump
+docker exec monai-db pg_dump -U monai -Fc monai > "$D" && chmod 600 "$D" && ls -l "$D"   # not 0 bytes
+echo "POSTGRES_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
+echo "MONAI_UI_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
+chmod 600 .env
+# rotate over the container's unix socket; stdin keeps the value out of argv and history
+PW=$(grep '^POSTGRES_PASSWORD=' .env | tail -1 | cut -d= -f2-)
+printf "ALTER USER monai WITH PASSWORD '%s';\n" "$PW" | docker exec -i monai-db psql -U monai -d monai -v ON_ERROR_STOP=1
+unset PW
+docker compose up -d --build                # right away: the running backend's new connections fail until it restarts
+```
+
+The rebuild also runs `alembic upgrade head`, so any pending migration is applied at the same time (the dump covers it). If the rebuild fails, restore the old password over the socket, remove the two new `.env` lines, and retry: `printf "ALTER USER monai WITH PASSWORD 'monai';\n" | docker exec -i monai-db psql -U monai -d monai`. The dump is the data-recovery path, with `pg_restore`.
 
 ### Day-to-day usage
 

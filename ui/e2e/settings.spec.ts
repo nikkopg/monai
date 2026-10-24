@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 // ---------------------------------------------------------------------------
 // Phase 3 Plan 03 — Settings page render spec.
@@ -75,5 +75,50 @@ test.describe("/settings page", () => {
     await expect(
       page.getByText("Leave blank to keep the current key.")
     ).toBeVisible();
+  });
+
+  // quick 261011-mgj: every row action sits behind a ⋯ menu. Synthetic data,
+  // every route this test touches is mocked and non-GETs fail, so nothing can
+  // reach the live backend; nothing is clicked through to a destructive action.
+  test("row options menus list the same actions as before", async ({ page }) => {
+    const node = (id: number, name: string, is_system: boolean) => ({
+      id, name, parent_id: null, kind: "expense", color: null, effective_color: null,
+      icon: null, is_system, tx_count: 0, children: [],
+    });
+    const accounts = [
+      { id: 1, name: "ZZTest Cash", current_balance: 0, type: "liquid" },
+      { id: 2, name: "ZZTest Card", current_balance: 0, type: "credit" },
+    ];
+    const cats = [node(1, "ZZTest Food", false), node(2, "ZZTest System", true)];
+    const mock = async (pg: Page, glob: string, body: unknown) =>
+      pg.route(glob, (route) =>
+        route.request().method() === "GET"
+          ? route.fulfill({ json: body as object })
+          : route.fulfill({ status: 500, json: { detail: "blocked in test" } })
+      );
+    await mock(page, "**/api/categories*", cats);
+    await mock(page, "**/api/cashflow/summary**", { accounts });
+    await page.goto("/settings");
+
+    const items = page.getByRole("menuitem");
+    const open = (name: string) =>
+      page.getByRole("button", { name, exact: true }).click();
+
+    await open(`Category options: ${cats[0].name}`);
+    await expect(items).toHaveText(["Add subcategory", "Edit", "Merge into…", "Delete"]);
+    await page.keyboard.press("Escape");
+
+    await open(`Category options: ${cats[1].name}`);
+    const del = page.getByRole("menuitem", { name: "Delete", exact: true });
+    await expect(del).toHaveAttribute("aria-disabled", "true");
+    await expect(del).toHaveAttribute("title", "System category — can't be deleted.");
+    await page.keyboard.press("Escape");
+
+    await open(`Account options: ${accounts[0].name}`);
+    await expect(items).toHaveText(["Edit", "Adjust balance", "Delete"]);
+    await page.keyboard.press("Escape");
+
+    await open(`Account options: ${accounts[1].name}`);
+    await expect(items).toHaveText(["Edit", "Delete"]);
   });
 });

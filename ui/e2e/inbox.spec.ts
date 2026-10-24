@@ -1199,7 +1199,7 @@ const RGB = {
   ink: "rgb(35, 32, 27)",
   tintNeutral: "rgb(238, 241, 236)",
   white: "rgb(255, 255, 255)",
-  chatDim: "rgb(164, 156, 140)",
+  chatDim: "rgb(111, 104, 87)", // muted3 since 37-06 (AA contrast); was muted2
 };
 const css = (loc: ReturnType<Page["locator"]>, prop: string) =>
   loc.evaluate((el, p) => getComputedStyle(el).getPropertyValue(p), prop);
@@ -1389,33 +1389,37 @@ test.describe("chat card", () => {
     const answer = {
       type: "answer",
       text: "I can add that.",
-      proposals: [{ id: pid, token: TOKEN }],
+      proposals: [
+        {
+          id: pid,
+          token: TOKEN,
+          operation: "add_transaction",
+          expires_at: new Date(Date.now() + 15 * MIN).toISOString(),
+          payload: {
+            operation: "add_transaction",
+            rows: [
+              {
+                before: null,
+                after: {
+                  date: "2026-10-07",
+                  amount: "-35000.00",
+                  account: "Account A",
+                  merchant: "Kopi Contoh",
+                  category: null,
+                  notes: null,
+                  currency: "IDR",
+                  is_transfer: false,
+                },
+              },
+            ],
+          },
+        },
+      ],
       trace: [
         {
           tool: "propose_add_transaction",
           args: {},
-          result: {
-            proposal_id: pid,
-            proposal_token: TOKEN,
-            payload: {
-              operation: "add_transaction",
-              rows: [
-                {
-                  before: null,
-                  after: {
-                    date: "2026-10-07",
-                    amount: "-35000.00",
-                    account: "Account A",
-                    merchant: "Kopi Contoh",
-                    category: null,
-                    notes: null,
-                    currency: "IDR",
-                    is_transfer: false,
-                  },
-                },
-              ],
-            },
-          },
+          result: { proposal_id: pid, proposal_token: TOKEN },
         },
       ],
     };
@@ -1435,10 +1439,12 @@ test.describe("chat card", () => {
       posts.push({ path: new URL(req.url()).pathname, body: req.postDataJSON() });
       return route.fulfill({ json: { id: pid, status: req.url().endsWith("/confirm") ? "confirmed" : "rejected" } });
     });
+    // D-19a: stub GET /api/threads (sidebar list)
+    await page.route(/\/api\/threads$/, (route) => route.fulfill({ json: [] }));
     await page.goto("/chat");
     await page.getByPlaceholder("Ask anything about your finances…").fill("Add a synthetic coffee");
     await page.getByPlaceholder("Ask anything about your finances…").press("Enter");
-    await expect(page.getByText("Proposed propose add transaction")).toBeVisible();
+    await expect(page.getByText("Proposed add transaction")).toBeVisible();
     return { inbox, posts };
   }
 

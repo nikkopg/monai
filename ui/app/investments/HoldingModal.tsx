@@ -19,13 +19,29 @@ import type { PlatformOption } from "./page";
 // /api/portfolio-events/funded-buy|sell instead, carrying a cash_amount that
 // defaults to quantity x price until manually edited (D-06). Dividend has no
 // funded schema — a funding selection is ignored for it (unfunded path).
+//
+// Edit mode (editEvent prop): prefilled from an existing event; submit PUTs
+// /api/portfolio-events/{id}. A linked (funded) event shows its Cash amount
+// field; the funding link, platform and asset type are not editable here.
 // ---------------------------------------------------------------------------
+
+export type EditableEvent = {
+  id: number;
+  date: string; // YYYY-MM-DD
+  ticker: string;
+  event_type: "buy" | "sell" | "dividend";
+  quantity: number;
+  price: number;
+  transaction_id: number | null;
+  cash_amount: number | null;
+};
 
 type Props = {
   platforms: PlatformOption[];
   onClose: () => void;
   onSaved: () => void;
   defaultPlatformId?: number;
+  editEvent?: EditableEvent;
 };
 
 type Account = {
@@ -58,8 +74,11 @@ export default function HoldingModal({
   onClose,
   onSaved,
   defaultPlatformId,
+  editEvent,
 }: Props) {
-  const [ticker, setTicker] = useState("");
+  const isEdit = editEvent !== undefined;
+  const linked = editEvent?.transaction_id != null;
+  const [ticker, setTicker] = useState(editEvent?.ticker ?? "");
   const [assetType, setAssetType] = useState<string>("crypto");
   // Platform is required (no more "(unassigned)") — pre-select
   // defaultPlatformId when given (still editable), else the first platform.
@@ -70,10 +89,16 @@ export default function HoldingModal({
       ? String(platforms[0].id)
       : ""
   );
-  const [eventType, setEventType] = useState<"buy" | "sell" | "dividend">("buy");
-  const [quantity, setQuantity] = useState("");
-  const [price, setPrice] = useState("");
-  const [date, setDate] = useState(toLocalDatetimeInputValue(new Date()));
+  const [eventType, setEventType] = useState<"buy" | "sell" | "dividend">(
+    editEvent?.event_type ?? "buy"
+  );
+  const [quantity, setQuantity] = useState(
+    editEvent ? String(editEvent.quantity) : ""
+  );
+  const [price, setPrice] = useState(editEvent ? String(editEvent.price) : "");
+  const [date, setDate] = useState(
+    editEvent ? `${editEvent.date}T00:00` : toLocalDatetimeInputValue(new Date())
+  );
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -85,10 +110,16 @@ export default function HoldingModal({
   // Buy/Sell; Dividend has no funded schema, so it's ignored there.
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [fundingAccount, setFundingAccount] = useState("");
-  const [cashAmount, setCashAmount] = useState("");
-  const [cashAmountTouched, setCashAmountTouched] = useState(false);
+  const [cashAmount, setCashAmount] = useState(
+    editEvent?.cash_amount != null ? String(editEvent.cash_amount) : ""
+  );
+  // Edit mode starts "touched" so the quantity x price re-sync (which also
+  // fires on mount) can't overwrite the stored cash amount.
+  const [cashAmountTouched, setCashAmountTouched] = useState(isEdit);
   const liquidAccounts = accounts.filter((a) => a.type === "liquid");
-  const isFunded = fundingAccount !== "" && !isDividend;
+  const isFunded = isEdit
+    ? linked && !isDividend
+    : fundingAccount !== "" && !isDividend;
 
   useEffect(() => {
     let cancelled = false;
@@ -136,6 +167,30 @@ export default function HoldingModal({
     setSaving(true);
     setError(null);
     try {
+      if (isEdit) {
+        const body: Record<string, unknown> = {
+          ticker: ticker.trim(),
+          event_type: eventType,
+          quantity: parseFloat(quantity),
+          price: parseFloat(price),
+          date: toLocalDateOnly(date),
+        };
+        if (isFunded) body.cash_amount = parseFloat(cashAmount);
+        const r = await fetch(`/api/portfolio-events/${editEvent.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (r.ok) {
+          onSaved();
+          onClose();
+        } else {
+          const detail = await extractDetail(r);
+          setError(`Couldn't save changes: ${detail}. Nothing was changed.`);
+        }
+        return;
+      }
+
       if (isFunded) {
         const endpoint =
           eventType === "sell"
@@ -232,7 +287,7 @@ export default function HoldingModal({
         onClick={(e) => e.stopPropagation()}
       >
         <h2 style={{ fontSize: 20, fontWeight: 600, margin: "0 0 16px" }}>
-          Log event
+          {isEdit ? "Edit event" : "Log event"}
         </h2>
         <form onSubmit={handleSubmit}>
           <div
@@ -258,6 +313,7 @@ export default function HoldingModal({
               <select
                 style={input}
                 value={assetType}
+                disabled={isEdit}
                 onChange={(e) => setAssetType(e.target.value)}
               >
                 {ASSET_TYPES.map((t) => (
@@ -272,6 +328,7 @@ export default function HoldingModal({
               <select
                 style={input}
                 required
+                disabled={isEdit}
                 value={platformId}
                 onChange={(e) => setPlatformId(e.target.value)}
               >
@@ -298,7 +355,9 @@ export default function HoldingModal({
               >
                 <option value="buy">Buy</option>
                 <option value="sell">Sell</option>
-                <option value="dividend">Dividend</option>
+                <option value="dividend" disabled={linked}>
+                  Dividend
+                </option>
               </select>
             </div>
             <div>
@@ -336,6 +395,7 @@ export default function HoldingModal({
                 onChange={(e) => setDate(e.target.value)}
               />
             </div>
+            {!isEdit && (
             <div>
               <label style={label}>Funding account</label>
               <select
@@ -357,6 +417,7 @@ export default function HoldingModal({
                 </p>
               )}
             </div>
+            )}
             {isFunded && (
               <div>
                 <label style={label}>Cash amount (IDR)</label>
@@ -375,7 +436,7 @@ export default function HoldingModal({
             )}
           </div>
 
-          {isFunded && quantity && ticker && (
+          {!isEdit && isFunded && quantity && ticker && (
             <p
               style={{
                 fontSize: 13,
@@ -420,6 +481,8 @@ export default function HoldingModal({
             >
               {saving
                 ? "Saving…"
+                : isEdit
+                ? "Save changes"
                 : isFunded
                 ? `Log funded ${eventType.charAt(0).toUpperCase()}${eventType.slice(1)}`
                 : "Log event"}

@@ -24,7 +24,7 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
-def test_get_settings_returns_defaults(client):
+def test_get_settings_returns_defaults(client, authed):
     """GET /settings returns 200 with the effective settings shape."""
     resp = client.get("/settings")
     assert resp.status_code == 200
@@ -67,7 +67,7 @@ def test_put_settings_requires_key(client, monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_put_updates_provider_and_get_reflects(client, api_key):
+def test_put_updates_provider_and_get_reflects(client, api_key, authed):
     """Authenticated PUT changing provider/model is reflected on a fresh GET."""
     resp = client.put(
         "/settings",
@@ -87,7 +87,7 @@ def test_put_updates_provider_and_get_reflects(client, api_key):
 # ---------------------------------------------------------------------------
 
 
-def test_key_is_masked_never_raw(client, api_key):
+def test_key_is_masked_never_raw(client, api_key, authed):
     """PUT a raw API key; GET must return only the masked bullet-last4 form."""
     raw_key = "sk-ant-super-secret-1234"
     resp = client.put(
@@ -115,7 +115,7 @@ def test_key_is_masked_never_raw(client, api_key):
 # ---------------------------------------------------------------------------
 
 
-def test_blank_key_keeps_existing(client, api_key):
+def test_blank_key_keeps_existing(client, api_key, authed):
     """A blank/absent key field on PUT must not clobber a previously stored key."""
     raw_key = "sk-ant-keepme-5678"
     first = client.put(
@@ -144,7 +144,7 @@ def test_blank_key_keeps_existing(client, api_key):
 # ---------------------------------------------------------------------------
 
 
-def test_preferences_persist(client, api_key):
+def test_preferences_persist(client, api_key, authed):
     """PUT preferences; a fresh GET returns those exact values."""
     resp = client.put(
         "/settings",
@@ -165,7 +165,7 @@ def test_preferences_persist(client, api_key):
 # ---------------------------------------------------------------------------
 
 
-def test_provider_switch_without_model_resets_model(client, api_key):
+def test_provider_switch_without_model_resets_model(client, api_key, authed):
     """Switching llm_provider without sending llm_model must reset the model to
     the new provider's default, not leave the old provider's model in effect
     (WR-03)."""
@@ -251,3 +251,19 @@ def test_llm_change_resets_engine(client, api_key, monkeypatch):
     )
     assert resp2.status_code == 200
     assert calls["count"] == 1
+
+
+def test_get_llm_rebuilds_from_effective_settings_after_reset(monkeypatch):
+    """reset_engine() must not drop a Settings-page override: _get_llm rebuilds with it."""
+    from backend import query, settings
+
+    seen = []
+    monkeypatch.setattr(settings, "get_effective_settings",
+                        lambda db, raw_keys=False: {"llm_provider": "ollama", "llm_model": "zz-local:1b"})
+    monkeypatch.setattr(query, "configure_llm", lambda overrides=None: seen.append(overrides))
+    query.reset_engine()
+    try:
+        query._get_llm()
+    finally:
+        query.reset_engine()
+    assert seen == [{"llm_provider": "ollama", "llm_model": "zz-local:1b"}]

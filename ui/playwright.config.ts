@@ -23,19 +23,27 @@ const chromiumPath = chromiumCandidates.find((p) => existsSync(p));
 const PORT = 3099;
 const baseURL = `http://127.0.0.1:${PORT}`;
 
+// The UI is behind HTTP Basic auth (Phase 40.1). Synthetic; the dev server gets
+// it as MONAI_UI_PASSWORD and the browser sends it, scoped to the test origin so
+// it never reaches a direct backend call (inbox-live).
+export const UI_PASSWORD = "e2e-ui-password-synthetic-0003"; // pii-ok synthetic
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
   reporter: "line",
   use: {
     baseURL,
+    httpCredentials: { username: "monai", password: UI_PASSWORD, origin: baseURL, send: "always" },
     trace: "retain-on-failure",
   },
   webServer: {
     command: `npx next dev -H 127.0.0.1 -p ${PORT}`,
     url: baseURL,
+    env: { MONAI_UI_PASSWORD: UI_PASSWORD },
     // Never reuse a foreign server in CI; locally, reuse only a server we
-    // ourselves started on this dedicated port.
+    // ourselves started on this dedicated port. Run with CI=1 so a server that
+    // was started without the password above is never reused.
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,
   },

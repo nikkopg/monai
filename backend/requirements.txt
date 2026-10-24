@@ -4,15 +4,25 @@ sqlalchemy>=2.0.0
 psycopg[binary]>=3.1.0
 python-multipart>=0.0.9
 llama-index-core==0.14.25
+llama-index-workflows>=2.25,<3
 llama-index-llms-ollama>=0.1.0
 llama-index-embeddings-ollama>=0.1.0
 llama-index-llms-anthropic>=0.1.0
+# anthropic 2.x turned MessageParam into a Union that llama-index-llms-anthropic 0.12.x still instantiates (TypeError on every Claude call).
+anthropic>=1,<2
 llama-index-llms-openai>=0.1.0
 llama-index-embeddings-openai>=0.1.0
 alembic>=1.13.0
+anyio>=4
 httpx>=0.27.0
 yfinance>=1.5.1
 apscheduler>=3.11.3
 pytest>=8.0.0
 fastmcp>=3.4,<4
 pytest-asyncio>=1.4,<2
+# Text-PDF statement parsing (Phase 39); brings pdfminer.six and pypdfium2. Pillow is already present via llama-index-core.
+pdfplumber>=0.11.10,<0.12
+# Skill pack frontmatter (Phase 40). Already a dependency of llama-index-core; declared because backend/skills.py imports it.
+pyyaml>=6
+# Already installed via mcp; declared because backend/mcp_client.py imports it (Phase 41).
+jsonschema>=4.20,<5

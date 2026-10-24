@@ -357,6 +357,7 @@ def apply_add_funded_buy(db: Session, after: dict) -> dict:
         "asset_type": after.get("asset_type"),
     })
     ev.source_account_id = tx.account_id
+    ev.transaction_id = tx.id  # both rows flushed by their primitives
     return {"transaction": tx, "portfolio_event": ev}
 
 
@@ -391,6 +392,7 @@ def apply_add_funded_sell(db: Session, after: dict) -> dict:
         "asset_type": after.get("asset_type"),
     })
     ev.source_account_id = tx.account_id
+    ev.transaction_id = tx.id  # both rows flushed by their primitives
     return {"transaction": tx, "portfolio_event": ev}
 
 
@@ -534,6 +536,48 @@ def apply_delete_platform(db: Session, platform_id: int, before: dict | None, re
     return reassigned_count
 
 
+def _check_position_target(db: Session, ticker: str, platform_id: int, currency: str | None) -> str:
+    """Guards for putting an event on position (ticker, platform_id); returns the resolved currency.
+
+    GUARD (recompute-clobbers-holdings): recompute_holding_from_events rebuilds
+    a position purely from its (ticker, platform_id) event slice. A non-zero
+    LEGACY holding with ZERO backing events would therefore be silently
+    overwritten by just this new event, destroying the opening balance (live
+    loss in Phase 18 UAT #3). Refuse loudly instead — run migration 012
+    (opening-balance backfill) so the position has a backing event first, after
+    which a funded buy correctly SUMS. Once any event exists this never fires.
+
+    T-07-02-CUR: one currency per position. A mismatch with the existing
+    holding's currency raises ValueError (422 at the API boundary); an omitted
+    currency defaults to the holding's (or "IDR" for a brand-new position).
+    """
+    existing_holding = db.query(Holding).filter(
+        Holding.ticker == ticker, Holding.platform_id == platform_id
+    ).one_or_none()
+
+    if existing_holding is not None and existing_holding.quantity != 0:
+        prior_events = db.query(PortfolioEvent).filter(
+            PortfolioEvent.ticker == ticker,
+            PortfolioEvent.platform_id == platform_id,
+        ).count()
+        if prior_events == 0:
+            raise ValueError(
+                f"holding {ticker} on platform {platform_id} has "
+                f"{existing_holding.quantity} units but no backing portfolio_events — "
+                "recording an event now would overwrite that opening balance. Run the "
+                "opening-balance backfill (migration 012) first."
+            )
+
+    if currency is None:
+        return existing_holding.currency if existing_holding is not None else "IDR"
+    if existing_holding is not None and currency != existing_holding.currency:
+        raise ValueError(
+            f"event currency {currency} does not match holding currency "
+            f"{existing_holding.currency} (one currency per position)"
+        )
+    return currency
+
+
 def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
     """Insert a buy/sell/dividend event, then recompute the position (D-01/INV-07).
 
@@ -561,38 +605,9 @@ def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
     if db.get(Platform, after["platform_id"]) is None:
         raise ValueError(f"platform {after['platform_id']} not found")
 
-    existing_holding = db.query(Holding).filter(
-        Holding.ticker == after["ticker"], Holding.platform_id == after["platform_id"]
-    ).one_or_none()
-
-    # GUARD (recompute-clobbers-holdings): recompute_holding_from_events rebuilds
-    # this position purely from its (ticker, platform_id) event slice. A non-zero
-    # LEGACY holding with ZERO backing events would therefore be silently
-    # overwritten by just this new event, destroying the opening balance (live
-    # loss in Phase 18 UAT #3). Refuse loudly instead — run migration 012
-    # (opening-balance backfill) so the position has a backing event first, after
-    # which a funded buy correctly SUMS. Once any event exists this never fires.
-    if existing_holding is not None and existing_holding.quantity != 0:
-        prior_events = db.query(PortfolioEvent).filter(
-            PortfolioEvent.ticker == after["ticker"],
-            PortfolioEvent.platform_id == after["platform_id"],
-        ).count()
-        if prior_events == 0:
-            raise ValueError(
-                f"holding {after['ticker']} on platform {after['platform_id']} has "
-                f"{existing_holding.quantity} units but no backing portfolio_events — "
-                "recording an event now would overwrite that opening balance. Run the "
-                "opening-balance backfill (migration 012) first."
-            )
-
-    event_currency = after.get("currency")
-    if event_currency is None:
-        event_currency = existing_holding.currency if existing_holding is not None else "IDR"
-    elif existing_holding is not None and event_currency != existing_holding.currency:
-        raise ValueError(
-            f"event currency {event_currency} does not match holding currency "
-            f"{existing_holding.currency} (one currency per position)"
-        )
+    event_currency = _check_position_target(
+        db, after["ticker"], after["platform_id"], after.get("currency")
+    )
 
     ev = PortfolioEvent(
         date=date.fromisoformat(after["date"]) if after.get("date") else datetime.now(timezone.utc).date(),
@@ -623,6 +638,122 @@ def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
         if holding is not None:
             holding.asset_type = after["asset_type"]
     return ev
+
+
+_EDITABLE_EVENT_TYPES = ("buy", "sell", "dividend")
+
+
+def _portfolio_event_snapshot(ev: PortfolioEvent) -> dict:
+    """Audit snapshot of a portfolio event — strings only (AuditLog JSON-serializes, no Decimal)."""
+    return {
+        "id": ev.id,
+        "date": ev.date.isoformat() if ev.date else None,
+        "ticker": ev.ticker,
+        "event_type": ev.event_type,
+        "quantity": str(ev.quantity),
+        "price": str(ev.price),
+        "platform_id": ev.platform_id,
+        "currency": ev.currency,
+        "source_account_id": ev.source_account_id,
+        "transaction_id": ev.transaction_id,
+    }
+
+
+def _load_editable_event(db: Session, event_id: int) -> PortfolioEvent:
+    ev = db.get(PortfolioEvent, event_id)
+    if ev is None:
+        raise ValueError(f"portfolio event {event_id} not found")
+    if ev.event_type not in _EDITABLE_EVENT_TYPES:
+        raise ValueError(
+            f"portfolio event {event_id} is a {ev.event_type}; only buy/sell/dividend "
+            "events can be edited or deleted here"
+        )
+    return ev
+
+
+def apply_edit_portfolio_event(
+    db: Session, event_id: int, after: dict, before: dict | None
+) -> PortfolioEvent:
+    """Partial-update a buy/sell/dividend event, keep its cash leg in step, recompute.
+
+    None/absent fields in `after` keep the current value. A funded event
+    (transaction_id set) must stay buy or sell; its cash leg takes the new
+    date and a signed amount (buy negative, sell positive; magnitude from
+    `cash_amount`, else the leg's current magnitude). Does NOT commit.
+    """
+    ev = _load_editable_event(db, event_id)
+    old_ticker = ev.ticker
+    new_ticker = after.get("ticker") or old_ticker
+    new_type = after.get("event_type") or ev.event_type
+    funded = ev.transaction_id is not None
+    if funded and new_type == "dividend":
+        raise ValueError("a funded event must stay a buy or sell (its cash leg is linked)")
+    if after.get("cash_amount") is not None and not funded:
+        raise ValueError("cash_amount can only be set on a funded event (no linked cash transaction)")
+    if new_ticker != old_ticker:
+        _check_position_target(db, new_ticker, ev.platform_id, ev.currency)
+
+    ev.ticker = new_ticker
+    ev.event_type = new_type
+    if after.get("date"):
+        ev.date = date.fromisoformat(after["date"])
+    if after.get("quantity") is not None:
+        ev.quantity = Decimal(str(after["quantity"]))  # LOAD-BEARING: str() before Decimal()
+    if after.get("price") is not None:
+        ev.price = Decimal(str(after["price"]))
+
+    tx = db.get(Transaction, ev.transaction_id) if funded else None
+    if tx is not None:
+        tx_before = _transaction_snapshot(tx)
+        magnitude = abs(Decimal(str(after["cash_amount"]))) if after.get("cash_amount") is not None else abs(tx.amount)
+        new_amount = -magnitude if new_type == "buy" else magnitude
+        new_dt = datetime.combine(ev.date, tx.date.time()) if tx.date else datetime.combine(ev.date, datetime.min.time())
+        if new_amount != tx.amount or new_dt != tx.date:
+            tx.amount = new_amount
+            tx.date = new_dt
+            db.add(AuditLog(entity="transaction", entity_id=tx.id, operation="edit",
+                            before=tx_before,
+                            after={"date": new_dt.isoformat(), "amount": str(new_amount)}))
+
+    db.add(AuditLog(entity="portfolio_event", entity_id=ev.id, operation="edit",
+                    before=before, after=_portfolio_event_snapshot(ev)))
+    db.flush()  # LOAD-BEARING: autoflush=False, recompute's SELECT must see the edited rows
+    recompute_holding_from_events(db, ev.ticker, ev.platform_id)
+    if new_ticker != old_ticker:
+        recompute_holding_from_events(db, old_ticker, ev.platform_id)
+        db.flush()
+        new_h = db.query(Holding).filter(
+            Holding.ticker == new_ticker, Holding.platform_id == ev.platform_id
+        ).one_or_none()
+        old_h = db.query(Holding).filter(
+            Holding.ticker == old_ticker, Holding.platform_id == ev.platform_id
+        ).one_or_none()
+        if new_h is not None and new_h.asset_type is None and old_h is not None:
+            new_h.asset_type = old_h.asset_type
+    return ev
+
+
+def apply_delete_portfolio_event(db: Session, event_id: int, before: dict | None) -> int | None:
+    """Delete a buy/sell/dividend event (and its linked cash leg), then recompute.
+
+    Returns the deleted cash-leg transaction id, or None. A position left with
+    no events becomes a zero-quantity holding row (D-04). Does NOT commit.
+    """
+    ev = _load_editable_event(db, event_id)
+    ticker, platform_id, tx_id = ev.ticker, ev.platform_id, ev.transaction_id
+    deleted_tx_id = None
+    if tx_id is not None:
+        tx = db.get(Transaction, tx_id)
+        if tx is not None:
+            # audited delete; funded legs carry no transfer_pair_id so its pair guard never fires
+            apply_delete_transaction(db, tx_id, _transaction_snapshot(tx))
+            deleted_tx_id = tx_id
+    db.delete(ev)
+    db.add(AuditLog(entity="portfolio_event", entity_id=event_id, operation="delete",
+                    before=before, after=None))
+    db.flush()  # LOAD-BEARING: autoflush=False, recompute's SELECT must not see the deleted rows
+    recompute_holding_from_events(db, ticker, platform_id)
+    return deleted_tx_id
 
 
 def apply_add_holding(db: Session, after: dict) -> Holding:

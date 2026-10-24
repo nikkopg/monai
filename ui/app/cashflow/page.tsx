@@ -462,12 +462,18 @@ export default function CashflowPage() {
                   Spending by category
                 </div>
                 <div
-                  style={{ display: "flex", alignItems: "center", gap: 22 }}
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                    gap: 22,
+                  }}
                 >
                   <CategoryDonut data={categoryData} />
                   <div
                     style={{
-                      flex: 1,
+                      flex: "1 1 180px",
+                      minWidth: 0,
                       display: "flex",
                       flexDirection: "column",
                       gap: 9,
@@ -492,11 +498,26 @@ export default function CashflowPage() {
                             flexShrink: 0,
                           }}
                         />
-                        <span style={{ flex: 1 }}>{c.name || "—"}</span>
+                        {/* Wrap at spaces; a single word too long for the line
+                            ends in an ellipsis instead of splitting mid-word
+                            (hyphens:auto has no dictionary in headless
+                            Chromium). Full name stays in the tooltip. */}
+                        <span
+                          title={c.name || undefined}
+                          style={{
+                            flex: 1,
+                            minWidth: 0,
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {c.name || "—"}
+                        </span>
                         <span
                           style={{
                             color: tokens.color.muted,
                             fontVariantNumeric: "tabular-nums",
+                            whiteSpace: "nowrap",
                           }}
                         >
                           {money(c.total)}

@@ -235,6 +235,7 @@ def test_post_funded_buy(client, api_key, db_session):
         ev = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
         assert ev.event_type == "buy"
         assert ev.source_account_id == acc_id
+        assert ev.transaction_id == tx.id
 
         h = db_session.query(Holding).filter(
             Holding.ticker == ticker, Holding.platform_id == plat_id
@@ -277,6 +278,7 @@ def test_post_funded_sell(client, api_key, db_session):
         ev = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
         assert ev.event_type == "sell"
         assert ev.source_account_id == acc_id
+        assert ev.transaction_id == tx.id
     finally:
         db_session.rollback()
         _cleanup_ticker(db_session, ticker)
@@ -425,7 +427,7 @@ def test_transfer_missing_api_key_401(client, api_key, db_session):
 # transfer_pair_id is absent from TransactionOut JSON — until 17-03 lands.
 # ---------------------------------------------------------------------------
 
-def test_transactions_filter(client, db_session):
+def test_transactions_filter(client, db_session, authed):
     """Each GET /transactions filter param narrows results: account_id, q
     (merchant/notes ilike), type=expense/income, amount_min/amount_max
     (abs), date_from/date_to, include_transfers=false (D-01/REC-02)."""
@@ -488,7 +490,7 @@ def test_transactions_filter(client, db_session):
         _cleanup_account(db_session, name)
 
 
-def test_transaction_paging(client, db_session):
+def test_transaction_paging(client, db_session, authed):
     """offset+limit page correctly (date-desc), and the 500-row hard cap
     holds regardless of a larger requested limit (Pitfall 4)."""
     import datetime as _dt
@@ -529,7 +531,13 @@ def test_transaction_paging(client, db_session):
         _cleanup_account(db_session, name)
 
 
-def test_category_filter_hierarchy(client, db_session):
+def test_transactions_impossible_date_is_422_not_500(client, authed):
+    for qs in ("date_from=2001-02-31", "date_to=2001-13-45", "date_from=nope"):
+        assert client.get(f"/transactions?{qs}").status_code == 422
+    assert client.get("/transactions?date_from=2001-02-28&date_to=2001-03-01").status_code == 200
+
+
+def test_category_filter_hierarchy(client, db_session, authed):
     """category filter matches the node + ALL descendants (hierarchy), not
     exact-string-only — derives the expected count live from the category
     tree, never a hard-coded number (Pitfall 3, critical item #3)."""
@@ -582,7 +590,7 @@ def test_category_filter_hierarchy(client, db_session):
         _cleanup_account(db_session, name)
 
 
-def test_transfer_pair_id_exposed(client, db_session):
+def test_transfer_pair_id_exposed(client, db_session, authed):
     """transfer_pair_id key present in TransactionOut JSON (D-02); the
     type=transfer filter keys off transfer_pair_id IS NOT NULL, not
     is_transfer — an Adjustment row (is_transfer=true, transfer_pair_id=
@@ -767,3 +775,183 @@ def test_bulk_recategorize_missing_api_key_401(client, api_key, db_session):
     Uses the api_key fixture — see test_bulk_delete_missing_api_key_401."""
     resp = client.post("/transactions/bulk-recategorize", json={"ids": [1], "category": "Food"})
     assert resp.status_code == 401, f"Expected 401, got {resp.status_code}: {resp.text}"
+
+
+# ---------------------------------------------------------------------------
+# Quick 261010-o3y: edit / delete portfolio events (+ linked cash leg)
+# ---------------------------------------------------------------------------
+
+def _cleanup_o3y_audit(db, event_ids, tx_ids) -> None:
+    """Delete audit rows for events/transactions the test created (deleted
+    rows are unreachable through _cleanup_ticker/_cleanup_account)."""
+    from backend.models import AuditLog
+    if event_ids:
+        db.query(AuditLog).filter(
+            AuditLog.entity == "portfolio_event", AuditLog.entity_id.in_(event_ids)
+        ).delete(synchronize_session=False)
+    if tx_ids:
+        db.query(AuditLog).filter(
+            AuditLog.entity == "transaction", AuditLog.entity_id.in_(tx_ids)
+        ).delete(synchronize_session=False)
+    db.commit()
+
+
+def _o3y_buy(client, api_key, plat_id, ticker, qty, price=100, day="2024-03-12") -> int:
+    r = client.post(
+        "/portfolio-events",
+        json={"ticker": ticker, "event_type": "buy", "quantity": qty, "price": price,
+              "date": day, "platform_id": plat_id, "currency": "IDR"},
+        headers={"MONAI_API_KEY": api_key},
+    )
+    assert r.status_code == 201, r.text
+    return r.json()["id"]
+
+
+def _o3y_holding(db, ticker, plat_id):
+    from backend.models import Holding
+    db.expire_all()
+    return db.query(Holding).filter(Holding.ticker == ticker, Holding.platform_id == plat_id).one_or_none()
+
+
+def test_o3y_edit_and_delete_unfunded_event(client, api_key, db_session):
+    from backend.models import AuditLog, PortfolioEvent
+
+    ticker = "ZZO3YA"
+    plat_id = _make_platform(db_session, "zzo3y-plat-unfunded")
+    _cleanup_ticker(db_session, ticker)
+    ids = []
+    hdr = {"MONAI_API_KEY": api_key}
+    try:
+        e1 = _o3y_buy(client, api_key, plat_id, ticker, 10)
+        e2 = _o3y_buy(client, api_key, plat_id, ticker, 5)
+        ids = [e1, e2]
+
+        r = client.put(f"/portfolio-events/{e2}", json={"quantity": 4}, headers=hdr)
+        assert r.status_code == 200, r.text
+        assert _o3y_holding(db_session, ticker, plat_id).quantity == Decimal("14")
+        assert db_session.query(AuditLog).filter(
+            AuditLog.entity == "portfolio_event", AuditLog.entity_id == e2, AuditLog.operation == "edit"
+        ).count() == 1
+
+        r = client.delete(f"/portfolio-events/{e2}", headers=hdr)
+        assert r.status_code == 200, r.text
+        assert r.json()["deleted_transaction_id"] is None
+        db_session.expire_all()
+        assert db_session.get(PortfolioEvent, e2) is None
+        assert _o3y_holding(db_session, ticker, plat_id).quantity == Decimal("10")
+
+        assert client.delete(f"/portfolio-events/{e1}", headers=hdr).status_code == 200
+        h = _o3y_holding(db_session, ticker, plat_id)
+        assert h is not None and h.quantity == Decimal("0")  # D-04: zero row kept
+    finally:
+        db_session.rollback()
+        _cleanup_o3y_audit(db_session, ids, [])
+        _cleanup_ticker(db_session, ticker)
+        _cleanup_platform(db_session, plat_id)
+
+
+def test_o3y_funded_event_edit_delete_moves_cash_leg(client, api_key, db_session, authed):
+    from backend.models import AuditLog, PortfolioEvent, Transaction
+
+    name = "zzo3y-FundedSource"
+    ticker = "ZZO3YA"
+    acc_id = _make_account(db_session, name)
+    plat_id = _make_platform(db_session, "zzo3y-plat-funded")
+    _cleanup_ticker(db_session, ticker)
+    hdr = {"MONAI_API_KEY": api_key}
+    ev_id = tx_id = None
+    try:
+        r = client.post(
+            "/portfolio-events/funded-buy",
+            json={"source_account_name": name, "platform_id": plat_id, "ticker": ticker,
+                  "quantity": 10, "price": 100000, "cash_amount": 1000000,
+                  "cash_currency": "IDR", "event_currency": "IDR", "date": "2024-03-12"},
+            headers=hdr,
+        )
+        assert r.status_code == 201, r.text
+        ev_id, tx_id = r.json()["portfolio_event_id"], r.json()["transaction_id"]
+
+        listed = client.get(f"/portfolio-events?platform_id={plat_id}").json()
+        row = next(x for x in listed if x["id"] == ev_id)
+        assert row["transaction_id"] == tx_id and row["cash_amount"] == 1000000
+
+        r = client.put(f"/portfolio-events/{ev_id}",
+                       json={"date": "2024-03-15", "cash_amount": 1200000}, headers=hdr)
+        assert r.status_code == 200, r.text
+        db_session.expire_all()
+        tx = db_session.get(Transaction, tx_id)
+        assert tx.amount == Decimal("-1200000") and tx.date.date().isoformat() == "2024-03-15"
+
+        r = client.put(f"/portfolio-events/{ev_id}", json={"event_type": "sell"}, headers=hdr)
+        assert r.status_code == 200, r.text
+        db_session.expire_all()
+        assert db_session.get(Transaction, tx_id).amount == Decimal("1200000")
+
+        r = client.put(f"/portfolio-events/{ev_id}", json={"event_type": "dividend"}, headers=hdr)
+        assert r.status_code == 422
+
+        r = client.delete(f"/portfolio-events/{ev_id}", headers=hdr)
+        assert r.status_code == 200, r.text
+        assert r.json()["deleted_transaction_id"] == tx_id
+        db_session.expire_all()
+        assert db_session.get(PortfolioEvent, ev_id) is None
+        assert db_session.get(Transaction, tx_id) is None
+        assert _o3y_holding(db_session, ticker, plat_id).quantity == Decimal("0")
+        assert db_session.query(AuditLog).filter(
+            AuditLog.entity == "portfolio_event", AuditLog.entity_id == ev_id, AuditLog.operation == "delete"
+        ).count() == 1
+        assert db_session.query(AuditLog).filter(
+            AuditLog.entity == "transaction", AuditLog.entity_id == tx_id, AuditLog.operation == "delete"
+        ).count() == 1
+    finally:
+        db_session.rollback()
+        _cleanup_o3y_audit(db_session, [ev_id] if ev_id else [], [tx_id] if tx_id else [])
+        _cleanup_ticker(db_session, ticker)
+        _cleanup_account(db_session, name)
+        _cleanup_platform(db_session, plat_id)
+
+
+def test_o3y_ticker_change_recomputes_both_positions(client, api_key, db_session):
+    plat_id = _make_platform(db_session, "zzo3y-plat-ticker")
+    for t in ("ZZO3YA", "ZZO3YB"):
+        _cleanup_ticker(db_session, t)
+    ids = []
+    try:
+        e1 = _o3y_buy(client, api_key, plat_id, "ZZO3YA", 10)
+        e2 = _o3y_buy(client, api_key, plat_id, "ZZO3YA", 2)
+        ids = [e1, e2]
+        r = client.put(f"/portfolio-events/{e2}", json={"ticker": "ZZO3YB"},
+                       headers={"MONAI_API_KEY": api_key})
+        assert r.status_code == 200, r.text
+        assert _o3y_holding(db_session, "ZZO3YA", plat_id).quantity == Decimal("10")
+        assert _o3y_holding(db_session, "ZZO3YB", plat_id).quantity == Decimal("2")
+    finally:
+        db_session.rollback()
+        _cleanup_o3y_audit(db_session, ids, [])
+        for t in ("ZZO3YA", "ZZO3YB"):
+            _cleanup_ticker(db_session, t)
+        _cleanup_platform(db_session, plat_id)
+
+
+def test_o3y_edit_delete_error_cases(client, api_key, db_session):
+    ticker = "ZZO3YA"
+    plat_id = _make_platform(db_session, "zzo3y-plat-errors")
+    _cleanup_ticker(db_session, ticker)
+    hdr = {"MONAI_API_KEY": api_key}
+    ids = []
+    try:
+        ev = _o3y_buy(client, api_key, plat_id, ticker, 10)
+        ids = [ev]
+        assert client.put("/portfolio-events/999999999", json={"quantity": 1}, headers=hdr).status_code == 404
+        assert client.delete("/portfolio-events/999999999", headers=hdr).status_code == 404
+        assert client.put(f"/portfolio-events/{ev}", json={"quantity": 0}, headers=hdr).status_code == 422
+        assert client.put(f"/portfolio-events/{ev}", json={"event_type": "gift"}, headers=hdr).status_code == 422
+        assert client.put(f"/portfolio-events/{ev}", json={"cash_amount": 5}, headers=hdr).status_code == 422
+        assert client.put(f"/portfolio-events/{ev}", json={"quantity": 1}).status_code == 401
+        assert client.delete(f"/portfolio-events/{ev}").status_code == 401
+        assert _o3y_holding(db_session, ticker, plat_id).quantity == Decimal("10")
+    finally:
+        db_session.rollback()
+        _cleanup_o3y_audit(db_session, ids, [])
+        _cleanup_ticker(db_session, ticker)
+        _cleanup_platform(db_session, plat_id)

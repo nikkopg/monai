@@ -239,9 +239,9 @@ test.describe("Multi-select + bulk actions (REC-03)", () => {
     await row.locator('input[type="checkbox"]').check();
 
     await expect(page.getByText("1 selected", { exact: true })).toBeVisible();
-    // Row-level Edit/Delete actions are <span role="button">; bulk-bar
-    // actions are real <button> elements — scope by tag to disambiguate
-    // (matches the cashflow-crud.spec.ts idiom).
+    // Row-level Edit/Delete now sit behind each row's ⋯ menu (menuitems exist
+    // only while it is open), so the only real "Delete" <button> on the page is
+    // the bulk bar's.
     await expect(page.locator("button").filter({ hasText: "Recategorize" })).toBeVisible();
     await expect(page.locator("button").filter({ hasText: "Delete" }).first()).toBeVisible();
     await expect(page.getByText("Cancel selection", { exact: true })).toBeVisible();
@@ -322,5 +322,108 @@ test.describe('Pagination — "Load 100 more" (REC-01)', () => {
     await mockRecords(page);
     await page.goto("/records");
     await expect(page.getByRole("button", { name: "Load 100 more" })).toHaveCount(0);
+  });
+});
+
+test.describe("Row options menu (quick 261011-mgj)", () => {
+  test("row options menu opens Edit and Delete", async ({ page }) => {
+    await mockRecords(page);
+    await page.goto("/records");
+    const tx = transactionsFixture().find((t) => t.id === 301)!;
+    const opts = page.getByRole("button", {
+      name: `Record options: ${tx.merchant} on ${tx.date.slice(0, 10)}`,
+      exact: true,
+    });
+
+    await opts.click();
+    await expect(page.getByRole("menuitem")).toHaveText(["Edit", "Delete"]);
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    await expect(page.getByText("Edit transaction", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(page.getByText("Edit transaction", { exact: true })).toBeHidden();
+
+    await opts.click();
+    await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
+    await expect(
+      page.getByText("Delete this transaction? This can't be undone.")
+    ).toBeVisible();
+    // Never confirmed: cancel with Escape and check focus returns to the row's ⋯.
+    await page.keyboard.press("Escape");
+    await expect(
+      page.getByText("Delete this transaction? This can't be undone.")
+    ).toBeHidden();
+    await expect(opts).toBeFocused();
+  });
+});
+
+// Phase 37-07 — chat source chips open Records pre-filtered (D-14/D-14a/D-14b).
+test.describe("Records URL-seeded filters and pills (37-07)", () => {
+  const SEEDED =
+    "/records?date_from=2026-09-01&date_to=2026-09-30&category=Food&type=expense&cashflow=1";
+
+  async function captureRequests(page: Page): Promise<URL[]> {
+    const urls: URL[] = [];
+    await mockSupportRoutes(page);
+    await page.route("**/api/transactions*", async (route) => {
+      if (route.request().method() !== "GET") {
+        await route.fallback();
+        return;
+      }
+      urls.push(new URL(route.request().url()));
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(transactionsFixture()),
+      });
+    });
+    return urls;
+  }
+
+  test("the FIRST request already carries the chip filters, incl. cashflow=true", async ({ page }) => {
+    const urls = await captureRequests(page);
+    await page.goto(SEEDED);
+    await expect(page.getByTestId("records-pill-dates")).toBeVisible();
+    const first = urls[0];
+    expect(first.searchParams.get("date_from")).toBe("2026-09-01");
+    expect(first.searchParams.get("date_to")).toBe("2026-09-30");
+    expect(first.searchParams.get("category")).toBe("Food");
+    expect(first.searchParams.get("type")).toBe("expense");
+    expect(first.searchParams.get("cashflow")).toBe("true");
+  });
+
+  test("pills read as specified and a seeded unknown category is a selected option", async ({ page }) => {
+    await captureRequests(page);
+    await page.goto(SEEDED);
+    await expect(page.getByTestId("records-pill-dates")).toContainText("Sep 1 – Sep 30, 2026");
+    await expect(page.getByTestId("records-pill-cashflow")).toContainText("Cash-flow only");
+    await expect(page.locator("select").nth(1)).toHaveValue("Food");
+    await expect(page.locator("select").nth(1).locator("option:checked")).toHaveText("Food");
+  });
+
+  test("removing a pill refetches without that filter and leaves the URL unchanged", async ({ page }) => {
+    const urls = await captureRequests(page);
+    await page.goto(SEEDED);
+    await expect(page.getByTestId("records-pill-dates")).toBeVisible();
+
+    await page.getByRole("button", { name: /Remove date filter/ }).click();
+    await expect(page.getByTestId("records-pill-dates")).toHaveCount(0);
+    await expect.poll(() => urls.at(-1)!.searchParams.has("date_from")).toBe(false);
+    expect(urls.at(-1)!.searchParams.has("date_to")).toBe(false);
+    expect(urls.at(-1)!.searchParams.get("cashflow")).toBe("true");
+
+    await page.getByRole("button", { name: "Remove cash-flow filter" }).click();
+    await expect(page.getByTestId("records-pill-cashflow")).toHaveCount(0);
+    await expect.poll(() => urls.at(-1)!.searchParams.has("cashflow")).toBe(false);
+    expect(page.url()).toContain(SEEDED);
+  });
+
+  test("no params: no cashflow, no dates, no pills; bad and impossible-date seeds are ignored", async ({ page }) => {
+    const urls = await captureRequests(page);
+    await page.goto("/records?date_from=2026-02-31&date_to=2026-13-45&type=bogus&account_id=1%3Bx");
+    await expect(page.getByText("Today", { exact: true })).toBeVisible();
+    for (const k of ["cashflow", "date_from", "date_to", "type", "account_id"]) {
+      expect(urls[0].searchParams.has(k)).toBe(false);
+    }
+    await expect(page.getByRole("group", { name: "Active filters" })).toHaveCount(0);
   });
 });

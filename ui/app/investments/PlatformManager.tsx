@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { card, input, btn, label } from "../styles";
+import RowMenu from "../components/RowMenu";
 import ConfirmDialog from "../cashflow/ConfirmDialog";
 import { extractDetail } from "../lib/api";
 
@@ -215,26 +216,24 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
                     </button>
                   </>
                 ) : (
-                  <>
-                    <span
-                      role="button"
-                      onClick={() => {
-                        setEditingId(p.id);
-                        setEditName(p.name);
-                        setEditKind(p.kind ?? "");
-                      }}
-                      style={{ color: "#8b8474", cursor: "pointer", marginRight: 12, fontSize: 12 }}
-                    >
-                      Edit
-                    </span>
-                    <span
-                      role="button"
-                      onClick={() => setDeleteFlow({ stage: "confirm", platform: p })}
-                      style={{ color: "#b5503f", cursor: "pointer", fontSize: 12 }}
-                    >
-                      Delete
-                    </span>
-                  </>
+                  <RowMenu
+                    label={`Platform options: ${p.name}`}
+                    items={[
+                      {
+                        label: "Edit",
+                        onSelect: () => {
+                          setEditingId(p.id);
+                          setEditName(p.name);
+                          setEditKind(p.kind ?? "");
+                        },
+                      },
+                      {
+                        label: "Delete",
+                        destructive: true,
+                        onSelect: () => setDeleteFlow({ stage: "confirm", platform: p }),
+                      },
+                    ]}
+                  />
                 )}
               </td>
             </tr>

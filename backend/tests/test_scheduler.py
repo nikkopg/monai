@@ -177,6 +177,21 @@ def test_build_scheduler_registers_daily_job():
     assert job.max_instances == 1
 
 
+def test_build_scheduler_registers_purge_job():
+    from backend.scheduler import build_scheduler
+
+    scheduler = build_scheduler()
+    job = scheduler.get_job("daily_attachment_purge")
+    assert job is not None
+    assert job.misfire_grace_time == 3600
+    assert job.coalesce is True
+    assert job.max_instances == 1
+    fields = {f.name: str(f) for f in job.trigger.fields}
+    assert (fields["hour"], fields["minute"]) == ("3", "0")
+    assert str(job.trigger.timezone) == "Asia/Jakarta"
+    assert scheduler.get_job("daily_portfolio_snapshot") is not None
+
+
 def test_snapshot_records_both_platforms_for_shared_ticker(db_session):
     """Gap B: a ticker held on TWO platforms produces TWO snapshot rows in one
     run — the value-history key is (snapshot_date, ticker, platform_id), so the

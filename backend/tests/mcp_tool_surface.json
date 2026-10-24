@@ -40,6 +40,74 @@
     "name": "average_daily_spending"
   },
   {
+    "description": "Two periods side by side: spending, income and net totals plus top-level category spending, each with delta and percentage computed in code. The earlier period is the base and the later one current, whatever the argument order; pct is null when the base is zero. other_delta covers the categories not shown plus uncategorised and system rows. comparable=false flags unequal or in-progress periods, with per-day spending. all_time, open-ended custom ranges and overlapping periods are refused. period_a and period_b each take a named period or \"custom\"; custom dates go in a_start_date/a_end_date and b_start_date/b_end_date (YYYY-MM-DD, end inclusive). Named periods: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "a_end_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "a_start_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "b_end_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "b_start_date": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "limit": {
+          "default": 10,
+          "type": "integer"
+        },
+        "period_a": {
+          "type": "string"
+        },
+        "period_b": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "period_a",
+        "period_b"
+      ],
+      "type": "object"
+    },
+    "name": "compare_periods"
+  },
+  {
     "description": "Apply a pending proposal this MCP client created, using the 6-character code the owner reads in monai. Never guess a code. Send the code as a string. Wrong codes count: 5 wrong codes lock the proposal for MCP, and an hourly limit stops MCP confirms. The owner can always approve in monai.",
     "inputSchema": {
       "additionalProperties": false,
@@ -117,7 +185,7 @@
     "name": "find_platforms"
   },
   {
-    "description": "Search/filter individual transactions by merchant, category, period, and kind (all | expense | income); returns ids, dates, amounts, categories, merchants, and account ids. Rows are ordered most-recent-first. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive).",
+    "description": "Search/filter individual transactions by merchant, category, period, and kind (all | expense | income); returns ids, dates, amounts, categories, merchants, and account ids. Rows are ordered most-recent-first. A category or group name goes in category, not merchant (merchant is only a payee name). period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive).",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -427,6 +495,24 @@
       "type": "object"
     },
     "name": "propose_transfer"
+  },
+  {
+    "description": "Likely recurring expense charges (subscriptions, bills, rent) detected from past transactions. Each result has a cadence (weekly/monthly/quarterly/yearly), typical amount, estimated monthly cost, last date, active/lapsed status with the next expected date (overdue=true means that date has passed), a high/medium/low confidence label and up to 12 evidence rows. Transfers, investment accounts, investment-linked rows and system categories are excluded. Takes no period: only months (lookback, 3-60, default 24) and limit (1-50, default 20). Results are detected, not confirmed.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "limit": {
+          "default": 20,
+          "type": "integer"
+        },
+        "months": {
+          "default": 24,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "name": "recurring_charges"
   },
   {
     "description": "Discard a pending proposal this MCP client created; needs no code. Proposals from other channels must be rejected in monai.",

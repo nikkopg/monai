@@ -2,6 +2,7 @@
 
 import uuid as _uuid
 from datetime import date, datetime
+from datetime import date as _date  # a `date: date | None = None` field would shadow the type
 from decimal import Decimal
 from typing import Annotated, Literal
 
@@ -213,6 +214,29 @@ class PortfolioEventOut(BaseModel):
     event_type: str
     quantity: MoneyDecimal
     price: MoneyDecimal
+    # Migration 016 link to the cash-leg Transaction; cash_amount is that leg's
+    # magnitude, filled only by GET /portfolio-events.
+    transaction_id: int | None = None
+    cash_amount: MoneyDecimal | None = None
+
+
+class PortfolioEventUpdate(BaseModel):
+    """Partial-update body for a buy/sell/dividend event — None means keep.
+
+    Same validation as PortfolioEventCreate; platform_id and currency are not
+    editable. cash_amount is the new magnitude of the linked cash leg (the
+    server applies the sign from the event type) and is only valid on a
+    funded event.
+    """
+
+    ticker: str | None = Field(None, min_length=1)
+    event_type: Literal["buy", "sell", "dividend"] | None = None
+    quantity: MoneyDecimal | None = Field(None, gt=0)
+    price: MoneyDecimal | None = Field(None, gt=0)
+    date: _date | None = None
+    cash_amount: MoneyDecimal | None = Field(
+        None, gt=0, description="New magnitude of the linked cash leg; funded events only"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -499,6 +523,99 @@ class AffectedCountResponse(BaseModel):
 
 class QueryRequest(BaseModel):
     question: str
+    thread_id: _uuid.UUID | None = None
+    replace_from: _uuid.UUID | None = None  # the user message to replace (regenerate and edit, Phase 37 D-18)
+    attachment_ids: list[_uuid.UUID] = Field(default_factory=list, max_length=20)  # bound to this question (Phase 39 D-03)
+    mcp_server_ids: list[_uuid.UUID] = Field(default_factory=list, max_length=20)  # external servers for a NEW thread only (Phase 41 PC-03)
+
+
+class ThreadTitleUpdate(BaseModel):
+    title: str = Field(min_length=1, max_length=200)
+
+    @field_validator("title", mode="before")
+    @classmethod
+    def _strip(cls, v):
+        return v.strip() if isinstance(v, str) else v
+
+
+class ThreadOut(BaseModel):
+    id: _uuid.UUID
+    title: str
+    updated_at: datetime
+
+
+class ProposalLiveOut(BaseModel):
+    id: str
+    operation: str | None = None
+    payload: dict | None = None
+    status: str
+    expires_at: datetime | None = None
+    channel: str | None = None
+
+
+class ExtCallOut(BaseModel):
+    """One external tool call as card and receipt (Phase 41). Never the result."""
+
+    id: _uuid.UUID
+    message_id: _uuid.UUID | None = None
+    server_slug: str
+    tool: str
+    args: dict
+    destination: str
+    leaves_machine: bool
+    reason: str | None = None
+    approval: str
+    decided_via: str | None = None
+    expires_at: datetime
+    receipt: str | None = None
+    error_class: str | None = None
+
+
+class MessagePartsOut(BaseModel):
+    steps: list[dict] = []
+    proposals: list[ProposalLiveOut] = []
+    notices: list[dict] = []
+    error: dict | None = None
+    provider: dict | None = None
+
+
+class MessageOut(BaseModel):
+    id: _uuid.UUID
+    seq: int
+    role: str
+    content: str
+    status: str
+    created_at: datetime
+    parts: MessagePartsOut
+
+
+class ActiveRunOut(BaseModel):
+    run_id: str
+
+
+class AttachmentOut(BaseModel):
+    id: _uuid.UUID
+    filename: str
+    kind: str
+    status: str
+    summary: str = ""
+    row_count: int
+    message_id: _uuid.UUID | None = None
+    purged_at: datetime | None = None
+
+
+class ThreadDetailOut(ThreadOut):
+    """Thread with messages and live proposal status. The typed shape has no
+    token or code field, so even a stray key from the service is dropped on
+    output (T-02-07)."""
+
+    active_run: ActiveRunOut | None = None
+    messages: list[MessageOut]
+    attachments: list[AttachmentOut] = []
+    summary_upto_seq: int = 0
+    has_summary: bool = False  # flags only: the summary text never leaves the server
+    mcp_server_ids: list[_uuid.UUID] = []  # external MCP servers this thread uses (Phase 41)
+    ext_calls: list[ExtCallOut] = []
 
 
 class ImportResponse(BaseModel):
@@ -506,6 +623,17 @@ class ImportResponse(BaseModel):
     inserted: int
     skipped: int
     currency: str
+
+
+class AttachmentUploadOut(BaseModel):
+    """Upload answer (Phase 39 D-03). `attachment_id` is None when nothing was stored (a password is needed)."""
+
+    attachment_id: _uuid.UUID | None
+    thread_id: _uuid.UUID
+    kind: str
+    status: str  # ok | refused | llm_read | needs_password | wrong_password
+    summary: str
+    row_count: int
 
 
 class ProposalOut(BaseModel):
@@ -611,3 +739,88 @@ class SettingsUpdate(BaseModel):
                 f"Invalid price_data_source={v!r}. Valid: {sorted(_VALID_PRICE_SOURCES)}"
             )
         return v
+
+
+# ── External MCP servers (Phase 41) ─────────────────────────────────────────
+
+class McpSecretIn(BaseModel):
+    """A header or env entry. A value that is still the masked form keeps the stored secret (D-04)."""
+
+    name: str = Field(min_length=1, max_length=64)
+    value: str = Field(max_length=4096)
+
+
+class McpServerCreate(BaseModel):
+    slug: str = Field(pattern=r"^[a-z0-9-]{1,24}$")
+    transport: Literal["http", "sse", "stdio"]
+    url: str | None = None
+    headers: list[McpSecretIn] = Field(default_factory=list, max_length=20)
+    command: Literal["npx", "uvx"] | None = None
+    args: list[Annotated[str, Field(min_length=1, max_length=512)]] = Field(default_factory=list, max_length=32)
+    env: list[McpSecretIn] = Field(default_factory=list, max_length=20)
+    acknowledged_local_read: bool = False
+
+
+class McpServerUpdate(BaseModel):
+    """Slug and transport are fixed at creation: a sent value is dropped (D-03)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    url: str | None = None
+    headers: list[McpSecretIn] | None = Field(default=None, max_length=20)
+    command: Literal["npx", "uvx"] | None = None
+    args: list[Annotated[str, Field(min_length=1, max_length=512)]] | None = Field(default=None, max_length=32)
+    env: list[McpSecretIn] | None = Field(default=None, max_length=20)
+    acknowledged_local_read: bool = False
+
+
+class McpSecretOut(BaseModel):
+    name: str
+    value_masked: str | None
+
+
+class McpServerOut(BaseModel):
+    id: _uuid.UUID
+    slug: str
+    transport: str
+    url: str | None
+    destination: str
+    command: str | None
+    args: list[str]
+    headers: list[McpSecretOut]
+    env: list[McpSecretOut]
+    enabled: bool
+    changed_count: int | None
+
+
+class McpToolOut(BaseModel):
+    name: str
+    description: str
+    input_schema: dict
+    annotations: dict | None  # what the server claims; never a guarantee (D-09)
+    usable_name: bool
+    status: Literal["new", "changed", "unchanged"]
+
+
+class McpTestOut(BaseModel):
+    tools_hash: str
+    tools: list[McpToolOut]
+    removed: list[str]
+    policies: dict[str, str]
+
+
+class McpEnableIn(BaseModel):
+    enabled: bool
+    tools_hash: str | None = None
+
+
+class McpPolicyIn(BaseModel):
+    policy: Literal["ask", "always", "deny"]
+
+
+class ExtDecisionIn(BaseModel):
+    approve: bool
+
+
+class ThreadServersIn(BaseModel):
+    server_ids: list[_uuid.UUID] = Field(max_length=20)

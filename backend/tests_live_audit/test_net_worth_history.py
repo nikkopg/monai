@@ -7,7 +7,7 @@ LIVE AUDIT -- this file lives in backend/tests_live_audit/, outside
 warning verbatim), so a default `pytest` run never collects it and it
 never inherits the guarded conftest's monai_test default or its refusal.
 It is re-run deliberately against live `monai`:
-`DATABASE_URL=postgresql+psycopg://monai:monai@localhost:5434/monai .venv/bin/pytest backend/tests_live_audit/test_net_worth_history.py -x -q -p no:cacheprovider`
+`DATABASE_URL=postgresql+psycopg://monai:$POSTGRES_PASSWORD@localhost:5434/monai .venv/bin/pytest backend/tests_live_audit/test_net_worth_history.py -x -q -p no:cacheprovider`
 
 Every test in this file is either read-only against that database, or
 performs its writes inside a transaction that is ALWAYS unwound in a
@@ -55,15 +55,23 @@ def db_session(db_available):
         db.close()
 
 
+_LIVE_AUDIT_KEY = "live-audit-synthetic-key"
+
+
 @pytest.fixture(scope="module")
 def client():
     """This file no longer sees backend/tests/conftest.py's session-scoped
     `client` fixture (it lives outside testpaths), so define it locally --
-    same TestClient(app) the guarded conftest builds."""
+    same TestClient(app) the guarded conftest builds. Phase 40.1: every route needs
+    the key, so patch the in-process configured key to a synthetic one and send it
+    (the app is called in-process; the owner's real key is never read)."""
+    import backend.auth as auth_mod
     from backend.main import app
     from fastapi.testclient import TestClient
 
-    return TestClient(app)
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(auth_mod, "_CONFIGURED_KEY", _LIVE_AUDIT_KEY)
+        yield TestClient(app, headers={"MONAI_API_KEY": _LIVE_AUDIT_KEY})
 
 
 def _current_month() -> str:

@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { isNullBodyStatus, isStreamPath } from "../app/lib/proxyStream";
 import {
   approverHeaderAllowed,
   buildForwardHeaders,
@@ -124,6 +125,11 @@ test.describe("forward headers", () => {
     const h = buildForwardHeaders(incoming(), "api-synthetic", SERVER, "POST", `proposals/${U}/confirm`, "");
     expect(h.has("MONAI_APPROVER_KEY")).toBe(false);
   });
+  test("the query-stream cancel path never receives the approver key", () => {
+    const h = buildForwardHeaders(incoming(), "api-synthetic", SERVER, "POST", `query-stream/${U}/cancel`, "");
+    expect(h.has("MONAI_APPROVER_KEY")).toBe(false);
+    expect(h.get("MONAI_API_KEY")).toBe("api-synthetic");
+  });
   const withHeaders = (extra: Record<string, string>) => {
     const h = incoming();
     for (const [k, v] of Object.entries(extra)) h.set(k, v);
@@ -160,6 +166,18 @@ test.describe("forward headers", () => {
     expect(h.get("MONAI_API_KEY")).toBe("api-synthetic");
     expect(h.has("host")).toBe(false);
     expect(h.get("accept")).toBe("application/json");
+  });
+  test("the browser's Basic authorization is never forwarded (it is the UI password)", () => {
+    const req = incoming();
+    req.set("authorization", "Basic " + btoa("monai:pw"));
+    const h = buildForwardHeaders(req, "api-synthetic", "", "GET", "transactions", "");
+    expect(h.has("authorization")).toBe(false);
+    expect(h.get("MONAI_API_KEY")).toBe("api-synthetic");
+  });
+  test("Expect is dropped (undici's fetch throws on it; curl sends it on large uploads)", () => {
+    const req = incoming();
+    req.set("expect", "100-continue");
+    expect(buildForwardHeaders(req, "api-synthetic", "", "POST", `threads/${U}/attachments`, "").has("expect")).toBe(false);
   });
 });
 
@@ -553,5 +571,47 @@ test.describe("contrast", () => {
   });
   test("terracotta on tintWarm fails (why the UI-SPEC bans it)", () => {
     expect(ratio(c.terracotta, c.tintWarm)).toBeLessThan(4.5);
+  });
+});
+
+test.describe("proxy stream paths (D-18a)", () => {
+  const T = "00000000-0000-4000-8000-000000000036";
+  const SERVER = "server-approver-synthetic";
+
+  test("streams query-stream and the thread re-attach route only", () => {
+    expect(isStreamPath("query-stream")).toBe(true);
+    expect(isStreamPath(`threads/${T}/stream`)).toBe(true);
+    for (const p of [
+      "threads",
+      `threads/${T}`,
+      `query-stream/${T}/cancel`,
+      "threads/not-a-uuid/stream",
+      `threads/${T}/stream/x`,
+    ]) {
+      expect(isStreamPath(p), p).toBe(false);
+    }
+  });
+  test("204, 205 and 304 take a null body", () => {
+    for (const s of [204, 205, 304]) expect(isNullBodyStatus(s)).toBe(true);
+    for (const s of [200, 404, 409]) expect(isNullBodyStatus(s)).toBe(false);
+  });
+  test("thread routes get the API key and never the approver key", () => {
+    const incoming = () => {
+      const h = new Headers({ accept: "application/json", "sec-fetch-site": "same-origin" });
+      h.set("MONAI_APPROVER_KEY", "forged");
+      return h;
+    };
+    const cases: [string, string][] = [
+      ["GET", "threads"],
+      ["GET", `threads/${T}`],
+      ["PATCH", `threads/${T}`],
+      ["DELETE", `threads/${T}`],
+      ["GET", `threads/${T}/stream`],
+    ];
+    for (const [m, p] of cases) {
+      const h = buildForwardHeaders(incoming(), "api-synthetic", SERVER, m, p, "");
+      expect(h.has("MONAI_APPROVER_KEY"), `${m} ${p}`).toBe(false);
+      expect(h.get("MONAI_API_KEY")).toBe("api-synthetic");
+    }
   });
 });

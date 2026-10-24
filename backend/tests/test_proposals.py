@@ -595,7 +595,7 @@ def test_concurrent_second_caller_gets_409(client, api_key, db_session, action):
 
     # Warm up B's client BEFORE any lock exists, so startup lag can't later
     # pass for "blocked" (D-15).
-    b_client = TestClient(app)
+    b_client = TestClient(app, headers={"MONAI_API_KEY": api_key})
     warm = b_client.get("/proposals")
     assert warm.status_code == 200, warm.text
 
@@ -689,7 +689,7 @@ def test_concurrent_second_caller_gets_409(client, api_key, db_session, action):
         db_session.commit()
 
 
-def test_get_proposals_excludes_token(client, api_key, db_session):
+def test_get_proposals_excludes_token(client, api_key, db_session, authed):
     """GET /proposals response JSON has NO 'token' field anywhere (T-02-07)."""
     tx_id = _make_transaction(db_session)
     proposal_id, token, _ = _insert_proposal(db_session, tx_id=tx_id)

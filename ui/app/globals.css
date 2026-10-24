@@ -39,6 +39,15 @@
   }
 }
 
+/* Below 340px the 44px page gutters leave cards too narrow for an amount
+   (37 IN-03). Chat's own 16px rule further down wins for the chat column. */
+@media (max-width: 339px) {
+  .tab-in {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+}
+
 /* Phase 33 Inbox. Hex values are literal copies of ui/app/styles.ts tokens
    because CSS cannot import styles.ts: #2f6f4f green, #6f6857 muted3,
    #f0ece3 hairline. */
@@ -115,3 +124,101 @@
     flex: 1 1 100% !important;
   }
 }
+
+/* Phase 36 chat threads. Hex values are literal copies of ui/app/styles.ts
+   tokens: #f2efe8 sidebar, #f7f5f1 panel, #e2dccf border2. No transitions:
+   the drawer is a plain display toggle (the automated pane never fires rAF). */
+
+.thread-row .thread-actions {
+  opacity: 0;
+}
+.thread-row:hover .thread-actions,
+.thread-row:focus-within .thread-actions,
+.thread-row[aria-current] .thread-actions {
+  opacity: 1;
+}
+.thread-row:not([aria-current]):hover,
+.thread-row:not([aria-current]):focus-within {
+  background: #f2efe8;
+}
+@media (pointer: coarse) {
+  .thread-actions button {
+    min-height: 44px;
+  }
+}
+
+/* Category-row options reveal; replaces CategoryManager's old JS hover state
+   and also shows on keyboard focus. RowMenu's inline opacity wins while open. */
+.cat-row .cat-actions {
+  opacity: 0;
+}
+.cat-row:hover .cat-actions,
+.cat-row:focus-within .cat-actions {
+  opacity: 1;
+}
+
+.threads-toggle {
+  display: none;
+}
+
+@media (max-width: 1100px) {
+  .chat-threads {
+    display: none !important;
+  }
+  .chat-threads[data-open="true"] {
+    display: block !important;
+    width: min(280px, 88%) !important;
+    box-shadow: 0 1px 2px rgba(40, 34, 24, 0.05);
+    z-index: 20;
+  }
+  .chat-column {
+    margin-left: 0 !important;
+  }
+  .threads-toggle {
+    display: inline-flex !important;
+  }
+}
+
+@media (max-width: 560px) {
+  .chat-column-inner {
+    padding: 24px 16px 40px !important;
+  }
+}
+
+/* Scrim only exists for the drawer; never over the desktop layout. */
+.threads-scrim {
+  display: none;
+}
+@media (max-width: 1100px) {
+  .threads-scrim {
+    display: block !important;
+  }
+}
+
+/* Markdown answers (37-04): inline margins cannot express first/last-child or
+   nested-list rules, so these use !important to beat the inline styles. */
+.md > :first-child { margin-top: 0 !important; }
+.md > :last-child { margin-bottom: 0 !important; }
+.md li > ul, .md li > ol { margin: 4px 0 0 !important; }
+.md li > p { margin: 0 0 4px !important; }
+
+/* Tool steps (37-05). */
+@media (pointer: coarse) {
+  .coarse-tap { min-height: 44px; }
+}
+.source-chip:hover { background: #f2efe8 !important; text-decoration: underline; }
+.step-toggle:hover .step-label { text-decoration: underline; }
+.steps-toggle:hover { color: #23201b !important; }
+
+/* Message actions (37-08): opacity only, so every button stays focusable. */
+.message-actions { opacity: 0; }
+.message-actions.always-visible,
+.chat-msg:hover .message-actions,
+.chat-msg:focus-within .message-actions { opacity: 1; }
+@media (hover: none), (pointer: coarse) {
+  .message-actions { opacity: 1; }
+}
+.action-btn:hover, .action-btn:focus-visible { color: #23201b !important; text-decoration: underline; }
+.action-tooltip { display: none; position: absolute; bottom: calc(100% + 4px); left: 0; }
+.action-wrap:hover .action-tooltip,
+.action-wrap:focus-within .action-tooltip { display: block; }

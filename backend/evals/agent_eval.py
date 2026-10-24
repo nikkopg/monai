@@ -3,16 +3,24 @@ Opt-in golden-question eval for the production agent loop.
 
 What this is: a standalone script, NOT a pytest test and NOT collected by
 default pytest or CI (backend/evals/ sits outside pyproject.toml's
-testpaths). It sends ~12 scripted questions through backend.query.agent_stream
+testpaths). It sends ~21 scripted questions through backend.query.agent_stream
 — the real, production agent loop — driven by whatever real LLM is
 configured via LLM_PROVIDER / the matching model env var. It runs only
 against monai_test, never the live monai database; a module-top guard
 refuses to proceed otherwise, before any backend import.
 
-It seeds its own synthetic ZZEval rows (one account, a parent+child category
-pair, four transactions) before running, and removes every ZZEval row and
-every pending proposal it created afterwards, in a `finally` block that
+It seeds its own synthetic ZZEval rows (one account, three categories, the
+four case rows, a recurring series with a transfer decoy and a
+portfolio-linked decoy, one platform and their portfolio events) before
+running, and removes every ZZEval row and every pending proposal it created
+afterwards, in a `finally` block that
 also runs on Ctrl-C. It never approves a proposal.
+
+Cases 15-17 and 20 are multi-turn: their history is built in memory with
+plan_history and they create no threads. Cases 18-20 cover Phase 38 (a
+read-only tool subset, an ordered two-write request, a long summarised thread).
+Case 21 covers Phase 40: an enabled synthetic skill that must be loaded first; the
+skill (env var and app_settings row) exists only around that one case.
 
 Usage:
     env -u DATABASE_URL .venv/bin/python -m backend.evals.agent_eval \
@@ -21,7 +29,7 @@ Usage:
     --self-check   run the answer-number parser's asserts only. No DB, no LLM.
     --seed-check   run the DB guard, head check, seed, probes and teardown.
                    No LLM.
-    --case N       run only case N (repeatable). Default: run all 12 cases.
+    --case N       run only case N (repeatable). Default: run all 21 cases.
 
 Exit code 0 means every selected case passed (or, for --self-check /
 --seed-check, that check passed). Exit code 1 otherwise.
@@ -29,13 +37,16 @@ Exit code 0 means every selected case passed (or, for --self-check /
 
 import argparse
 import asyncio
+import calendar
+import contextlib
 import datetime
 import json
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from sqlalchemy.engine.url import make_url
 
@@ -54,7 +65,7 @@ from sqlalchemy.engine.url import make_url
 # ---------------------------------------------------------------------------
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEFAULT_TEST_URL = "postgresql+psycopg://monai:monai@localhost:5434/monai_test"
+_DEFAULT_TEST_URL = f"postgresql+psycopg://monai:{quote(os.environ.get('POSTGRES_PASSWORD') or 'monai', safe='')}@localhost:5434/monai_test"
 os.environ.setdefault("DATABASE_URL", _DEFAULT_TEST_URL)
 
 _TEST_DB = make_url(os.environ["DATABASE_URL"])
@@ -336,6 +347,35 @@ def _self_check() -> None:
     assert _check_case(fake_case, {"text": "You spent 43,000", "trace": [right, wrong]})["passed"]
     assert not _check_case(fake_case, {"text": "You spent 134,000", "trace": [right, wrong]})["passed"]
 
+    # Case 21 trace checker (pure). `_period_range` is stubbed so no backend
+    # import (and so no DB) is needed to compare ranges.
+    def st(tool, **args):
+        return {"tool": tool, "args": args}
+
+    sp, mt = st("spending_total", period="this_month"), st("monthly_trend")
+    ls = st("load_skill", name=SKILL_NAME)
+    saved_pr = globals()["_period_range"]
+    globals()["_period_range"] = lambda p="all_time", s=None, e=None: (p, s, e)
+    try:
+        assert _args_skill_first([ls, sp, mt], {})
+        assert _args_skill_first([ls, mt, sp], {})
+        assert not _args_skill_first([sp, ls, mt], {})
+        assert not _args_skill_first([ls, sp], {})
+        assert not _args_skill_first([ls, st("spending_total", period="last_month"), mt], {})
+        assert not _args_skill_first([st("load_skill", name="other"), sp, mt], {})
+    finally:
+        globals()["_period_range"] = saved_pr
+    digits = [p.name for p in SKILLS_FIXTURE.rglob("*") if p.is_file() and re.search(r"\d", p.read_text())]
+    assert SKILLS_FIXTURE.is_dir() and not digits, digits
+
+    # Multi-turn helpers (pure): history markers and the calendar-month maths.
+    assert _has_marker("[2026-10-11] You spent 5")
+    assert _has_marker("You spent 5 [tools used: x()]")
+    assert not _has_marker("You spent 5 on 2026-10-11")
+    assert _month_before(datetime.date(2026, 3, 10), 2) == ("2026-01-01", "2026-01-31")
+    assert _month_before(datetime.date(2026, 1, 20), 2) == ("2025-11-01", "2025-11-30")
+    assert _stale_stamp(datetime.date(2026, 10, 11)) == datetime.date(2026, 8, 15)
+
     # Teardown contract: Ctrl-C mid-run, or a failure building the LLM
     # client, must still purge every proposal id collected so far. The DB
     # and LLM hooks are stubbed, so this stays offline.
@@ -343,7 +383,7 @@ def _self_check() -> None:
     saved = {k: g[k] for k in ("_check_db", "_seed", "_header_line", "_run_case", "_purge")}
     purged: list[list[str]] = []
 
-    async def interrupted_case(question: str, proposal_ids: list[str]) -> dict:
+    async def interrupted_case(question: str, proposal_ids: list[str], history=None) -> dict:
         proposal_ids.append("synthetic-proposal-id")
         raise KeyboardInterrupt
 
@@ -387,6 +427,18 @@ ACCOUNT = "ZZEval Wallet"
 PARENT = "ZZEval Hobbies"
 CHILD = "ZZEval Pottery"
 UNKNOWN = "Yachts"
+RECUR_CAT = "ZZEval Subscriptions"
+RECUR_MERCHANT = "ZZEval Streaming"
+TRANSFER_DECOY = "ZZEval Transfer Out"
+LINKED_DECOY = "ZZEval Broker Topup"
+EVAL_PLATFORM = "ZZEval Platform"
+EVAL_TICKER = "ZZEVAL"
+# Phase 40 (case 21). SKILLS_KEY mirrors skills.KEY_SKILLS_ENABLED as a literal so
+# _purge/_leftovers need no backend import.
+SKILLS_FIXTURE = Path(__file__).parent / "skills_fixture"
+SKILL_NAME = "zzeval-monthly-review"
+SKILLS_KEY = "skills_enabled"
+_EVAL_CATS = [PARENT, CHILD, RECUR_CAT]
 
 
 def _seed_rows(today: datetime.date) -> list[tuple[datetime.date, int, str]]:
@@ -405,6 +457,23 @@ def _seed_rows(today: datetime.date) -> list[tuple[datetime.date, int, str]]:
         (last_month_start + datetime.timedelta(days=9), -127000, "ZZEval Kiln Rental"),
         (datetime.date(2024, 3, 14), -91000, "ZZEval Studio Fee"),
     ]
+
+
+def _recurring_seed_rows(
+    today: datetime.date,
+) -> list[tuple[datetime.date, int, str, bool, bool]]:
+    """(date, amount, merchant, is_transfer, linked) for three monthly-cadence
+    series of 5 rows each, at today - 30*k days. RECUR_MERCHANT is the
+    largest amount so leftover monai_test groups cannot push it out of the
+    default top-20 (sorted by monthly cost). The two decoys must NOT be
+    detected: one by is_transfer, one only by its portfolio_events link."""
+    rows: list[tuple[datetime.date, int, str, bool, bool]] = []
+    for k in range(5):
+        d = today - datetime.timedelta(days=30 * k)
+        rows.append((d, -249000, RECUR_MERCHANT, False, False))
+        rows.append((d, -88000, TRANSFER_DECOY, True, False))
+        rows.append((d, -212000, LINKED_DECOY, False, True))
+    return rows
 
 
 def _seeded_sum_in(period_name: str) -> float:
@@ -454,8 +523,9 @@ def _check_db() -> None:
 
     remediation = (
         "Run the backend suite once (env -u DATABASE_URL .venv/bin/pytest "
-        f"backend/tests -q), or run `DATABASE_URL={_DEFAULT_TEST_URL} "
-        "alembic upgrade head`. Always spell out DATABASE_URL — bare "
+        "backend/tests -q), or run `DATABASE_URL=postgresql+psycopg://monai:"
+        "$POSTGRES_PASSWORD@localhost:5434/monai_test alembic upgrade head`. "
+        "Always spell out DATABASE_URL — bare "
         "alembic defaults to the live DB."
     )
     try:
@@ -489,14 +559,28 @@ def _purge(proposal_ids: list[str]) -> None:
     from backend.db import engine
 
     with engine.begin() as c:
+        # Events first: they reference platforms and eval transactions.
+        c.execute(
+            sa_text("DELETE FROM portfolio_events WHERE ticker = :tick"),
+            {"tick": EVAL_TICKER},
+        )
         c.execute(
             sa_text("DELETE FROM transactions WHERE " + _EVAL_TXN_WHERE),
-            {"acct": ACCOUNT, "cats": [PARENT, CHILD]},
+            {"acct": ACCOUNT, "cats": _EVAL_CATS},
+        )
+        c.execute(
+            sa_text("DELETE FROM platforms WHERE name = :name"), {"name": EVAL_PLATFORM}
         )
         # Child before parent — FK order.
         c.execute(sa_text("DELETE FROM categories WHERE name = :name"), {"name": CHILD})
         c.execute(sa_text("DELETE FROM categories WHERE name = :name"), {"name": PARENT})
+        c.execute(sa_text("DELETE FROM categories WHERE name = :name"), {"name": RECUR_CAT})
         c.execute(sa_text("DELETE FROM accounts WHERE name = :name"), {"name": ACCOUNT})
+        # Phase 40: the scoped-skill row (normally already gone via _fixture_skill).
+        c.execute(sa_text("DELETE FROM app_settings WHERE key = :sk"), {"sk": SKILLS_KEY})
+        # Guard (research C6): the eval creates no threads (D-22a), but drop any
+        # eval-titled one; messages cascade, proposals keep their rows.
+        c.execute(sa_text("DELETE FROM threads WHERE title LIKE :tp"), {"tp": MARKER + "%"})
         # Exact ids only (pending, or flipped to expired by a lazy-expiry read).
         # A SIGKILL'd run's proposals are not swept
         # by the next run; they are inert (never confirmed) test-DB rows.
@@ -551,6 +635,40 @@ def _seed() -> None:
                 ),
                 {"d": d, "amt": amount, "cat": CHILD, "cid": child_id, "m": merchant, "aid": account_id},
             )
+        recur_id = c.execute(
+            sa_text(
+                "INSERT INTO categories (name, parent_id, kind, is_system) "
+                "VALUES (:name, NULL, 'expense', false) RETURNING id"
+            ),
+            {"name": RECUR_CAT},
+        ).scalar()
+        platform_id = c.execute(
+            sa_text(
+                "INSERT INTO platforms (name, kind) VALUES (:n, 'test') "
+                "ON CONFLICT (name) DO UPDATE SET kind = 'test' RETURNING id"
+            ),
+            {"n": EVAL_PLATFORM},
+        ).scalar()
+        for d, amount, merchant, is_transfer, linked in _recurring_seed_rows(datetime.date.today()):
+            txn_id = c.execute(
+                sa_text(
+                    "INSERT INTO transactions "
+                    "(date, amount, currency, category, category_id, merchant, account_id, is_transfer) "
+                    "VALUES (:d, :amt, 'IDR', :cat, :cid, :m, :aid, :tr) RETURNING id"
+                ),
+                {"d": d, "amt": amount, "cat": RECUR_CAT, "cid": recur_id, "m": merchant,
+                 "aid": account_id, "tr": is_transfer},
+            ).scalar()
+            if linked:
+                # Raw SQL: no holdings recompute runs (recompute-clobbers hazard).
+                c.execute(
+                    sa_text(
+                        "INSERT INTO portfolio_events "
+                        "(date, ticker, event_type, quantity, price, platform_id, transaction_id) "
+                        "VALUES (:d, :tick, 'buy', 1, 100000, :pid, :tid)"
+                    ),
+                    {"d": d, "tick": EVAL_TICKER, "pid": platform_id, "tid": txn_id},
+                )
 
 
 def _leftovers(proposal_ids: list[str]) -> int:
@@ -564,24 +682,34 @@ def _leftovers(proposal_ids: list[str]) -> int:
                 "(SELECT count(*) FROM accounts WHERE name = :acct) + "
                 "(SELECT count(*) FROM categories WHERE name = ANY(:cats)) + "
                 "(SELECT count(*) FROM transactions WHERE " + _EVAL_TXN_WHERE + ") + "
+                "(SELECT count(*) FROM portfolio_events WHERE ticker = :tick) + "
+                "(SELECT count(*) FROM platforms WHERE name = :plat) + "
+                "(SELECT count(*) FROM threads WHERE title LIKE :tp) + "
+                "(SELECT count(*) FROM app_settings WHERE key = :sk) + "
                 "(SELECT count(*) FROM proposals WHERE status IN ('pending', 'expired') AND "
                 "id = ANY(CAST(:ids AS uuid[])))"
             ),
-            {"acct": ACCOUNT, "cats": [PARENT, CHILD], "ids": [pid for pid in proposal_ids if pid]},
+            {"acct": ACCOUNT, "cats": _EVAL_CATS, "tick": EVAL_TICKER, "plat": EVAL_PLATFORM,
+             "tp": MARKER + "%", "sk": SKILLS_KEY, "ids": [pid for pid in proposal_ids if pid]},
         ).scalar()
     return int(n or 0)
 
 
 # ---------------------------------------------------------------------------
 # Probes — no LLM. Prove the subtree, case-insensitive,
-# unknown-category and period data paths the 12 cases rely on.
+# unknown-category and period data paths the 20 cases rely on, plus the
+# Phase 38 subset (P11), summary-aware history (P12) and Phase 40 scoped
+# skill (P13) wiring.
 # ---------------------------------------------------------------------------
 
-_PROBE_COUNT = 7
+_PROBE_COUNT = 13
 
 
 def _run_probes() -> list[str]:
-    from backend.tools import spending_in_category, find_transactions, spending_total, net_worth_tool
+    from backend.tools import (
+        spending_in_category, find_transactions, spending_total, net_worth_tool,
+        recurring_charges, compare_periods,
+    )
 
     failures: list[str] = []
 
@@ -631,6 +759,132 @@ def _run_probes() -> list[str]:
     if bad["passed"] or not good["passed"]:
         failures.append(f"P7: case-5 check cross-step passed={bad['passed']}, honest passed={good['passed']}")
 
+    # P8: recurring_charges finds the seeded monthly series, neither decoy, and
+    # case 13's check accepts the honest step and rejects a decoy-tainted one.
+    rc = recurring_charges()
+    labels = [str(g.get("label", "")).lower() for g in rc.get("groups", [])]
+    mine = [g for g in rc.get("groups", []) if str(g.get("label", "")).lower() == RECUR_MERCHANT.lower()]
+    if not (mine and mine[0].get("cadence") == "monthly" and mine[0].get("status") == "active"
+            and TRANSFER_DECOY.lower() not in labels and LINKED_DECOY.lower() not in labels):
+        failures.append(f"P8: recurring_charges() labels={labels!r}, match={mine!r}")
+    case13 = next(c for c in CASES if c["id"] == 13)
+    honest13 = {"tool": "recurring_charges", "args": {}, "result": rc}
+    tainted = {**rc, "groups": [*rc.get("groups", []), {"label": LINKED_DECOY}]}
+    bad13 = {"tool": "recurring_charges", "args": {}, "result": tainted}
+    if not case13["step_args"](honest13) or case13["step_args"](bad13):
+        failures.append(
+            f"P8: case-13 check honest={case13['step_args'](honest13)}, "
+            f"decoy-tainted={case13['step_args'](bad13)}"
+        )
+
+    # P9: compare_periods totals agree with spending_total, and case 14's check
+    # is order-insensitive but rejects the wrong pair.
+    cp = compare_periods("last_month", "this_month")
+    if "error" in cp:
+        failures.append(f"P9: compare_periods error: {cp!r}")
+    else:
+        sp = cp["totals"]["spending"]
+        if sp["current"] != spending_total("this_month")["total"] or sp["base"] != spending_total("last_month")["total"]:
+            failures.append(f"P9: compare_periods totals {sp!r} != spending_total")
+    case14 = next(c for c in CASES if c["id"] == 14)
+    ok_args = [{"period_a": "last_month", "period_b": "this_month"},
+               {"period_a": "this_month", "period_b": "last_month"}]
+    bad_args = {"period_a": "last_month", "period_b": "last_month"}
+    got = [case14["step_args"]({"tool": "compare_periods", "args": a, "result": cp}) for a in ok_args]
+    got_bad = case14["step_args"]({"tool": "compare_periods", "args": bad_args, "result": cp})
+    if not all(got) or got_bad:
+        failures.append(f"P9: case-14 check ok={got}, wrong-pair={got_bad}")
+
+    # P10: history wiring and the multi-turn checks, positive and negative.
+    from backend import config
+    from backend.chat_history import EARLIER_DATES_NOTE, build_history
+
+    today = _query_today()
+    h = build_history(_stale_history(today), config.CHAT_HISTORY_TOKEN_BUDGET, today)
+    stamp = "[" + _stale_stamp(today).isoformat() + "]"
+    if not (
+        len(h) == 2
+        and stamp in h[0].content and EARLIER_DATES_NOTE in h[0].content
+        and h[1].content.splitlines()[-1].startswith("[tools used: spending_in_category(")
+    ):
+        failures.append(f"P10: stale history did not build as expected: {[m.content for m in h]!r}")
+    else:
+        case15, case16, case17 = (next(c for c in CASES if c["id"] == i) for i in (15, 16, 17))
+
+        def sic(**args):
+            return {"tool": "spending_in_category", "args": {"category": PARENT, **args}, "result": {}}
+
+        s, e = _month_before(_stale_stamp(today), 2)
+        cmp_ok = {"tool": "compare_periods", "result": {"totals": {}},
+                  "args": {"period_a": "last_month", "period_b": "this_month"}}
+        cmp_bad = {**cmp_ok, "args": {"period_a": "last_month", "period_b": "last_month"}}
+        checks = [
+            ("case 17 expected month", case17["step_args"](sic(period="custom", start_date=s, end_date=e)), True),
+            ("case 17 last_month", case17["step_args"](sic(period="last_month")), False),
+            ("case 15 this_month", case15["step_args"](sic(period="this_month")), True),
+            ("case 15 last_month", case15["step_args"](sic(period="last_month")), False),
+            ("case 16 last/this pair", case16["step_args"](cmp_ok), True),
+            ("case 16 last/last pair", case16["step_args"](cmp_bad), False),
+        ]
+        for name, got_p10, want in checks:
+            if got_p10 is not want:
+                failures.append(f"P10: {name} returned {got_p10}, expected {want}")
+                break
+
+    # P11: per-turn tool subset (D-02, D-04a), no LLM.
+    from backend.agent_loop import tools_for_turn
+    from backend.tools import READ_TOOL_NAMES, TOOLS
+
+    q18, q19, q12 = (next(c for c in CASES if c["id"] == i)["question"] for i in (18, 19, 12))
+    sub18 = tools_for_turn(q18)
+    if sub18 != READ_TOOL_NAMES or any(n.startswith("propose_") for n in sub18):
+        failures.append("P11: case 18 question did not get the read-only subset")
+    if tools_for_turn(q12) != frozenset(TOOLS) or tools_for_turn(q19) != frozenset(TOOLS):
+        failures.append("P11: case 12/19 questions did not get every tool")
+    offered = _turn_messages("Add a coffee", {"text": "Proposed.", "trace": []}, datetime.datetime.now().astimezone())
+    offered[1]["parts"]["proposals"] = [{"id": "x"}]
+    if tools_for_turn("yes, do that", offered) != frozenset(TOOLS):
+        failures.append("P11: sticky write intent after a proposal did not keep every tool")
+
+    # P12: summary-aware, budget-trimmed history (D-20, D-30), no LLM.
+    from backend.chat_history import plan_history
+
+    long_h = _long_history(today)
+    hist, to_compact = plan_history(
+        long_h, config.CHAT_HISTORY_TOKEN_BUDGET, today, summary=LONG_SUMMARY)
+    if not hist or not hist[0].content.startswith("Summary of earlier conversation"):
+        failures.append("P12: summary did not lead the planned history")
+    if len(hist) - 1 >= len(long_h):
+        failures.append(f"P12: long thread was not budget-trimmed ({len(hist) - 1} of {len(long_h)} messages kept)")
+    if not to_compact:
+        failures.append("P12: trimmed long thread returned nothing to compact")
+    if re.search(r"\d", LONG_SUMMARY):
+        failures.append("P12: LONG_SUMMARY holds a digit")
+
+    # P13: the case-21 skill is valid, effective, offered and loadable inside
+    # the scope, and fully gone after it (D-19, A-06), no LLM.
+    from backend import skills
+    from backend.chat_tools import load_skill
+
+    prior_dir = os.environ.get("MONAI_SKILLS_DIR")
+    with _fixture_skill():
+        found = skills.scan()
+        if [(s.name, s.valid) for s in found] != [(SKILL_NAME, True)]:
+            failures.append(f"P13: fixture scan = {[(s.name, s.valid, s.reason) for s in found]!r}")
+        if [s.name for s in skills.effective()] != [SKILL_NAME]:
+            failures.append("P13: fixture skill is not effective inside the scope")
+        if "load_skill" not in tools_for_turn("Run my monthly review."):
+            failures.append("P13: load_skill not offered inside the scope")
+        main_text = load_skill(SKILL_NAME).get("text", "")
+        if "monthly_trend" not in main_text:
+            failures.append("P13: load_skill text lacks monthly_trend")
+        if "error" in load_skill(SKILL_NAME, "references/format.md"):
+            failures.append("P13: references/format.md did not load")
+    if skills.effective() or os.environ.get("MONAI_SKILLS_DIR") != prior_dir:
+        failures.append("P13: skill or MONAI_SKILLS_DIR leaked past the scope")
+    if _skills_rows() != 0:
+        failures.append("P13: skills_enabled row left after the scope")
+
     return failures
 
 
@@ -657,7 +911,7 @@ def _do_seed_check() -> int:
 
 
 # ---------------------------------------------------------------------------
-# The 12 golden cases.
+# The 21 golden cases (21 is the Phase 40 skill case).
 # ---------------------------------------------------------------------------
 
 
@@ -673,6 +927,39 @@ def _resolved_args(step: dict):
         return _period_range(args.get("period", "all_time"), args.get("start_date"), args.get("end_date"))
     except (ValueError, TypeError):
         return (None, "PARSE-ERROR")
+
+
+def _resolved_pair(step: dict):
+    """Two-sided resolver for compare_periods: the set of resolved ranges for
+    the a_/b_ sides (order-insensitive, D-11), or None if either side fails."""
+    args = step.get("args") or {}
+    try:
+        return {
+            _period_range(args.get("period_a", "all_time"), args.get("a_start_date"), args.get("a_end_date")),
+            _period_range(args.get("period_b", "all_time"), args.get("b_start_date"), args.get("b_end_date")),
+        }
+    except (ValueError, TypeError):
+        return None
+
+
+def _recurring_step(step: dict) -> bool:
+    r = step.get("result")
+    if not isinstance(r, dict):
+        return False
+    labels = [str(g.get("label", "")).lower() for g in r.get("groups") or []]
+    return (
+        RECUR_MERCHANT.lower() in labels
+        and TRANSFER_DECOY.lower() not in labels
+        and LINKED_DECOY.lower() not in labels
+    )
+
+
+def _compare_step(step: dict) -> bool:
+    r = step.get("result")
+    return (
+        isinstance(r, dict) and "error" not in r
+        and _resolved_pair(step) == {_period_range("last_month"), _period_range("this_month")}
+    )
 
 
 def _steps_for(trace: list, tool_names: list[str]) -> list[dict]:
@@ -749,6 +1036,170 @@ def _answer_has_parent_name(text: str) -> bool:
     return PARENT.lower() in text.lower()
 
 
+def _hobbies_range_step(period_name: str):
+    """Check: category PARENT (ci) and the step's range == the named period."""
+    return lambda step: (
+        _category_arg_matches(step, PARENT.lower())
+        and _resolved_args(step) == _period_range(period_name)
+    )
+
+
+def _carried_step(step: dict) -> bool:
+    """Case 16: the final turn re-queries itself: a clean compare_periods over
+    {last_month, this_month}, or a PARENT query over either of those months."""
+    r = step.get("result")
+    if step.get("tool") == "compare_periods":
+        return (
+            isinstance(r, dict) and "error" not in r
+            and _resolved_pair(step) == {_period_range("last_month"), _period_range("this_month")}
+        )
+    return _category_arg_matches(step, PARENT.lower()) and _resolved_args(step) in (
+        _period_range("last_month"), _period_range("this_month"),
+    )
+
+
+def _month_before(d: datetime.date, k: int) -> tuple[str, str]:
+    """(first_day, last_day) ISO strings of the calendar month k months before d's."""
+    idx = d.year * 12 + d.month - 1 - k
+    y, m = divmod(idx, 12)
+    m += 1
+    return f"{y:04d}-{m:02d}-01", f"{y:04d}-{m:02d}-{calendar.monthrange(y, m)[1]:02d}"
+
+
+def _stale_stamp(today: datetime.date) -> datetime.date:
+    """The 15th of the month two months before today: the stale history date."""
+    return datetime.date.fromisoformat(_month_before(today, 2)[0]).replace(day=15)
+
+
+def _query_today() -> datetime.date:
+    from backend.query import _today
+
+    return _today()
+
+
+def _stale_step(step: dict) -> bool:
+    """Case 17: PARENT over the calendar month two months before the stamped
+    history date. The stamped turn asked 'last month' (stamp month - 1), so
+    'the month before that' is stamp month - 2."""
+    return (
+        _category_arg_matches(step, PARENT.lower())
+        and _resolved_args(step)
+        == _period_range("custom", *_month_before(_stale_stamp(_query_today()), 2))
+    )
+
+
+def _stale_history(today: datetime.date) -> list[dict]:
+    """Synthetic prior turn stamped _stale_stamp(today). 4321 is deliberately
+    absent from every seed, so copying it into an answer fails numbers_ok."""
+    at = datetime.datetime.combine(_stale_stamp(today), datetime.time(10, 0)).astimezone()
+    return [
+        {"role": "user", "content": "How much did I spend on ZZEval Hobbies last month?",
+         "status": "complete", "parts": None, "created_at": at},
+        {"role": "assistant", "content": "You spent 4321 on ZZEval Hobbies last month.",
+         "status": "complete",
+         "parts": {"steps": [{"tool": "spending_in_category",
+                              "args": {"category": PARENT, "period": "last_month"}}]},
+         "created_at": at},
+    ]
+
+
+def _args_two_ordered(trace, payload):
+    """Case 19: exactly one add_account and one rename_category proposal, no
+    other propose_* step, two distinct ids, operations in the stated order."""
+    proposes = [s for s in trace if str(s.get("tool", "")).startswith("propose_")]
+    if sorted(s["tool"] for s in proposes) != ["propose_add_account", "propose_rename_category"]:
+        return False
+    proposals = payload.get("proposals") or []
+    return (
+        len(proposals) == 2
+        and len({p.get("id") for p in proposals}) == 2
+        and [p.get("operation") for p in proposals] == ["add_account", "rename_category"]
+    )
+
+
+def _args_skill_first(trace, payload):
+    """Case 21: load_skill(SKILL_NAME) comes first, then spending_total over
+    this_month and monthly_trend after it (their relative order is free: the
+    spike saw both)."""
+    first = next(
+        (i for i, s in enumerate(trace)
+         if s.get("tool") == "load_skill" and (s.get("args") or {}).get("name") == SKILL_NAME),
+        None,
+    )
+    if first is None:
+        return False
+    later = trace[first + 1:]
+    return any(s.get("tool") == "monthly_trend" for s in later) and any(
+        s.get("tool") == "spending_total" and _range_is("this_month")(s) for s in later
+    )
+
+
+def _skills_rows() -> int:
+    from sqlalchemy import text as sa_text
+    from backend.db import engine
+
+    with engine.connect() as c:
+        return int(c.execute(
+            sa_text("SELECT count(*) FROM app_settings WHERE key = :sk"), {"sk": SKILLS_KEY}
+        ).scalar() or 0)
+
+
+@contextlib.contextmanager
+def _fixture_skill():
+    """Scope the synthetic skill to one case: env var + enabled row, both
+    removed in `finally` so cases 1-20 never see a catalog (A-06)."""
+    from sqlalchemy import text as sa_text
+    from backend import skills
+    from backend.db import engine
+
+    old = os.environ.get("MONAI_SKILLS_DIR")
+    os.environ["MONAI_SKILLS_DIR"] = str(SKILLS_FIXTURE)
+    try:
+        found = [s for s in skills.scan() if s.name == SKILL_NAME]
+        if not (found and found[0].valid):
+            raise RuntimeError(f"eval fixture skill invalid: {found!r}")
+        with engine.begin() as c:
+            c.execute(
+                sa_text(
+                    "INSERT INTO app_settings (key, value, updated_at) "
+                    "VALUES (:sk, CAST(:v AS jsonb), now()) "
+                    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()"
+                ),
+                {"sk": SKILLS_KEY, "v": json.dumps({SKILL_NAME: found[0].hash})},
+            )
+        yield
+    finally:
+        with engine.begin() as c:
+            c.execute(sa_text("DELETE FROM app_settings WHERE key = :sk"), {"sk": SKILLS_KEY})
+        if old is None:
+            os.environ.pop("MONAI_SKILLS_DIR", None)
+        else:
+            os.environ["MONAI_SKILLS_DIR"] = old
+
+
+LONG_SUMMARY = (
+    "The owner asked several times about ZZEval Hobbies spending by month and about "
+    "ZZEval Streaming charges; no changes were proposed."
+)
+
+
+def _long_history(today: datetime.date) -> list[dict]:
+    """30 synthetic pairs stamped earlier today, long enough to overflow the
+    history budget. 7777 is deliberately absent from every seed, so copying it
+    into an answer fails numbers_ok."""
+    at = datetime.datetime.combine(today, datetime.time(0, 5)).astimezone()
+    out: list[dict] = []
+    for i in range(30):
+        topic = PARENT if i % 2 == 0 else "ZZEval Streaming"
+        out.append({"role": "user", "status": "complete", "parts": None, "created_at": at,
+                    "content": f"Question {i}: " + f"what did I spend on {topic} in the earlier months? " * 4})
+        out.append({"role": "assistant", "status": "complete", "created_at": at,
+                    "content": f"Answer {i}: " + f"you spent 7777 on {topic} in that period. " * 11,
+                    "parts": {"steps": [{"tool": "spending_in_category",
+                                         "args": {"category": PARENT, "period": "last_month"}}]}})
+    return out
+
+
 CASES: list[dict] = [
     {
         "id": 1, "question": "How much did I spend this month?",
@@ -820,6 +1271,87 @@ CASES: list[dict] = [
         "args_desc": "exactly 2 propose_add_transaction steps, amounts {25000, 60000}, 2 proposals",
         "answer": "numbers", "needs_number": False,
     },
+    {
+        "id": 13, "question": "What are my recurring charges?",
+        "tools": ["recurring_charges"], "step_args": _recurring_step,
+        "args_desc": "a recurring_charges step whose groups include ZZEval Streaming and neither decoy",
+        "answer": "numbers", "needs_number": True,
+    },
+    {
+        "id": 14, "question": "Compare my spending last month against this month",
+        "tools": ["compare_periods"], "step_args": _compare_step,
+        "args_desc": "a compare_periods step whose two resolved ranges == {last_month, this_month} (either order), no error",
+        "answer": "numbers", "needs_number": True,
+    },
+    # Cases 15-17 are multi-turn: "turns" are the questions in order (the last
+    # is graded), "history" optionally seeds synthetic prior messages.
+    {
+        "id": 15,
+        "turns": ["How much did I spend on ZZEval Hobbies last month?", "and this month?"],
+        "question": "and this month?",
+        "tools": ["spending_in_category", "find_transactions"],
+        "step_args": _hobbies_range_step("this_month"),
+        "args_desc": "final turn: category (ci) == PARENT and range == this_month",
+        "answer": "numbers", "needs_number": True,
+    },
+    {
+        "id": 16,
+        "turns": [
+            "How much did I spend on ZZEval Hobbies last month?",
+            "and this month?",
+            "What's the difference between those two?",
+        ],
+        "question": "What's the difference between those two?",
+        "tools": ["compare_periods", "spending_in_category", "find_transactions"],
+        "step_args": _carried_step,
+        "args_desc": "final turn makes its own compare_periods {last_month, this_month} or PARENT re-query; numbers only from this turn's trace",
+        "answer": "numbers", "needs_number": True,
+    },
+    {
+        "id": 17,
+        "history": _stale_history,
+        "turns": ["and the month before that?"],
+        "question": "and the month before that?",
+        "tools": ["spending_in_category", "find_transactions"],
+        "step_args": _stale_step,
+        "args_desc": "range == the calendar month two months before the stamped history date; category PARENT",
+        # A zero month may be phrased without digits, so the args check carries
+        # this case; any stated figure must still come from this turn's trace.
+        "answer": "numbers", "needs_number": False,
+    },
+    # Cases 18-20 cover Phase 38: tool subset, ordered two-write, long summarised thread.
+    {
+        "id": 18, "question": "How much did I spend on ZZEval Hobbies last month?",
+        "tools": ["spending_in_category", "find_transactions"],
+        "step_args": _hobbies_range_step("last_month"), "no_writes": True,
+        "args_desc": "PARENT over last_month; trace has no propose_* step (subset)",
+        "answer": "numbers", "needs_number": True,
+    },
+    {
+        "id": 19,
+        "question": "Add an account named ZZEval Savings and rename the category ZZEval Pottery to ZZEval Ceramics.",
+        "tools": ["propose_add_account", "propose_rename_category"], "args": _args_two_ordered,
+        "args_desc": "exactly 2 proposals, distinct ids, operations [add_account, rename_category] in order",
+        # The answer must describe the changes, not reply to the tail reminder
+        # ("Understood. I will ensure...", seen live on 2026-10-18 with a user-role reminder).
+        "answer": lambda text: "zzeval savings" in text.lower(), "needs_number": False,
+    },
+    {
+        "id": 20,
+        "history": _long_history, "summary": LONG_SUMMARY,
+        "turns": ["How much did I spend on ZZEval Hobbies this month?"],
+        "question": "How much did I spend on ZZEval Hobbies this month?",
+        "tools": ["spending_in_category", "find_transactions"],
+        "step_args": _hobbies_range_step("this_month"),
+        "args_desc": "long budget-trimmed thread with a summary; this_month PARENT re-query; no figure from history",
+        "answer": "numbers", "needs_number": True,
+    },
+    {
+        "id": 21, "skill": True, "question": "Run my monthly review.",
+        "tools": ["load_skill"], "args": _args_skill_first,
+        "args_desc": "load_skill(zzeval-monthly-review) before spending_total(this_month) and monthly_trend; their order is not asserted",
+        "answer": "numbers", "needs_number": True, "no_writes": True,
+    },
 ]
 
 
@@ -828,16 +1360,21 @@ CASES: list[dict] = [
 # ---------------------------------------------------------------------------
 
 
-async def _run_case(question: str, proposal_ids: list[str]) -> dict:
+async def _run_case(question: str, proposal_ids: list[str], history=None, prior=None) -> dict:
     """Drive agent_stream once and return the answer payload. Every proposal
     id is appended to the caller-owned `proposal_ids` the moment its
     tool_result arrives (not just from the final answer's proposals list),
     so the caller's `finally` still purges it if the run crashes or is
-    interrupted mid-stream."""
+    interrupted mid-stream. `history` is the replayed prior turns of a
+    multi-turn case (None for the single-turn cases); `prior` is its message
+    dicts, which with the question pick the turn's tool subset like chat does."""
+    from backend.agent_loop import tools_for_turn
     from backend.query import agent_stream
 
     answer: dict = {"text": "", "trace": [], "proposals": []}
-    async for line in agent_stream(question):
+    async for line in agent_stream(
+        question, history=history, tool_names=tools_for_turn(question, prior)
+    ):
         if not line.startswith("data: "):
             continue
         raw = line[len("data: "):].strip()
@@ -850,10 +1387,62 @@ async def _run_case(question: str, proposal_ids: list[str]) -> dict:
                 proposal_ids.append(result["proposal_id"])
         elif payload.get("type") == "answer":
             answer = payload
+        elif payload.get("type") == "error":
+            # Typed stream error (Phase 34): a failed case, not an empty answer.
+            # Keep its proposals so the purge loop below still removes them.
+            answer = {"text": "", "trace": [], "proposals": payload.get("proposals") or [],
+                      "error": payload.get("code")}
     for p in answer.get("proposals") or []:
         if p.get("id"):
             proposal_ids.append(p["id"])
     return answer
+
+
+def _turn_messages(question: str, result: dict, at: datetime.datetime) -> list[dict]:
+    """One finished turn as two build_history message dicts (in memory only)."""
+    steps = [{"tool": s.get("tool"), "args": s.get("args") or {}} for s in result.get("trace") or []]
+    return [
+        {"role": "user", "content": question, "status": "complete", "parts": None, "created_at": at},
+        {"role": "assistant", "content": result.get("text") or "",
+         "status": "error" if result.get("error") else "complete",
+         "parts": {"steps": steps}, "created_at": at},
+    ]
+
+
+async def _run_multi_case(case: dict, proposal_ids: list[str]) -> dict:
+    """Run a multi-turn case through the real history builder, in memory only
+    (D-22a: no threads or messages rows). Earlier turns are replayed via
+    plan_history before every turn; the returned result is the final turn's,
+    with `prior_error` set to the first earlier turn's error code, if any."""
+    from backend import config
+    from backend.chat_history import plan_history
+    from backend.query import _today
+
+    today = _today()
+    messages = case["history"](today) if "history" in case else []
+    prior_error = None
+    turns = case["turns"]
+    def plan():
+        return plan_history(
+            messages, config.CHAT_HISTORY_TOKEN_BUDGET, today,
+            summary=case.get("summary"), upto_seq=case.get("upto_seq", 0),
+        )[0]
+
+    for turn in turns[:-1]:
+        result = await _run_case(turn, proposal_ids, history=plan(), prior=messages)
+        prior_error = prior_error or result.get("error")
+        messages.extend(_turn_messages(turn, result, datetime.datetime.now().astimezone()))
+    final = await _run_case(turns[-1], proposal_ids, history=plan(), prior=messages)
+    return {**final, "prior_error": prior_error}
+
+
+_MARKER_RE = re.compile(r"\[\d{4}-\d{2}-\d{2}\]")
+
+
+def _has_marker(text: str) -> bool:
+    """True when an answer echoes history scaffolding: '[tools used:' or a
+    bracketed '[YYYY-MM-DD]' stamp (Pitfall 5)."""
+    return "[tools used:" in text or bool(_MARKER_RE.search(text))
 
 
 def _has_number(text: str) -> bool:
@@ -893,19 +1482,37 @@ def _check_case(case: dict, result: dict) -> dict:
     if needs_number_failed:
         ok = False
 
-    passed = tool_ok and args_ok and ok
+    if case.get("no_writes") and any(str(s.get("tool", "")).startswith("propose_") for s in trace):
+        args_ok = False
+
+    error = (result or {}).get("error")
+    passed = tool_ok and args_ok and ok and not error
     return {
         "id": case["id"], "question": case["question"],
         "tool_ok": tool_ok, "args_ok": args_ok, "args_na": args_na,
         "numbers_ok": ok, "numbers_na": numbers_na,
         "passed": passed, "unmatched": unmatched,
         "needs_number_failed": needs_number_failed,
-        "trace": trace, "text": answer_text,
+        "trace": trace, "text": answer_text, "error": error,
     }
 
 
 async def _run_all_cases(selected: list[dict], proposal_ids: list[str]) -> list[dict]:
-    return [_check_case(case, await _run_case(case["question"], proposal_ids)) for case in selected]
+    results = []
+    for case in selected:
+        if "turns" in case:
+            result = await _run_multi_case(case, proposal_ids)
+            r = _check_case(case, result)
+            r["prior_error"] = result.get("prior_error")
+            r["marker"] = _has_marker(r["text"])
+            r["passed"] = r["passed"] and not r["prior_error"] and not r["marker"]
+        elif case.get("skill"):
+            with _fixture_skill():
+                r = _check_case(case, await _run_case(case["question"], proposal_ids))
+        else:
+            r = _check_case(case, await _run_case(case["question"], proposal_ids))
+        results.append(r)
+    return results
 
 
 def _header_line() -> str:
@@ -948,6 +1555,12 @@ def _print_detail(case: dict, r: dict) -> None:
         print("  trace: (empty)")
     for s in r["trace"]:
         print(f"  trace step: tool={s.get('tool')} args={json.dumps(s.get('args'), default=str)}")
+    if r.get("error"):
+        print(f"  stream error: {r['error']}")
+    if r.get("prior_error"):
+        print(f"  prior turn error: {r['prior_error']}")
+    if r.get("marker"):
+        print("  answer echoes a history marker")
     if r["unmatched"]:
         print(f"  unmatched numbers: {r['unmatched']}")
     if r["needs_number_failed"]:
@@ -981,13 +1594,17 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         type=int,
         default=None,
-        help="run only this case id (repeatable). Default: run all 12 cases.",
+        help="run only this case id (repeatable). Default: run all 21 cases.",
     )
     args = parser.parse_args(argv)
 
     if args.self_check:
         _self_check()
         return 0
+
+    # The probes and cases 1-20 must never see the owner's real skills (WR-03):
+    # scan an empty folder; _fixture_skill scopes case 21's own and restores this.
+    os.environ["MONAI_SKILLS_DIR"] = tempfile.mkdtemp(prefix="monai-eval-no-skills-")
 
     if args.seed_check:
         return _do_seed_check()

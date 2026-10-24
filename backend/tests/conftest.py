@@ -6,6 +6,7 @@ Provides:
   async_client — httpx.AsyncClient for async endpoint tests (query-stream, proposals)
   api_key      — sets MONAI_API_KEY env var for tests that exercise write endpoints
   approver_key — sets MONAI_APPROVER_KEY for approve/reject tests; differs from api_key
+  authed       — opt-in: client + api_key, with the MONAI_API_KEY header set for one test
 
 Import-time note:
   backend.auth reads _CONFIGURED_KEY (from the MONAI_API_KEY env var, default
@@ -30,13 +31,13 @@ import os
 import re
 import sys
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, quote, urlsplit
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine.url import make_url
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_DEFAULT_TEST_URL = "postgresql+psycopg://monai:monai@localhost:5434/monai_test"
+_DEFAULT_TEST_URL = f"postgresql+psycopg://monai:{quote(os.environ.get('POSTGRES_PASSWORD') or 'monai', safe='')}@localhost:5434/monai_test"
 os.environ.setdefault("DATABASE_URL", _DEFAULT_TEST_URL)
 
 _TEST_DB = make_url(os.environ["DATABASE_URL"])
@@ -193,6 +194,20 @@ def api_key(monkeypatch: pytest.MonkeyPatch) -> str:
     return _TEST_API_KEY
 
 
+@pytest.fixture()
+def authed(client: TestClient, api_key: str):
+    """
+    Opt-in keyed reads (Phase 40.1 D-06): yield the shared client with the synthetic
+    MONAI_API_KEY header set for this one test, then pop it in teardown.
+
+    The plain `client` stays header-less on purpose, so the missing-key and
+    wrong-key tests still prove 401.
+    """
+    client.headers["MONAI_API_KEY"] = api_key
+    yield client
+    client.headers.pop("MONAI_API_KEY", None)
+
+
 _TEST_APPROVER_KEY = "test-approver-key-fixture"
 
 
@@ -203,6 +218,14 @@ def approver_key(monkeypatch: pytest.MonkeyPatch) -> str:
 
     monkeypatch.setattr(auth_mod, "_CONFIGURED_APPROVER_KEY", _TEST_APPROVER_KEY)
     return _TEST_APPROVER_KEY
+
+
+@pytest.fixture(autouse=True)
+def _no_ambient_skills(tmp_path_factory, monkeypatch):
+    """Phase 40 WR-03: tools_for_turn and the workflow scan MONAI_SKILLS_DIR (default
+    /app/skills, the owner's real mount in the container). Point every test at an
+    empty folder; tests that need packs set their own."""
+    monkeypatch.setenv("MONAI_SKILLS_DIR", str(tmp_path_factory.mktemp("no-skills")))
 
 
 # ---------------------------------------------------------------------------
@@ -248,6 +271,50 @@ def _purge_test_platforms():
         for tbl in ("portfolio_value_history", "portfolio_events", "holdings", "platforms"):
             col = "id" if tbl == "platforms" else "platform_id"
             db.execute(text(f"DELETE FROM {tbl} WHERE {col} = ANY(:ids)"), {"ids": ids})
+        db.commit()
+    except Exception:
+        db.rollback()  # test-DB hygiene must never fail the suite
+    finally:
+        db.close()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _purge_test_threads():
+    """Delete every thread after the run (messages cascade; proposals keep their
+    rows with message_id NULL). Every thread in monai_test is test-created (the
+    eval creates none, D-22a) and conftest already refuses the live DB."""
+    yield
+    try:
+        from sqlalchemy import text
+        from backend.db import SessionLocal
+
+        db = SessionLocal()
+    except Exception:
+        return
+    try:
+        db.execute(text("DELETE FROM threads"))
+        db.commit()
+    except Exception:
+        db.rollback()  # test-DB hygiene must never fail the suite
+    finally:
+        db.close()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _purge_test_mcp_servers():
+    """Delete synthetic external MCP servers after the run. Every Phase 41 test
+    server uses a `zz-` slug; ext_calls and thread_mcp_servers rows go with their
+    threads through the cascade (and with the server for links)."""
+    yield
+    try:
+        from sqlalchemy import text
+        from backend.db import SessionLocal
+
+        db = SessionLocal()
+    except Exception:
+        return
+    try:
+        db.execute(text("DELETE FROM mcp_servers WHERE slug LIKE 'zz-%'"))
         db.commit()
     except Exception:
         db.rollback()  # test-DB hygiene must never fail the suite

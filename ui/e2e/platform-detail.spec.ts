@@ -1,5 +1,16 @@
 import { test, expect, type Page } from "@playwright/test";
 
+import { cspViolations, watchCsp } from "./csp-fixture";
+
+// D-11: these pages run with real chart data under the CSP header; any
+// securitypolicyviolation fails the test.
+test.beforeEach(async ({ page }) => {
+  await watchCsp(page);
+});
+test.afterEach(async ({ page }) => {
+  expect(await cspViolations(page)).toEqual([]);
+});
+
 // ---------------------------------------------------------------------------
 // Phase 17 Plan 02 — RED e2e spec for Platform detail (PLAT-01).
 //
@@ -157,6 +168,17 @@ test.describe("Buy & Sell tab (D-05, Component 12)", () => {
     // event_type Title-cased, not the raw lowercase enum value.
     await expect(page.getByText("Buy", { exact: true })).toBeVisible();
     await expect(page.getByText("Sell", { exact: true })).toBeVisible();
+
+    // Row actions sit behind the ⋯ options menu (quick 261011-mgj).
+    const buy = portfolioEventsFixture().find((e) => e.event_type === "buy")!;
+    await page
+      .getByRole("button", {
+        name: `Event options: ${buy.event_type} of ${buy.ticker} on ${buy.date}`,
+        exact: true,
+      })
+      .click();
+    await expect(page.getByRole("menuitem")).toHaveText(["Edit", "Delete"]);
+    await page.keyboard.press("Escape");
   });
 });
 

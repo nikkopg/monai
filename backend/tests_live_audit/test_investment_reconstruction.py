@@ -7,7 +7,7 @@ LIVE AUDIT -- this file lives in backend/tests_live_audit/, outside
 verbatim), so a default `pytest` run never collects it and it never
 inherits the guarded conftest's monai_test default or its refusal. It is
 re-run deliberately against live `monai`:
-`DATABASE_URL=postgresql+psycopg://monai:monai@localhost:5434/monai .venv/bin/pytest backend/tests_live_audit/test_investment_reconstruction.py -x -q -p no:cacheprovider`
+`DATABASE_URL=postgresql+psycopg://monai:$POSTGRES_PASSWORD@localhost:5434/monai .venv/bin/pytest backend/tests_live_audit/test_investment_reconstruction.py -x -q -p no:cacheprovider`
 
 Every test in this file is either read-only against that database, or
 performs its writes inside a transaction that is ALWAYS unwound in a
