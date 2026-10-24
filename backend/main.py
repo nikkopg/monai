@@ -189,6 +189,10 @@ from backend.settings import (
 )
 
 logging.basicConfig(level=logging.INFO)
+# httpx logs every request's full URL at INFO, and an external MCP URL may carry a
+# secret in its query (41 WR-01, D-04).
+for _name in ("httpx", "httpcore"):
+    logging.getLogger(_name).setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 

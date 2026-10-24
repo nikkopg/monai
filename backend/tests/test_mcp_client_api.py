@@ -414,3 +414,12 @@ def test_selection_unknown_id_on_a_new_thread_stores_nothing(live):
     with SessionLocal() as db:
         assert db.execute(text("SELECT count(*) FROM threads WHERE id = :t"), {"t": tid}).scalar() == 0
         assert db.execute(text("SELECT count(*) FROM messages WHERE thread_id = :t"), {"t": tid}).scalar() == 0
+
+
+def test_httpx_request_urls_stay_out_of_the_logs():
+    """WR-01: httpx logs each request's full URL (query secret included) at INFO."""
+    import logging
+
+    from backend import main  # noqa: F401  (configures logging at import)
+
+    assert all(logging.getLogger(n).getEffectiveLevel() >= logging.WARNING for n in ("httpx", "httpcore"))
