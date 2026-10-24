@@ -169,8 +169,10 @@ test.describe("approval card (EXT-04)", () => {
     const seen = await boot(page, {
       scripts: [[
         thread, run, toolStart, approval(),
-        extCall(2000, { approval: "approved", decided_via: "user", receipt: "pending" }),
-        extCall(2100, { approval: "approved", receipt: "confirmed" }),
+        // as the backend sends them: one decision event, then receipt-only events (no approval)
+        extCall(2000, { approval: "approved", decided_via: "user" }),
+        extCall(2050, { receipt: "pending", error_class: null }),
+        extCall(2100, { receipt: "confirmed", error_class: null }),
         toolResult(2200), answer(2300), done(2320),
       ]],
     });
@@ -213,7 +215,8 @@ test.describe("approval card (EXT-04)", () => {
     await boot(page, {
       scripts: [[
         thread, run, toolStart, approval(),
-        extCall(2000, { approval: "approved", decided_via: "user", receipt: "failed", error_class: "timeout" }),
+        extCall(2000, { approval: "approved", decided_via: "user" }),
+        extCall(2050, { receipt: "failed", error_class: "timeout" }),
         toolResult(2100), answer(2200), done(2220),
       ]],
       detail: () => ({ json: detail({ ext_calls: [sent({ receipt: "failed", error_class: "timeout" })] }) }),
@@ -402,7 +405,8 @@ test.describe("labels (EXT-07, D-25)", () => {
     await boot(page, {
       scripts: [[
         thread, run, toolStart, approval(),
-        extCall(1500, { approval: "approved", decided_via: "user", receipt: "confirmed" }),
+        extCall(1500, { approval: "approved", decided_via: "user" }),
+        extCall(1550, { receipt: "confirmed", error_class: null }),
         toolResult(1600, [source]), answer(1700), done(1720),
       ]],
       detail: () => ({ status: 500, json: {} }), // keep the live view: the live path is what is under test

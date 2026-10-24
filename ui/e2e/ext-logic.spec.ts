@@ -250,6 +250,17 @@ test.describe("mergeCallEvent", () => {
     const decided = mergeCallEvent(mergeCallEvent([], req), { type: "ext_call", call_id: "c1", approval: "denied", decided_via: "user" });
     expect(mergeCallEvent(decided, req)[0].approval).toBe("denied");
   });
+  test("a receipt-only event (no approval field, as _receipt sends it) keeps the approval", () => {
+    let calls = mergeCallEvent([], req);
+    calls = mergeCallEvent(calls, { type: "ext_call", call_id: "c1", approval: "approved", decided_via: "user" });
+    calls = mergeCallEvent(calls, { type: "ext_call", call_id: "c1", receipt: "pending", error_class: null });
+    expect(calls[0].approval).toBe("approved");
+    expect(cardState(calls[0])).toBe("running");
+    calls = mergeCallEvent(calls, { type: "ext_call", call_id: "c1", receipt: "confirmed", error_class: null });
+    expect(calls[0]).toMatchObject({ approval: "approved", decided_via: "user", receipt: "confirmed" });
+    expect(cardState(calls[0])).toBe("sent");
+    expect(cardStatus(cardState(calls[0]), calls[0])).not.toContain("Nothing was sent");
+  });
   test("ext_call for an unknown id is ignored", () => {
     expect(mergeCallEvent([], { type: "ext_call", call_id: "zz", approval: "approved" })).toEqual([]);
   });

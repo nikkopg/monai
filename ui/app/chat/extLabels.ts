@@ -270,7 +270,7 @@ export type ExtEvent =
   | {
       type: "ext_call";
       call_id: string;
-      approval: ExtApproval;
+      approval?: ExtApproval; // absent on receipt events (ext_calls._receipt)
       decided_via?: ExtCall["decided_via"];
       receipt?: ExtReceipt;
       error_class?: string | null;
@@ -307,7 +307,7 @@ export function mergeCallEvent(calls: ExtCall[], e: ExtEvent): ExtCall[] {
     c.id === e.call_id
       ? {
           ...c,
-          approval: e.approval,
+          approval: e.approval ?? c.approval,
           decided_via: e.decided_via ?? c.decided_via,
           receipt: e.receipt ?? c.receipt,
           error_class: e.error_class ?? c.error_class,
