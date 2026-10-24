@@ -8,6 +8,8 @@ llama-index-workflows>=2.25,<3
 llama-index-llms-ollama>=0.1.0
 llama-index-embeddings-ollama>=0.1.0
 llama-index-llms-anthropic>=0.1.0
+# anthropic 2.x turned MessageParam into a Union that llama-index-llms-anthropic 0.12.x still instantiates (TypeError on every Claude call).
+anthropic>=1,<2
 llama-index-llms-openai>=0.1.0
 llama-index-embeddings-openai>=0.1.0
 alembic>=1.13.0

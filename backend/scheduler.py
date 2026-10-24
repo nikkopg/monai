@@ -60,7 +60,7 @@ def build_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone="Asia/Jakarta")
     scheduler.add_job(
         daily_portfolio_snapshot_job,
-        trigger=CronTrigger(hour=1, minute=0),
+        trigger=CronTrigger(hour=1, minute=0, timezone="Asia/Jakarta"),
         id="daily_portfolio_snapshot",
         replace_existing=True,
         misfire_grace_time=3600,
@@ -69,7 +69,7 @@ def build_scheduler() -> AsyncIOScheduler:
     )
     scheduler.add_job(
         daily_attachment_purge_job,
-        trigger=CronTrigger(hour=3, minute=0),
+        trigger=CronTrigger(hour=3, minute=0, timezone="Asia/Jakarta"),
         id="daily_attachment_purge",
         replace_existing=True,
         misfire_grace_time=3600,
