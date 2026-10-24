@@ -292,3 +292,10 @@ async def test_stop_without_ext_touches_nothing(pending):
     await q.stop_run(run)
     await q.finish_run(run)
     assert _state(cid) == ("pending", None)
+
+
+async def test_stop_before_the_workflow_starts_runs_nothing(gullible):
+    """CR-04: a Stop that lands while the tools are prepared leaves no run behind."""
+    run = q.Run(stopped=True)
+    out = await _collect(q.agent_stream("hello", run=run, tool_names=NAMES))
+    assert out == [q._DONE] and gullible.offered == [] and run.handler is None

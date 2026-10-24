@@ -679,6 +679,9 @@ async def agent_stream(
             workflow = await asyncio.to_thread(_get_agent_workflow, tool_names)
         known = tool_names | {t.metadata.name for t in ext_tools or ()}
         model, provider = _llm_label(workflow)
+        if run is not None and run.stopped:  # Stop landed before run.handler existed (CR-04)
+            yield _DONE
+            return
         # Before workflow.run: the run's tasks copy the context at creation, so
         # the tool step tasks see this Turn. No reset: an async generator can be
         # closed from another context, and the pump task's context is per run

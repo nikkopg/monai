@@ -387,6 +387,36 @@ async def test_no_session_tools_keeps_old_keywords(env, monkeypatch):
     assert _detail(env.tid)["messages"][-1]["status"] == "complete"
 
 
+async def test_stop_while_the_session_opens_runs_nothing(env, monkeypatch):
+    """CR-04: a Stop before the agent exists must not let the run start afterwards."""
+    await env.add()
+    real = mc.ExtSession.open
+    opening, gate = asyncio.Event(), asyncio.Event()
+
+    async def slow(thread_id):
+        opening.set()
+        await gate.wait()
+        return await real(thread_id)
+
+    monkeypatch.setattr(mc.ExtSession, "open", slow)
+    seen = []
+
+    async def agent(question, **kw):  # takes ext_tools too, unlike _fake_agent
+        seen.append(sorted(kw))
+        yield q._sse({"type": "answer", "text": "zz ok", "model": "m", "provider": "p"})
+
+    monkeypatch.setattr(q, "agent_stream", agent)
+    run = await chat_service.start_turn(ECHO, env.tid)
+    task = asyncio.create_task(_collect(q.run_stream(run)))
+    await asyncio.wait_for(opening.wait(), 3)
+    await q.stop_run(run)
+    gate.set()
+    events = _payloads(await asyncio.wait_for(task, 5))
+    await run.pump
+    assert seen == [] and _calls(env.tid) == [] and not _of_type(events, "answer")
+    assert _detail(env.tid)["messages"][-1]["status"] == "cancelled"
+
+
 async def test_session_failure_logs_class_only(env, monkeypatch, caplog):
     async def boom(thread_id):
         raise RuntimeError("secret-detail ZZ")

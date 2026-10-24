@@ -341,6 +341,8 @@ async def _pump(
                 session = await mcp_client.ExtSession.open(run.thread_id)
             except Exception as e:  # the turn still answers, with the built-in tools
                 logger.warning("external session failed: %s", type(e).__name__)
+        if run.stopped:  # Stop landed while the session opened: nothing runs (CR-04)
+            return  # finally closes the session, persists cancelled and ends the run
         kw: dict = {}
         if session is not None:
             for n in session.notices:
