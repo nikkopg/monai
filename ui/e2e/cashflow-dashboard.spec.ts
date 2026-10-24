@@ -171,7 +171,7 @@ test.describe("Spending by category card layout", () => {
       await page.setViewportSize({ width, height: 900 });
       await page.goto("/cashflow");
       const card = page.getByText("Spending by category", { exact: true }).locator("xpath=..");
-      await expect(card.getByText("12,345,678")).toBeVisible();
+      await expect(card.getByText("12,345,678")).toBeVisible(); // pii-ok: mocked fixture
       const m = await card.evaluate((el) => {
         const r = el.getBoundingClientRect();
         const cs = getComputedStyle(el);
