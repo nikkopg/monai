@@ -983,6 +983,13 @@ function ChatInner() {
     const pending = tokenBuf.take(); // flushed text not yet in the draft
     const rejected = await stream.stop();
     if (rejected === null) return;
+    // The server denied the run's waiting external calls (decided_via "stop"); without this
+    // the live cards keep Allow/Deny and the countdown until a reload (41 IN-06 a).
+    setCalls(
+      extRef.current.map((c) =>
+        c.approval === "pending" ? { ...c, approval: "denied", decided_via: "stop" } : c
+      )
+    );
     if (editPendingRef.current) {
       // An edit the server never confirmed: nothing local to mark Stopped; re-read.
       editPendingRef.current = false;

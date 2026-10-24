@@ -165,6 +165,18 @@ test.describe("approval card (EXT-04)", () => {
     await expect(page.locator("body")).not.toContainText("Sent to");
   });
 
+  test("Stop during a pending approval turns the live card into the stopped copy", async ({ page }) => {
+    await boot(page, { scripts: [[thread, run, toolStart, approval()]], keepOpen: true });
+    await ask(page);
+    await expect(page.getByTestId("ext-allow")).toBeVisible();
+    await page.getByRole("button", { name: "Stop" }).click();
+    await expect(card(page)).toHaveAttribute("data-state", "stopped");
+    await expect(card(page)).toContainText("Denied because the run was stopped. Nothing was sent to zz-notes.");
+    await expect(page.getByTestId("ext-allow")).toHaveCount(0);
+    await expect(page.getByTestId("ext-deny")).toHaveCount(0);
+    await expect(page.getByTestId("ext-countdown")).toHaveCount(0);
+  });
+
   test("Allow once posts the decision and a confirmed receipt reads Sent to", async ({ page }) => {
     const seen = await boot(page, {
       scripts: [[
