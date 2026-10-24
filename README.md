@@ -1,193 +1,105 @@
 # monai
 
-Personal wealth intelligence layer. Self-hosted, AI-queryable, yours.
+Your money, in one place, and an assistant you can ask about it. It runs on your own machine.
 
-## What it is
+## What it does
 
-A self-hosted, single-user app that combines your **spending history** and **investment holdings** in one place, with a conversational AI layer that can both *read and safely act on* your data.
+monai keeps your spending and your investments together and lets you ask about them in plain language:
 
-Not a budgeting app. Not another Mint clone. Every self-hosted finance tool does one thing — Actual Budget does spending, Ghostfolio does investments. None of them talk to each other, and none have a natural-language layer that can also make changes for you behind a confirmation gate. monai is the bridge.
+- "How much did I spend on food last month?"
+- "What are my recurring charges?"
+- "Compare this month with the same month last year."
+- "Add a grocery expense for yesterday."
 
-**What you can ask it:**
-- "How much did I spend on food in April 2024?"
-- "You bought NVDA in March — since then, how has my eating-out spending changed?"
-- "Add a 2M IDR groceries transaction for yesterday" → it proposes the exact change and waits for your approval before writing anything.
+Two rules hold everywhere:
 
-The AI never fabricates a number (it chains a fixed set of tested tools, never raw SQL) and never changes your data without an explicit, single-use confirmation.
+- **It never makes up a number.** The assistant can't do its own maths. It picks from a fixed set of tested calculations, and every figure comes from those.
+- **It never changes your data without asking.** Any change shows up as a card with Approve and Reject buttons. Nothing is written until you approve, and every change is logged.
 
-## Status
+## What's in it
 
-✅ **v1.4 shipped** (2026-10-04). See [Releases](https://github.com/nikkopg/monai/releases) for per-version notes.
+- **Chat.** Answers appear as they're written, show which calculations were used, and link to the records behind each number. Conversations are saved, so you can return to them, and reloading the page loses nothing. You can stop an answer at any time, and errors are always shown, never silent.
+- **Files in chat.** Attach a CSV, a PDF bank statement or a photo of a receipt, then ask about it. Its rows are suggested as one batch for you to approve. Text inside a file can't make the assistant change anything.
+- **Skills.** Put instruction files (`SKILL.md`) in the `skills/` folder and switch them on in Settings. The assistant reads them when they're relevant. Nothing in a skill is ever run.
+- **Outside tools.** Connect other AI tool servers in Settings. You approve each call, with its exact inputs, before it runs. Their answers are marked "external, unverified", and they can't touch your data.
+- **Cashflow.** Your net worth, spending by category, income against expenses, monthly trends and account balances. The net-worth chart shows months with missing data as gaps instead of guessing.
+- **Records.** Every transaction, grouped by day, with filters and bulk edits. Add an expense, income or transfer from one form.
+- **Investments.** Holdings across platforms with live prices, profit and loss, USD to IDR conversion, cash and gold, and allocation charts. You can buy or sell using money from one of your accounts.
+- **Inbox.** Every change waiting for your approval, whether it came from chat or from Claude, with likely duplicates flagged.
+- **Use it from Claude.** Claude Desktop and other AI apps can read your data. They can also suggest changes, but those wait for your approval in monai.
+- **Import.** Load CSV exports from the Wallet app by BudgetBakers.
 
-- **Chat**: an agent that plans and chains tools over several steps. Every write is proposed as an Approve/Reject card (one card per proposal), applied only after you confirm, and audit-logged.
-- **Cashflow**: one net-worth figure, liquids plus investments, each counted once. The dashboard has totals, a category donut, income vs expense, a month trend and per-account balances. A net-worth trend card goes back years: months without trustworthy data show as explained gaps, never interpolated.
-- **Records**: a date-grouped ledger with daily nets, filters, transfer pairs and bulk actions. One modal records an expense, income or transfer.
-- **Accounts and categories**: typed liquid/investment accounts with balance adjustments. Categories form a 3-level hierarchy, managed in Settings. Wallet (BudgetBakers) CSV import.
-- **Investments**:
-  - holdings across platforms, with live prices (crypto via CoinGecko, IDX via yfinance, manual fallback), P&L and staleness badges
-  - USD→IDR conversion, cash and physical gold
-  - allocation and historical charts
-  - funded buy/sell from a liquid account
-- **Settings**: LLM provider/model, API keys, base currency and price source, all set in the UI.
-- **Inbox**: every proposal waiting for your approval, from chat or from Claude over MCP, in one page with its rows, duplicate flags, per-row skip and the confirm code; approve or reject with a button that says what it will do.
-- **MCP server**: read-only finance tools for external MCP clients such as Claude Desktop (same registry as the web agent), plus curated write tools that only create proposals you approve with a code.
+## Privacy
 
-Not built yet: recurring-charge detection, arbitrary two-period comparison, token-by-token streaming, an automated reksadana NAV feed.
+Everything stays on your machine. By default the assistant runs locally through [Ollama](https://ollama.com). Claude or OpenAI is used only if you choose it in Settings. monai is only reachable from the machine it runs on.
 
-## Architecture
+## Setup
 
-- **Backend** — Python 3.12 · FastAPI · SQLAlchemy 2.0 · psycopg3, on port `8001`
-- **Database** — PostgreSQL 16, Alembic-managed schema, on port `5434`
-- **AI** — LlamaIndex `FunctionAgent` over one tool registry (`backend/tools.py` `TOOLS`), streamed through `POST /query-stream`; multi-provider via `LLM_PROVIDER` (Ollama local default / Claude / OpenAI). Each tool's docstring is its prompt, and the LLM-visible tool surface is locked by a checked-in snapshot (`backend/tests/agent_tool_surface.json`)
-- **Frontend** — Next.js 14 (App Router) + React 18; a server-side route handler proxies `/api/*` to the backend and injects the API key so it never reaches the browser bundle
-- **MCP** — FastMCP co-mounted in the FastAPI app at `/mcp` (auth-gated)
-- **Correctness by construction** — the LLM selects and chains parameterized tools; it never emits SQL. All agent writes require explicit user confirmation and are audit-logged.
+You need Docker on Linux. On Mac or Windows, change the compose file to use `host.docker.internal` instead of host networking.
 
-## Getting started
-
-Requires Docker + Docker Compose. Host networking is used so the backend can reach a local Ollama daemon — this is **Linux-only**; on Mac/Windows switch the compose services to bridge networking + `host.docker.internal`.
-
-**1. Set the secrets** (required). `MONAI_API_KEY` guards every backend route except `/health`, reads included:
+**1. Create your passwords.** These commands write four random secrets to `.env`:
 
 ```sh
-echo "MONAI_API_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
-```
-
-Add two more secrets. Compose refuses to start without either:
-
-```sh
-echo "POSTGRES_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
-echo "MONAI_UI_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
+for k in MONAI_API_KEY POSTGRES_PASSWORD MONAI_UI_PASSWORD MONAI_APPROVER_KEY; do
+  echo "$k=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
+done
 chmod 600 .env
 ```
 
-`MONAI_UI_PASSWORD` is what the browser's sign-in prompt asks for (username `monai`, entered once per browser session). It must differ from `MONAI_API_KEY` and `MONAI_APPROVER_KEY`, otherwise the UI answers 503. `npm run dev` needs it in its environment too. Keep `POSTGRES_PASSWORD` URL-safe (hex, as generated above): Python URL-quotes it, but `docker-compose.yml` interpolates it into `DATABASE_URL` as-is. `POSTGRES_PASSWORD` only applies when a fresh volume is initialised; an existing `monai_pgdata` needs the rotation runbook under Database migrations.
+- `MONAI_UI_PASSWORD` is what your browser asks for. The username is `monai`.
+- `MONAI_API_KEY` lets other apps such as Claude read your data and suggest changes.
+- `MONAI_APPROVER_KEY` lets the Inbox approve changes. **Never give it to Claude or any other app.** Keeping it separate means no outside app can approve its own changes.
 
-Optionally add a separate approver key. It approves or rejects any pending proposal whatever channel created it (`POST /proposals/{id}/approve` and `POST /proposals/{id}/reject`, sent in the `MONAI_APPROVER_KEY` header):
+**2. Choose the assistant.** By default monai uses Ollama on `http://localhost:11434` with the model set in `docker-compose.yml`. You can switch to Claude or OpenAI in Settings later.
 
-```sh
-echo "MONAI_APPROVER_KEY=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
-```
-
-Docker compose also passes the key to the frontend container, whose proxy attaches it only to the Inbox list, approve, reject and row-skip requests (never to the browser), and only for same-origin requests to `127.0.0.1` or `localhost` (open the app at one of those, or through an SSH tunnel that keeps them); rebuild with `docker compose up -d --build` after changing it. The Inbox marks its own requests (`X-Monai-Surface: inbox`) and the proxy attaches the key to those only, so the chat card's Reject keeps API-key scope and is unaffected by the approver key. If the frontend's approver key is set but wrong, Inbox actions fail with the "Approvals aren't set up" message; fix the key, or leave it unset.
-
-It must differ from `MONAI_API_KEY` (the backend answers 503 if they match or if it is unset). Never put it in any MCP client config: MCP clients hold `MONAI_API_KEY`, and the split is what keeps them from approving MCP-created proposals. `MONAI_API_KEY` still authorizes the REST write routes and chat token confirms, so treat it as a write key too.
-
-**2. (Default provider) Have Ollama running** on the host at `http://localhost:11434` with the model in `docker-compose.yml` (`gemma4:31b-cloud`). To use Claude or OpenAI instead, set `LLM_PROVIDER=claude` (+ `ANTHROPIC_API_KEY`) or `LLM_PROVIDER=openai` (+ `OPENAI_API_KEY`) — these are also switchable in the Settings page.
-
-**3. Start the stack:**
+**3. Start it:**
 
 ```sh
 docker compose up -d --build
 ```
 
-- Frontend: http://127.0.0.1:3001
-- Backend API: http://127.0.0.1:8001
-- MCP endpoint: http://127.0.0.1:8001/mcp (send `MONAI_API_KEY` as a header or `Authorization: Bearer <key>`)
+Open http://127.0.0.1:3001. To use monai from another computer, tunnel in with `ssh -L 3001:127.0.0.1:3001 you@your-server`.
 
-**MCP writes.** Four tools let an MCP client capture data: `propose_transactions` (one row or a batch of up to 500), `propose_transfer`, `confirm_proposal` and `reject_proposal`. Every write lands as a pending proposal. Claude can apply it only with the 6-character code shown in monai; open Inbox in monai to read it (each Claude proposal shows its code with a Copy button). 5 wrong codes lock that proposal for MCP and 20 wrong codes per hour stop MCP confirms; you can still approve it in the Inbox. Skip rows in the Inbox before approving. Likely duplicates are flagged, never blocked. Never put the approver key in any MCP client config.
+### Using monai from Claude
 
-Alembic runs `alembic upgrade head` automatically at backend startup (idempotent). A fresh install needs nothing further. **If you have an existing `monai_pgdata` volume from before Alembic**, follow the one-time runbook below first.
+Point Claude Desktop (through `mcp-remote`) or Claude Code at `http://127.0.0.1:8001/mcp` and send `MONAI_API_KEY` as a bearer token. When Claude suggests a change, it shows up in monai's Inbox along with a 6-character code. Approve it there, or give Claude the code. After too many wrong codes, Claude is locked out and the change can only be approved in the Inbox.
 
-### Network and timezone
+## Updating
 
-The db, API and UI all listen on `127.0.0.1` only — nothing is reachable from the LAN. For remote use, SSH-tunnel instead: `ssh -L 3001:127.0.0.1:3001 user@your-server` (add `-L 8001:127.0.0.1:8001` for MCP), then open http://127.0.0.1:3001 locally. Point `mcp-remote` / Claude Desktop configs at http://127.0.0.1:8001/mcp. The backend runs on Asia/Jakarta via `TZ`/`PGTZ` in `docker-compose.yml`; the daily 01:00 WIB portfolio snapshot used to stamp the previous (UTC) date and now stamps the Jakarta date, so expect a one-time one-day discontinuity in the value history at cutover.
+Pull the latest code and run `docker compose up -d --build` again. Database updates apply automatically on start.
 
-## Development
-
-**Tests.** Run `pytest` from the repo root. It defaults to a separate `monai_test` database on the same Postgres, creating and migrating it on the first run, and it refuses to run against the live `monai` database. Host pytest, evals and alembic connect to the same Postgres role, so after the password is set they need it exported (nothing loads `.env` for Python; export only this one variable, not the whole file): `export POSTGRES_PASSWORD="$(grep '^POSTGRES_PASSWORD=' .env | tail -1 | cut -d= -f2-)"`. Tests use synthetic data only. `backend/tests_live_audit/` holds read-only checks against live data, run by hand only.
-
-**UI tests.** `cd ui && CI=1 npm run e2e` runs the Playwright suite on port 3099 against mocked APIs; it signs in with a synthetic Basic password set in `ui/playwright.config.ts`. The Inbox live spec `e2e/inbox-live.spec.ts` is opt-in and writes real rows, so it needs a scratch backend on `monai_test` with synthetic, different API and approver keys. It refuses ports 8001 and 3001 but cannot see which database the backend uses, so it also requires `E2E_SCRATCH_DB_CONFIRMED=monai_test`: set it only after checking the backend's `DATABASE_URL` ends in `/monai_test`. Start the scratch backend, then run the spec with the same values in `E2E_*` and in `MONAI_API`, `MONAI_API_KEY`, `MONAI_APPROVER_KEY`:
+**Changing the database password on an existing install.** `POSTGRES_PASSWORD` only takes effect on a new database. To change it on one you already have, back it up first:
 
 ```sh
-DATABASE_URL=postgresql+psycopg://monai:$POSTGRES_PASSWORD@127.0.0.1:5434/monai_test MONAI_API_KEY=e2e-api-key-synthetic-0001 MONAI_APPROVER_KEY=e2e-approver-key-synthetic-0002 TZ=Asia/Jakarta PGTZ=Asia/Jakarta .venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8011
-cd ui && CI=1 E2E_LIVE=1 E2E_SCRATCH_DB_CONFIRMED=monai_test E2E_BACKEND=http://127.0.0.1:8011 E2E_API_KEY=e2e-api-key-synthetic-0001 E2E_APPROVER_KEY=e2e-approver-key-synthetic-0002 MONAI_API=http://127.0.0.1:8011 MONAI_API_KEY=e2e-api-key-synthetic-0001 MONAI_APPROVER_KEY=e2e-approver-key-synthetic-0002 npx playwright test e2e/inbox-live.spec.ts
-```
-
-**CI.** GitHub Actions (`.github/workflows/backend-tests.yml`) runs the backend suite on Python 3.12 against a fresh Postgres, on every push and pull request.
-
-**Agent eval (opt-in).** Asks 12 golden questions with your configured LLM against `monai_test`. It checks each answer's tool choice, date arguments and numbers, then prints a pass/fail table. It is never part of CI.
-
-```sh
-env -u DATABASE_URL python -m backend.evals.agent_eval            # all cases
-env -u DATABASE_URL python -m backend.evals.agent_eval --case 4   # one case
-env -u DATABASE_URL python -m backend.evals.agent_eval --self-check   # parser only: no DB, no LLM
-```
-
-**Pre-push guard.** The repo is public and monai runs on real finances. `.githooks/pre-push` blocks pushes that contain planning docs, data or dump files, secret-like tokens, or IDR-sized figures. Enable it once per clone:
-
-```sh
-git config core.hooksPath .githooks
-```
-
-## Privacy
-
-All data stays on your machine. AI inference runs locally via Ollama by default. Cloud APIs (Claude/OpenAI) only activate if you explicitly set `LLM_PROVIDER=claude` or `LLM_PROVIDER=openai`.
-
-## Database migrations
-
-monai uses [Alembic](https://alembic.sqlalchemy.org/) for schema management. The Docker entrypoint runs `alembic upgrade head` automatically on every container start (idempotent).
-
-### One-time introduction runbook (existing `monai_pgdata` volume)
-
-> **Only for volumes created before Alembic was introduced.** A fresh install skips this — Alembic applies all migrations on first start.
-
-**Step 1 — Backup first:**
-
-```sh
-docker exec monai-db pg_dump -U monai monai > backup_pre_alembic.sql
-```
-
-Confirm the file is non-empty before proceeding.
-
-**Step 2 — Stamp the baseline** (marks the existing schema as already applied WITHOUT running it):
-
-```sh
-alembic stamp 3a1f8c2d9e04
-alembic current   # must show: 3a1f8c2d9e04
-```
-
-> **WARNING:** Step 2 MUST precede Step 3 on an existing volume. Skipping the stamp and running `alembic upgrade head` directly makes migration 001 fail with "relation accounts already exists".
-
-**Step 3 — Apply the remaining migrations:**
-
-```sh
-alembic upgrade head
-alembic current   # must show the current head revision
-```
-
-**Step 4 — Verify no data loss:**
-
-```sh
-docker exec monai-db psql -U monai -d monai -c "SELECT count(*) FROM transactions;"
-docker exec monai-db psql -U monai -d monai -c "\dt"   # audit_log, proposals, holdings, portfolio_events, price_cache, platforms, ... present
-docker exec monai-db psql -U monai -d monai -c "\dv"   # date_helpers present
-```
-
-### Rotating the database password (existing volume)
-
-`POSTGRES_PASSWORD` in `.env` only takes effect on a fresh volume. To switch an existing `monai_pgdata` off the old default, run this from the repo root:
-
-```sh
-df -h /                                     # a full disk breaks the rebuild; free ~3 GB first
-mkdir -p ~/monai-backups && chmod 700 ~/monai-backups    # outside the repo
-D=~/monai-backups/monai_pre_rotation_$(date +%F).dump
-docker exec monai-db pg_dump -U monai -Fc monai > "$D" && chmod 600 "$D" && ls -l "$D"   # not 0 bytes
-echo "POSTGRES_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
-echo "MONAI_UI_PASSWORD=$(python3 -c 'import secrets; print(secrets.token_hex(32))')" >> .env
-chmod 600 .env
-# rotate over the container's unix socket; stdin keeps the value out of argv and history
+mkdir -p ~/monai-backups && chmod 700 ~/monai-backups
+D=~/monai-backups/monai_$(date +%F).dump
+docker exec monai-db pg_dump -U monai -Fc monai > "$D" && chmod 600 "$D" && ls -l "$D"
 PW=$(grep '^POSTGRES_PASSWORD=' .env | tail -1 | cut -d= -f2-)
 printf "ALTER USER monai WITH PASSWORD '%s';\n" "$PW" | docker exec -i monai-db psql -U monai -d monai -v ON_ERROR_STOP=1
 unset PW
-docker compose up -d --build                # right away: the running backend's new connections fail until it restarts
+docker compose up -d --build
 ```
 
-The rebuild also runs `alembic upgrade head`, so any pending migration is applied at the same time (the dump covers it). If the rebuild fails, restore the old password over the socket, remove the two new `.env` lines, and retry: `printf "ALTER USER monai WITH PASSWORD 'monai';\n" | docker exec -i monai-db psql -U monai -d monai`. The dump is the data-recovery path, with `pg_restore`.
+Check that the backup file isn't empty before you continue. If the rebuild fails, set the old password back the same way and try again.
 
-### Day-to-day usage
+**Very old installs (before June 2026).** If your database predates automatic updates, back it up, run `alembic stamp 3a1f8c2d9e04`, then run `alembic upgrade head`. Running the upgrade without the stamp fails with "relation accounts already exists".
 
-After the one-time runbook, `docker compose up` handles everything — Alembic runs at container start and skips already-applied migrations.
+## Development
+
+- **Backend tests:** run `pytest` from the repo root. It uses a separate `monai_test` database and refuses to touch your real one. Export only the database password first:
+  `export POSTGRES_PASSWORD="$(grep '^POSTGRES_PASSWORD=' .env | tail -1 | cut -d= -f2-)"`
+- **UI tests:** run `cd ui && CI=1 npm run e2e`. They use fake data on port 3099.
+- **Inbox live test:** `ui/e2e/inbox-live.spec.ts` writes real rows, so it's opt-in. It needs a backend on `monai_test` with test-only keys. Set `E2E_SCRATCH_DB_CONFIRMED=monai_test` only after checking that backend's database:
+
+  ```sh
+  DATABASE_URL=postgresql+psycopg://monai:$POSTGRES_PASSWORD@127.0.0.1:5434/monai_test MONAI_API_KEY=e2e-api-key-synthetic-0001 MONAI_APPROVER_KEY=e2e-approver-key-synthetic-0002 TZ=Asia/Jakarta PGTZ=Asia/Jakarta .venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8011
+  cd ui && CI=1 E2E_LIVE=1 E2E_SCRATCH_DB_CONFIRMED=monai_test E2E_BACKEND=http://127.0.0.1:8011 E2E_API_KEY=e2e-api-key-synthetic-0001 E2E_APPROVER_KEY=e2e-approver-key-synthetic-0002 MONAI_API=http://127.0.0.1:8011 MONAI_API_KEY=e2e-api-key-synthetic-0001 MONAI_APPROVER_KEY=e2e-approver-key-synthetic-0002 npx playwright test e2e/inbox-live.spec.ts
+  ```
+
+- **Assistant quality check:** asks a fixed set of questions and checks the answers. It's run by hand and isn't part of CI. Run `env -u DATABASE_URL python -m backend.evals.agent_eval`, or add `--case 4` to run a single question.
+- **Before pushing:** this repo is public, but monai runs on real finances. Run `git config core.hooksPath .githooks` once. After that, each push is blocked if it contains planning notes, data files, secrets or real-looking amounts.
+
+How it's built: [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## License
 
