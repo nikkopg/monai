@@ -56,7 +56,11 @@ class Account(Base):
     # CHECK ck_accounts_type + NOT NULL + server_default 'liquid' — mirrors
     # PortfolioEvent.currency's server_default idiom.
     type: Mapped[str] = mapped_column(String(64), nullable=False, server_default="liquid")
-    currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # IDR/USD only. The CHECK, UNIQUE (id, currency) and the composite FK
+    # transactions (account_id, currency) -> accounts (id, currency) live in
+    # migration 020 only: declaring them here adds a second FK path between
+    # these tables and makes the Account.transactions relationship ambiguous.
+    currency: Mapped[str] = mapped_column(String(8), nullable=False, server_default="IDR")
 
     transactions: Mapped[list["Transaction"]] = relationship(
         back_populates="account"
@@ -136,7 +140,7 @@ class Transaction(Base):
     # Pitfall 5 fix: annotation changed from Mapped[float] to Mapped[Decimal]
     # to match the Numeric(18,2) column type (psycopg3 returns Decimal natively).
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2))
-    currency: Mapped[str] = mapped_column(String(8))
+    currency: Mapped[str] = mapped_column(String(8), server_default="IDR")
     category: Mapped[str | None] = mapped_column(String(255), nullable=True)
     raw_category: Mapped[str | None] = mapped_column(String(255), nullable=True)
     merchant: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -602,6 +606,9 @@ class FxRateCache(Base):
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default="now()", nullable=False
     )
+    # The vendor's business date when it differs from rate_date (weekend or
+    # holiday carry-back). NULL means the rate is for the requested date.
+    rate_effective_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
 
 class PortfolioValueHistory(Base):
