@@ -221,6 +221,16 @@ def approver_key(monkeypatch: pytest.MonkeyPatch) -> str:
 
 
 @pytest.fixture(autouse=True)
+def _clear_fx_today_memo():
+    """fx._today_memo is process-global: clear it so a mocked rate never leaks
+    across tests. No import here — only touches the module if already loaded."""
+    mod = sys.modules.get("backend.fx")
+    if mod is not None and hasattr(mod, "_today_memo"):
+        mod._today_memo.clear()
+    yield
+
+
+@pytest.fixture(autouse=True)
 def _no_ambient_skills(tmp_path_factory, monkeypatch):
     """Phase 40 WR-03: tools_for_turn and the workflow scan MONAI_SKILLS_DIR (default
     /app/skills, the owner's real mount in the container). Point every test at an

@@ -497,6 +497,87 @@ def test_get_rate_today_ignores_frozen_cache_row(monkeypatch, fx_jan1900_clean):
     assert _jan_rows() == [(_JAN_TODAY, None, Decimal("15000.000000"))]
 
 
+def _counting_get(body):
+    calls = {"n": 0}
+
+    def _get(*a, **k):
+        calls["n"] += 1
+        return _resp(body)
+
+    return calls, _get
+
+
+def _failing_get(*a, **k):
+    raise httpx.HTTPError("vendor down")
+
+
+def test_get_rate_today_memo_one_http_call(monkeypatch, fx_jan1900_clean):
+    """D-18: today's rate is memoised ~15 min per (pair, date); never in the DB."""
+    from types import SimpleNamespace
+
+    from backend import fx
+
+    calls, getter = _counting_get({"rates": {"IDR": 16000}})
+    monkeypatch.setattr(httpx, "get", getter)
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(fx, "time", SimpleNamespace(monotonic=lambda: clock["t"]))
+
+    for _ in range(2):
+        assert fx.get_rate("USD", "IDR", _JAN_TODAY, db=_FakeDb()) == Decimal("16000")
+    assert calls["n"] == 1
+    clock["t"] += fx._TODAY_TTL_SECONDS + 1
+    assert fx.get_rate("USD", "IDR", _JAN_TODAY, db=_FakeDb()) == Decimal("16000")
+    assert calls["n"] == 2
+    assert _jan_rows() == []
+
+
+def test_get_rate_today_failure_not_memoised(monkeypatch, fx_jan1900_clean):
+    from backend import fx
+
+    monkeypatch.setattr(httpx, "get", _failing_get)
+    assert fx.get_rate("USD", "IDR", _JAN_TODAY, db=_FakeDb()) is None
+    calls, getter = _counting_get({"rates": {"IDR": 16000}})
+    monkeypatch.setattr(httpx, "get", getter)
+    assert fx.get_rate("USD", "IDR", _JAN_TODAY, db=_FakeDb()) == Decimal("16000")
+    assert calls["n"] == 1
+
+
+def test_spot_returns_rate_and_effective_date(monkeypatch, fx_jan1900_clean):
+    from backend import fx
+
+    monkeypatch.setattr(
+        httpx, "get", lambda *a, **k: _resp({"date": "1900-01-09", "rates": {"IDR": 16000}})
+    )
+    assert fx.spot("USD", _FakeDb()) == (Decimal("16000"), date(1900, 1, 9))
+
+    monkeypatch.setattr(httpx, "get", _failing_get)
+    assert fx.spot("IDR", _FakeDb()) == (Decimal("1"), _JAN_TODAY)  # identity, no HTTP
+    fx._today_memo.clear()
+    with pytest.raises(fx.FxUnavailable):
+        fx.spot("USD", _FakeDb())
+
+
+def test_to_idr(monkeypatch, fx_jan1900_clean):
+    from backend import fx
+
+    monkeypatch.setattr(httpx, "get", _failing_get)
+    out = fx.to_idr(Decimal("-12.50"), "IDR", date(1900, 1, 3), _FakeDb())
+    assert out == Decimal("-12.50") and isinstance(out, Decimal)
+    with pytest.raises(fx.FxUnavailable):  # never returns the unconverted amount
+        fx.to_idr("-12.50", "USD", date(1900, 1, 3), _FakeDb())
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _resp({"rates": {"IDR": 16000}}))
+    out = fx.to_idr("-12.50", "USD", date(1900, 1, 3), _FakeDb())
+    assert out == Decimal("-200000.00") and isinstance(out, Decimal)
+
+
+def test_base_and_exception():
+    from backend import fx
+
+    assert fx.BASE == "IDR"
+    assert issubclass(fx.FxUnavailable, Exception)
+
+
 def test_cash_and_gold_have_explicit_ttl_entries():
     """cash and gold must not silently inherit _DEFAULT_TTL (Pitfall 1)."""
     from backend import prices
