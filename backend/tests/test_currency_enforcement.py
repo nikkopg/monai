@@ -324,3 +324,43 @@ def test_edit_transaction_cannot_reach_account_or_currency(wdb):
         assert (tx.notes, tx.account_id, tx.currency) == ("zz", a_id, "IDR")
     finally:
         wdb.rollback()
+
+
+# ---------------------------------------------------------------------------
+# Plan 03: CSV importer skips and counts a row whose currency differs from its account (D-07)
+# ---------------------------------------------------------------------------
+
+_CSV_HEAD = "account;category;currency;amount;type;note;date;transfer\n"
+
+
+def _csv_row(account: str, currency: str) -> str:
+    return f"{account};Food;{currency};-12.50;Expenses;zz42;2024-02-01 10:00:00;false\n"
+
+
+def _post_csv(authed, body: str):
+    return authed.post("/import", files={"file": ("zz42.csv", body.encode(), "text/csv")})
+
+
+def test_import_usd_primary_csv_skips_all_and_creates_no_account(authed, wdb):
+    name = f"ZZ42 imp usd {secrets.token_hex(4)}"
+    resp = _post_csv(authed, _CSV_HEAD + _csv_row(name, "USD") * 2)
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"parsed": 2, "inserted": 0, "skipped": 2, "currency": "USD"}
+    wdb.rollback()
+    assert _one(wdb, "SELECT COUNT(*) FROM accounts WHERE name = :n", n=name)[0] == 0
+
+
+def test_import_mixed_counts_only_mismatches(authed, wdb):
+    tag = secrets.token_hex(4)
+    idr_name, usd_name = f"ZZ42 imp idr {tag}", f"ZZ42 imp usdacct {tag}"
+    usd_id = _account(wdb, usd_name, "USD")
+    wdb.commit()
+    body = _CSV_HEAD + _csv_row(idr_name, "IDR") + _csv_row(usd_name, "IDR") + _csv_row(idr_name, "IDR")
+    resp = _post_csv(authed, body)
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"parsed": 3, "inserted": 2, "skipped": 1, "currency": "IDR"}
+    wdb.rollback()
+    cur, n = _one(wdb, "SELECT a.currency, COUNT(t.id) FROM accounts a LEFT JOIN transactions t ON t.account_id = a.id "
+                       "WHERE a.name = :n GROUP BY a.currency", n=idr_name)
+    assert (cur, n) == ("IDR", 2)
+    assert _one(wdb, "SELECT COUNT(*) FROM transactions WHERE account_id = :a", a=usd_id)[0] == 0
