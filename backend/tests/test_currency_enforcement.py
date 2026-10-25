@@ -163,3 +163,163 @@ def test_models_are_db_light():
     for fk in Transaction.__table__.foreign_key_constraints:
         assert {c.name for c in fk.columns} != {"account_id", "currency"}
     configure_mappers()
+
+
+# ---------------------------------------------------------------------------
+# Phase 42, plan 02: write-path currency gate (D-01..D-04, D-06)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def wdb(db):
+    """`db` plus cleanup of the 2024-dated rows these tests create on ZZ42 accounts."""
+
+    def _clean_writes():
+        db.rollback()
+        ids = [r[0] for r in db.execute(text(
+            "SELECT t.id FROM transactions t JOIN accounts a ON a.id = t.account_id "
+            "WHERE a.name LIKE 'ZZ42 %'"
+        ))]
+        if ids:
+            db.execute(text("DELETE FROM audit_log WHERE entity = 'transaction' AND entity_id = ANY(:ids)"), {"ids": ids})
+            db.execute(text("DELETE FROM transactions WHERE id = ANY(:ids)"), {"ids": ids})
+        db.execute(text(
+            "DELETE FROM audit_log WHERE entity = 'account' AND entity_id IN "
+            "(SELECT id FROM accounts WHERE name LIKE 'ZZ42 %')"
+        ))
+        db.execute(text("DELETE FROM accounts WHERE name LIKE 'ZZ42 %'"))
+        db.commit()
+
+    _clean_writes()
+    try:
+        yield db
+    finally:
+        _clean_writes()
+
+
+def _body(account: str, **extra) -> dict:
+    return {"date": "2024-03-10T12:00:00", "amount": -12.5, "account": account, **extra}
+
+
+def _one(db, sql: str, **params):
+    return db.execute(text(sql), params).first()
+
+
+def test_post_transactions_audited_and_currency_from_account(authed, wdb):
+    from backend.schemas import TransactionOut
+
+    name = f"ZZ42 api idr {secrets.token_hex(4)}"
+    _account(wdb, name)
+    wdb.commit()
+
+    resp = authed.post("/transactions", json=_body(name))
+    assert resp.status_code == 201, resp.text
+    assert set(resp.json()) == set(TransactionOut.model_fields)
+    tx_id = resp.json()["id"]
+    assert _one(wdb, "SELECT currency FROM transactions WHERE id = :i", i=tx_id)[0] == "IDR"
+    rows = wdb.execute(text(
+        "SELECT after->>'currency' FROM audit_log "
+        "WHERE entity = 'transaction' AND entity_id = :i AND operation = 'add'"
+    ), {"i": tx_id}).all()
+    assert [r[0] for r in rows] == ["IDR"]
+
+
+def test_post_transactions_currency_mismatch_is_422(authed, wdb):
+    name = f"ZZ42 api usd {secrets.token_hex(4)}"
+    acc_id = _account(wdb, name, "USD")
+    wdb.commit()
+
+    resp = authed.post("/transactions", json=_body(name, currency="IDR"))
+    assert resp.status_code == 422, resp.text
+    assert "USD" in resp.text and "IDR" in resp.text
+    assert _one(wdb, "SELECT COUNT(*) FROM transactions WHERE account_id = :a", a=acc_id)[0] == 0
+
+
+def test_autocreate_usd_payload_refused_nothing_persisted(authed, wdb):
+    name = f"ZZ42 new {secrets.token_hex(4)}"
+    resp = authed.post("/transactions", json=_body(name, currency="USD"))
+    assert resp.status_code == 422, resp.text
+    wdb.rollback()
+    assert _one(wdb, "SELECT COUNT(*) FROM accounts WHERE name = :n", n=name)[0] == 0
+
+
+def test_autocreate_is_always_idr(authed, wdb):
+    name = f"ZZ42 new {secrets.token_hex(4)}"
+    resp = authed.post("/transactions", json=_body(name))
+    assert resp.status_code == 201, resp.text
+    assert _one(wdb, "SELECT currency FROM accounts WHERE name = :n", n=name)[0] == "IDR"
+
+
+def test_post_transactions_naive_and_offset_dates(authed, wdb):
+    name = f"ZZ42 api dates {secrets.token_hex(4)}"
+    _account(wdb, name)
+    wdb.commit()
+
+    naive = authed.post("/transactions", json=_body(name))
+    assert naive.status_code == 201, naive.text
+    assert _one(wdb, "SELECT date FROM transactions WHERE id = :i", i=naive.json()["id"])[0] == datetime(2024, 3, 10, 12)
+
+    offset = authed.post("/transactions", json=_body(name, date="2024-03-10T12:00:00+07:00"))
+    assert offset.status_code == 201, offset.text
+    assert _one(wdb, "SELECT date::date FROM transactions WHERE id = :i", i=offset.json()["id"])[0] == date(2024, 3, 10)
+
+
+def test_apply_add_currency_rules(wdb):
+    from backend.models import AuditLog
+    from backend.writes import apply_add_transaction
+
+    name = f"ZZ42 prim {secrets.token_hex(4)}"
+    _account(wdb, name)
+    wdb.commit()
+    base = {"account": name, "amount": "-12.50", "date": "2024-03-10T12:00:00"}
+    try:
+        for extra in ({}, {"currency": None}, {"currency": ""}, {"currency": "  "}, {"currency": "idr"}):
+            tx = apply_add_transaction(wdb, {**base, **extra})
+            assert tx.currency == "IDR", extra
+        audit = wdb.query(AuditLog).filter_by(entity="transaction", entity_id=tx.id).one()
+        assert audit.after["currency"] == "IDR"
+        assert isinstance(audit.after["amount"], str)
+
+        with pytest.raises(ValueError) as exc:
+            apply_add_transaction(wdb, {**base, "currency": "USD"})
+        assert "USD" in str(exc.value) and "IDR" in str(exc.value)
+    finally:
+        wdb.rollback()
+
+
+def test_apply_add_transfer_usd_leg_on_idr_account_refused(wdb):
+    from backend.writes import apply_add_transfer
+
+    tag = secrets.token_hex(4)
+    a, b = f"ZZ42 xfer a {tag}", f"ZZ42 xfer b {tag}"
+    a_id = _account(wdb, a)
+    b_id = _account(wdb, b)
+    wdb.commit()
+    leg = {"amount": "-12.50", "date": "2024-03-10T12:00:00"}
+    try:
+        with pytest.raises(ValueError) as exc:
+            apply_add_transfer(
+                wdb,
+                {**leg, "account": a, "currency": "IDR"},
+                {**leg, "account": b, "currency": "USD", "amount": "12.50"},
+            )
+        assert "USD" in str(exc.value) and "IDR" in str(exc.value)
+    finally:
+        wdb.rollback()
+    assert _one(wdb, "SELECT COUNT(*) FROM transactions WHERE account_id IN (:a, :b)", a=a_id, b=b_id)[0] == 0
+
+
+def test_edit_transaction_cannot_reach_account_or_currency(wdb):
+    from backend.writes import apply_edit_transaction
+
+    tag = secrets.token_hex(4)
+    a_id = _account(wdb, f"ZZ42 edit a {tag}")
+    b_id = _account(wdb, f"ZZ42 edit b {tag}")
+    tx_id = _tx(wdb, date(2024, 3, 10), "-12.50", "IDR", a_id)
+    wdb.commit()
+    try:
+        tx = apply_edit_transaction(wdb, tx_id, {"account": f"ZZ42 edit b {tag}", "account_id": b_id, "currency": "USD", "notes": "zz"}, None)
+        wdb.flush()
+        assert (tx.notes, tx.account_id, tx.currency) == ("zz", a_id, "IDR")
+    finally:
+        wdb.rollback()
