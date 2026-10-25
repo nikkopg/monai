@@ -37,6 +37,7 @@ All money is Decimal(str(x)) — never float.
 """
 
 import re
+import time
 from datetime import date, datetime, timezone
 from zoneinfo import ZoneInfo
 from decimal import Decimal
@@ -57,6 +58,20 @@ _CURRENCY_RE = re.compile(r"^[A-Z]{3,4}$")
 _FX_ALIASES: dict[str, str] = {"USDT": "USD"}
 
 _JAKARTA = ZoneInfo("Asia/Jakarta")
+
+
+BASE = "IDR"  # the one currency every valuation converts into
+
+
+class FxUnavailable(Exception):
+    """No rate could be obtained. Callers must surface this, never substitute 1.0."""
+
+
+# Today's rate is fetched live and memoised briefly (D-18) — never in fx_rate_cache.
+# ponytail: per-process, lost on restart, not shared across workers; move to a
+# shared cache only if the app runs more than one worker.
+_TODAY_TTL_SECONDS = 900.0
+_today_memo: dict[tuple[str, str, date], tuple[Decimal, date | None, float]] = {}
 
 
 def _jakarta_today() -> date:
@@ -123,8 +138,9 @@ def _lookup(base: str, quote: str, as_of: date, db: Session) -> tuple[Decimal, d
     2. USDT normalized to USD before lookup (FX-02).
     3. base/quote validated as ^[A-Z]{3,4}$ BEFORE any HTTP call — invalid
        codes return None (SSRF guard, Pitfall 5).
-    4. as_of on or after Jakarta today -> adapter only; the cache is neither
-       read nor written (D-17), so a pre-publish rate never freezes.
+    4. as_of on or after Jakarta today -> adapter only (memoised ~15 min per
+       process, D-18); the cache is neither read nor written (D-17), so a
+       pre-publish rate never freezes.
     5. Past date, cache HIT -> stored Decimal, adapter never called (FX-05).
     6. Past date, cache MISS -> adapter called; a non-None result INSERTs
        exactly one immutable row keyed (rate_date, base_currency,
@@ -147,8 +163,15 @@ def _lookup(base: str, quote: str, as_of: date, db: Session) -> tuple[Decimal, d
     adapter = FX_ADAPTERS["frankfurter"]
 
     if as_of >= _jakarta_today():
+        key = (base_norm, quote_norm, as_of)
+        hit = _today_memo.get(key)
+        if hit is not None and time.monotonic() - hit[2] < _TODAY_TTL_SECONDS:
+            return hit[0], hit[1]
         result = adapter(base_norm, quote_norm, as_of)
-        return None if result is None else (result[0], result[2])
+        if result is None:
+            return None  # failures are not memoised
+        _today_memo[key] = (result[0], result[2], time.monotonic())
+        return result[0], result[2]
 
     existing = _latest_cache_row(db, as_of, base_norm, quote_norm)
     if existing is not None:
@@ -187,3 +210,29 @@ def get_rate(base: str, quote: str, as_of: date, db: Session) -> Decimal | None:
     """Cache-first, immutable-write FX lookup (FX-01/02/04/05); see `_lookup`."""
     found = _lookup(base, quote, as_of, db)
     return None if found is None else found[0]
+
+
+def spot(currency: str, db: Session) -> tuple[Decimal, date]:
+    """(today's `currency`->BASE rate, the business date it belongs to).
+
+    Raises FxUnavailable when no rate exists.
+    """
+    today = _jakarta_today()
+    found = _lookup(currency, BASE, today, db)
+    if found is None:
+        raise FxUnavailable(f"No {currency}->{BASE} rate for {today}")
+    return found[0], found[1] or today
+
+
+def to_idr(amount, currency: str, on: date, db: Session) -> Decimal:
+    """`amount` of `currency` as BASE on `on`; exact Decimal, unrounded.
+
+    Raises FxUnavailable when no rate exists — never returns the unconverted amount.
+    """
+    amt = Decimal(str(amount))
+    if currency.upper() == BASE:
+        return amt
+    rate = get_rate(currency, BASE, on, db)
+    if rate is None:
+        raise FxUnavailable(f"No {currency}->{BASE} rate for {on}")
+    return amt * rate
