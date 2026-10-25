@@ -1,11 +1,12 @@
 """Tests for migration 020 (currency model: IDR/USD constraints + transactions_idr).
 
-Runs against the scratch DB `monai_test_mig020`, created and dropped on the same
+Runs against a per-process scratch DB `monai_test_mig020_<token>`, created and dropped on the same
 server as conftest's guarded DATABASE_URL. Never touches the live `monai`. All
 values are synthetic.
 """
 import os
 import re
+import secrets
 from pathlib import Path
 
 import pytest
@@ -16,7 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 MIGRATION_PATH = REPO_ROOT / "alembic" / "versions" / "020_currency_model.py"
 PRE_020 = "20116eb89bff"
 REV_020 = "c4f2a8e61d93"
-SCRATCH_DB = "monai_test_mig020"
+SCRATCH_DB = f"monai_test_mig020_{secrets.token_hex(4)}"  # per-process: concurrent runs must not FORCE-drop each other
 NAMES = ("ck_accounts_currency", "ck_transactions_currency", "uq_accounts_id_currency", "fk_transactions_account_currency")
 
 COUNTS_SQL = text(
@@ -184,7 +185,7 @@ def test_020_upgrade_is_idempotent_and_reversible(scratch_url):
         assert _view_cols(engine, "cashflow_transactions") == tx_cols
         assert _counts(engine) == before
 
-        command.upgrade(cfg, "head")
+        command.upgrade(cfg, REV_020)
         assert "transactions_idr" in _views(engine)
     finally:
         engine.dispose()
@@ -237,6 +238,6 @@ def test_020_preflight_aborts_on_tx_account_mismatch(scratch_url):
 
 def test_020_fresh_empty_db_upgrades_twice(scratch_url):
     cfg, command = _cfg(scratch_url)
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, REV_020)
     command.stamp(cfg, PRE_020)
-    command.upgrade(cfg, "head")
+    command.upgrade(cfg, REV_020)
