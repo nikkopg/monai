@@ -36,14 +36,13 @@ the outbound request unless it already looks like a currency code.
 All money is Decimal(str(x)) — never float.
 """
 
+import logging
 import re
 import time
 from datetime import date, datetime, timedelta, timezone
-from zoneinfo import ZoneInfo
 from decimal import Decimal, InvalidOperation
 from typing import Callable
-
-import logging
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -193,14 +192,15 @@ def _lookup(base: str, quote: str, as_of: date, db: Session) -> tuple[Decimal, d
     base_norm = _FX_ALIASES.get(base.upper(), base.upper())
     quote_norm = _FX_ALIASES.get(quote.upper(), quote.upper())
 
+    if isinstance(as_of, datetime):
+        as_of = as_of.date()
+
     if base_norm == quote_norm:
         return Decimal("1"), as_of
 
     if not (_CURRENCY_RE.match(base_norm) and _CURRENCY_RE.match(quote_norm)):
         return None  # SSRF guard — no HTTP request issued for an invalid code
 
-    if isinstance(as_of, datetime):
-        as_of = as_of.date()
     adapter = FX_ADAPTERS["frankfurter"]
 
     if as_of >= _jakarta_today():
