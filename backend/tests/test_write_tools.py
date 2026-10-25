@@ -1520,8 +1520,9 @@ def test_apply_add_transfer_pairs_both_legs(db_session):
     """apply_add_transfer(db, leg_a_after, leg_b_after) inserts two paired
     Transaction rows (XFER-01): both is_transfer=true, sharing one
     transfer_pair_id equal to leg A's own id (shared-group-id convention,
-    D-03/D-09), each with its own AuditLog row (D-02), each leg free to carry
-    its own currency independently (D-09). RED until Plan 13-03."""
+    D-03/D-09), each with its own AuditLog row (D-02), each leg in its
+    own account's currency (CUR-03: the DB rejects a leg whose currency differs
+    from its account's). RED until Plan 13-03."""
     from backend.models import Transaction
 
     name_a, name_b = "zz13test-TransferA", "zz13test-TransferB"
@@ -1539,7 +1540,7 @@ def test_apply_add_transfer_pairs_both_legs(db_session):
             "is_transfer": True, "date": "2024-01-15", "notes": "Transfer out",
         }
         leg_b_after = {
-            "account": name_b, "amount": 6.5, "currency": "USD",
+            "account": name_b, "amount": 100000, "currency": "IDR",
             "is_transfer": True, "date": "2024-01-15", "notes": "Transfer in",
         }
 
@@ -1558,7 +1559,7 @@ def test_apply_add_transfer_pairs_both_legs(db_session):
 
         by_account = {r.account_id: r for r in rows}
         assert by_account[acc_a].currency == "IDR"
-        assert by_account[acc_b].currency == "USD", "legs may carry different currencies independently (D-09)"
+        assert by_account[acc_b].currency == "IDR"
 
         after_audit = int(db_session.execute(
             text("SELECT COUNT(*) FROM audit_log WHERE entity = 'transaction'")
