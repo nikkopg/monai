@@ -40,7 +40,7 @@ def seeded_scoping_data():
     inserted_ids: list[int] = []
     category_ids: list[int] = []
     try:
-        acc = _get_or_create_account(db, "zzscopetest-account", _CURRENCY)
+        acc = _get_or_create_account(db, "zzscopetest-account")
         db.flush()
 
         # spending_in_category is hierarchy-backed (11-04): each test category

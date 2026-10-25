@@ -25,7 +25,8 @@ MoneyDecimal = Annotated[
 class TransactionCreate(BaseModel):
     date: datetime
     amount: MoneyDecimal = Field(..., description="Signed: negative = expense, positive = income")
-    currency: str = "IDR"
+    # Absent means "the account's currency"; a value must match it (D-01/D-03). Clients sending "IDR" keep working.
+    currency: str | None = None
     category: str | None = None
     merchant: str | None = None
     notes: str | None = None

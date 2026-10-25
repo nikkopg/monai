@@ -107,10 +107,11 @@ def parse_csv(text_content: str, primary_currency: str | None = None) -> tuple[l
     return rows, skipped, (detected or "")
 
 
-def _get_or_create_account(db: Session, name: str, currency: str) -> Account:
+def _get_or_create_account(db: Session, name: str) -> Account:
     acc = db.query(Account).filter(Account.name == name).one_or_none()
     if acc is None:
-        acc = Account(name=name, currency=currency)
+        # Auto-created accounts are always IDR; a USD account only comes from the account manager (Phase 44).
+        acc = Account(name=name, currency="IDR")
         db.add(acc)
         db.flush()  # assign id
     return acc
@@ -139,7 +140,7 @@ def insert_rows(db: Session, rows: list[dict]) -> int:
     name_to_id, uncategorized_id = _load_category_id_map(db)
     inserted = 0
     for r in rows:
-        acc = _get_or_create_account(db, r["account"], r["currency"])
+        acc = _get_or_create_account(db, r["account"])
         db.add(Transaction(
             date=r["date"],
             amount=r["amount"],

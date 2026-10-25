@@ -82,7 +82,7 @@ from backend.mcp_client_api import router as mcp_client_router
 from backend.auth import optional_approver, require_api_key, require_approver_key, require_reject_scope
 from backend.mcp_server import build_mcp
 from backend.db import get_session, get_session_sync
-from backend.importer import _get_or_create_account, import_csv_text
+from backend.importer import import_csv_text
 from backend.mcp_writes import duplicate_flags
 from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, Proposal, Transaction
 from backend.net_worth_history import monthly_net_worth_series
@@ -118,7 +118,6 @@ from backend.writes import (
     apply_rename_category,
     apply_set_price,
     _portfolio_event_snapshot,
-    resolve_category_id,
 )
 from backend.schemas import (
     AccountCreate,
@@ -1065,21 +1064,14 @@ def networth_history_endpoint(months: int = 72, db: Session = Depends(get_sessio
 
 @app.post("/transactions", response_model=TransactionOut, status_code=201, dependencies=[Depends(require_api_key)])
 def create_transaction(payload: TransactionCreate, db: Session = Depends(get_session)):
-    acc = _get_or_create_account(db, payload.account, payload.currency)
-    tx = Transaction(
-        date=payload.date,
-        amount=payload.amount,
-        currency=payload.currency,
-        category=payload.category,
-        raw_category=payload.category,
-        category_id=resolve_category_id(db, payload.category),  # D-08 dual-write
-        merchant=payload.merchant,
-        notes=payload.notes,
-        account_id=acc.id,
-        is_transfer=payload.is_transfer,
-    )
-    db.add(tx)
-    db.commit()
+    after = payload.model_dump(mode="json")
+    after["amount"] = str(payload.amount)  # keep the exact Decimal (json mode gives a float)
+    try:
+        tx = apply_add_transaction(db, after)
+        db.commit()
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
     db.refresh(tx)
     # New data — invalidate the cached query engine (currency/date context)
     from backend.query import reset_engine

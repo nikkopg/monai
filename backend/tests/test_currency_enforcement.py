@@ -276,6 +276,7 @@ def test_apply_add_currency_rules(wdb):
         for extra in ({}, {"currency": None}, {"currency": ""}, {"currency": "  "}, {"currency": "idr"}):
             tx = apply_add_transaction(wdb, {**base, **extra})
             assert tx.currency == "IDR", extra
+        wdb.flush()
         audit = wdb.query(AuditLog).filter_by(entity="transaction", entity_id=tx.id).one()
         assert audit.after["currency"] == "IDR"
         assert isinstance(audit.after["amount"], str)

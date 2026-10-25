@@ -52,10 +52,18 @@ def resolve_category_id(db: Session, name: str | None) -> int:
 
 
 def apply_add_transaction(db: Session, after: dict) -> Transaction:
-    """Insert a new transaction, resolving/creating its account by name."""
+    """Insert a new transaction, resolving/creating its account by name.
+
+    The account decides the currency (D-01): an absent/blank payload currency
+    means the account's; a different one is refused with ValueError (the
+    composite FK in migration 020 would otherwise surface it as a 500).
+    """
     account_name = after.get("account", "Unknown")
-    currency = after.get("currency", "IDR")
-    acc = _get_or_create_account(db, account_name, currency)
+    acc = _get_or_create_account(db, account_name)
+    given = (after.get("currency") or "").strip().upper()
+    if given and given != acc.currency:
+        raise ValueError(f"Account '{acc.name}' is in {acc.currency}; this row is in {given}")
+    currency = acc.currency
     category_name = after.get("category")
     tx = Transaction(
         date=datetime.fromisoformat(after["date"]) if after.get("date") else datetime.now(timezone.utc),
@@ -72,7 +80,7 @@ def apply_add_transaction(db: Session, after: dict) -> Transaction:
     db.add(tx)
     db.flush()  # LOAD-BEARING: populates tx.id before the AuditLog row below
     db.add(AuditLog(entity="transaction", entity_id=tx.id, operation="add",
-                    before=None, after=after))
+                    before=None, after={**after, "currency": currency}))
     return tx
 
 
