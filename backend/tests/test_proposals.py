@@ -1099,3 +1099,78 @@ def _make_platform_local(db, name: str) -> int:
     db.commit()
     db.refresh(plat)
     return plat.id
+
+
+# ---------------------------------------------------------------------------
+# Currency guard on confirm (Phase 42, D-08): the account decides the currency
+# ---------------------------------------------------------------------------
+
+def _add_txn_proposal(db, account: str, **after_extra) -> tuple[str, str]:
+    """Insert a pending add_transaction proposal against `account`; return (id, token)."""
+    import secrets
+    from backend.models import Proposal
+
+    after = {"date": "2024-05-02", "amount": "-12.50", "account": account, "category": None,
+             "merchant": "zz42", "notes": None, "is_transfer": False, **after_extra}
+    token = secrets.token_urlsafe(32)
+    p = Proposal(
+        token=token, operation="add_transaction",
+        payload={"operation": "add_transaction", "rows": [{"before": None, "after": after}]},
+        status="pending",
+        expires_at=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=15),
+    )
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+    return str(p.id), token
+
+
+def _usd_account_cleanup(db, name: str, proposal_id: str) -> None:
+    db.rollback()
+    ids = [r[0] for r in db.execute(text(
+        "SELECT t.id FROM transactions t JOIN accounts a ON a.id = t.account_id WHERE a.name = :n"), {"n": name})]
+    if ids:
+        db.execute(text("DELETE FROM audit_log WHERE entity = 'transaction' AND entity_id = ANY(:i)"), {"i": ids})
+        db.execute(text("DELETE FROM transactions WHERE id = ANY(:i)"), {"i": ids})
+    db.execute(text("DELETE FROM audit_log WHERE entity = 'proposal' AND entity_id::text = :p"), {"p": proposal_id})
+    db.execute(text("DELETE FROM proposals WHERE id = :p"), {"p": uuid.UUID(proposal_id)})
+    db.execute(text("DELETE FROM accounts WHERE name = :n"), {"n": name})
+    db.commit()
+
+
+def _seed_usd_account(db, name: str) -> int:
+    acc_id = db.execute(text("INSERT INTO accounts (name, type, currency) VALUES (:n, 'liquid', 'USD') RETURNING id"),
+                        {"n": name}).scalar()
+    db.commit()
+    return acc_id
+
+
+def test_confirm_add_transaction_currency_mismatch_is_422(client, api_key, db_session):
+    import secrets
+    name = f"ZZ42 prop usd {secrets.token_hex(4)}"
+    acc_id = _seed_usd_account(db_session, name)
+    pid, token = _add_txn_proposal(db_session, name, currency="IDR")
+    try:
+        resp = client.post(f"/proposals/{pid}/confirm", json={"token": token}, headers={"MONAI_API_KEY": api_key})
+        assert resp.status_code == 422, resp.text
+        assert "USD" in resp.text and "IDR" in resp.text
+        db_session.rollback()
+        assert db_session.execute(text("SELECT status FROM proposals WHERE id = :p"), {"p": uuid.UUID(pid)}).scalar() == "pending"
+        assert db_session.execute(text("SELECT COUNT(*) FROM transactions WHERE account_id = :a"), {"a": acc_id}).scalar() == 0
+    finally:
+        _usd_account_cleanup(db_session, name, pid)
+
+
+def test_confirm_add_transaction_without_currency_uses_account_currency(client, api_key, db_session):
+    import secrets
+    name = f"ZZ42 prop usd {secrets.token_hex(4)}"
+    acc_id = _seed_usd_account(db_session, name)
+    pid, token = _add_txn_proposal(db_session, name)
+    try:
+        resp = client.post(f"/proposals/{pid}/confirm", json={"token": token}, headers={"MONAI_API_KEY": api_key})
+        assert resp.status_code == 200, resp.text
+        db_session.rollback()
+        cur = db_session.execute(text("SELECT currency FROM transactions WHERE account_id = :a"), {"a": acc_id}).scalars().all()
+        assert cur == ["USD"]
+    finally:
+        _usd_account_cleanup(db_session, name, pid)

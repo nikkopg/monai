@@ -922,3 +922,14 @@ def test_mcp_writes_need_code_over_mcp(client, api_key, db_session, wallets, tra
         ok = _tools_call(client, hdr, "confirm_proposal", {"proposal_id": tid, "code": code})
         assert ok["isError"] is False
     assert count() == before + 1
+
+
+def test_confirm_currency_mismatch_is_refused_with_fixed_text(db_session, wallets, mcp_proposal):
+    w = wallets(currency="USD")
+    p = mcp_proposal(_txn_payload((w.name, -10, _d(0))))  # rows carry currency "IDR"
+    stored = _db_row(db_session, p.id).code
+    with pytest.raises(ToolError) as ei:
+        _confirm(p, stored)
+    assert str(ei.value) == mcp_writes._APPLY_FAILED
+    assert "USD" not in str(ei.value) and w.name not in str(ei.value)
+    assert _db_row(db_session, p.id).status == "pending" and _tx_count(db_session, w.id) == 0
