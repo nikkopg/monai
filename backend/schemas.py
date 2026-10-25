@@ -141,10 +141,22 @@ class BulkActionResponse(BaseModel):
     skipped: list[dict] = []
 
 
+# Phase 44 widens account currencies to IDR/USD; until then only IDR may be created or edited.
+IDR_ONLY_ACCOUNTS_MSG = "USD accounts are not available yet; only IDR accounts can be created or edited for now"
+
+
 class AccountCreate(BaseModel):
     name: str
     type: str | None = None
     currency: str | None = "IDR"
+
+    @field_validator("currency")
+    @classmethod
+    def _idr_only(cls, v: str | None) -> str:
+        v = (v or "").strip().upper() or "IDR"
+        if v != "IDR":
+            raise ValueError(IDR_ONLY_ACCOUNTS_MSG)
+        return v
 
 
 class AccountUpdate(BaseModel):

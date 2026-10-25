@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from backend.importer import _get_or_create_account
 from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, PriceCache, Transaction
 from backend.portfolio import recompute_holding_from_events
+from backend.schemas import IDR_ONLY_ACCOUNTS_MSG
 
 
 def resolve_category_id(db: Session, name: str | None) -> int:
@@ -404,17 +405,26 @@ def apply_add_funded_sell(db: Session, after: dict) -> dict:
     return {"transaction": tx, "portfolio_event": ev}
 
 
+def _idr_only_account_currency(value) -> str:
+    """Null/blank -> IDR; anything but IDR is refused until Phase 44 (D-05)."""
+    currency = (value or "").strip().upper() or "IDR"
+    if currency != "IDR":
+        raise ValueError(IDR_ONLY_ACCOUNTS_MSG)
+    return currency
+
+
 def apply_add_account(db: Session, after: dict) -> Account:
-    """Insert a new account."""
+    """Insert a new account (IDR only until Phase 44)."""
+    currency = _idr_only_account_currency(after.get("currency"))
     acc = Account(
         name=after["name"],
         type=after.get("type"),
-        currency=after.get("currency"),
+        currency=currency,
     )
     db.add(acc)
     db.flush()  # LOAD-BEARING: populates acc.id before the AuditLog row below
     db.add(AuditLog(entity="account", entity_id=acc.id, operation="add",
-                    before=None, after=after))
+                    before=None, after={**after, "currency": currency}))
     return acc
 
 
@@ -423,12 +433,13 @@ def apply_edit_account(db: Session, acc_id: int, after: dict, before: dict | Non
     acc = db.get(Account, acc_id)
     if acc is None:
         raise ValueError(f"Account {acc_id} not found during confirm")
+    new_currency = _idr_only_account_currency(after["currency"]) if after.get("currency") is not None else None
     if after.get("name") is not None:
         acc.name = after["name"]
     if after.get("type") is not None:
         acc.type = after["type"]
-    if after.get("currency") is not None:
-        acc.currency = after["currency"]
+    if new_currency is not None:
+        acc.currency = new_currency
     db.add(AuditLog(entity="account", entity_id=acc_id, operation="edit",
                     before=before, after=after))
     return acc

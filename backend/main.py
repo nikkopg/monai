@@ -339,8 +339,12 @@ def list_accounts(db: Session = Depends(get_session)):
 @app.post("/accounts", response_model=AccountOut, status_code=201, dependencies=[Depends(require_api_key)])
 def create_account(payload: AccountCreate, db: Session = Depends(get_session)):
     """Create an account (CASH-05). Routed through apply_add_account (audited)."""
-    acc = apply_add_account(db, payload.model_dump(mode="json"))
-    db.commit()
+    try:
+        acc = apply_add_account(db, payload.model_dump(mode="json"))
+        db.commit()
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
     db.refresh(acc)
     from backend.query import reset_engine
     reset_engine()
