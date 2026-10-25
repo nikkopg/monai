@@ -22,7 +22,9 @@ from sqlalchemy.orm import Session
 from backend.importer import _get_or_create_account
 from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, PriceCache, Transaction
 from backend.portfolio import recompute_holding_from_events
-from backend.schemas import IDR_ONLY_ACCOUNTS_MSG
+
+# Phase 44 widens account currencies to IDR/USD; until then only IDR may be created or edited.
+IDR_ONLY_ACCOUNTS_MSG = "USD accounts are not available yet; only IDR accounts can be created or edited for now"
 
 
 def resolve_category_id(db: Session, name: str | None) -> int:
@@ -441,7 +443,7 @@ def apply_edit_account(db: Session, acc_id: int, after: dict, before: dict | Non
     if new_currency is not None:
         acc.currency = new_currency
     db.add(AuditLog(entity="account", entity_id=acc_id, operation="edit",
-                    before=before, after=after))
+                    before=before, after=after if new_currency is None else {**after, "currency": new_currency}))
     return acc
 
 
