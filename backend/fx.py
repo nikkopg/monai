@@ -38,17 +38,22 @@ All money is Decimal(str(x)) — never float.
 
 import re
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from decimal import Decimal
 from typing import Callable
 
+import logging
+
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from backend.db import SessionLocal
 from backend.models import FxRateCache
+
+logger = logging.getLogger(__name__)
 
 # ISO-4217-shaped currency code (3-4 uppercase letters — allows USDT).
 _CURRENCY_RE = re.compile(r"^[A-Z]{3,4}$")
@@ -118,6 +123,39 @@ def fetch_frankfurter_rate(
 
 FX_ADAPTERS: dict[str, Callable[[str, str, date], tuple[Decimal, str, date | None] | None]] = {
     "frankfurter": fetch_frankfurter_rate,
+}
+
+
+def fetch_frankfurter_range(
+    base: str, quote: str, start: date, end: date
+) -> list[tuple[date, Decimal]] | None:
+    """GET https://api.frankfurter.dev/v1/{start}..{end}?base=..&symbols=..
+
+    One call returns every published business date in the range (a weekend
+    start pulls in the prior business day; a range with no data, a future
+    range, or end before start is a 404). Returns [(date, rate)] or None on
+    ANY failure (HTTP error incl. 404, malformed body) — never raises.
+    """
+    import httpx
+
+    try:
+        resp = httpx.get(
+            f"https://api.frankfurter.dev/v1/{start.isoformat()}..{end.isoformat()}",
+            params={"base": base.upper(), "symbols": quote.upper()},
+            timeout=10.0,
+        )
+        resp.raise_for_status()
+        rates = resp.json()["rates"]
+        return [
+            (date.fromisoformat(d), Decimal(str(v[quote.upper()])))
+            for d, v in rates.items()
+        ]
+    except (httpx.HTTPError, KeyError, ValueError, TypeError, AttributeError):
+        return None
+
+
+FX_RANGE_ADAPTERS: dict[str, Callable[[str, str, date, date], list[tuple[date, Decimal]] | None]] = {
+    "frankfurter": fetch_frankfurter_range,
 }
 
 
@@ -236,3 +274,64 @@ def to_idr(amount, currency: str, on: date, db: Session) -> Decimal:
     if rate is None:
         raise FxUnavailable(f"No {currency}->{BASE} rate for {on}")
     return amt * rate
+
+
+def _store_range(base: str, quote: str, start: date, end: date) -> int:
+    """Fetch [start, end] in ONE range call and insert the missing past rows.
+
+    Rows are immutable: ON CONFLICT DO NOTHING on uq_fx_rate_cache_date_pair,
+    so an existing row is never changed (FX-05) and overlapping fills are
+    harmless. Dates on or after Jakarta today are dropped (D-17: a pre-publish
+    rate must never freeze). Returns the inserted count; 0 on any failure
+    (logged — codes and dates only, never amounts).
+    """
+    base_norm = _FX_ALIASES.get(base.upper(), base.upper())
+    quote_norm = _FX_ALIASES.get(quote.upper(), quote.upper())
+    if not (_CURRENCY_RE.match(base_norm) and _CURRENCY_RE.match(quote_norm)):
+        return 0  # SSRF guard — no HTTP request for an invalid code
+
+    got = FX_RANGE_ADAPTERS["frankfurter"](base_norm, quote_norm, start, end)
+    if got is None:
+        logger.warning("fx warm/range fill %s->%s %s..%s: vendor unavailable", base_norm, quote_norm, start, end)
+        return 0
+
+    today = _jakarta_today()
+    now = datetime.now(timezone.utc)
+    values = [
+        {
+            "rate_date": d,
+            "base_currency": base_norm,
+            "quote_currency": quote_norm,
+            "rate": rate,
+            "rate_effective_date": d,
+            "source": "frankfurter",
+            "fetched_at": now,
+        }
+        for d, rate in got
+        if d < today
+    ]
+    if not values:
+        return 0
+    with SessionLocal() as cache_session:
+        result = cache_session.execute(
+            pg_insert(FxRateCache)
+            .values(values)
+            .on_conflict_do_nothing(constraint="uq_fx_rate_cache_date_pair")
+        )
+        cache_session.commit()
+        return result.rowcount
+
+
+def warm_recent_rates(db: Session) -> int:
+    """Nightly warm (D-23): ensure yesterday's USD->IDR rate is cached.
+
+    One range call over [yesterday - 7, yesterday] when yesterday has no row,
+    none when it does. Never raises on vendor failure (see `_store_range`).
+    """
+    yesterday = _jakarta_today() - timedelta(days=1)
+    if _latest_cache_row(db, yesterday, "USD", "IDR") is not None:
+        return 0
+    # ponytail: a weekend/holiday yesterday never gets its own row, so those
+    # mornings make one call that stores nothing new (~3 extra calls a week);
+    # add a business-day check only if the vendor ever rate-limits.
+    return _store_range("USD", "IDR", yesterday - timedelta(days=7), yesterday)
