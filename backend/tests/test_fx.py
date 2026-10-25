@@ -266,8 +266,10 @@ def test_get_rate_adapter_none_returns_none_no_fallback_to_one(monkeypatch):
 
 
 class _FakeRow:
-    def __init__(self, rate):
+    def __init__(self, rate, rate_date=date(2024, 1, 15), rate_effective_date=None):
         self.rate = rate
+        self.rate_date = rate_date
+        self.rate_effective_date = rate_effective_date
 
 
 class _FakeQuery:
