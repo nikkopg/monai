@@ -40,7 +40,7 @@ import re
 import time
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Callable
 
 import logging
@@ -112,12 +112,11 @@ def fetch_frankfurter_rate(
         if rate is None:
             return None
         eff = body.get("date")
-        return (
-            Decimal(str(rate)),
-            "frankfurter",
-            date.fromisoformat(eff) if eff else None,
-        )
-    except (httpx.HTTPError, KeyError, ValueError, TypeError):
+        rate = Decimal(str(rate))
+        if not rate.is_finite() or rate <= 0:
+            return None  # cache rows are immutable — never freeze a bad rate
+        return (rate, "frankfurter", date.fromisoformat(eff) if eff else None)
+    except (httpx.HTTPError, KeyError, ValueError, TypeError, InvalidOperation):
         return None  # caller propagates None — never fabricates a rate
 
 
@@ -146,11 +145,15 @@ def fetch_frankfurter_range(
         )
         resp.raise_for_status()
         rates = resp.json()["rates"]
-        return [
+        out = [
             (date.fromisoformat(d), Decimal(str(v[quote.upper()])))
             for d, v in rates.items()
         ]
-    except (httpx.HTTPError, KeyError, ValueError, TypeError, AttributeError):
+        # Cache rows are immutable: one bad rate would freeze, so refuse the lot.
+        if any(not r.is_finite() or r <= 0 for _, r in out):
+            return None
+        return out
+    except (httpx.HTTPError, KeyError, ValueError, TypeError, AttributeError, InvalidOperation):
         return None
 
 

@@ -204,6 +204,17 @@ def test_fetch_frankfurter_rate_malformed_json_returns_none(monkeypatch):
     assert fx.fetch_frankfurter_rate("USD", "IDR", date(2024, 1, 15)) is None
 
 
+def test_fetch_frankfurter_rate_bad_rate_returns_none(monkeypatch):
+    """null / garbage / zero / negative / non-finite rate -> None, never raises."""
+    from backend import fx
+
+    for bad in ("garbage", 0, -1, "NaN", "Infinity"):
+        monkeypatch.setattr(
+            httpx, "get", lambda *a, _b=bad, **k: _resp({"date": "2024-01-15", "rates": {"IDR": _b}})
+        )
+        assert fx.fetch_frankfurter_rate("USD", "IDR", date(2024, 1, 15)) is None
+
+
 def test_get_rate_identity_shortcut_no_http_call(monkeypatch):
     """base == quote -> Decimal('1'), no HTTP call issued."""
     from backend import fx
@@ -619,6 +630,9 @@ def test_fetch_frankfurter_range_failures_return_none(monkeypatch):
         _NotFound(),
         _resp({"rates": {"1902-01-03": [16000]}}),  # value is a list
         _resp({"rates": {"not-a-date": {"IDR": 16000}}}),  # non-date key
+        _resp({"rates": {"1902-01-03": {"IDR": "garbage"}}}),  # InvalidOperation
+        _resp({"rates": {"1902-01-03": {"IDR": 16000}, "1902-01-06": {"IDR": 0}}}),  # zero rate
+        _resp({"rates": {"1902-01-03": {"IDR": -5}}}),  # negative rate
     ]
     for r in bad:
         monkeypatch.setattr(httpx, "get", lambda *a, _r=r, **k: _r)
