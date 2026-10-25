@@ -136,15 +136,26 @@ def _load_category_id_map(db: Session) -> tuple[dict[str, int], int]:
     return name_to_id, uncategorized[0]
 
 
-def insert_rows(db: Session, rows: list[dict]) -> int:
+def insert_rows(db: Session, rows: list[dict]) -> tuple[int, int]:
+    """Insert rows; returns (inserted, skipped). A row whose currency differs from
+    its account's (IDR for an account that does not exist yet) is skipped and
+    counted, never inserted and never given a new account (D-07)."""
     name_to_id, uncategorized_id = _load_category_id_map(db)
-    inserted = 0
+    inserted = skipped = 0
     for r in rows:
-        acc = _get_or_create_account(db, r["account"])
+        acc = db.query(Account).filter(Account.name == r["account"]).one_or_none()
+        target = acc.currency if acc is not None else "IDR"
+        row_cur = (r["currency"] or "").strip().upper()
+        if row_cur != target:
+            logger.warning("Skip row (currency %s != account currency %s)", row_cur, target)
+            skipped += 1
+            continue
+        if acc is None:
+            acc = _get_or_create_account(db, r["account"])
         db.add(Transaction(
             date=r["date"],
             amount=r["amount"],
-            currency=r["currency"],
+            currency=acc.currency,
             category=r["category"],
             raw_category=r["raw_category"],
             category_id=name_to_id.get(r["category"], uncategorized_id),  # D-08 dual-write
@@ -155,11 +166,12 @@ def insert_rows(db: Session, rows: list[dict]) -> int:
         ))
         inserted += 1
     db.commit()
-    return inserted
+    return inserted, skipped
 
 
 def import_csv_text(db: Session, text_content: str) -> tuple[int, int, int, str]:
-    """Parse + insert. Returns (parsed, inserted, skipped, currency)."""
+    """Parse + insert. Returns (parsed, inserted, skipped, currency); rows whose
+    currency differs from their account's are counted in skipped."""
     rows, skipped, currency = parse_csv(text_content)
-    inserted = insert_rows(db, rows)
-    return len(rows), inserted, skipped, currency
+    inserted, mismatched = insert_rows(db, rows)
+    return len(rows), inserted, skipped + mismatched, currency
