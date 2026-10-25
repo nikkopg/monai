@@ -142,12 +142,14 @@ def insert_rows(db: Session, rows: list[dict]) -> tuple[int, int]:
     counted, never inserted and never given a new account (D-07)."""
     name_to_id, uncategorized_id = _load_category_id_map(db)
     inserted = skipped = 0
+    mismatches: dict[tuple[str, str, str], int] = {}  # (account, row currency, account currency) -> rows
     for r in rows:
         acc = db.query(Account).filter(Account.name == r["account"]).one_or_none()
         target = acc.currency if acc is not None else "IDR"
         row_cur = (r["currency"] or "").strip().upper()
         if row_cur != target:
-            logger.warning("Skip row (currency %s != account currency %s)", row_cur, target)
+            key = (r["account"], row_cur, target)
+            mismatches[key] = mismatches.get(key, 0) + 1
             skipped += 1
             continue
         if acc is None:
@@ -165,6 +167,8 @@ def insert_rows(db: Session, rows: list[dict]) -> tuple[int, int]:
             is_transfer=r["is_transfer"],
         ))
         inserted += 1
+    for (account, row_cur, target), n in mismatches.items():  # one line per pair, not per row
+        logger.warning("Skipped %d row(s) for account %r (currency %s != account currency %s)", n, account, row_cur, target)
     db.commit()
     return inserted, skipped
 
