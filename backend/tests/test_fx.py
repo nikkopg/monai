@@ -585,3 +585,245 @@ def test_cash_and_gold_have_explicit_ttl_entries():
     assert "gold" in prices.TTL_BY_ASSET_TYPE
     assert "cash" in prices.TTL_BY_ASSET_TYPE
     assert prices.TTL_BY_ASSET_TYPE["gold"] == prices.TTL_BY_ASSET_TYPE["mutual_fund"]
+
+
+# ---------------------------------------------------------------------------
+# Range adapter, _store_range, ensure_flow_rates (Phase 42-05, D-20/D-21).
+# Synthetic dates: 1902 (store tests, today pinned 1902-01-07), 1903 (ensure
+# tests, today pinned 1903-04-01). Rates are round numbers.
+# ---------------------------------------------------------------------------
+
+def _range_body(rates: dict):
+    return _resp({"base": "USD", "rates": {d: {"IDR": v} for d, v in rates.items()}})
+
+
+def test_fetch_frankfurter_range_parses_probe_shape(monkeypatch):
+    from backend import fx
+
+    body = _range_body({"1902-01-03": 16000, "1902-01-06": 16050.5})
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: body)
+    got = fx.fetch_frankfurter_range("USD", "IDR", date(1902, 1, 3), date(1902, 1, 6))
+    assert got == [(date(1902, 1, 3), Decimal("16000")), (date(1902, 1, 6), Decimal("16050.5"))]
+    assert fx.FX_RANGE_ADAPTERS["frankfurter"] is fx.fetch_frankfurter_range
+
+
+def test_fetch_frankfurter_range_failures_return_none(monkeypatch):
+    from backend import fx
+
+    class _NotFound:
+        def raise_for_status(self):
+            req = httpx.Request("GET", "https://example.invalid")
+            raise httpx.HTTPStatusError("404", request=req, response=httpx.Response(404, request=req))
+
+    bad = [
+        _NotFound(),
+        _resp({"rates": {"1902-01-03": [16000]}}),  # value is a list
+        _resp({"rates": {"not-a-date": {"IDR": 16000}}}),  # non-date key
+    ]
+    for r in bad:
+        monkeypatch.setattr(httpx, "get", lambda *a, _r=r, **k: _r)
+        assert fx.fetch_frankfurter_range("USD", "IDR", date(1902, 1, 3), date(1902, 1, 6)) is None
+
+
+@pytest.fixture()
+def range_env(monkeypatch):
+    """Counts httpx.get calls; cleans 1902/1903 USD->IDR rows, ZZ42 fx accounts
+    and 1903 transactions before and after. Skips when Postgres is down."""
+    from backend import fx
+    from backend.db import SessionLocal, engine
+
+    try:
+        with engine.connect() as c:
+            c.execute(text("SELECT 1"))
+    except Exception as e:
+        pytest.skip(f"Postgres not available: {e}")
+
+    def _clean():
+        s = SessionLocal()
+        try:
+            s.execute(text("DELETE FROM transactions WHERE date >= '1903-01-01' AND date < '1904-01-01'"))
+            s.execute(text("DELETE FROM accounts WHERE name LIKE 'ZZ42 fx %'"))
+            s.execute(text(
+                "DELETE FROM fx_rate_cache WHERE rate_date >= '1902-01-01' AND rate_date < '1904-01-01' "
+                "AND base_currency = 'USD' AND quote_currency = 'IDR'"
+            ))
+            s.commit()
+        finally:
+            s.close()
+
+    _clean()
+    env = {"calls": [], "behaviour": None}
+
+    def pin(today):
+        monkeypatch.setattr(fx, "_jakarta_today", lambda: today)
+
+    def _get(url, params=None, **kw):
+        env["calls"].append((url, params))
+        return env["behaviour"]()
+
+    monkeypatch.setattr(httpx, "get", _get)
+    env["pin"] = pin
+    yield env
+    _clean()
+
+
+def _seed_cache(rate_date: date, rate: str) -> None:
+    from backend.db import SessionLocal
+
+    s = SessionLocal()
+    try:
+        s.execute(
+            text(
+                "INSERT INTO fx_rate_cache (rate_date, base_currency, quote_currency, rate, source, fetched_at) "
+                "VALUES (:d, 'USD', 'IDR', :r, 'frankfurter', now())"
+            ),
+            {"d": rate_date, "r": rate},
+        )
+        s.commit()
+    finally:
+        s.close()
+
+
+def _seed_txs(rows: list[tuple[date, str, str]]) -> None:
+    """rows: (day, amount, currency). One account per currency."""
+    import secrets
+
+    from backend.db import SessionLocal
+
+    s = SessionLocal()
+    try:
+        accounts: dict[str, int] = {}
+        for _day, _amt, cur in rows:
+            if cur not in accounts:
+                accounts[cur] = s.execute(
+                    text("INSERT INTO accounts (name, type, currency) VALUES (:n, 'liquid', :c) RETURNING id"),
+                    {"n": f"ZZ42 fx {cur.lower()} {secrets.token_hex(4)}", "c": cur},
+                ).scalar()
+        for day, amt, cur in rows:
+            s.execute(
+                text(
+                    "INSERT INTO transactions (date, amount, currency, account_id, is_transfer) "
+                    "VALUES (:d, :a, :c, :acc, false)"
+                ),
+                {"d": datetime(day.year, day.month, day.day, 12), "a": amt, "c": cur, "acc": accounts[cur]},
+            )
+        s.commit()
+    finally:
+        s.close()
+
+
+def _usd_rows() -> list[tuple]:
+    from backend.db import SessionLocal
+
+    s = SessionLocal()
+    try:
+        return [tuple(r) for r in s.execute(text(
+            "SELECT rate_date, rate FROM fx_rate_cache WHERE rate_date >= '1902-01-01' "
+            "AND rate_date < '1904-01-01' AND base_currency = 'USD' AND quote_currency = 'IDR' "
+            "ORDER BY rate_date"
+        ))]
+    finally:
+        s.close()
+
+
+def test_store_range_is_immutable_and_skips_today(range_env):
+    from backend import fx
+    from backend.db import SessionLocal
+
+    range_env["pin"](date(1902, 1, 7))
+    _seed_cache(date(1902, 1, 6), "16000")
+    range_env["behaviour"] = lambda: _range_body(
+        {"1902-01-03": 16100, "1902-01-06": 17000, "1902-01-07": 17100}
+    )
+    n = fx._store_range("USD", "IDR", date(1902, 1, 3), date(1902, 1, 7))
+
+    assert n == 1  # only 01-03 is new; 01-06 exists, 01-07 is today
+    assert _usd_rows() == [
+        (date(1902, 1, 3), Decimal("16100.000000")),
+        (date(1902, 1, 6), Decimal("16000.000000")),
+    ]
+    assert len(range_env["calls"]) == 1
+
+    range_env["calls"].clear()
+    assert fx._store_range("U$D", "IDR", date(1902, 1, 3), date(1902, 1, 6)) == 0
+    assert range_env["calls"] == []
+
+
+def _ensure(start, end):
+    from backend import fx
+    from backend.db import SessionLocal
+
+    s = SessionLocal()
+    try:
+        return fx.ensure_flow_rates(s, start, end)
+    finally:
+        s.close()
+
+
+def test_ensure_flow_rates_covered_makes_no_call(range_env):
+    range_env["pin"](date(1903, 4, 1))
+    _seed_txs([(date(1903, 3, 20), "-12.50", "USD")])
+    _seed_cache(date(1903, 3, 18), "16000")
+    assert _ensure(date(1903, 3, 1), date(1903, 3, 31)) == 0
+    assert range_env["calls"] == []
+
+
+def test_ensure_flow_rates_one_call_spans_gaps(range_env):
+    from backend.db import SessionLocal
+
+    range_env["pin"](date(1903, 4, 1))
+    _seed_txs([(date(1903, 3, 4), "-12.50", "USD"), (date(1903, 3, 12), "-12.50", "USD")])
+    range_env["behaviour"] = lambda: _range_body(
+        {"1903-02-25": 16000, "1903-03-04": 16050.5, "1903-03-12": 16100}
+    )
+    n = _ensure(date(1903, 3, 1), date(1903, 3, 31))
+
+    assert n == 3
+    assert len(range_env["calls"]) == 1
+    assert range_env["calls"][0][0].endswith("/v1/1903-02-25..1903-03-12")
+    s = SessionLocal()
+    try:
+        vals = s.execute(text(
+            "SELECT amount_idr FROM transactions_idr WHERE date >= '1903-03-01' AND date < '1903-04-01' "
+            "AND currency = 'USD'"
+        )).scalars().all()
+    finally:
+        s.close()
+    assert len(vals) == 2 and all(v is not None for v in vals)
+
+
+def test_ensure_flow_rates_idr_only_makes_no_call(range_env):
+    range_env["pin"](date(1903, 4, 1))
+    _seed_txs([(date(1903, 3, 10), "-50000", "IDR")])
+    assert _ensure(date(1903, 3, 1), date(1903, 3, 31)) == 0
+    assert range_env["calls"] == []
+
+
+def test_ensure_flow_rates_future_gap_raises_without_call(range_env):
+    from backend import fx
+
+    range_env["pin"](date(1903, 4, 1))
+    _seed_txs([(date(1903, 4, 11), "-12.50", "USD")])
+    with pytest.raises(fx.FxUnavailable):
+        _ensure(date(1903, 4, 1), date(1903, 4, 30))
+    assert range_env["calls"] == []
+
+
+def test_ensure_flow_rates_vendor_down_raises_after_one_call(range_env):
+    from backend import fx
+
+    class _NotFound:
+        def raise_for_status(self):
+            req = httpx.Request("GET", "https://example.invalid")
+            raise httpx.HTTPStatusError("404", request=req, response=httpx.Response(404, request=req))
+
+    range_env["pin"](date(1903, 4, 1))
+    _seed_txs([(date(1903, 3, 4), "-12.50", "USD")])
+    range_env["behaviour"] = lambda: _NotFound()
+    with pytest.raises(fx.FxUnavailable) as exc:
+        _ensure(date(1903, 3, 1), date(1903, 3, 31))
+
+    assert len(range_env["calls"]) == 1
+    msg = str(exc.value)
+    assert "1 USD transaction date(s)" in msg and "1903-03-04" in msg
+    assert "12.50" not in msg
