@@ -45,7 +45,7 @@ from typing import Callable
 
 import logging
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -317,9 +317,11 @@ def _store_range(base: str, quote: str, start: date, end: date) -> int:
             pg_insert(FxRateCache)
             .values(values)
             .on_conflict_do_nothing(constraint="uq_fx_rate_cache_date_pair")
+            .returning(FxRateCache.id)  # rowcount is -1 for an ORM multi-row insert
         )
+        inserted = len(result.all())
         cache_session.commit()
-        return result.rowcount
+        return inserted
 
 
 def warm_recent_rates(db: Session) -> int:
@@ -335,3 +337,50 @@ def warm_recent_rates(db: Session) -> int:
     # mornings make one call that stores nothing new (~3 extra calls a week);
     # add a business-day check only if the vendor ever rate-limits.
     return _store_range("USD", "IDR", yesterday - timedelta(days=7), yesterday)
+
+
+# Transaction days (non-IDR) with no USD->IDR cache row in [d - 7, d]. The
+# window is character-for-character the transactions_idr view's (migration 020),
+# so this pre-check and the view never disagree. NULL bounds mean unbounded.
+_GAP_SQL = text("""
+    SELECT DISTINCT t.date::date AS d
+    FROM transactions t
+    WHERE t.currency != 'IDR'
+      AND (CAST(:lo AS date) IS NULL OR t.date::date >= CAST(:lo AS date))
+      AND (CAST(:hi AS date) IS NULL OR t.date::date <= CAST(:hi AS date))
+      AND NOT EXISTS (
+        SELECT 1 FROM fx_rate_cache c
+        WHERE c.base_currency = 'USD' AND c.quote_currency = 'IDR'
+          AND c.rate_date BETWEEN t.date::date - 7 AND t.date::date
+      )
+    ORDER BY d
+""")
+
+
+def ensure_flow_rates(db: Session, start: date | None = None, end: date | None = None) -> int:
+    """Fill missing past USD->IDR rates for non-IDR transactions in [start, end].
+
+    Phase 43 calls this before summing `amount_idr` (SUM skips NULLs silently).
+    Makes at most ONE range call: [first gap - 7, min(last gap, yesterday)].
+    Returns the number of rows inserted (0 when nothing was missing). Raises
+    FxUnavailable (counts and dates only) when gaps remain afterwards, e.g.
+    vendor down or the gap is today or later.
+
+    Known hole, accepted (D-21): a lone stale row in a day's 7-day window
+    counts as covered even if a closer published rate exists; flagged for
+    Phase 43.
+    """
+    params = {"lo": start, "hi": end}
+    gaps = list(db.execute(_GAP_SQL, params).scalars())
+    if not gaps:
+        return 0
+    lo = min(gaps) - timedelta(days=7)
+    hi = min(max(gaps), _jakarta_today() - timedelta(days=1))
+    inserted = _store_range("USD", "IDR", lo, hi) if hi >= lo else 0
+    left = list(db.execute(_GAP_SQL, params).scalars())
+    if left:
+        raise FxUnavailable(
+            f"{len(left)} USD transaction date(s) between {min(left)} and {max(left)} "
+            "have no USD->IDR rate within 7 days"
+        )
+    return inserted
