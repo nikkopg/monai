@@ -62,10 +62,13 @@ def apply_add_transaction(db: Session, after: dict) -> Transaction:
     composite FK in migration 020 would otherwise surface it as a 500).
     """
     account_name = after.get("account", "Unknown")
-    acc = _get_or_create_account(db, account_name)
+    # Check the currency BEFORE creating the account, so a refusal never leaves a stray flushed row.
+    existing = db.query(Account).filter(Account.name == account_name).one_or_none()
+    target = existing.currency if existing is not None else "IDR"  # auto-created accounts are IDR
     given = (after.get("currency") or "").strip().upper()
-    if given and given != acc.currency:
-        raise ValueError(f"Account '{acc.name}' is in {acc.currency}; this row is in {given}")
+    if given and given != target:
+        raise ValueError(f"Account '{account_name}' is in {target}; this row is in {given}")
+    acc = existing or _get_or_create_account(db, account_name)
     currency = acc.currency
     category_name = after.get("category")
     tx = Transaction(

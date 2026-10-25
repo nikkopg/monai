@@ -264,6 +264,15 @@ def test_post_transactions_naive_and_offset_dates(authed, wdb):
     assert _one(wdb, "SELECT date::date FROM transactions WHERE id = :i", i=offset.json()["id"])[0] == date(2024, 3, 10)
 
 
+def test_apply_add_refusal_creates_no_account_without_rollback(wdb):
+    from backend.writes import apply_add_transaction
+
+    name = f"ZZ42 stray {secrets.token_hex(4)}"
+    with pytest.raises(ValueError):
+        apply_add_transaction(wdb, {"account": name, "amount": "-1", "currency": "USD"})
+    assert _one(wdb, "SELECT COUNT(*) FROM accounts WHERE name = :n", n=name)[0] == 0
+
+
 def test_apply_add_currency_rules(wdb):
     from backend.models import AuditLog
     from backend.writes import apply_add_transaction
