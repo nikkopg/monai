@@ -609,3 +609,103 @@ def test_dashboard_trend_counts_unconverted(recent_seed, authed):
     partial = trend_row()
     assert partial["unconverted_count"] == 1
     assert full["expense"] - partial["expense"] == pytest.approx(9.99 * float(SUB_RATES[1]), abs=0.05)
+
+
+# --- net-worth history (D-14, D-15, D-16, D-19) ----------------------------
+
+from backend import reconstruction  # noqa: E402
+from backend.db import engine  # noqa: E402
+
+
+def _hist_months() -> int:
+    """Months back from today to cover 1995-03 (the bucket count is relative to CURRENT_DATE)."""
+    t = date.today()
+    return (t.year - 1995) * 12 + t.month - 3 + 1
+
+
+def _hist_account(s, name: str, cur: str) -> int:
+    return s.execute(text(
+        "INSERT INTO accounts (name, type, currency) VALUES (:n, 'liquid', :c) RETURNING id"),
+        {"n": name, "c": cur}).scalar()
+
+
+def _hist_tx(s, acc: int, day: date, amount: str, cur: str, anchor: bool = False) -> None:
+    """A ledger row; anchor=True gives apply_add_balance_adjustment's row shape."""
+    s.execute(text(
+        "INSERT INTO transactions (date, amount, currency, merchant, category, account_id, is_transfer) "
+        "VALUES (:d, :a, :c, 'zz43 hist', :cat, :acc, :anchor)"),
+        {"d": datetime(day.year, day.month, day.day, 12), "a": amount, "c": cur,
+         "cat": "Adjustment" if anchor else None, "acc": acc, "anchor": anchor})
+
+
+def _hist_rate(s, day: date, rate: str) -> None:
+    s.execute(text(
+        "INSERT INTO fx_rate_cache (rate_date, base_currency, quote_currency, rate, source, fetched_at) "
+        "VALUES (:d, 'USD', 'IDR', :r, 'frankfurter', now())"), {"d": day, "r": rate})
+
+
+@pytest.fixture()
+def history_env(monkeypatch):
+    """An anchored IDR and an anchored USD account; one range prefill point (1995-06-30)."""
+    _stub_fx(monkeypatch, live=None, ranges={date(1995, 6, 30): Decimal("16000.000000")})
+    _clean()
+    s = SessionLocal()
+    try:
+        idr = _hist_account(s, "ZZ43 hist idr", "IDR")
+        usd = _hist_account(s, "ZZ43 hist usd", "USD")
+        _hist_tx(s, idr, date(1995, 4, 10), "1000000.00", "IDR")
+        _hist_tx(s, idr, date(1995, 12, 29), "1000.00", "IDR", anchor=True)  # regime cutoff covers 1995
+        _hist_tx(s, usd, date(1995, 4, 10), "100.00", "USD")
+        _hist_tx(s, usd, date(1995, 4, 15), "10.00", "USD", anchor=True)
+        _hist_rate(s, date(1995, 4, 28), "15900.000000")
+        _hist_rate(s, date(1995, 5, 31), "15950.000000")
+        s.commit()
+    finally:
+        s.close()
+    try:
+        yield
+    finally:
+        _clean()
+
+
+def _hist_row(month: str) -> dict:
+    rows = reconstruction.monthly_liquid_series(months=_hist_months())["rows"]
+    return next(r for r in rows if r["month"] == month)
+
+
+def test_history_to_idr_by_account_pure():
+    conv = getattr(reconstruction, "_to_idr_by_account", None)
+    assert callable(conv)
+    cur = {"U": "USD"}
+    assert conv({"I": Decimal("5.00")}, cur, None) == {"I": Decimal("5.00")}
+    assert conv({"U": Decimal("110.00")}, cur, Decimal("15900")) == {"U": Decimal("1749000.00")}
+    assert conv({"U": Decimal("110.00")}, cur, None) is None
+    assert conv({"U": Decimal("0.00")}, cur, None) == {"U": Decimal("0.00")}
+    assert conv({"U": Decimal("0.33")}, cur, Decimal("16000.5")) == {"U": Decimal("5280.17")}
+
+
+def test_history_converts_at_month_end_rate(history_env):
+    for month, usd in (("1995-04", "1749000.00"), ("1995-05", "1754500.00"), ("1995-06", "1760000.00")):
+        row = _hist_row(month)
+        assert row["honest"] is True, row
+        assert row["liquid_by_account"]["ZZ43 hist usd"] == Decimal(usd)  # Sunday month-end uses Friday's rate
+        assert row["liquid_by_account"]["ZZ43 hist idr"] == Decimal("1000000.00")
+        assert row["liquid_total"] == sum(row["liquid_by_account"].values(), Decimal("0.00"))
+
+
+def test_history_fx_unavailable_gap(history_env):
+    row = _hist_row("1995-07")
+    assert (row["honest"], row["gap_reason"], row["liquid_by_account"]) == (False, "fx_unavailable", None)
+    assert "fx_unavailable" in reconstruction.GAP_REASONS
+
+
+def test_history_parity_newest_usd_matches_account_balances(history_env, monkeypatch):
+    _stub_fx(monkeypatch, live=Decimal("16200"), ranges={})
+    newest = reconstruction.reconstructed_liquid_by_month(months=1)[-1]["by_account"]
+    with engine.connect() as conn:
+        rate = fx.spot_stale_ok("USD", conn)[0]
+    native = {"ZZ43 hist usd": newest["ZZ43 hist usd"]}
+    idr = reconstruction._to_idr_by_account(native, {"ZZ43 hist usd": "USD"}, rate)["ZZ43 hist usd"]
+    bal = _row(tools.TOOLS["account_balances"]()["rows"], "ZZ43 hist usd")
+    assert idr == Decimal("1782000.00")
+    assert float(idr) == bal["current_balance"]
