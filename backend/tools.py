@@ -166,7 +166,8 @@ def _period_label(period, start, end) -> str:
 
 
 # --------------------------------------------------------------------------
-# Tools — each returns a structured dict. Formatting happens in format_answer.
+# Tools — each returns a structured dict; the agent reads it directly. A refusal
+# (e.g. a USD row with no rate) is a {tool, error} dict, never a short total.
 # --------------------------------------------------------------------------
 
 def spending_total(period="all_time", start_date=None, end_date=None) -> dict:
@@ -192,14 +193,10 @@ def income_total(period="all_time", start_date=None, end_date=None) -> dict:
     Use custom for a specific month, year, or date range.
     """
     s, e = resolve_period(period, start_date, end_date)
-    p: dict = {}
-    sql = (
-        "SELECT COALESCE(SUM(amount), 0) FROM cashflow_transactions "
-        "WHERE amount > 0 AND is_transfer = false" + _date_clause(s, e, p)
-    )
-    with engine.connect() as c:
-        total = float(c.execute(text(sql), p).scalar() or 0)
-    return {"tool": "income_total", "total": total, "period": _period_label(period, s, e)}
+    t = _flow_totals(s, e)
+    return _unconverted_error("income_total", t) or {
+        "tool": "income_total", "total": float(t["income"]), "currency": fx.BASE,
+        "period": _period_label(period, s, e)}
 
 
 def net_total(period="all_time", start_date=None, end_date=None) -> dict:
@@ -209,14 +206,10 @@ def net_total(period="all_time", start_date=None, end_date=None) -> dict:
     Use custom for a specific month, year, or date range.
     """
     s, e = resolve_period(period, start_date, end_date)
-    p: dict = {}
-    sql = (
-        "SELECT COALESCE(SUM(amount), 0) FROM cashflow_transactions "
-        "WHERE is_transfer = false" + _date_clause(s, e, p)
-    )
-    with engine.connect() as c:
-        total = float(c.execute(text(sql), p).scalar() or 0)
-    return {"tool": "net_total", "net": total, "period": _period_label(period, s, e)}
+    t = _flow_totals(s, e)
+    return _unconverted_error("net_total", t) or {
+        "tool": "net_total", "net": float(t["net"]), "currency": fx.BASE,
+        "period": _period_label(period, s, e)}
 
 
 def _category_tree() -> list[dict]:
@@ -467,23 +460,21 @@ def average_daily_spending(period="this_month", start_date=None, end_date=None) 
     Use custom for a specific month, year, or date range.
     """
     s, e = resolve_period(period, start_date, end_date)
-    p: dict = {}
-    total_sql = (
-        "SELECT COALESCE(SUM(-amount), 0) FROM cashflow_transactions "
-        "WHERE amount < 0 AND is_transfer = false" + _date_clause(s, e, p)
-    )
-    with engine.connect() as c:
-        total = float(c.execute(text(total_sql), p).scalar() or 0)
-        if s is not None and e is not None:
-            days = (e - s).days
-        else:
-            # Date span, not a total — leave on the base table so the
-            # denominator (days on record) isn't shrunk by the exclusion view.
+    t = _flow_totals(s, e)
+    if (err := _unconverted_error("average_daily_spending", t)) is not None:
+        return err
+    total = float(t["expense"])
+    if s is not None and e is not None:
+        days = (e - s).days
+    else:
+        # Date span, not a total — leave on the base table so the
+        # denominator (days on record) isn't shrunk by the exclusion view.
+        with engine.connect() as c:
             row = c.execute(text("SELECT MIN(date), MAX(date) FROM transactions")).fetchone()
-            days = ((row[1].date() - row[0].date()).days + 1) if row and row[0] else 1
+        days = ((row[1].date() - row[0].date()).days + 1) if row and row[0] else 1
     days = max(days, 1)
     return {"tool": "average_daily_spending", "average": total / days, "days": days,
-            "total": total, "period": _period_label(period, s, e)}
+            "total": total, "currency": fx.BASE, "period": _period_label(period, s, e)}
 
 
 def monthly_trend(months: int = 6) -> dict:
@@ -746,7 +737,7 @@ def _rollup_by_top(start, end) -> dict[str, float]:
     """
     p: dict = {}
     sql = (
-        "SELECT COALESCE(p2.name, p1.name, c.name) AS top_name, SUM(-t.amount) "
+        "SELECT COALESCE(p2.name, p1.name, c.name) AS top_name, ROUND(SUM(-t.amount_idr), 2) "
         + _ROLLUP_FROM + _date_clause(start, end, p) + " GROUP BY 1"
     )
     with engine.connect() as c:
@@ -815,12 +806,15 @@ def compare_periods(
                      "start": s.isoformat(), "end_inclusive": last.isoformat(),
                      "days": days, "in_progress": in_progress,
                      "days_elapsed": days_elapsed})
-        # Totals come from the oracle tools, so parity holds by construction.
-        sd_, ed_ = s.isoformat(), last.isoformat()
-        sp = spending_total("custom", start_date=sd_, end_date=ed_)["total"]
+        # Totals come from _flow_totals, the same helper the totals tools use,
+        # so parity holds by construction. A refusal covers both sides (D-23).
+        t = _flow_totals(s, e)
+        if (err := _unconverted_error("compare_periods", t)) is not None:
+            return err
+        sp = float(t["expense"])
         totals_raw["spending"].append(sp)
-        totals_raw["income"].append(income_total("custom", start_date=sd_, end_date=ed_)["total"])
-        totals_raw["net"].append(net_total("custom", start_date=sd_, end_date=ed_)["net"])
+        totals_raw["income"].append(float(t["income"]))
+        totals_raw["net"].append(float(t["net"]))
         spend.append(sp)
 
     totals = {
@@ -847,7 +841,7 @@ def compare_periods(
     # (totals use the plain spending predicate; the rollup joins categories).
     other_delta = totals["spending"]["delta"] - sum(r["delta"] for r in rows)
     return {"tool": "compare_periods", "base": base, "current": current,
-            "totals": totals, "comparable": comparable,
+            "totals": totals, "comparable": comparable, "currency": fx.BASE,
             "categories": rows, "other_delta": other_delta}
 
 
@@ -1834,59 +1828,3 @@ TOOLS.update({
     "propose_add_funded_sell": propose_add_funded_sell,
     "propose_add_balance_adjustment": propose_add_balance_adjustment,
 })
-
-
-def _fmt(amount: float, currency: str) -> str:
-    return f"{currency} {amount:,.2f}"
-
-
-def format_answer(result: dict, currency: str | None = None) -> str:
-    """Render a tool result dict as a natural-language answer with correct currency."""
-    cur = currency or _currency()
-    tool = result.get("tool")
-    if result.get("error"):
-        return result["error"]
-    period = result.get("period", "")
-    suffix = f" ({period})" if period and period != "all time" else (" (all time)" if period == "all time" else "")
-
-    if tool == "spending_total":
-        return f"You spent {_fmt(result['total'], cur)}{suffix}."
-    if tool == "income_total":
-        return f"Your income was {_fmt(result['total'], cur)}{suffix}."
-    if tool == "net_total":
-        net = result["net"]
-        word = "positive" if net >= 0 else "negative"
-        return f"Your net cash flow was {_fmt(net, cur)} ({word}){suffix}."
-    if tool == "spending_by_category":
-        if not result["rows"]:
-            return f"No spending found{suffix}."
-        lines = [f"{i+1}. {c}: {_fmt(t, cur)}" for i, (c, t) in enumerate(result["rows"])]
-        return f"Top spending categories{suffix}:\n" + "\n".join(lines)
-    if tool == "spending_in_category":
-        return f"You spent {_fmt(result['total'], cur)} on \"{result['category']}\"{suffix}."
-    if tool == "transaction_count":
-        k = result["kind"]
-        kind_word = {"all": "transactions", "expense": "expenses", "income": "income entries"}.get(k, "transactions")
-        return f"You made {result['count']} {kind_word}{suffix}."
-    if tool == "largest_transactions":
-        if not result["rows"]:
-            return f"No transactions found{suffix}."
-        lines = [
-            f"{i+1}. {r['date']} — {_fmt(r['amount'], cur)} — {r['category']}"
-            + (f" ({r['merchant']})" if r['merchant'] else "")
-            for i, r in enumerate(result["rows"])
-        ]
-        return f"Largest {result['kind']}s{suffix}:\n" + "\n".join(lines)
-    if tool == "average_daily_spending":
-        return (f"You spent an average of {_fmt(result['average'], cur)} per day "
-                f"over {result['days']} days{suffix} (total {_fmt(result['total'], cur)}).")
-    if tool == "list_categories":
-        lines: list[str] = []
-        stack = [(n, 0) for n in reversed(result["categories"])]
-        while stack:
-            node, depth = stack.pop()
-            lines.append("  " * depth + f"- {node['name']}")
-            stack.extend((ch, depth + 1) for ch in reversed(node["children"]))
-        return "Your categories:\n" + "\n".join(lines)
-
-    return str(result)
