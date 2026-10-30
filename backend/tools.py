@@ -349,14 +349,17 @@ def spending_in_category(category: str, period="all_time", start_date=None, end_
                          "Use list_categories to see the category tree."}
     p: dict = {"ids": _descendant_ids(node)}
     sql = (
-        "SELECT COALESCE(SUM(-amount), 0) FROM cashflow_transactions "
+        "SELECT ROUND(COALESCE(SUM(-amount_idr), 0), 2) FROM cashflow_transactions "
         "WHERE amount < 0 AND is_transfer = false "
         "AND category_id = ANY(:ids)" + _date_clause(s, e, p)
     )
     with engine.connect() as c:
+        refusal = _unconverted_error("spending_in_category", _unconverted(c, s, e))
+        if refusal:
+            return refusal
         total = float(c.execute(text(sql), p).scalar() or 0)
     return {"tool": "spending_in_category", "category": category, "total": total,
-            "period": _period_label(period, s, e)}
+            "currency": fx.BASE, "period": _period_label(period, s, e)}
 
 
 def spending_before_after_purchase(ticker: str, category: str) -> dict:
@@ -409,6 +412,7 @@ def spending_before_after_purchase(ticker: str, category: str) -> dict:
     delta = after["total"] - before["total"]
     return {
         "tool": "spending_before_after_purchase",
+        "currency": fx.BASE,
         "ticker": ticker,
         "category": category,
         "pivot_date": pivot.isoformat(),
@@ -448,20 +452,28 @@ def largest_transactions(period="all_time", start_date=None, end_date=None, limi
     s, e = resolve_period(period, start_date, end_date)
     p: dict = {"lim": max(1, min(int(limit), 50))}
     sign = "amount < 0" if kind == "expense" else "amount > 0"
-    order = "amount ASC" if kind == "expense" else "amount DESC"
+    order = "amount_idr ASC" if kind == "expense" else "amount_idr DESC"
     sql = (
-        "SELECT date, ABS(amount) AS mag, category, merchant FROM cashflow_transactions "
+        "SELECT date, ROUND(ABS(amount_idr), 2), category, merchant, currency, ABS(amount), "
+        "fx_rate, fx_rate_date FROM cashflow_transactions "
         f"WHERE {sign} AND is_transfer = false" + _date_clause(s, e, p) +
         f" ORDER BY {order} LIMIT :lim"
     )
     with engine.connect() as c:
-        rows = [
-            {"date": r[0].date().isoformat(), "amount": float(r[1]),
-             "category": r[2], "merchant": r[3]}
-            for r in c.execute(text(sql), p).fetchall()
-        ]
+        # Refuse before ranking: Postgres sorts NULL amount_idr to one end (T-43-09).
+        refusal = _unconverted_error("largest_transactions", _unconverted(c, s, e))
+        if refusal:
+            return refusal
+        rows = []
+        for r in c.execute(text(sql), p).fetchall():
+            row = {"date": r[0].date().isoformat(), "amount": float(r[1]),
+                   "category": r[2], "merchant": r[3], "currency": r[4]}
+            if r[4] != fx.BASE:
+                row.update(amount_native=float(r[5]), fx_rate=float(r[6]),
+                           fx_rate_date=r[7].isoformat())
+            rows.append(row)
     return {"tool": "largest_transactions", "rows": rows, "kind": kind,
-            "period": _period_label(period, s, e)}
+            "currency": fx.BASE, "period": _period_label(period, s, e)}
 
 
 def average_daily_spending(period="this_month", start_date=None, end_date=None) -> dict:
@@ -680,18 +692,21 @@ def find_transactions(
     if sign:
         clauses.append(sign)
     sql = (
-        "SELECT id, date, amount, category, merchant, account_id FROM cashflow_transactions WHERE "
+        "SELECT id, date, amount, category, merchant, account_id, currency, amount_idr "
+        "FROM cashflow_transactions WHERE "
         + " AND ".join(clauses) + _date_clause(s, e, p) +
         " ORDER BY date DESC LIMIT :lim"
     )
     with engine.connect() as c:
+        _flow_fx(c, s, e)  # fill what it can; never refuses (D-20): amount_idr is None on a gap
         rows = [
             {"id": r[0], "date": r[1].date().isoformat(), "amount": float(r[2]),
-             "category": r[3], "merchant": r[4], "account_id": r[5]}
+             "category": r[3], "merchant": r[4], "account_id": r[5], "currency": r[6],
+             "amount_idr": None if r[7] is None else float(r[7])}
             for r in c.execute(text(sql), p).fetchall()
         ]
     return {"tool": "find_transactions", "rows": rows, "kind": kind,
-            "period": _period_label(period, s, e)}
+            "currency": fx.BASE, "period": _period_label(period, s, e)}
 
 
 def find_platforms(name: str | None = None, limit: int = 10) -> dict:
