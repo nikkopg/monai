@@ -593,3 +593,19 @@ def test_find_transactions_lists_unconverted_rows(flow_seed):
         assert by[merchant]["amount"] == native
         assert by[merchant]["amount_idr"] is None
     assert by["zz43 usd mon"]["amount_idr"] == float(Decimal("5.00") * RATE_MON)
+
+
+def test_dashboard_trend_counts_unconverted(recent_seed, authed):
+    """Dashboard trend keeps the IDR part and counts the unconverted rows per month (D-06)."""
+    month = _sub_day(1).isoformat()[:7]
+
+    def trend_row() -> dict:
+        r = authed.get("/cashflow/summary")
+        assert r.status_code == 200
+        return next(x for x in r.json()["trend"] if x["month"] == month)
+
+    full = trend_row()
+    _delete_rate(_sub_day(1))
+    partial = trend_row()
+    assert partial["unconverted_count"] == 1
+    assert full["expense"] - partial["expense"] == pytest.approx(9.99 * float(SUB_RATES[1]), abs=0.05)
