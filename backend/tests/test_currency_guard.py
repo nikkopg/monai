@@ -580,3 +580,16 @@ def test_dashboard_by_category_partial_on_missing_rate(flow_seed, authed):
     assert r.status_code == 200
     cat = next(c for c in r.json()["by_category"] if c["name"] == "zz43-Guard")
     assert cat["total"] == 50000.0  # the IDR row only, not 50022.5
+
+
+def test_find_transactions_lists_unconverted_rows(flow_seed):
+    """D-20: the row listing never refuses; an unconverted row has amount_idr None."""
+    _delete_rate(D_FRI)
+    r = tools.TOOLS["find_transactions"](merchant="zz43", **RANGE)
+    assert "error" not in r
+    by = {x["merchant"]: x for x in r["rows"]}
+    for merchant, native in (("zz43 usd fri", -12.5), ("zz43 usd sat", -10.0)):
+        assert by[merchant]["currency"] == "USD"
+        assert by[merchant]["amount"] == native
+        assert by[merchant]["amount_idr"] is None
+    assert by["zz43 usd mon"]["amount_idr"] == float(Decimal("5.00") * RATE_MON)
