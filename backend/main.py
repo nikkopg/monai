@@ -172,10 +172,10 @@ from backend.tools import (
     monthly_trend,
     net_worth,
     resolve_period,
-    spending_by_category,
     _descendant_ids,
     _find_category_node,
     _flow_totals,
+    _spending_by_category,
 )
 from backend.settings import (
     KEY_ANTHROPIC_API_KEY,
@@ -1020,7 +1020,7 @@ def cashflow_summary(
     # Dashboard policy (D-06): show the IDR part, report what could not be converted.
     t = _flow_totals(s, e)
     totals = {"income": float(t["income"]), "expense": float(t["expense"]), "net": float(t["net"])}
-    by_cat_result = spending_by_category(period, start_date, end_date, limit=10)
+    by_cat_result = _spending_by_category(s, e, 10)
     by_category = _category_rollup(db, by_cat_result["rows"], by_cat_result["children"])
     accounts = account_balances(s, e)["rows"]
     trend = monthly_trend(6)["rows"]

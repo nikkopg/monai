@@ -289,6 +289,33 @@ _ROLLUP_FROM = (
 )
 
 
+def _spending_by_category(start, end_excl, lim) -> dict:
+    """IDR category rollup (rounded once per aggregate, D-07) plus the `_unconverted` keys.
+    Never refuses: SUM skips NULL, so on a gap this is the IDR part; callers pick the policy."""
+    p: dict = {"lim": lim}
+    date_pred = _date_clause(start, end_excl, p)  # `date` is unambiguous: only transactions has it
+    top = "COALESCE(p2.name, p1.name, c.name)"
+    sql = (
+        f"SELECT {top} AS top_name, ROUND(SUM(-t.amount_idr), 2) AS total "
+        + _ROLLUP_FROM + date_pred +
+        " GROUP BY 1 ORDER BY total DESC LIMIT :lim"
+    )
+    child_sql = (
+        f"SELECT {top} AS top_name, c.name, ROUND(SUM(-t.amount_idr), 2) AS total "
+        + _ROLLUP_FROM + date_pred +
+        " GROUP BY 1, c.name ORDER BY total DESC"
+    )
+    with engine.connect() as conn:
+        info = _unconverted(conn, start, end_excl)
+        rows = [(r[0], float(r[1])) for r in conn.execute(text(sql), p).fetchall()]
+        crows = conn.execute(text(child_sql), p).fetchall()
+    children: dict[str, list] = {name: [] for name, _ in rows}
+    for top_name, sub_name, total in crows:
+        if top_name in children:
+            children[top_name].append((sub_name, float(total)))
+    return {**info, "rows": rows, "children": children}
+
+
 def spending_by_category(period="all_time", start_date=None, end_date=None, limit=5) -> dict:
     """Top spending categories (expenses only) in a period, rolled up to
     TOP-LEVEL category groups — each group's total includes all its
@@ -298,28 +325,12 @@ def spending_by_category(period="all_time", start_date=None, end_date=None, limi
     start_date/end_date (end_date inclusive).
     """
     s, e = resolve_period(period, start_date, end_date)
-    p: dict = {"lim": max(1, min(int(limit), 50))}
-    date_pred = _date_clause(s, e, p)  # `date` is unambiguous: only transactions has it
-    top = "COALESCE(p2.name, p1.name, c.name)"
-    sql = (
-        f"SELECT {top} AS top_name, SUM(-t.amount) AS total "
-        + _ROLLUP_FROM + date_pred +
-        " GROUP BY 1 ORDER BY total DESC LIMIT :lim"
-    )
-    child_sql = (
-        f"SELECT {top} AS top_name, c.name, SUM(-t.amount) AS total "
-        + _ROLLUP_FROM + date_pred +
-        " GROUP BY 1, c.name ORDER BY total DESC"
-    )
-    with engine.connect() as conn:
-        rows = [(r[0], float(r[1])) for r in conn.execute(text(sql), p).fetchall()]
-        crows = conn.execute(text(child_sql), p).fetchall()
-    children: dict[str, list] = {name: [] for name, _ in rows}
-    for top_name, sub_name, total in crows:
-        if top_name in children:
-            children[top_name].append((sub_name, float(total)))
-    return {"tool": "spending_by_category", "rows": rows, "children": children,
-            "period": _period_label(period, s, e)}
+    r = _spending_by_category(s, e, max(1, min(int(limit), 50)))
+    refusal = _unconverted_error("spending_by_category", r)
+    if refusal:
+        return refusal
+    return {"tool": "spending_by_category", "rows": r["rows"], "children": r["children"],
+            "currency": fx.BASE, "period": _period_label(period, s, e)}
 
 
 def spending_in_category(category: str, period="all_time", start_date=None, end_date=None) -> dict:
