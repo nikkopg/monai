@@ -48,10 +48,13 @@ from decimal import Decimal
 
 from sqlalchemy import text
 
+from backend import fx
 from backend.db import engine
 
 _SOURCE = "corrections_260620"
-GAP_REASONS = ("pre_ledger", "no_opening_anchor", "no_closing_anchor")
+# fx_unavailable ranks after the anchoring reasons: a month is first judged on
+# whether its balance can be trusted, only then on whether a rate exists (D-15).
+GAP_REASONS = ("pre_ledger", "no_opening_anchor", "no_closing_anchor", "fx_unavailable")
 
 _MONTH_SQL = (
     "SELECT to_char(m, 'YYYY-MM') AS month, "
@@ -88,6 +91,8 @@ _ADJUSTMENT_DATES_SQL = (
 )
 
 _LIQUID_ACCOUNT_NAMES_SQL = "SELECT name FROM accounts WHERE type = 'liquid' ORDER BY name"
+
+_LIQUID_CURRENCY_SQL = "SELECT name, currency FROM accounts WHERE type = 'liquid'"
 
 _EARLIEST_LIQUID_TX_SQL = (
     "SELECT MIN(t.date)::date FROM transactions t "
@@ -294,6 +299,29 @@ def _honesty(
     return True, None
 
 
+def _needs_rate(by_account: dict, currency_by_name: dict) -> bool:
+    return any(
+        currency_by_name.get(name, fx.BASE) != fx.BASE and value != 0
+        for name, value in by_account.items()
+    )
+
+
+def _to_idr_by_account(by_account: dict, currency_by_name: dict, rate: Decimal | None) -> dict | None:
+    """Per-account values in IDR. IDR (and correction labels, which default to
+    IDR) and zero values pass through; a non-zero USD value is converted with
+    `fx.at_rate`, or the whole map is None when that needs a rate we lack
+    (D-14, D-15). Native amounts are never added across currencies."""
+    out: dict = {}
+    for name, value in by_account.items():
+        if currency_by_name.get(name, fx.BASE) == fx.BASE or value == 0:
+            out[name] = value
+        elif rate is None:
+            return None
+        else:
+            out[name] = fx.at_rate(value, rate)
+    return out
+
+
 def monthly_liquid_series(months: int = 72, *, conn=None) -> dict:
     """The D-15 output shape: corrected monthly liquid series with per-month
     honesty. When `honest` is False, `liquid_by_account`/`liquid_total` are
@@ -313,6 +341,12 @@ def monthly_liquid_series(months: int = 72, *, conn=None) -> dict:
     regime at all. `valuation_basis` is None for both the
     pre-ledger gap and the D-07 path; it is only ever
     "ledger_plus_corrections" for the new pre-anchor regime.
+
+    Figures are IDR (Phase 43): each non-IDR account's native balance is
+    converted on its own, past months at that month-end's rate (7-day
+    weekend fallback), the newest month at today's rate, and only then
+    added. A month whose needed rate is missing is a gap with reason
+    `fx_unavailable`.
     """
     owns_conn = conn is None
     conn = conn or engine.connect()
@@ -324,10 +358,11 @@ def monthly_liquid_series(months: int = 72, *, conn=None) -> dict:
         anchors = _anchor_dates(conn)
         regime_cutoff = _regime_cutoff(anchors)
         live_names = set(anchors.keys())
+        currency_by_name = dict(conn.execute(text(_LIQUID_CURRENCY_SQL)).fetchall())
 
-        rows: list[dict] = []
-        gap_counts: dict[str, int] = {}
-        honest_months: list[str] = []
+        # Pass 1: native arithmetic and honesty. planned entries are
+        # (month, month_end, native by_account or None for a gap, basis, gap_reason).
+        planned: list[tuple] = []
         for raw in raw_rows:
             month = raw["month"]
             month_end = raw["end_excl"] - timedelta(days=1)
@@ -342,36 +377,52 @@ def monthly_liquid_series(months: int = 72, *, conn=None) -> dict:
             )
 
             if pre_anchor:
-                liquid_by_account = {
-                    name: value for name, value in raw["by_account"].items() if name in live_names
-                }
-                rows.append(
-                    {
-                        "month": month,
-                        "liquid_by_account": liquid_by_account,
-                        "liquid_total": sum(liquid_by_account.values(), Decimal("0.00")),
-                        "valuation_basis": "ledger_plus_corrections",
-                        "honest": True,
-                        "gap_reason": None,
-                    }
-                )
-                honest_months.append(month)
+                by_account = {name: v for name, v in raw["by_account"].items() if name in live_names}
+                planned.append((month, month_end, by_account, "ledger_plus_corrections", None))
                 continue
 
             honest, gap_reason = _honesty(month, month_end, windows, current_month, earliest_liquid_tx)
-            if honest:
-                rows.append(
-                    {
-                        "month": month,
-                        "liquid_by_account": raw["by_account"],
-                        "liquid_total": raw["total"],
-                        "valuation_basis": None,
-                        "honest": True,
-                        "gap_reason": None,
-                    }
-                )
-                honest_months.append(month)
-            else:
+            planned.append((month, month_end, raw["by_account"] if honest else None, None, gap_reason))
+
+        # Rates (D-14, D-24): past months use the month-end rate (7-day weekend
+        # fallback) from fx's cache after at most one range fill; the newest
+        # month uses today's rate.
+        last = len(planned) - 1
+        missing = [
+            me for i, (_m, me, ba, _b, _g) in enumerate(planned)
+            if ba is not None and i != last and _needs_rate(ba, currency_by_name)
+            and fx.cached_rate_within(conn, "USD", me) is None
+        ]
+        if missing:
+            # Fills fx's rate cache on fx's own session; this module still
+            # never writes ledger rows.
+            start, end = min(missing) - timedelta(days=7), min(max(missing), fx._jakarta_today() - timedelta(days=1))
+            if start <= end:
+                fx._store_range("USD", fx.BASE, start, end)
+        spot_rate = None
+        if last >= 0 and planned[last][2] is not None and _needs_rate(planned[last][2], currency_by_name):
+            try:
+                spot_rate = fx.spot_stale_ok("USD", conn)[0]
+            except fx.FxUnavailable:
+                pass
+
+        # Pass 2: convert per account, then add (the only cross-account sum, now in IDR).
+        rows: list[dict] = []
+        gap_counts: dict[str, int] = {}
+        honest_months: list[str] = []
+        for i, (month, month_end, by_account, basis, gap_reason) in enumerate(planned):
+            if by_account is not None:
+                rate = None
+                if _needs_rate(by_account, currency_by_name):
+                    if i == last:
+                        rate = spot_rate
+                    else:
+                        found = fx.cached_rate_within(conn, "USD", month_end)
+                        rate = found[0] if found else None
+                by_account = _to_idr_by_account(by_account, currency_by_name, rate)
+                if by_account is None:
+                    gap_reason = "fx_unavailable"
+            if by_account is None:
                 rows.append(
                     {
                         "month": month,
@@ -383,6 +434,18 @@ def monthly_liquid_series(months: int = 72, *, conn=None) -> dict:
                     }
                 )
                 gap_counts[gap_reason] = gap_counts.get(gap_reason, 0) + 1
+            else:
+                rows.append(
+                    {
+                        "month": month,
+                        "liquid_by_account": by_account,
+                        "liquid_total": sum(by_account.values(), Decimal("0.00")),
+                        "valuation_basis": basis,
+                        "honest": True,
+                        "gap_reason": None,
+                    }
+                )
+                honest_months.append(month)
 
         return {
             "tool": "reconstructed_liquid_series",
