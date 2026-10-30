@@ -245,6 +245,29 @@ def test_money_spending_total(flow_seed):
     assert r["currency"] == "IDR"
 
 
+def test_flow_rounds_once_per_aggregate(flow_env):
+    """D-07: one ROUND over the summed IDR, not per-row rounding and not native dollars."""
+    s = SessionLocal()
+    try:
+        acc = s.execute(text(
+            "INSERT INTO accounts (name, type, currency) VALUES ('ZZ43 round usd', 'liquid', 'USD') "
+            "RETURNING id")).scalar()
+        for _ in range(3):
+            s.execute(text(
+                "INSERT INTO transactions (date, amount, currency, merchant, account_id, is_transfer) "
+                "VALUES (:d, -0.33, 'USD', 'zz43 round', :a, false)"),
+                {"d": datetime(1995, 6, 14, 12), "a": acc})
+        s.execute(text(
+            "INSERT INTO fx_rate_cache (rate_date, base_currency, quote_currency, rate, source, fetched_at) "
+            "VALUES ('1995-06-14', 'USD', 'IDR', 16000.500000, 'frankfurter', now())"))
+        s.commit()
+    finally:
+        s.close()
+    r = tools.TOOLS["spending_total"](period="custom", start_date="1995-06-14", end_date="1995-06-14")
+    assert r["total"] == 15840.5  # ROUND(3 * 0.33 * 16000.5) once; per-row rounding gives 15840.51
+    assert r["currency"] == "IDR"
+
+
 def test_money_income_total(flow_seed):
     r = tools.TOOLS["income_total"](**RANGE)
     assert r["total"] == float(INCOME)
