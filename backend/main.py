@@ -169,15 +169,13 @@ from backend.schemas import (
 )
 from backend.tools import (
     account_balances,
-    income_total,
     monthly_trend,
-    net_total,
     net_worth,
     resolve_period,
     spending_by_category,
-    spending_total,
     _descendant_ids,
     _find_category_node,
+    _flow_totals,
 )
 from backend.settings import (
     KEY_ANTHROPIC_API_KEY,
@@ -1019,16 +1017,17 @@ def cashflow_summary(
         # an unrecognized/malformed period is a client error, never a raw 500.
         # Named `exc` (not `e`) so it can't shadow the end-bound `e` above.
         raise HTTPException(status_code=422, detail=str(exc))
-    totals = {
-        "income": income_total(period, start_date, end_date)["total"],
-        "expense": spending_total(period, start_date, end_date)["total"],
-        "net": net_total(period, start_date, end_date)["net"],
-    }
+    # Dashboard policy (D-06): show the IDR part, report what could not be converted.
+    t = _flow_totals(s, e)
+    totals = {"income": float(t["income"]), "expense": float(t["expense"]), "net": float(t["net"])}
     by_cat_result = spending_by_category(period, start_date, end_date, limit=10)
     by_category = _category_rollup(db, by_cat_result["rows"], by_cat_result["children"])
     accounts = account_balances(s, e)["rows"]
     trend = monthly_trend(6)["rows"]
-    return CashflowSummary(totals=totals, by_category=by_category, accounts=accounts, trend=trend)
+    return CashflowSummary(
+        totals=totals, by_category=by_category, accounts=accounts, trend=trend,
+        unconverted_count=t["unconverted_count"], unconverted_usd=float(t["unconverted_usd"]),
+        currency="IDR")
 
 
 @app.get("/net-worth", response_model=NetWorth, dependencies=[Depends(require_api_key)])

@@ -89,6 +89,10 @@ class CashflowSummary(BaseModel):
     by_category: list[CategoryRollup]  # hierarchy rollup (CAT-04, was tuple rows)
     accounts: list  # rows from account_balances (id/name/current_balance/period_net)
     trend: list  # rows from monthly_trend (month/income/expense/net)
+    # Additive (D-06): totals are the IDR part; USD rows without a rate are counted here.
+    unconverted_count: int = 0
+    unconverted_usd: float = 0.0  # signed native USD of those rows
+    currency: str = "IDR"
 
 
 class NetWorth(BaseModel):

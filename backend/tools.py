@@ -29,6 +29,7 @@ from decimal import Decimal
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from backend import fx
 from backend.db import engine, get_session_sync
 
 # Named periods the router can choose from. Resolved to [start, end) date bounds.
@@ -104,10 +105,56 @@ def _date_clause(start, end, params: dict) -> str:
     return (" AND " + " AND ".join(parts)) if parts else ""
 
 
-def _currency() -> str:
+def _flow_fx(conn, start, end_excl) -> str | None:
+    """Fill missing USD->IDR rates for the range; return the FxUnavailable text or None.
+    ensure_flow_rates' upper bound is inclusive, so pass the day before end_excl."""
+    hi = end_excl - timedelta(days=1) if end_excl is not None else None
+    try:
+        fx.ensure_flow_rates(conn, start, hi)
+    except fx.FxUnavailable as exc:
+        return str(exc)
+    return None
+
+
+# One physical line: the static SUM/AVG guard matches on the line.
+_UNCONVERTED_SQL = "SELECT COUNT(*), COALESCE(SUM(amount), 0), MIN(date)::date, MAX(date)::date FROM cashflow_transactions WHERE is_transfer = false AND amount_idr IS NULL"  # noqa: E501
+
+
+def _unconverted(conn, start, end_excl) -> dict:
+    """Rows in range with no IDR value (SUM skips NULLs silently, so count them)."""
+    fx_error = _flow_fx(conn, start, end_excl)
+    p: dict = {}
+    n, usd, first, last = conn.execute(
+        text(_UNCONVERTED_SQL + _date_clause(start, end_excl, p)), p).one()
+    return {"fx_error": fx_error, "unconverted_count": int(n), "unconverted_usd": Decimal(usd),
+            "unconverted_first": first, "unconverted_last": last}
+
+
+def _unconverted_error(tool: str, info: dict) -> dict | None:
+    """D-06 refusal for chat/MCP: counts and dates only, never an amount."""
+    if info["fx_error"] is None and info["unconverted_count"] == 0:
+        return None
+    msg = info["fx_error"] or (
+        f"{info['unconverted_count']} USD transaction(s) between {info['unconverted_first']} "
+        f"and {info['unconverted_last']} have no USD->IDR rate yet")
+    return {"tool": tool, "error": f"{msg}, so this total cannot be stated in IDR."}
+
+
+_FLOW_TOTALS_SQL = (
+    "SELECT ROUND(COALESCE(SUM(amount_idr) FILTER (WHERE amount > 0), 0), 2), "
+    "ROUND(COALESCE(SUM(-amount_idr) FILTER (WHERE amount < 0), 0), 2), "
+    "ROUND(COALESCE(SUM(amount_idr), 0), 2) "
+    "FROM cashflow_transactions WHERE is_transfer = false"
+)
+
+
+def _flow_totals(start, end_excl) -> dict:
+    """IDR income/expense/net (rounded once per aggregate, D-07) plus the unconverted info."""
     with engine.connect() as c:
-        row = c.execute(text("SELECT currency FROM transactions LIMIT 1")).fetchone()
-    return row[0] if row else ""
+        out = _unconverted(c, start, end_excl)
+        p: dict = {}
+        inc, exp, net = c.execute(text(_FLOW_TOTALS_SQL + _date_clause(start, end_excl, p)), p).one()
+    return {**out, "income": inc, "expense": exp, "net": net}
 
 
 def _period_label(period, start, end) -> str:
@@ -132,14 +179,10 @@ def spending_total(period="all_time", start_date=None, end_date=None) -> dict:
       or date range.
     """
     s, e = resolve_period(period, start_date, end_date)
-    p: dict = {}
-    sql = (
-        "SELECT COALESCE(SUM(-amount), 0) FROM cashflow_transactions "
-        "WHERE amount < 0 AND is_transfer = false" + _date_clause(s, e, p)
-    )
-    with engine.connect() as c:
-        total = float(c.execute(text(sql), p).scalar() or 0)
-    return {"tool": "spending_total", "total": total, "period": _period_label(period, s, e)}
+    t = _flow_totals(s, e)
+    return _unconverted_error("spending_total", t) or {
+        "tool": "spending_total", "total": float(t["expense"]), "currency": fx.BASE,
+        "period": _period_label(period, s, e)}
 
 
 def income_total(period="all_time", start_date=None, end_date=None) -> dict:
