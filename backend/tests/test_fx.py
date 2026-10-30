@@ -841,3 +841,101 @@ def test_ensure_flow_rates_vendor_down_raises_after_one_call(range_env):
     msg = str(exc.value)
     assert "1 USD transaction date(s)" in msg and "1903-03-04" in msg
     assert "12.50" not in msg
+
+
+# --- 43-05: cache-only window, stale-tolerant spot, at_rate (synthetic 1904 dates) ---
+
+_FRI = date(1904, 3, 4)
+_TODAY_1904 = date(1904, 3, 10)
+
+
+@pytest.fixture()
+def stale_env(monkeypatch):
+    """Cleans 1904 USD->IDR rows before and after, pins today to 1904-03-10 and
+    exposes a mutable live-adapter stub (None = vendor down). Skips when Postgres is down."""
+    from backend import fx
+    from backend.db import SessionLocal, engine
+
+    try:
+        with engine.connect() as c:
+            c.execute(text("SELECT 1"))
+    except Exception as e:
+        pytest.skip(f"Postgres not available: {e}")
+
+    def _clean():
+        s = SessionLocal()
+        try:
+            s.execute(text(
+                "DELETE FROM fx_rate_cache WHERE rate_date >= '1904-01-01' AND rate_date < '1905-01-01' "
+                "AND base_currency = 'USD' AND quote_currency = 'IDR'"
+            ))
+            s.commit()
+        finally:
+            s.close()
+
+    _clean()
+    fx._today_memo.clear()
+    env = {"live": None, "calls": 0}
+
+    def _adapter(base, quote, as_of):
+        env["calls"] += 1
+        return env["live"]
+
+    monkeypatch.setattr(fx, "_jakarta_today", lambda: _TODAY_1904)
+    monkeypatch.setitem(fx.FX_ADAPTERS, "frankfurter", _adapter)
+    yield env
+    fx._today_memo.clear()
+    _clean()
+
+
+def _fn(name):
+    from backend import fx
+
+    f = getattr(fx, name, None)
+    assert callable(f), f"fx.{name} missing"
+    return f
+
+
+def test_cached_rate_within_window(stale_env):
+    from backend.db import SessionLocal
+
+    _seed_cache(_FRI, "16000")
+    within = _fn("cached_rate_within")
+    with SessionLocal() as s:
+        assert within(s, "USD", date(1904, 3, 6)) == (Decimal("16000"), _FRI)
+        assert within(s, "USD", date(1904, 3, 11)) == (Decimal("16000"), _FRI)  # 7 days back, inclusive
+        assert within(s, "USD", date(1904, 3, 12)) is None
+        assert within(s, "USDT", date(1904, 3, 6)) == (Decimal("16000"), _FRI)
+        assert within(s, "IDR", date(1904, 3, 6)) == (Decimal("1"), date(1904, 3, 6))
+    assert stale_env["calls"] == 0  # cache-only
+
+
+def test_spot_stale_ok_live(stale_env):
+    from backend.db import SessionLocal
+
+    stale_env["live"] = (Decimal("16100"), "frankfurter", _TODAY_1904)
+    with SessionLocal() as s:
+        assert _fn("spot_stale_ok")("USD", s) == (Decimal("16100"), _TODAY_1904, False)
+
+
+def test_spot_stale_ok_falls_back_within_7_days(stale_env):
+    from backend.db import SessionLocal
+
+    _seed_cache(_FRI, "16000")
+    with SessionLocal() as s:
+        assert _fn("spot_stale_ok")("USD", s) == (Decimal("16000"), _FRI, True)
+
+
+def test_spot_stale_ok_raises_beyond_7_days(stale_env):
+    from backend import fx
+    from backend.db import SessionLocal
+
+    _seed_cache(date(1904, 3, 2), "16000")  # one day outside [03-03, 03-10]
+    with SessionLocal() as s, pytest.raises(fx.FxUnavailable):
+        _fn("spot_stale_ok")("USD", s)
+
+
+def test_at_rate_rounds_half_up():
+    at_rate = _fn("at_rate")
+    assert at_rate(Decimal("0.33"), Decimal("16000.5")) == Decimal("5280.17")
+    assert at_rate(Decimal("-17.50"), Decimal("16200")) == Decimal("-283500.00")
