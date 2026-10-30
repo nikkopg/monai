@@ -278,13 +278,14 @@ def _descendant_ids(node: dict) -> list[int]:
 # Shared joins for hierarchy rollup: walk up to two parents (depth cap is 3,
 # so two LEFT JOINs always reach the top-level group). Top node is
 # COALESCE(p2, p1, c); Transfer/system trees and is_transfer rows excluded
-# from every spending total (D-12).
+# from every spending total (D-12). Unconverted rows (no IDR value) are left
+# out so no group totals NULL; `_unconverted` still counts them.
 _ROLLUP_FROM = (
     "FROM cashflow_transactions t "
     "JOIN categories c ON c.id = t.category_id "
     "LEFT JOIN categories p1 ON p1.id = c.parent_id "
     "LEFT JOIN categories p2 ON p2.id = p1.parent_id "
-    "WHERE t.amount < 0 AND t.is_transfer = false "
+    "WHERE t.amount < 0 AND t.is_transfer = false AND t.amount_idr IS NOT NULL "
     "AND COALESCE(p2.is_system, p1.is_system, c.is_system) = false"
 )
 
