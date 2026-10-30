@@ -40,7 +40,7 @@ import logging
 import re
 import time
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Callable
 from zoneinfo import ZoneInfo
 
@@ -263,6 +263,49 @@ def spot(currency: str, db: Session) -> tuple[Decimal, date]:
     if found is None:
         raise FxUnavailable(f"No {currency}->{BASE} rate for {today}")
     return found[0], found[1] or today
+
+
+# Same window as the transactions_idr view: newest cached row within 7 days back.
+_CACHED_SQL = text(
+    "SELECT rate, COALESCE(rate_effective_date, rate_date) FROM fx_rate_cache "
+    "WHERE base_currency = :base AND quote_currency = 'IDR' "
+    "AND rate_date BETWEEN CAST(:on AS date) - CAST(:days AS integer) AND CAST(:on AS date) "
+    "ORDER BY rate_date DESC LIMIT 1"
+)
+
+
+def cached_rate_within(db, currency: str, on: date, days: int = 7) -> tuple[Decimal, date] | None:
+    """Newest cached `currency`->BASE rate dated in [on - days, on], with its
+    effective date, or None. Cache-only: never calls the adapter. `db` is a
+    Session or Connection (only `.execute` is used)."""
+    cur = _FX_ALIASES.get(currency.upper(), currency.upper())
+    if cur == BASE:
+        return Decimal("1"), on
+    if not _CURRENCY_RE.match(cur):
+        return None
+    row = db.execute(_CACHED_SQL, {"base": cur, "on": on, "days": days}).first()
+    return None if row is None else (Decimal(str(row[0])), row[1])
+
+
+def spot_stale_ok(currency: str, db) -> tuple[Decimal, date, bool]:
+    """(rate, as-of date, stale). Live `spot`, else the cached rate up to 7 days old.
+
+    Stale means the live fetch failed and a cached row was used, not an age
+    threshold (D-12). Raises FxUnavailable when neither exists.
+    """
+    try:
+        rate, as_of = spot(currency, db)
+        return rate, as_of, False
+    except FxUnavailable:
+        found = cached_rate_within(db, currency, _jakarta_today(), 7)
+        if found is None:
+            raise
+        return found[0], found[1], True
+
+
+def at_rate(native, rate) -> Decimal:
+    """`native` * `rate` rounded once to 0.01 (half up, matches Postgres ROUND)."""
+    return (Decimal(str(native)) * Decimal(str(rate))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def to_idr(amount, currency: str, on: date, db: Session) -> Decimal:

@@ -567,29 +567,49 @@ def account_balances(period_start=None, period_end=None) -> dict:
         period_parts.append("t.date < :period_end")
         p["period_end"] = period_end.isoformat()
     period_predicate = (" AND " + " AND ".join(period_parts)) if period_parts else ""
-    # Per-account list (not a cashflow total) — intentionally reads the base
-    # `transactions` table, not `cashflow_transactions`, so investment
-    # accounts still show their own balance here. `type` is additive (Phase
-    # 15) — net_worth() filters by it; existing consumers (CashflowSummary,
-    # the frontend AccountBalance type) are unaffected since it's a new key,
-    # not a removed/renamed one (Pitfall 2).
+    # Per-account list (not a cashflow total) — reads transactions_idr (every
+    # row, investment accounts included) so period_net converts at
+    # transaction-date rates. `type` and the fx fields are additive keys.
     sql = (
-        "SELECT a.id, a.name, a.type, "
+        "SELECT a.id, a.name, a.type, a.currency, "
         "COALESCE(SUM(t.amount), 0) AS current_balance, "  # transfers INCLUDED
-        f"COALESCE(SUM(t.amount) FILTER (WHERE t.is_transfer = false{period_predicate}), 0) AS period_net "
+        f"ROUND(COALESCE(SUM(t.amount_idr) FILTER (WHERE t.is_transfer = false{period_predicate}), 0), 2) AS period_net, "
+        f"COUNT(*) FILTER (WHERE t.amount_idr IS NULL AND t.is_transfer = false{period_predicate}) AS period_unconverted "
         "FROM accounts a "
-        "LEFT JOIN transactions t ON t.account_id = a.id "
-        "GROUP BY a.id, a.name, a.type ORDER BY a.name"
+        "LEFT JOIN transactions_idr t ON t.account_id = a.id "
+        "GROUP BY a.id, a.name, a.type, a.currency ORDER BY a.name"
     )
     with engine.connect() as c:
-        rows = [
-            {
-                "id": r[0], "name": r[1], "type": r[2],
-                "current_balance": float(r[3]), "period_net": float(r[4]),
-            }
-            for r in c.execute(text(sql), p).fetchall()
-        ]
-    return {"tool": "account_balances", "rows": rows}
+        _flow_fx(c, period_start, period_end)  # fill missing dated rates; period_unconverted carries the truth
+        raw = c.execute(text(sql), p).fetchall()
+        rate = None
+        # ponytail: one USD spot because the DB CHECK allows only IDR/USD; a
+        # third currency (CUR-F1) needs one spot_stale_ok call per currency.
+        if any(r[3] != fx.BASE and Decimal(r[4]) != 0 for r in raw):
+            try:
+                rate = fx.spot_stale_ok("USD", c)
+            except fx.FxUnavailable:
+                pass
+    rows = []
+    for r in raw:
+        native = Decimal(r[4])
+        row = {
+            "id": r[0], "name": r[1], "type": r[2], "native_balance": float(native), "currency": r[3],
+            "fx_rate": None, "fx_as_of": None, "fx_stale": False, "fx_note": None,
+            "period_net": None if r[6] else float(r[5]), "period_net_unconverted": int(r[6]),
+        }
+        if r[3] == fx.BASE:
+            row.update(current_balance=float(native), fx_rate=1.0)
+        elif native == 0:
+            row["current_balance"] = 0.0
+        elif rate is None:
+            row["current_balance"] = None  # never the native number, 1.0 or 0 (D-12)
+        else:
+            row.update(current_balance=float(fx.at_rate(native, rate[0])), fx_rate=float(rate[0]),
+                       fx_as_of=rate[1].isoformat(), fx_stale=rate[2],
+                       fx_note=f"stale, rate of {rate[1].isoformat()}" if rate[2] else None)
+        rows.append(row)
+    return {"tool": "account_balances", "rows": rows, "currency": fx.BASE}
 
 
 def net_worth(db=None) -> dict:
