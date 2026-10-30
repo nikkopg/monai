@@ -1072,7 +1072,14 @@ def recurring_charges(months: int = 24, limit: int = 20) -> dict:
     today = datetime.date.today()
     start = today - timedelta(days=int(m * 30.44))
     with engine.connect() as c:
+        fx_error = _flow_fx(c, start, None)
         rows = c.execute(text(_RECURRING_SQL), {"start": start}).fetchall()
+    # A group cannot be valued without all its rows: refuse (counts only, no amounts).
+    gaps = sum(1 for r in rows if r[8] != fx.BASE and r[9] is None)
+    if fx_error or gaps:
+        return {"tool": "recurring_charges", "error": fx_error or (
+            f"{gaps} USD transaction(s) in the lookback window have no USD->IDR rate yet, "
+            "so recurring charges cannot be stated in IDR.")}
     groups = _recurring_groups(rows, today)
     return {"tool": "recurring_charges", "currency": fx.BASE, "months": m,
             "total_detected": len(groups),
