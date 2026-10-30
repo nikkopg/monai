@@ -500,6 +500,34 @@ def average_daily_spending(period="this_month", start_date=None, end_date=None) 
             "total": total, "currency": fx.BASE, "period": _period_label(period, s, e)}
 
 
+def _monthly_trend(months: int) -> dict:
+    """IDR income/expense/net per month plus a per-month unconverted_count; never refuses.
+    The window start is computed once here so the gap fill and the SQL cannot disagree."""
+    months = max(months, 6)
+    today = datetime.date.today()
+    y, m = divmod(today.year * 12 + today.month - 1 - months, 12)
+    start = datetime.date(y, m + 1, 1)
+    p: dict = {}
+    sql = (
+        "SELECT date_trunc('month', date) AS month, "
+        "ROUND(COALESCE(SUM(amount_idr) FILTER (WHERE amount > 0), 0), 2) AS income, "
+        "ROUND(COALESCE(SUM(-amount_idr) FILTER (WHERE amount < 0), 0), 2) AS expense, "
+        "ROUND(COALESCE(SUM(amount_idr), 0), 2) AS net, "
+        "COUNT(*) FILTER (WHERE amount_idr IS NULL) AS unconverted "
+        "FROM cashflow_transactions "
+        "WHERE is_transfer = false" + _date_clause(start, None, p) +
+        " GROUP BY 1 ORDER BY 1"
+    )
+    with engine.connect() as c:
+        fx_error = _flow_fx(c, start, None)
+        rows = [
+            {"month": r[0].date().isoformat()[:7], "income": float(r[1]),
+             "expense": float(r[2]), "net": float(r[3]), "unconverted_count": int(r[4])}
+            for r in c.execute(text(sql), p).fetchall()
+        ]
+    return {"rows": rows, "fx_error": fx_error}
+
+
 def monthly_trend(months: int = 6) -> dict:
     """Month-over-month income/expense/net for the last N months (CASH-02).
 
@@ -507,28 +535,14 @@ def monthly_trend(months: int = 6) -> dict:
       calendar-year bound — early-in-the-year calls still return a full
       trailing window). Transfers excluded.
     """
-    months = max(months, 6)
-    p: dict = {"months": months}
-    sql = (
-        "SELECT date_trunc('month', date) AS month, "
-        "COALESCE(SUM(amount) FILTER (WHERE amount > 0), 0) AS income, "
-        "COALESCE(SUM(-amount) FILTER (WHERE amount < 0), 0) AS expense "
-        "FROM cashflow_transactions "
-        "WHERE is_transfer = false "
-        "AND date >= date_trunc('month', CURRENT_DATE) - (:months || ' months')::interval "
-        "GROUP BY 1 ORDER BY 1"
-    )
-    with engine.connect() as c:
-        rows = [
-            {
-                "month": r[0].date().isoformat()[:7],
-                "income": float(r[1]),
-                "expense": float(r[2]),
-                "net": float(r[1]) - float(r[2]),
-            }
-            for r in c.execute(text(sql), p).fetchall()
-        ]
-    return {"tool": "monthly_trend", "rows": rows}
+    r = _monthly_trend(months)
+    gaps = [x for x in r["rows"] if x["unconverted_count"]]
+    if r["fx_error"] or gaps:
+        msg = r["fx_error"] or (
+            f"{sum(x['unconverted_count'] for x in gaps)} USD transaction(s) in "
+            f"{', '.join(x['month'] for x in gaps)} have no USD->IDR rate yet")
+        return {"tool": "monthly_trend", "error": f"{msg}, so this trend cannot be stated in IDR."}
+    return {"tool": "monthly_trend", "rows": r["rows"], "currency": fx.BASE}
 
 
 def account_balances(period_start=None, period_end=None) -> dict:

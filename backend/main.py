@@ -169,12 +169,12 @@ from backend.schemas import (
 )
 from backend.tools import (
     account_balances,
-    monthly_trend,
     net_worth,
     resolve_period,
     _descendant_ids,
     _find_category_node,
     _flow_totals,
+    _monthly_trend,
     _spending_by_category,
 )
 from backend.settings import (
@@ -1023,7 +1023,7 @@ def cashflow_summary(
     by_cat_result = _spending_by_category(s, e, 10)
     by_category = _category_rollup(db, by_cat_result["rows"], by_cat_result["children"])
     accounts = account_balances(s, e)["rows"]
-    trend = monthly_trend(6)["rows"]
+    trend = _monthly_trend(6)["rows"]
     return CashflowSummary(
         totals=totals, by_category=by_category, accounts=accounts, trend=trend,
         unconverted_count=t["unconverted_count"], unconverted_usd=float(t["unconverted_usd"]),
