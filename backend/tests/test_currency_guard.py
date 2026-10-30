@@ -582,6 +582,34 @@ def test_dashboard_by_category_partial_on_missing_rate(flow_seed, authed):
     assert cat["total"] == 50000.0  # the IDR row only, not 50022.5
 
 
+def test_all_unconverted_category_absent_and_refused(flow_seed, authed):
+    """CR-01: a category of only unconverted rows is absent on the dashboard and refused in chat, never a crash."""
+    s = SessionLocal()
+    try:
+        cid = s.execute(text(
+            "INSERT INTO categories (name, parent_id, kind, is_system) "
+            "VALUES ('zz43-UsdOnly', NULL, 'expense', false) RETURNING id")).scalar()
+        s.execute(text(
+            "INSERT INTO transactions (date, amount, currency, merchant, category, category_id, "
+            "account_id, is_transfer) VALUES (:d, '-7.00', 'USD', 'zz43 usd only', 'zz43-UsdOnly', "
+            ":cid, :acc, false)"),
+            {"d": datetime(1995, 6, 9, 12), "cid": cid, "acc": flow_seed["acc"]["USD"]})
+        s.commit()
+    finally:
+        s.close()
+    _delete_rate(D_FRI)
+    r = authed.get("/cashflow/summary", params=RANGE)
+    assert r.status_code == 200
+    body = r.json()
+    names = {c["name"]: c for c in body["by_category"]}
+    assert "zz43-UsdOnly" not in names
+    assert names["zz43-Guard"]["total"] == 50000.0
+    assert body["unconverted_count"] == 3
+    chat = tools.TOOLS["spending_by_category"](**RANGE)
+    assert set(chat) == {"tool", "error"}
+    assert chat["tool"] == "spending_by_category"
+
+
 def test_find_transactions_lists_unconverted_rows(flow_seed):
     """D-20: the row listing never refuses; an unconverted row has amount_idr None."""
     _delete_rate(D_FRI)
