@@ -105,6 +105,11 @@ class NetWorth(BaseModel):
     investment_groups: list  # rows from portfolio_summary.groups
     accounts_covered: int
     accounts_total: int
+    # Additive (D-12): /net-worth builds NetWorth(**result), so keys without a field here are dropped.
+    currency: str = "IDR"
+    fx_excluded: list = []  # liquid accounts left out for want of a rate
+    notice: str | None = None
+    fx_note: str | None = None
 
 
 class TransactionUpdate(BaseModel):

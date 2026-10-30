@@ -643,13 +643,25 @@ def net_worth(db=None) -> dict:
                 f"net_worth coverage gap: {len(liquid_rows) + len(investment_rows)}/{len(rows)} "
                 "accounts classified — refusing to silently drop or double-count"
             )
-        liquid_total = sum(r["current_balance"] for r in liquid_rows)
+        # An account with no rate (current_balance None) is left out and listed (D-12/D-13).
+        # It stays classified, so it still counts as covered above.
+        liquid_total = float(sum((Decimal(str(r["current_balance"])) for r in liquid_rows
+                                  if r["current_balance"] is not None), Decimal(0)))
+        fx_excluded = [{"name": r["name"], "native_balance": r["native_balance"], "currency": r["currency"]}
+                       for r in liquid_rows if r["current_balance"] is None]
+        notice = (f"{len(fx_excluded)} account(s) left out of the total: no USD->IDR rate within 7 days"
+                  if fx_excluded else None)
+        fx_note = next((r["fx_note"] for r in liquid_rows if r["fx_note"]), None)
 
         pf = portfolio_summary(db)
         investment_total = float(pf["total_value"])
 
         return {
             "tool": "net_worth",
+            "currency": fx.BASE,
+            "fx_excluded": fx_excluded,
+            "notice": notice,
+            "fx_note": fx_note,
             "total": liquid_total + investment_total,
             "liquid_total": liquid_total,
             "investment_total": investment_total,
