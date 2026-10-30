@@ -709,3 +709,46 @@ def test_history_parity_newest_usd_matches_account_balances(history_env, monkeyp
     bal = _row(tools.TOOLS["account_balances"]()["rows"], "ZZ43 hist usd")
     assert idr == Decimal("1782000.00")
     assert float(idr) == bal["current_balance"]
+
+
+def test_history_unanchored_usd_gaps_no_opening_anchor(history_env):
+    """D-19 (owner chose d19-recommended): a USD account with rows but no anchor gaps the month;
+    with no rows yet it contributes exactly 0."""
+    s = SessionLocal()
+    try:
+        acc = _hist_account(s, "ZZ43 hist usd2", "USD")
+        _hist_tx(s, acc, date(1995, 8, 10), "50.00", "USD")
+        _hist_rate(s, date(1995, 8, 31), "16050.000000")  # the gate, not a missing rate, decides
+        s.commit()
+    finally:
+        s.close()
+    aug = _hist_row("1995-08")
+    assert (aug["honest"], aug["gap_reason"]) == (False, "no_opening_anchor")
+    may = _hist_row("1995-05")
+    assert may["honest"] is True
+    assert may["liquid_by_account"]["ZZ43 hist usd2"] == Decimal("0.00")
+
+
+def test_history_drift_estimate_skips_usd(history_env):
+    before = reconstruction.liquid_drift_estimate()
+    s = SessionLocal()
+    try:
+        acc = _hist_account(s, "ZZ43 hist usd3", "USD")
+        _hist_tx(s, acc, date(1995, 4, 20), "-50.00", "USD", anchor=True)
+        s.commit()
+    finally:
+        s.close()
+    assert reconstruction.liquid_drift_estimate() == before
+
+
+def test_history_parity_skips_excluded_balance(monkeypatch):
+    from backend import net_worth_history
+
+    rows = [
+        {"type": "liquid", "current_balance": 100.0},
+        {"type": "liquid", "current_balance": None},
+        {"type": "investment", "current_balance": 5.0},
+    ]
+    monkeypatch.setattr(tools, "account_balances", lambda: {"rows": rows})
+    row = {"liquid": {"total": Decimal("100.00")}, "investment": {"valuation_basis": "replay"}}
+    assert net_worth_history._parity_verdict(None, row) is None
