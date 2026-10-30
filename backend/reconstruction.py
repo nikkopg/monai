@@ -94,6 +94,11 @@ _LIQUID_ACCOUNT_NAMES_SQL = "SELECT name FROM accounts WHERE type = 'liquid' ORD
 
 _LIQUID_CURRENCY_SQL = "SELECT name, currency FROM accounts WHERE type = 'liquid'"
 
+_FIRST_TX_BY_ACCOUNT_SQL = (
+    "SELECT a.name, MIN(t.date)::date FROM transactions t "
+    "JOIN accounts a ON a.id = t.account_id WHERE a.type = 'liquid' GROUP BY a.name"
+)
+
 _EARLIEST_LIQUID_TX_SQL = (
     "SELECT MIN(t.date)::date FROM transactions t "
     "JOIN accounts a ON a.id = t.account_id WHERE a.type = 'liquid'"
@@ -359,6 +364,7 @@ def monthly_liquid_series(months: int = 72, *, conn=None) -> dict:
         regime_cutoff = _regime_cutoff(anchors)
         live_names = set(anchors.keys())
         currency_by_name = dict(conn.execute(text(_LIQUID_CURRENCY_SQL)).fetchall())
+        first_tx = dict(conn.execute(text(_FIRST_TX_BY_ACCOUNT_SQL)).fetchall())
 
         # Pass 1: native arithmetic and honesty. planned entries are
         # (month, month_end, native by_account or None for a gap, basis, gap_reason).
@@ -377,6 +383,20 @@ def monthly_liquid_series(months: int = 72, *, conn=None) -> dict:
             )
 
             if pre_anchor:
+                # D-19 (owner chose the per-account gate): a non-IDR account with
+                # rows before this month must be anchored by this month-end, or the
+                # whole month gaps -- its raw ledger would otherwise show as a
+                # guessed balance. With no rows yet it is exactly 0 and the month
+                # is unaffected.
+                if any(
+                    currency_by_name.get(name, fx.BASE) != fx.BASE
+                    and first_tx.get(name) is not None
+                    and first_tx[name] < raw["end_excl"]
+                    and (anchors.get(name) is None or anchors[name] > month_end)
+                    for name in live_names
+                ):
+                    planned.append((month, month_end, None, None, "no_opening_anchor"))
+                    continue
                 by_account = {name: v for name, v in raw["by_account"].items() if name in live_names}
                 planned.append((month, month_end, by_account, "ledger_plus_corrections", None))
                 continue
@@ -489,9 +509,12 @@ def liquid_drift_estimate(*, conn=None) -> Decimal | None:
         anchors = _anchor_dates(conn)
         if _regime_cutoff(anchors) is None:
             return None
+        currency_by_name = dict(conn.execute(text(_LIQUID_CURRENCY_SQL)).fetchall())
         bound = Decimal("0.00")
         for name, anchor in anchors.items():
-            if anchor is None:
+            # Non-IDR accounts have no archival corrections: subtracting their
+            # native adjustment from IDR corrections would mix units (Pitfall 6).
+            if anchor is None or currency_by_name.get(name, fx.BASE) != fx.BASE:
                 continue
             params = {"source": _SOURCE, "name": name, "end_excl": anchor + timedelta(days=1)}
             corrections = Decimal(str(conn.execute(text(_ACCOUNT_CORRECTIONS_SQL), params).scalar()))

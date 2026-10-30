@@ -213,8 +213,15 @@ def _parity_verdict(db, row: dict) -> str | None:
 
         one = Decimal("1")
 
+        # A None balance is an fx-excluded account (D-16): its newest series point
+        # already gapped fx_unavailable. If the series still valued it, the composed
+        # side is larger, so this check still fails closed.
         live_liquid = sum(
-            (Decimal(str(r["current_balance"])) for r in account_balances()["rows"] if r["type"] == "liquid"),
+            (
+                Decimal(str(r["current_balance"]))
+                for r in account_balances()["rows"]
+                if r["type"] == "liquid" and r["current_balance"] is not None
+            ),
             Decimal("0"),
         )
         composed_liquid = row["liquid"]["total"]
