@@ -933,11 +933,18 @@ def _day(d) -> datetime.date:
 # group is rejected when >25% of its occurrences sit outside median +-25%;
 # otherwise any such outlier demotes it to low (a variable-amount frequent
 # merchant is never "high").
-def _build_group(key_type: str, grp: list, today: datetime.date) -> dict | None:
+# Amounts stay native inside one currency (cadence, spread, outliers); the IDR
+# typical/monthly figure comes from r[9] (each row at its own date's rate), or the
+# native amount for 8-tuples (IDR).
+def _build_group(key_type: str, grp: list, today: datetime.date,
+                 currency: str = "IDR") -> dict | None:
     grp = sorted(grp, key=lambda r: (_day(r[1]), r[0]))
     days: dict = {}
+    days_idr: dict = {}
     for r in grp:
-        days[_day(r[1])] = days.get(_day(r[1]), 0.0) + abs(float(r[2]))
+        d = _day(r[1])
+        days[d] = days.get(d, 0.0) + abs(float(r[2]))
+        days_idr[d] = days_idr.get(d, 0.0) + abs(float(r[9] if len(r) > 9 else r[2]))
     occ = sorted(days.items())
     n = len(occ)
     if n < 2:
@@ -952,6 +959,7 @@ def _build_group(key_type: str, grp: list, today: datetime.date) -> dict | None:
 
     amts = [a for _, a in occ]
     typical, mn, mx = statistics.median(amts), min(amts), max(amts)
+    typical_idr = statistics.median(days_idr[d] for d, _ in occ)
     spread_ok = (mx - mn) <= 0.05 * typical
     outliers = sum(1 for a in amts if abs(a - typical) > 0.25 * typical)
     text_key = key_type == "text"
@@ -977,13 +985,16 @@ def _build_group(key_type: str, grp: list, today: datetime.date) -> dict | None:
     if text_key:
         label = str(newest[4] if _norm_text_key(newest[4]) else newest[5]).strip()[:80]
     else:
-        label = f"{newest[7] or 'category ' + str(newest[6])} \u00b7 ~{typical:,.0f}"
+        cat = newest[7] or 'category ' + str(newest[6])
+        label = (f"{cat} \u00b7 ~{typical:,.0f}" if currency == "IDR"
+                 else f"{cat} \u00b7 ~{typical:,.2f} {currency}")
     g = {
         "label": label, "key_type": key_type, "category": newest[7],
         "cadence": name, "median_interval_days": float(mi),
+        "currency": currency,
         "typical_amount": round(typical, 2), "amount_min": round(mn, 2),
-        "amount_max": round(mx, 2),
-        "est_monthly": round(typical * 30.44 / nominal, 2),
+        "amount_max": round(mx, 2), "typical_amount_idr": round(typical_idr, 2),
+        "est_monthly": round(typical_idr * 30.44 / nominal, 2),
         "occurrences": n, "first_date": occ[0][0].isoformat(),
         "last_date": last.isoformat(), "status": "active" if active else "lapsed",
         "confidence": conf,
@@ -1001,20 +1012,24 @@ def _build_group(key_type: str, grp: list, today: datetime.date) -> dict | None:
 
 
 def _recurring_groups(rows, today: datetime.date) -> list[dict]:
-    """rows: (id, date, amount, account_id, merchant, notes, category_id, category_name).
+    """rows: (id, date, amount, account_id, merchant, notes, category_id, category_name
+    [, currency, amount_idr]); the optional columns default to IDR / the native amount.
+    Buckets are per currency, so a USD row never clusters with an IDR row.
     Returns detected groups, active first then est_monthly descending."""
     buckets: dict = {}
     by_cat: dict = {}
     for r in rows:
+        cur = r[8] if len(r) > 8 else "IDR"
         k = _norm_text_key(r[4]) or _norm_text_key(r[5])
         if k:
-            buckets.setdefault(("text", k), []).append(r)
+            buckets.setdefault(("text", k, cur), []).append(r)
         elif r[6] is not None:
-            by_cat.setdefault(r[6], []).append(r)
-    for cid, rs in by_cat.items():
+            by_cat.setdefault((r[6], cur), []).append(r)
+    for (cid, cur), rs in by_cat.items():
         for i, cl in enumerate(_cluster_amounts(rs)):
-            buckets[("category", cid, i)] = cl
-    groups = [g for k, grp in buckets.items() if (g := _build_group(k[0], grp, today))]
+            buckets[("category", cid, cur, i)] = cl
+    groups = [g for k, grp in buckets.items()
+              if (g := _build_group(k[0], grp, today, k[2]))]
     groups.sort(key=lambda g: (g["status"] != "active", -g["est_monthly"], g["label"]))
     return groups
 
@@ -1024,7 +1039,8 @@ def _recurring_groups(rows, today: datetime.date) -> list[dict]:
 # category still count. NOT EXISTS (never NOT IN over the nullable
 # transaction_id) so unlinked events cannot empty the result.
 _RECURRING_SQL = (
-    "SELECT t.id, t.date, t.amount, t.account_id, t.merchant, t.notes, t.category_id, c.name "
+    "SELECT t.id, t.date, t.amount, t.account_id, t.merchant, t.notes, t.category_id, c.name, "
+    "t.currency, t.amount_idr "
     "FROM cashflow_transactions t "
     "LEFT JOIN categories c ON c.id = t.category_id "
     "LEFT JOIN categories p1 ON p1.id = c.parent_id "
@@ -1058,7 +1074,8 @@ def recurring_charges(months: int = 24, limit: int = 20) -> dict:
     with engine.connect() as c:
         rows = c.execute(text(_RECURRING_SQL), {"start": start}).fetchall()
     groups = _recurring_groups(rows, today)
-    return {"tool": "recurring_charges", "months": m, "total_detected": len(groups),
+    return {"tool": "recurring_charges", "currency": fx.BASE, "months": m,
+            "total_detected": len(groups),
             "groups": groups[:lim],
             "note": "Likely recurring, detected from past transactions; not confirmed subscriptions."}
 
