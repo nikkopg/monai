@@ -571,3 +571,12 @@ def test_dashboard_partial_on_missing_rate(flow_seed, authed):
     assert body["unconverted_count"] == 2
     assert body["unconverted_usd"] == float(Decimal("-12.50") + Decimal("-10.00"))
     assert body["currency"] == "IDR"
+
+
+def test_dashboard_by_category_partial_on_missing_rate(flow_seed, authed):
+    """Dashboard category rollup keeps the IDR part and never refuses (D-06)."""
+    _delete_rate(D_FRI)
+    r = authed.get("/cashflow/summary", params=RANGE)
+    assert r.status_code == 200
+    cat = next(c for c in r.json()["by_category"] if c["name"] == "zz43-Guard")
+    assert cat["total"] == 50000.0  # the IDR row only, not 50022.5
