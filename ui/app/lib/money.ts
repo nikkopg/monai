@@ -1,13 +1,41 @@
-// RED stub: bodies land in the green commit.
-export function fmtAmount(_v: number | null | undefined, _ccy?: string | null): string {
-  return "";
+// The one formatter for liquid money (Phase 44, D-12). The IDR branch reproduces
+// the old Cashflow page formatters exactly (en-US on Math.round, no symbol); USD
+// shows two decimals and a trailing code. lib/inbox.ts fmtMoney, lib/api.ts
+// fmtPlain and the investment-page formatters stay separate on purpose: other
+// pages pin their output.
+import { fmtRowDate } from "./inbox";
+
+const plain = new Intl.NumberFormat("en-US");
+const plainSigned = new Intl.NumberFormat("en-US", { signDisplay: "always" });
+const usd = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const usdSigned = new Intl.NumberFormat("en-US", {
+  signDisplay: "always",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+const rateFmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+
+// A missing amount must look missing, never a believable 0.
+const missing = (v: unknown): v is null | undefined =>
+  v === null || v === undefined || !Number.isFinite(v);
+
+/** "1,234,568" for IDR or no currency; "1,234.50 USD" for USD; "—" when missing. */
+export function fmtAmount(v: number | null | undefined, ccy?: string | null): string {
+  if (missing(v)) return "—";
+  return ccy === "USD" ? `${usd.format(v)} USD` : plain.format(Math.round(v));
 }
-export function fmtAmountSigned(_v: number | null | undefined, _ccy?: string | null): string {
-  return "";
+
+/** Same as fmtAmount with an explicit sign: "+12.30 USD", "-0". */
+export function fmtAmountSigned(v: number | null | undefined, ccy?: string | null): string {
+  if (missing(v)) return "—";
+  return ccy === "USD" ? `${usdSigned.format(v)} USD` : plainSigned.format(Math.round(v));
 }
+
+/** Native tooltip text for a converted row; undefined (no title) when rate or date is missing. */
 export function rateHover(
-  _rate: number | null | undefined,
-  _isoDate: string | null | undefined
+  rate: number | null | undefined,
+  isoDate: string | null | undefined
 ): string | undefined {
-  return "";
+  if (missing(rate) || !isoDate) return undefined;
+  return `1 USD = ${rateFmt.format(rate)} IDR · rate of ${fmtRowDate(isoDate)}`;
 }

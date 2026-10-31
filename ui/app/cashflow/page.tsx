@@ -7,6 +7,7 @@ import CategoryDonut from "./charts/CategoryDonut";
 import TrendChart from "./charts/TrendChart";
 import NetWorthTrendChart from "./charts/NetWorthTrendChart";
 import CsvUpload from "./CsvUpload";
+import { fmtAmount, fmtAmountSigned, rateHover } from "../lib/money";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -16,8 +17,17 @@ type AccountBalance = {
   id: number;
   name: string;
   type: string;
-  current_balance: number;
-  period_net: number;
+  // Phase 43 payload: a USD row carries its native balance and rate; current_balance
+  // (the IDR value) is null when no rate is within range.
+  current_balance: number | null;
+  period_net: number | null;
+  currency?: string;
+  native_balance?: number;
+  fx_rate?: number | null;
+  fx_as_of?: string | null;
+  fx_stale?: boolean;
+  fx_note?: string | null;
+  period_net_unconverted?: boolean;
 };
 
 type TrendPoint = { month: string; income: number; expense: number };
@@ -147,14 +157,8 @@ export default function CashflowPage() {
   }, [period]);
 
   // ---- formatting ----------------------------------------------------------
-  // Data is IDR (single-currency); no currency symbol is invented — plain
-  // grouped digits, matching v1.0. `signed` adds an explicit +/- for deltas.
-  const money = (n: number) =>
-    new Intl.NumberFormat("en-US").format(Math.round(n));
-  const signed = (n: number) =>
-    new Intl.NumberFormat("en-US", { signDisplay: "always" }).format(
-      Math.round(n)
-    );
+  // Money goes through ../lib/money (fmtAmount / fmtAmountSigned): IDR as plain
+  // grouped digits, USD as two decimals plus a code.
   const initials = (name: string) =>
     name
       .split(/\s+/)
@@ -301,7 +305,7 @@ export default function CashflowPage() {
                       fontVariantNumeric: "tabular-nums",
                     }}
                   >
-                    {money(netWorthData?.total ?? 0)}
+                    {fmtAmount(netWorthData?.total ?? 0, "IDR")}
                   </div>
                 )}
               </div>
@@ -391,7 +395,7 @@ export default function CashflowPage() {
               <div style={statCard}>
                 <div style={statLabel}>Liquid</div>
                 <div style={{ ...statValue, color: tokens.color.ink }}>
-                  {money(netWorthData.liquid_total)}
+                  {fmtAmount(netWorthData.liquid_total, "IDR")}
                 </div>
                 <div style={{ fontSize: 13, color: tokens.color.muted }}>
                   {netWorthData.liquid_accounts.length} account
@@ -401,7 +405,7 @@ export default function CashflowPage() {
               <div style={statCard}>
                 <div style={statLabel}>Investment</div>
                 <div style={{ ...statValue, color: tokens.color.ink }}>
-                  {money(netWorthData.investment_total)}
+                  {fmtAmount(netWorthData.investment_total, "IDR")}
                 </div>
                 <div style={{ fontSize: 13, color: tokens.color.muted }}>
                   {netWorthData.investment_groups.length} platform
@@ -424,19 +428,19 @@ export default function CashflowPage() {
             <div style={statCard}>
               <div style={statLabel}>Income</div>
               <div style={{ ...statValue, color: tokens.color.green }}>
-                {money(summary.totals.income)}
+                {fmtAmount(summary.totals.income, "IDR")}
               </div>
             </div>
             <div style={statCard}>
               <div style={statLabel}>Expenses</div>
               <div style={{ ...statValue, color: tokens.color.terracotta }}>
-                {money(summary.totals.expense)}
+                {fmtAmount(summary.totals.expense, "IDR")}
               </div>
             </div>
             <div style={statCard}>
               <div style={statLabel}>Net saved</div>
               <div style={{ ...statValue, color: tokens.color.ink }}>
-                {signed(summary.totals.net)}
+                {fmtAmountSigned(summary.totals.net, "IDR")}
               </div>
             </div>
           </div>
@@ -520,7 +524,7 @@ export default function CashflowPage() {
                             whiteSpace: "nowrap",
                           }}
                         >
-                          {money(c.total)}
+                          {fmtAmount(c.total, "IDR")}
                         </span>
                       </div>
                     ))}
@@ -576,21 +580,53 @@ export default function CashflowPage() {
                           {a.name}
                         </div>
                       </div>
-                      <div style={{ textAlign: "right" }}>
-                        <div
-                          style={{
-                            fontSize: 14,
-                            fontWeight: 600,
-                            fontVariantNumeric: "tabular-nums",
-                            color:
-                              a.current_balance < 0
-                                ? tokens.color.terracotta
-                                : tokens.color.ink,
-                          }}
-                        >
-                          {money(a.current_balance)}
+                      {(a.currency ?? "IDR") === "IDR" ? (
+                        <div style={{ textAlign: "right" }}>
+                          <div
+                            style={{
+                              fontSize: 14,
+                              fontWeight: 600,
+                              fontVariantNumeric: "tabular-nums",
+                              color:
+                                (a.current_balance ?? 0) < 0
+                                  ? tokens.color.terracotta
+                                  : tokens.color.ink,
+                            }}
+                          >
+                            {fmtAmount(a.current_balance, "IDR")}
+                          </div>
                         </div>
-                      </div>
+                      ) : (
+                        <div
+                          style={{ textAlign: "right" }}
+                          title={rateHover(a.fx_rate, a.fx_as_of)}
+                        >
+                          <div
+                            style={{
+                              fontSize: 14,
+                              fontWeight: 600,
+                              fontVariantNumeric: "tabular-nums",
+                              color:
+                                (a.native_balance ?? 0) < 0
+                                  ? tokens.color.terracotta
+                                  : tokens.color.ink,
+                            }}
+                          >
+                            {fmtAmount(a.native_balance, "USD")}
+                          </div>
+                          <div
+                            style={{
+                              marginTop: 4,
+                              fontSize: 12,
+                              fontWeight: 400,
+                              color: tokens.color.muted3,
+                              fontVariantNumeric: "tabular-nums",
+                            }}
+                          >
+                            ≈ {fmtAmount(a.current_balance, "IDR")}
+                          </div>
+                        </div>
+                      )}
                     </div>
                   ))
                 )}
@@ -653,7 +689,7 @@ export default function CashflowPage() {
                           color: tokens.color.ink,
                         }}
                       >
-                        {money(g.subtotal)}
+                        {fmtAmount(g.subtotal, "IDR")}
                       </div>
                     </div>
                   ))
