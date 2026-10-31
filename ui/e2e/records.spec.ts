@@ -20,6 +20,9 @@ type FixtureTx = {
   is_transfer: boolean;
   transfer_pair_id: number | null;
   currency?: string;
+  amount_idr?: number | null;
+  fx_rate?: number | null;
+  fx_rate_date?: string | null;
 };
 
 const money = (n: number) => new Intl.NumberFormat("en-US").format(Math.round(n));
@@ -548,5 +551,43 @@ test.describe("Record modal currency (Phase 44)", () => {
     await expect(page.getByText("No other USD account to transfer to.")).toBeVisible();
     await expect(page.getByRole("button", { name: "Add transfer", exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "Save & add another" })).toBeDisabled();
+  });
+});
+
+test.describe("Records USD rows (Phase 44 D-13, D-14)", () => {
+  test("USD rows show native, ≈ IDR and the rate", async ({ page }) => {
+    const rows: FixtureTx[] = [
+      ...transactionsFixture(),
+      {
+        id: 401, date: isoAt(3), amount: -12.34, currency: "USD", category: "Food & Drinks",
+        merchant: "ZZ44 Priced", account_id: 3, notes: null,
+        is_transfer: false, transfer_pair_id: null,
+        amount_idr: -200525, fx_rate: 16250, fx_rate_date: "2026-10-30",
+      },
+      {
+        id: 402, date: isoAt(3), amount: -5, currency: "USD", category: "Food & Drinks",
+        merchant: "ZZ44 Unpriced", account_id: 3, notes: null,
+        is_transfer: false, transfer_pair_id: null,
+        amount_idr: null, fx_rate: null, fx_rate_date: null,
+      },
+    ];
+    await mockRecords(page, rows, [...accountsFixture(), { id: 3, name: "ZZ44 Wallet", currency: "USD" }]);
+    await page.goto("/records");
+
+    const priced = page.getByTitle("1 USD = 16,250 IDR · rate of 30 Oct 2026");
+    await expect(priced).toHaveCount(1);
+    await expect(priced).toContainText("-12.34 USD");
+    await expect(priced).toContainText("≈ -200,525");
+
+    const noRate = page.getByText("no rate yet", { exact: true });
+    await expect(noRate).toHaveCount(1);
+    await expect(noRate.locator("xpath=..")).toContainText("-5.00 USD");
+    await expect(noRate.locator("xpath=..")).not.toHaveAttribute("title", /.*/);
+
+    // The IDR row is untouched: signed amount only, no secondary line, no title.
+    const idr = page.getByText(signed(-25000), { exact: true });
+    await expect(idr).toHaveCount(1);
+    await expect(idr).not.toHaveAttribute("title", /.*/);
+    await expect(page.getByText("≈")).toHaveCount(1);
   });
 });
