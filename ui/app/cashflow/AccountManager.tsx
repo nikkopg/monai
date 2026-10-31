@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { card, input, btn, label } from "../styles";
+import { card, input, btn, label, tokens } from "../styles";
 import { extractDetail } from "../lib/api";
 import RowMenu from "../components/RowMenu";
 import ConfirmDialog from "./ConfirmDialog";
@@ -32,6 +32,7 @@ export type Account = {
   name: string;
   current_balance: number;
   type: string;
+  currency?: string | null; // absent means IDR
 };
 
 type Props = {
@@ -49,6 +50,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
   const [editName, setEditName] = useState("");
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
+  const [newCurrency, setNewCurrency] = useState("IDR");
   const [error, setError] = useState<string | null>(null);
   const [deleteFlow, setDeleteFlow] = useState<DeleteFlowState>({ stage: "idle" });
   const [adjustingAccount, setAdjustingAccount] = useState<Account | null>(null);
@@ -60,10 +62,11 @@ export default function AccountManager({ accounts, onChanged }: Props) {
       const r = await fetch("/api/accounts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newName, type: "liquid" }),
+        body: JSON.stringify({ name: newName, type: "liquid", currency: newCurrency }),
       });
       if (r.ok) {
         setNewName("");
+        setNewCurrency("IDR");
         setAdding(false);
         onChanged();
       } else {
@@ -181,6 +184,21 @@ export default function AccountManager({ accounts, onChanged }: Props) {
                 ) : (
                   a.name
                 )}
+                <span
+                  style={{
+                    marginLeft: 8,
+                    padding: "4px 8px",
+                    background: tokens.color.tintNeutral,
+                    color: tokens.color.muted3,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    borderRadius: tokens.radius.pill,
+                    whiteSpace: "nowrap",
+                    flexShrink: 0,
+                  }}
+                >
+                  {a.currency ?? "IDR"}
+                </span>
               </td>
               <td style={{ padding: "8px 4px", textAlign: "right", whiteSpace: "nowrap" }}>
                 {editingId === a.id ? (
@@ -247,6 +265,15 @@ export default function AccountManager({ accounts, onChanged }: Props) {
               onChange={(e) => setNewName(e.target.value)}
               required
             />
+            <select
+              style={{ ...input, width: 96 }}
+              aria-label="Account currency"
+              value={newCurrency}
+              onChange={(e) => setNewCurrency(e.target.value)}
+            >
+              <option value="IDR">IDR</option>
+              <option value="USD">USD</option>
+            </select>
             <button style={btn} type="submit">
               Add account
             </button>
@@ -261,7 +288,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
                 cursor: "pointer",
               }}
             >
-              Cancel
+              Discard new account
             </button>
           </form>
         ) : (

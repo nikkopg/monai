@@ -23,8 +23,8 @@ from backend.importer import _get_or_create_account
 from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, PriceCache, Transaction
 from backend.portfolio import recompute_holding_from_events
 
-# Phase 44 widens account currencies to IDR/USD; until then only IDR may be created or edited.
-IDR_ONLY_ACCOUNTS_MSG = "USD accounts are not available yet; only IDR accounts can be created or edited for now"
+# Mirrors migration 020's CHECK on accounts.currency; fx.py names only BASE.
+ACCOUNT_CURRENCIES = ("IDR", "USD")
 
 
 def resolve_category_id(db: Session, name: str | None) -> int:
@@ -410,17 +410,17 @@ def apply_add_funded_sell(db: Session, after: dict) -> dict:
     return {"transaction": tx, "portfolio_event": ev}
 
 
-def _idr_only_account_currency(value) -> str:
-    """Null/blank -> IDR; anything but IDR is refused until Phase 44 (D-05)."""
+def _account_currency(value) -> str:
+    """Trim + upper; null/blank -> IDR; anything outside ACCOUNT_CURRENCIES is refused (D-01)."""
     currency = (value or "").strip().upper() or "IDR"
-    if currency != "IDR":
-        raise ValueError(IDR_ONLY_ACCOUNTS_MSG)
+    if currency not in ACCOUNT_CURRENCIES:
+        raise ValueError("Account currency must be one of " + ", ".join(ACCOUNT_CURRENCIES))
     return currency
 
 
 def apply_add_account(db: Session, after: dict) -> Account:
-    """Insert a new account (IDR only until Phase 44)."""
-    currency = _idr_only_account_currency(after.get("currency"))
+    """Insert a new account (currency IDR or USD; blank -> IDR)."""
+    currency = _account_currency(after.get("currency"))
     acc = Account(
         name=after["name"],
         type=after.get("type"),
@@ -438,7 +438,7 @@ def apply_edit_account(db: Session, acc_id: int, after: dict, before: dict | Non
     acc = db.get(Account, acc_id)
     if acc is None:
         raise ValueError(f"Account {acc_id} not found during confirm")
-    new_currency = _idr_only_account_currency(after["currency"]) if after.get("currency") is not None else None
+    new_currency = _account_currency(after["currency"]) if after.get("currency") is not None else None
     if after.get("name") is not None:
         acc.name = after["name"]
     if after.get("type") is not None:
