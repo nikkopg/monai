@@ -590,4 +590,40 @@ test.describe("Records USD rows (Phase 44 D-13, D-14)", () => {
     await expect(idr).not.toHaveAttribute("title", /.*/);
     await expect(page.getByText("≈")).toHaveCount(1);
   });
+
+  test("daily net adds IDR values only", async ({ page }) => {
+    const usd = (id: number, day: number, amount: number, idr: number | null, extra: Partial<FixtureTx> = {}): FixtureTx => ({
+      id, date: isoAt(day), amount, currency: "USD", category: "Food & Drinks",
+      merchant: `ZZ44 usd ${id}`, account_id: 3, notes: null,
+      is_transfer: false, transfer_pair_id: null,
+      amount_idr: idr, fx_rate: idr == null ? null : 16250, fx_rate_date: idr == null ? null : "2026-10-30",
+      ...extra,
+    });
+    const idrRow = (id: number, day: number): FixtureTx => ({
+      id, date: isoAt(day), amount: -25000, category: "Food & Drinks",
+      merchant: `ZZ44 idr ${id}`, account_id: 1, notes: null,
+      is_transfer: false, transfer_pair_id: null,
+    });
+    const rows: FixtureTx[] = [
+      idrRow(501, 4), usd(502, 4, -12.34, -200525),
+      idrRow(511, 5), usd(512, 5, -5, null),
+      usd(521, 6, -5, null),
+      usd(531, 7, -25.5, -414375, { is_transfer: true, transfer_pair_id: 777, account_id: 3 }),
+      usd(532, 7, 25.5, 414375, { is_transfer: true, transfer_pair_id: 777, account_id: 4 }),
+    ];
+    await mockRecords(page, rows, [
+      ...accountsFixture(),
+      { id: 3, name: "ZZ44 Wallet", currency: "USD" },
+      { id: 4, name: "ZZ44 Vault", currency: "USD" },
+    ]);
+    await page.goto("/records");
+
+    await expect(page.getByText(`Net ${signed(-225525)}`, { exact: true })).toBeVisible();
+    await expect(page.getByText(/^Net -25,000 · 1 unconverted$/)).toBeVisible();
+    await expect(page.getByText(/^Net — · 1 unconverted$/)).toBeVisible();
+
+    const pair = page.getByText("25.50 USD", { exact: false });
+    await expect(pair).toHaveCount(1);
+    await expect(pair).toContainText("≈ 414,375");
+  });
 });

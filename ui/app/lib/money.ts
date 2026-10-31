@@ -39,3 +39,10 @@ export function rateHover(
   if (missing(rate) || !isoDate) return undefined;
   return `1 USD = ${rateFmt.format(rate)} IDR · rate of ${fmtRowDate(isoDate)}`;
 }
+
+export function sumIdr(
+  rows: { amount: number; currency?: string | null; amount_idr?: number | null }[]
+): { total: number; unconverted: number } {
+  void rows;
+  return { total: 0, unconverted: -1 };
+}

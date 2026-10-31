@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { fmtAmount, fmtAmountSigned, rateHover } from "../app/lib/money";
+import { fmtAmount, fmtAmountSigned, rateHover, sumIdr } from "../app/lib/money";
 
 // Browserless: pure formatter checks (no page, no server). All values synthetic.
 
@@ -47,5 +47,19 @@ test.describe("money formatter", () => {
     expect(rateHover(16250.456, "2026-10-30")).toBe("1 USD = 16,250.46 IDR · rate of 30 Oct 2026");
     expect(rateHover(null, "2026-10-30")).toBeUndefined();
     expect(rateHover(16250, null)).toBeUndefined();
+  });
+});
+
+test.describe("sumIdr", () => {
+  test("sumIdr adds IDR values only", () => {
+    const idr = { amount: -25000 };
+    const usd = { amount: -12.34, currency: "USD", amount_idr: -200525 };
+    const noRate = { amount: -5, currency: "USD", amount_idr: null };
+    expect(sumIdr([idr, usd])).toEqual({ total: -225525, unconverted: 0 });
+    expect(sumIdr([idr, usd, noRate])).toEqual({ total: -225525, unconverted: 1 });
+    expect(sumIdr([{ amount: -5, currency: "USD" }])).toEqual({ total: 0, unconverted: 1 });
+    expect(sumIdr([{ amount: -100, currency: "IDR", amount_idr: -90 }])).toEqual({ total: -90, unconverted: 0 });
+    expect(sumIdr([])).toEqual({ total: 0, unconverted: 0 });
+    expect(sumIdr([noRate, usd, idr].reverse())).toEqual(sumIdr([noRate, usd, idr]));
   });
 });
