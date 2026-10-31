@@ -429,9 +429,14 @@ def delete_account(
         target = db.get(Account, reassign_to)
         if target is None:
             raise HTTPException(status_code=404, detail=f"Reassign target account {reassign_to} not found")
-        reassigned = apply_delete_account(db, account_id, before, reassign_to=reassign_to)
-    else:
-        reassigned = apply_delete_account(db, account_id, before)
+
+    try:
+        reassigned = apply_delete_account(
+            db, account_id, before, reassign_to=reassign_to if tx_count > 0 else None
+        )
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
 
     db.commit()
     from backend.query import reset_engine

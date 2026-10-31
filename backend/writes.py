@@ -439,6 +439,12 @@ def apply_edit_account(db: Session, acc_id: int, after: dict, before: dict | Non
     if acc is None:
         raise ValueError(f"Account {acc_id} not found during confirm")
     new_currency = _account_currency(after["currency"]) if after.get("currency") is not None else None
+    # Compare against the stored currency, not `before`: chat edits always carry the
+    # current currency. Migration 020's composite FK is only the race backstop.
+    if new_currency is not None and new_currency != acc.currency:
+        n = int(db.execute(text("SELECT COUNT(*) FROM transactions WHERE account_id = :id"), {"id": acc_id}).scalar() or 0)
+        if n:
+            raise ValueError(f"Account '{acc.name}' has {n} record(s); its currency can't change")
     if after.get("name") is not None:
         acc.name = after["name"]
     if after.get("type") is not None:
@@ -465,6 +471,14 @@ def apply_delete_account(db: Session, acc_id: int, before: dict | None, reassign
     audit_after: dict | None = None
 
     if reassign_to is not None:
+        if reassign_to == acc_id:
+            raise ValueError("Can't reassign an account's records to itself")
+        dst = db.get(Account, reassign_to)
+        if dst is None:
+            raise ValueError(f"Reassign target account {reassign_to} not found")
+        src = db.get(Account, acc_id)
+        if src is not None and src.currency != dst.currency:
+            raise ValueError(f"Can't move {src.currency} records into {dst.currency} account '{dst.name}'")
         result = db.execute(
             text("UPDATE transactions SET account_id = :reassign_to WHERE account_id = :acc_id"),
             {"reassign_to": reassign_to, "acc_id": acc_id},
