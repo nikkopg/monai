@@ -219,4 +219,61 @@ test.describe("AccountManager currency (Phase 44)", () => {
     await expect.poll(() => deletes.filter((u) => u.includes("reassign_to=2")).length).toBe(1);
     expect(deletes.find((u) => u.includes("reassign_to"))).toContain("/api/accounts/1?reassign_to=2");
   });
+
+  // Phase 44-03: a USD account is adjusted in USD against its native balance.
+  const openAdjust = async (page: Page, name: string) => {
+    await page.goto("/settings");
+    await page.getByRole("button", { name: `Account options: ${name}`, exact: true }).click();
+    await page.getByRole("menuitem", { name: "Adjust balance", exact: true }).click();
+  };
+  const usdWallet = {
+    id: 2, name: "ZZ44 Wallet", type: "liquid", currency: "USD", native_balance: 50,
+    current_balance: 812_500, fx_rate: 16250, fx_as_of: "2026-10-30", fx_stale: false,
+  };
+
+  test("adjust a USD balance in USD", async ({ page }) => {
+    await mockSummary(page, [usdWallet]);
+    const posted: unknown[] = [];
+    await page.route("**/api/accounts/2/adjust-balance", (route) => {
+      if (route.request().method() !== "POST") return route.fulfill({ status: 500, json: { detail: "blocked in test" } });
+      posted.push(route.request().postDataJSON());
+      return route.fulfill({ status: 201, json: { status: "ok" } });
+    });
+    await openAdjust(page, "ZZ44 Wallet");
+
+    await expect(page.getByText("Target balance (USD)", { exact: true })).toBeVisible();
+    const target = page.locator("form input[type=number]");
+    await expect(target).toHaveValue("50");
+    const preview = page.getByText(/^(Adjustment:|No change)/);
+    const save = page.getByRole("button", { name: "Save adjustment", exact: true });
+
+    await target.fill("62.34");
+    await expect(preview).toHaveText("Adjustment: +12.34 USD");
+    await target.fill("50.001");
+    await expect(preview).toHaveText("No change — target equals current balance.");
+    await expect(save).toBeDisabled();
+    await target.fill("40");
+    await expect(preview).toHaveText("Adjustment: −10.00 USD");
+
+    await target.fill("62.34");
+    await save.click();
+    await expect.poll(() => posted.length).toBe(1);
+    expect(posted[0]).toEqual({ target_balance: 62.34 });
+  });
+
+  test("a USD account with no rate still opens at its native balance", async ({ page }) => {
+    await mockSummary(page, [{ ...usdWallet, current_balance: null, fx_rate: null, fx_as_of: null }]);
+    await openAdjust(page, "ZZ44 Wallet");
+    await expect(page.locator("form input[type=number]")).toHaveValue("50");
+  });
+
+  test("an IDR account keeps its copy and Rp preview", async ({ page }) => {
+    await mockSummary(page, [{ id: 1, name: "ZZ44 Cash", type: "liquid", current_balance: 1_000_000 }]);
+    await openAdjust(page, "ZZ44 Cash");
+    await expect(page.getByText("Target balance", { exact: true })).toBeVisible();
+    const target = page.locator("form input[type=number]");
+    await expect(target).toHaveValue("1000000");
+    await target.fill("1500000");
+    await expect(page.getByText("Adjustment: +Rp 500,000", { exact: true })).toBeVisible();
+  });
 });
