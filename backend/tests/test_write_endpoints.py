@@ -46,13 +46,13 @@ def db_session(db_available):
 # Seed / cleanup helpers (mirror test_write_tools.py's idiom)
 # ---------------------------------------------------------------------------
 
-def _make_account(db, name: str) -> int:
+def _make_account(db, name: str, currency: str = "IDR") -> int:
     from backend.models import Account
     existing = db.query(Account).filter(Account.name == name).first()
     if existing:
         db.delete(existing)
         db.commit()
-    acc = Account(name=name, type="liquid", currency="IDR")
+    acc = Account(name=name, type="liquid", currency=currency)
     db.add(acc)
     db.commit()
     db.refresh(acc)
@@ -148,6 +148,33 @@ def test_post_transfer(client, api_key, db_session):
         db_session.rollback()
         _cleanup_account(db_session, name_a)
         _cleanup_account(db_session, name_b)
+
+
+def test_post_transaction_usd_account_without_currency(client, api_key, db_session):
+    """Phase 44 D-09 / ENTRY-01: no currency in the body -> the row takes the
+    USD account's currency and keeps its cents (Phase 42 D-01 characterization)."""
+    import uuid
+    from backend.models import Transaction
+
+    name = f"ZZ44 rec usd-{uuid.uuid4().hex[:6]}"
+    acc_id = _make_account(db_session, name, currency="USD")
+    try:
+        resp = client.post(
+            "/transactions",
+            json={"date": "1997-06-06T12:00:00", "amount": -12.34, "account": name},
+            headers={"MONAI_API_KEY": api_key},
+        )
+        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
+        assert resp.json()["currency"] == "USD"
+
+        db_session.expire_all()
+        rows = db_session.query(Transaction).filter(Transaction.account_id == acc_id).all()
+        assert len(rows) == 1
+        assert rows[0].currency == "USD"
+        assert rows[0].amount == Decimal("-12.34")
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name)
 
 
 def test_post_investment_transfer(client, api_key, db_session):

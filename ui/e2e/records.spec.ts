@@ -19,6 +19,7 @@ type FixtureTx = {
   notes: string | null;
   is_transfer: boolean;
   transfer_pair_id: number | null;
+  currency?: string;
 };
 
 const money = (n: number) => new Intl.NumberFormat("en-US").format(Math.round(n));
@@ -97,7 +98,7 @@ function transactionsFixture(): FixtureTx[] {
   ];
 }
 
-async function mockSupportRoutes(page: Page) {
+async function mockSupportRoutes(page: Page, accounts: unknown[] = accountsFixture()) {
   await page.route("**/api/accounts", async (route) => {
     if (route.request().method() !== "GET") {
       await route.fallback();
@@ -106,7 +107,7 @@ async function mockSupportRoutes(page: Page) {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(accountsFixture()),
+      body: JSON.stringify(accounts),
     });
   });
   await page.route("**/api/categories", async (route) => {
@@ -122,8 +123,12 @@ async function mockSupportRoutes(page: Page) {
   });
 }
 
-async function mockRecords(page: Page, rows: FixtureTx[] = transactionsFixture()) {
-  await mockSupportRoutes(page);
+async function mockRecords(
+  page: Page,
+  rows: FixtureTx[] = transactionsFixture(),
+  accounts: unknown[] = accountsFixture()
+) {
+  await mockSupportRoutes(page, accounts);
   await page.route("**/api/transactions*", async (route) => {
     if (route.request().method() !== "GET") {
       await route.fallback();
@@ -425,5 +430,68 @@ test.describe("Records URL-seeded filters and pills (37-07)", () => {
       expect(urls[0].searchParams.has(k)).toBe(false);
     }
     await expect(page.getByRole("group", { name: "Active filters" })).toHaveCount(0);
+  });
+});
+
+// Phase 44 (ENTRY-01, D-09) — the record modal takes its currency from the
+// account and never sends one. Synthetic ZZ44 data; every non-GET route is
+// fulfilled here, so nothing can reach a live backend.
+const accountsWithUsd = () => [
+  ...accountsFixture(),
+  { id: 3, name: "ZZ44 Wallet", currency: "USD" },
+  { id: 4, name: "ZZ44 Spare", currency: "USD" },
+];
+
+test.describe("Record modal currency (Phase 44)", () => {
+  test("record modal takes currency from the account", async ({ page }) => {
+    await mockRecords(page, transactionsFixture(), accountsWithUsd().slice(0, 3));
+    let posted: Record<string, unknown> | null = null;
+    await page.route("**/api/transactions", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.fallback();
+        return;
+      }
+      posted = route.request().postDataJSON();
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({ id: 999 }),
+      });
+    });
+    await page.goto("/records");
+    await page.getByRole("button", { name: "+ Add record" }).click();
+
+    await expect(page.getByRole("textbox", { name: "Currency" })).toHaveCount(0);
+    const chip = page.getByLabel("Currency", { exact: true });
+    await expect(chip).toHaveText("IDR");
+    await page.getByLabel("Account", { exact: true }).selectOption({ label: "ZZ44 Wallet" });
+    await expect(chip).toHaveText("USD");
+
+    await page.getByLabel("Amount", { exact: true }).fill("12.34");
+    await page.getByRole("button", { name: "Add transaction", exact: true }).click();
+
+    await expect.poll(() => posted !== null).toBe(true);
+    const body = posted as unknown as Record<string, unknown>;
+    expect(Object.keys(body)).not.toContain("currency");
+    expect(body.amount).toBe(-12.34);
+    expect(body.account).toBe("ZZ44 Wallet");
+  });
+
+  test("edit mode shows the stored row currency", async ({ page }) => {
+    const row: FixtureTx = {
+      id: 307, date: isoAt(2), amount: -12.34, category: "Transport",
+      merchant: "ZZ44 Vendor", account_id: 3, notes: null,
+      is_transfer: false, transfer_pair_id: null, currency: "USD",
+    };
+    await mockRecords(page, [row], accountsWithUsd().slice(0, 3));
+    await page.goto("/records");
+    await page
+      .getByRole("button", {
+        name: `Record options: ZZ44 Vendor on ${row.date.slice(0, 10)}`,
+        exact: true,
+      })
+      .click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    await expect(page.getByLabel("Currency", { exact: true })).toHaveText("USD");
   });
 });
