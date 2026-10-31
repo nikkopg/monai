@@ -319,6 +319,17 @@ def apply_add_transfer(db: Session, leg_a_after: dict, leg_b_after: dict) -> tup
     return leg_a, leg_b
 
 
+# ponytail: blanket non-IDR refusal; Phase 45 (MOVE-02/03) takes the cash currency from the account and lifts this
+def _refuse_non_idr_funding(db: Session, account_name: str) -> None:
+    """Refuse moving money between a non-IDR liquid account and an investment platform."""
+    acc = db.query(Account).filter(Account.name == account_name).one_or_none()
+    if acc is not None and acc.currency != "IDR":
+        raise ValueError(
+            f"Account '{account_name}' is in {acc.currency}; "
+            "moving money between it and an investment platform isn't available yet"
+        )
+
+
 def apply_add_investment_transfer(
     db: Session, cash_leg_after: dict, event_after: dict
 ) -> tuple[Transaction, PortfolioEvent]:
@@ -337,6 +348,7 @@ def apply_add_investment_transfer(
     audit row — each primitive already writes its own (D-02). Does NOT
     commit — caller owns the transaction boundary (D-01).
     """
+    _refuse_non_idr_funding(db, cash_leg_after.get("account", "Unknown"))
     tx = apply_add_transaction(db, {**cash_leg_after, "is_transfer": True})
     ev = apply_add_portfolio_event(db, event_after)
     ev.source_account_id = tx.account_id
@@ -361,6 +373,7 @@ def apply_add_funded_buy(db: Session, after: dict) -> dict:
     (D-10); `recompute_holding_from_events` resolves historical, date-keyed
     rates itself when it needs an IDR valuation. Does NOT commit.
     """
+    _refuse_non_idr_funding(db, after["source_account_name"])
     cash_amount = -abs(after["cash_amount"])  # buy DEBITS the source; Decimal() happens inside apply_add_transaction
     tx = apply_add_transaction(db, {
         "account": after["source_account_name"],
@@ -396,6 +409,7 @@ def apply_add_funded_sell(db: Session, after: dict) -> dict:
     is_transfer/category tagging, dual-currency handling (D-09), and no-live-FX
     contract (D-10) as the buy side. Does NOT commit.
     """
+    _refuse_non_idr_funding(db, after["source_account_name"])
     cash_amount = abs(after["cash_amount"])  # sell CREDITS the destination; Decimal() happens inside apply_add_transaction
     tx = apply_add_transaction(db, {
         "account": after["source_account_name"],
