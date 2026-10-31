@@ -176,4 +176,47 @@ test.describe("AccountManager currency (Phase 44)", () => {
     await page.getByRole("button", { name: "Add account", exact: true }).click();
     await expect(page.getByLabel("Account currency")).toHaveValue("IDR");
   });
+  test("reassign lists same-currency accounts only", async ({ page }) => {
+    await mockSummary(page, [
+      { id: 1, name: "ZZ44 Cash", current_balance: 0, type: "liquid", currency: "IDR" },
+      { id: 2, name: "ZZ44 Bank", current_balance: 0, type: "liquid", currency: "IDR" },
+      { id: 3, name: "ZZ44 Card", current_balance: 0, type: "liquid" },
+      { id: 4, name: "ZZ44 Wallet", current_balance: 0, type: "liquid", currency: "USD" },
+    ]);
+    const deletes: string[] = [];
+    await page.route(/\/api\/accounts\/\d+/, (route) => {
+      const req = route.request();
+      if (req.method() !== "DELETE") return route.fulfill({ status: 500, json: { detail: "blocked in test" } });
+      deletes.push(req.url());
+      return req.url().includes("reassign_to")
+        ? route.fulfill({ json: { status: "deleted", reassigned: 3 } })
+        : route.fulfill({ status: 422, json: { detail: { message: "3 transactions use this account", affected_count: 3 } } });
+    });
+    await page.goto("/settings");
+
+    const startDelete = async (name: string) => {
+      await page.getByRole("button", { name: `Account options: ${name}`, exact: true }).click();
+      await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
+      await page.getByRole("button", { name: "Delete account", exact: true }).click();
+    };
+
+    // USD account, no other USD account: no select, disabled confirm, Cancel closes.
+    await startDelete("ZZ44 Wallet");
+    await expect(page.getByText("No other USD account to move these records to.")).toBeVisible();
+    await expect(page.getByLabel("Destination account")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Reassign & delete", exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Reassign & delete", exact: true })).toHaveCount(0);
+    expect(deletes.filter((u) => u.includes("reassign_to"))).toEqual([]);
+
+    // IDR account: only IDR accounts (a missing currency counts as IDR), never itself.
+    await startDelete("ZZ44 Cash");
+    const dest = page.getByLabel("Destination account");
+    expect(await dest.locator("option").allTextContents()).toEqual(["ZZ44 Bank", "ZZ44 Card"]);
+    const confirm = page.getByRole("button", { name: "Reassign & delete", exact: true });
+    await expect(confirm).toBeEnabled();
+    await confirm.click();
+    await expect.poll(() => deletes.filter((u) => u.includes("reassign_to=2")).length).toBe(1);
+    expect(deletes.find((u) => u.includes("reassign_to"))).toContain("/api/accounts/1?reassign_to=2");
+  });
 });
