@@ -7,6 +7,7 @@ import CategoryDonut from "./charts/CategoryDonut";
 import TrendChart from "./charts/TrendChart";
 import NetWorthTrendChart from "./charts/NetWorthTrendChart";
 import CsvUpload from "./CsvUpload";
+import { fmtRowDate } from "../lib/inbox";
 import { fmtAmount, fmtAmountSigned, rateHover } from "../lib/money";
 
 // ---------------------------------------------------------------------------
@@ -50,6 +51,9 @@ type CashflowSummary = {
   by_category: CategoryRollup[];
   accounts: AccountBalance[];
   trend: TrendPoint[];
+  // Phase 43: USD rows with no usable rate are left out of the IDR totals.
+  unconverted_count?: number;
+  unconverted_usd?: number;
 };
 
 // GET /net-worth (backend/schemas.py:NetWorth, phase 15 D-01/D-08). Server-
@@ -71,6 +75,9 @@ type NetWorth = {
   investment_groups: InvestmentGroup[];
   accounts_covered: number;
   accounts_total: number;
+  fx_excluded?: { name: string; native_balance: number; currency: string }[];
+  notice?: string | null;
+  fx_note?: string | null;
 };
 
 type Period = "this_week" | "this_month" | "last_month" | "this_year";
@@ -378,6 +385,31 @@ export default function CashflowPage() {
             </div>
           </div>
 
+          {/* Net-worth notice — Phase 43 strings verbatim (D-14) */}
+          {netWorthData &&
+            !netWorthError &&
+            (netWorthData.notice ||
+              netWorthData.fx_note ||
+              (netWorthData.fx_excluded?.length ?? 0) > 0) && (
+              <div style={{ ...notice, marginBottom: 16 }}>
+                {netWorthData.notice && (
+                  <div style={{ color: tokens.color.terracottaText }}>
+                    {netWorthData.notice}
+                  </div>
+                )}
+                {netWorthData.fx_note && (
+                  <div style={{ color: tokens.color.muted3 }}>
+                    {netWorthData.fx_note}
+                  </div>
+                )}
+                {netWorthData.fx_excluded?.map((e) => (
+                  <div key={e.name}>
+                    {e.name}: {fmtAmount(e.native_balance, e.currency)}
+                  </div>
+                ))}
+              </div>
+            )}
+
           {/* Net worth trend — NWH-01, Phase 23 D-01 */}
           <NetWorthTrendChart />
 
@@ -412,6 +444,21 @@ export default function CashflowPage() {
                   {netWorthData.investment_groups.length === 1 ? "" : "s"}
                 </div>
               </div>
+            </div>
+          )}
+
+          {/* Unconverted USD rows are left out of the IDR totals below (D-15) */}
+          {(summary.unconverted_count ?? 0) > 0 && (
+            <div
+              style={{
+                ...notice,
+                marginBottom: 16,
+                color: tokens.color.terracottaText,
+              }}
+            >
+              {summary.unconverted_count} USD row
+              {summary.unconverted_count === 1 ? "" : "s"} unconverted (
+              {fmtAmount(summary.unconverted_usd ?? 0, "USD")})
             </div>
           )}
 
@@ -599,7 +646,11 @@ export default function CashflowPage() {
                       ) : (
                         <div
                           style={{ textAlign: "right" }}
-                          title={rateHover(a.fx_rate, a.fx_as_of)}
+                          title={
+                            a.current_balance === null
+                              ? undefined
+                              : rateHover(a.fx_rate, a.fx_as_of)
+                          }
                         >
                           <div
                             style={{
@@ -623,8 +674,25 @@ export default function CashflowPage() {
                               fontVariantNumeric: "tabular-nums",
                             }}
                           >
-                            ≈ {fmtAmount(a.current_balance, "IDR")}
+                            {a.current_balance === null ? (
+                              <span style={{ color: tokens.color.terracottaText }}>
+                                IDR value unavailable
+                              </span>
+                            ) : (
+                              <>≈ {fmtAmount(a.current_balance, "IDR")}</>
+                            )}
                           </div>
+                          {a.fx_stale && (
+                            <div
+                              style={{
+                                marginTop: 4,
+                                fontSize: 12,
+                                color: tokens.color.muted3,
+                              }}
+                            >
+                              stale, rate of {fmtRowDate(a.fx_as_of)}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -707,6 +775,13 @@ export default function CashflowPage() {
   );
 }
 
+const notice: React.CSSProperties = {
+  background: tokens.color.tintWarm,
+  borderRadius: tokens.radius.sm,
+  padding: "8px 16px",
+  fontSize: 12,
+  lineHeight: 1.5,
+};
 const statCard: React.CSSProperties = {
   background: tokens.color.card,
   border: `1px solid ${tokens.color.border}`,
