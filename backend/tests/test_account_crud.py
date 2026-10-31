@@ -55,17 +55,17 @@ def _make_account(db, name: str, currency: str = "IDR") -> int:
     return acc.id
 
 
-def _make_transaction(db, account_id: int) -> int:
+def _make_transaction(db, account_id: int, *, currency="IDR", amount=-50000, category="Food", is_transfer=False) -> int:
     from backend.models import Transaction
     tx = Transaction(
         date=datetime.datetime(2024, 1, 15, 12, 0, 0),
-        amount=-50000,
-        currency="IDR",
-        category="Food",
-        raw_category="Food",
+        amount=amount,
+        currency=currency,
+        category=category,
+        raw_category=category,
         merchant="Acc Test",
         account_id=account_id,
-        is_transfer=False,
+        is_transfer=is_transfer,
     )
     db.add(tx)
     db.commit()
@@ -88,12 +88,15 @@ def _audit_rows(db, entity_id: int, operation: str) -> int:
 
 def _cleanup(db, *, account_ids=(), tx_ids=()):
     from backend.models import Account, Transaction
+    db.rollback()  # a failed test may leave a dirty session that would mask its error
     for tx_id in tx_ids:
         tx = db.get(Transaction, tx_id)
         if tx:
             db.delete(tx)
     db.commit()
-    for acc_id in account_ids:
+    for acc_id in account_ids:  # also drops rows a test created indirectly (adjustments)
+        db.execute(text("DELETE FROM transactions WHERE account_id = :a"), {"a": acc_id})
+        db.commit()
         acc = db.get(Account, acc_id)
         if acc:
             db.delete(acc)
@@ -356,3 +359,171 @@ def test_apply_add_account_currency_rules(db_session):
         assert "USD" in str(exc.value)
     finally:
         db_session.rollback()
+
+
+# ---------------------------------------------------------------------------
+# Phase 44 (D-02): currency lock once an account has rows
+# ---------------------------------------------------------------------------
+
+def test_apply_edit_account_lock_refuses_before_mutation(db_session):
+    from backend.models import Account, AuditLog
+    from backend.writes import apply_edit_account
+
+    acc_id = _make_account(db_session, _unique_name("ZZ44 lock"), "USD")
+    tx_id = _make_transaction(db_session, acc_id, currency="USD", amount=-50)
+    try:
+        with pytest.raises(ValueError, match="its currency can't change"):
+            apply_edit_account(db_session, acc_id, {"currency": "IDR"}, None)
+        assert db_session.get(Account, acc_id).currency == "USD"
+        assert not [o for o in db_session.new if isinstance(o, AuditLog)]
+        db_session.rollback()
+    finally:
+        _cleanup(db_session, account_ids=[acc_id], tx_ids=[tx_id])
+
+
+def test_put_currency_change_with_rows_is_422(client, api_key, db_session):
+    from backend.models import Account
+
+    name = _unique_name("ZZ44 lockrest")
+    acc_id = _make_account(db_session, name, "USD")
+    tx_id = _make_transaction(db_session, acc_id, currency="USD", amount=-50)
+    try:
+        resp = client.put(f"/accounts/{acc_id}", json={"currency": "IDR"}, headers={"MONAI_API_KEY": api_key})
+        assert resp.status_code == 422, resp.text
+        assert name in resp.text and "1 record" in resp.text
+        db_session.expire_all()
+        assert db_session.get(Account, acc_id).currency == "USD"
+        assert _audit_rows(db_session, acc_id, "edit") == 0
+    finally:
+        _cleanup(db_session, account_ids=[acc_id], tx_ids=[tx_id])
+
+
+def test_lock_counts_adjustment_rows(client, api_key, db_session):
+    acc_id = _make_account(db_session, _unique_name("ZZ44 lockadj"))
+    tx_id = _make_transaction(db_session, acc_id, category="Adjustment", is_transfer=True)
+    try:
+        resp = client.put(f"/accounts/{acc_id}", json={"currency": "USD"}, headers={"MONAI_API_KEY": api_key})
+        assert resp.status_code == 422, resp.text
+    finally:
+        _cleanup(db_session, account_ids=[acc_id], tx_ids=[tx_id])
+
+
+def test_lock_same_value_is_noop(client, api_key, db_session):
+    from backend.models import Account
+
+    acc_id = _make_account(db_session, _unique_name("ZZ44 locknoop"), "USD")
+    tx_id = _make_transaction(db_session, acc_id, currency="USD", amount=-50)
+    new_name = _unique_name("ZZ44 renamed")
+    try:
+        headers = {"MONAI_API_KEY": api_key}
+        resp = client.put(f"/accounts/{acc_id}", json={"currency": "usd"}, headers=headers)
+        assert resp.status_code == 200, resp.text
+        resp = client.put(f"/accounts/{acc_id}", json={"name": new_name}, headers=headers)
+        assert resp.status_code == 200, resp.text
+        db_session.expire_all()
+        acc = db_session.get(Account, acc_id)
+        assert acc.currency == "USD" and acc.name == new_name
+    finally:
+        _cleanup(db_session, account_ids=[acc_id], tx_ids=[tx_id])
+
+
+def test_lock_chat_shaped_rename_passes(db_session):
+    from backend import tools
+    from backend.models import Account
+    from backend.writes import apply_edit_account
+
+    acc_id = _make_account(db_session, _unique_name("ZZ44 chat"), "USD")
+    tx_id = _make_transaction(db_session, acc_id, currency="USD", amount=-50)
+    new_name = _unique_name("ZZ44 chatnew")
+    try:
+        acc = db_session.get(Account, acc_id)
+        before = tools._account_to_dict(acc)
+        apply_edit_account(db_session, acc_id, {**before, "name": new_name}, before)
+        db_session.commit()
+        db_session.expire_all()
+        acc = db_session.get(Account, acc_id)
+        assert acc.name == new_name and acc.currency == "USD"
+    finally:
+        _cleanup(db_session, account_ids=[acc_id], tx_ids=[tx_id])
+
+
+# ---------------------------------------------------------------------------
+# Phase 44 (D-05): reassign only into the same currency
+# ---------------------------------------------------------------------------
+
+def test_reassign_cross_currency_is_422(client, api_key, db_session):
+    from backend.models import Account, Transaction
+
+    src = _make_account(db_session, _unique_name("ZZ44 xsrc"), "USD")
+    dst_name = _unique_name("ZZ44 xdst")
+    dst = _make_account(db_session, dst_name, "IDR")
+    tx_ids = [_make_transaction(db_session, src, currency="USD", amount=-50) for _ in range(2)]
+    try:
+        resp = client.delete(f"/accounts/{src}?reassign_to={dst}", headers={"MONAI_API_KEY": api_key})
+        assert resp.status_code == 422, resp.text
+        assert "USD" in resp.text and "IDR" in resp.text and dst_name in resp.text
+        db_session.expire_all()
+        assert db_session.get(Account, src) is not None
+        assert all(db_session.get(Transaction, t).account_id == src for t in tx_ids)
+        assert _audit_rows(db_session, src, "delete") == 0
+    finally:
+        _cleanup(db_session, account_ids=[src, dst], tx_ids=tx_ids)
+
+
+def test_reassign_same_currency_usd(client, api_key, db_session):
+    from backend.models import Transaction
+
+    src = _make_account(db_session, _unique_name("ZZ44 usrc"), "USD")
+    dst = _make_account(db_session, _unique_name("ZZ44 udst"), "USD")
+    tx_ids = [_make_transaction(db_session, src, currency="USD", amount=-50) for _ in range(2)]
+    try:
+        resp = client.delete(f"/accounts/{src}?reassign_to={dst}", headers={"MONAI_API_KEY": api_key})
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["reassigned"] == 2
+        db_session.expire_all()
+        assert all(db_session.get(Transaction, t).account_id == dst for t in tx_ids)
+    finally:
+        _cleanup(db_session, account_ids=[src, dst], tx_ids=tx_ids)
+
+
+def test_reassign_to_itself_is_422(client, api_key, db_session):
+    from backend.models import Account, Transaction
+
+    acc_id = _make_account(db_session, _unique_name("ZZ44 self"))
+    tx_id = _make_transaction(db_session, acc_id)
+    try:
+        resp = client.delete(f"/accounts/{acc_id}?reassign_to={acc_id}", headers={"MONAI_API_KEY": api_key})
+        assert resp.status_code == 422, resp.text
+        db_session.expire_all()
+        assert db_session.get(Account, acc_id) is not None
+        assert db_session.get(Transaction, tx_id).account_id == acc_id
+    finally:
+        _cleanup(db_session, account_ids=[acc_id], tx_ids=[tx_id])
+
+
+# ---------------------------------------------------------------------------
+# Phase 44 (D-07, CUR-05): a USD adjustment is a native USD delta
+# ---------------------------------------------------------------------------
+
+def test_adjust_usd_account_native_delta(client, api_key, db_session):
+    from decimal import Decimal
+
+    from backend.models import Transaction
+
+    acc_id = _make_account(db_session, _unique_name("ZZ44 adj"), "USD")
+    tx_id = _make_transaction(db_session, acc_id, currency="USD", amount=Decimal("-50.00"))
+    try:
+        resp = client.post(
+            f"/accounts/{acc_id}/adjust-balance",
+            json={"target_balance": 12.34},
+            headers={"MONAI_API_KEY": api_key},
+        )
+        assert resp.status_code == 201, resp.text
+        db_session.expire_all()
+        rows = db_session.query(Transaction).filter_by(account_id=acc_id, category="Adjustment").all()
+        assert len(rows) == 1
+        adj = rows[0]
+        assert adj.currency == "USD" and adj.is_transfer is True
+        assert adj.amount == Decimal("62.34")
+    finally:
+        _cleanup(db_session, account_ids=[acc_id], tx_ids=[tx_id])
