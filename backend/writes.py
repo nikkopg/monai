@@ -14,7 +14,7 @@ Every apply_* function:
 """
 
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -181,7 +181,8 @@ def apply_add_balance_adjustment(
             text("SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE account_id = :id"),
             {"id": account_id},
         ).scalar()
-    delta = Decimal(str(target_balance)) - Decimal(str(current))
+    # Quantize to the column's 2 dp so the audit row records what is stored (WR-03).
+    delta = (Decimal(str(target_balance)) - Decimal(str(current))).quantize(Decimal("0.01"), ROUND_HALF_UP)
     account = db.get(Account, account_id)
     after = {
         "account": account.name if account is not None else "Unknown",
@@ -463,7 +464,8 @@ def apply_edit_account(db: Session, acc_id: int, after: dict, before: dict | Non
     acc = db.get(Account, acc_id)
     if acc is None:
         raise ValueError(f"Account {acc_id} not found during confirm")
-    new_currency = _account_currency(after["currency"]) if after.get("currency") is not None else None
+    # Blank means "unchanged" on edit, not IDR (that default is for create only).
+    new_currency = _account_currency(after["currency"]) if (after.get("currency") or "").strip() else None
     # Compare against the stored currency, not `before`: chat edits always carry the
     # current currency. Migration 020's composite FK is only the race backstop.
     if new_currency is not None and new_currency != acc.currency:
