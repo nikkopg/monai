@@ -27,6 +27,7 @@ test_transfer_retro_pairing.py do.
 import csv
 import importlib.util
 import json
+import re
 import sys
 from collections import Counter
 from datetime import date, datetime, timedelta, timezone
@@ -1035,10 +1036,11 @@ def test_as_of_not_exposed_to_agent_tool_surface():
     schema_props = tool.metadata.get_parameters_dict().get("properties", {})
     assert "as_of" not in schema_props, schema_props
 
-    # 4. Plain-text scan: neither registration module mentions as_of at all.
+    # 4. Plain-text scan: neither registration module mentions as_of as a
+    # whole identifier. \b keeps output keys like fx_as_of (Phase 43) legal.
     for mod_path in (Path(tools.__file__), Path(query.__file__)):
         module_text = mod_path.read_text(encoding="utf-8")
-        assert "as_of" not in module_text, (
+        assert not re.search(r"\bas_of\b", module_text), (
             f"{mod_path} contains 'as_of' — the propose_*/FunctionTool "
             "registrations in this file are introspected to build both the "
             "LlamaIndex and MCP schemas, so any as_of occurrence here risks "
