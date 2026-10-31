@@ -46,9 +46,9 @@ def _unique_name(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
-def _make_account(db, name: str) -> int:
+def _make_account(db, name: str, currency: str = "IDR") -> int:
     from backend.models import Account
-    acc = Account(name=name, type="liquid", currency="IDR")
+    acc = Account(name=name, type="liquid", currency=currency)
     db.add(acc)
     db.commit()
     db.refresh(acc)
@@ -264,29 +264,41 @@ def test_propose_delete_account_unchanged():
 
 
 # ---------------------------------------------------------------------------
-# Phase 42-02 (D-05): account write paths are IDR-only until Phase 44
+# Phase 44 (D-01): account currency is IDR or USD
 # ---------------------------------------------------------------------------
 
 def _account_count(db, name: str) -> int:
     return int(db.execute(text("SELECT COUNT(*) FROM accounts WHERE name = :n"), {"n": name}).scalar() or 0)
 
 
-def test_post_account_usd_is_422_not_available(client, api_key, db_session):
-    name = _unique_name("AccUsd")
+def test_post_account_usd_created(client, api_key, db_session):
+    from backend.models import AuditLog
+
+    name = _unique_name("ZZ44 usd")
     resp = client.post(
         "/accounts",
         json={"name": name, "type": "liquid", "currency": "USD"},
         headers={"MONAI_API_KEY": api_key},
     )
-    assert resp.status_code == 422, resp.text
-    assert "not available yet" in resp.text
-    assert _account_count(db_session, name) == 0
+    assert resp.status_code == 201, resp.text
+    acc_id = resp.json()["id"]
+    try:
+        assert resp.json()["currency"] == "USD"
+        db_session.expire_all()
+        stored = db_session.execute(
+            text("SELECT currency FROM accounts WHERE id = :i"), {"i": acc_id}
+        ).scalar()
+        assert stored == "USD"
+        audit = db_session.query(AuditLog).filter_by(entity="account", entity_id=acc_id, operation="add").one()
+        assert audit.after["currency"] == "USD"
+    finally:
+        _cleanup(db_session, account_ids=[acc_id])
 
 
 def test_post_account_null_currency_is_idr(client, api_key, db_session):
     resp = client.post(
         "/accounts",
-        json={"name": _unique_name("AccNull"), "type": "liquid", "currency": None},
+        json={"name": _unique_name("ZZ44 null"), "type": "liquid", "currency": None},
         headers={"MONAI_API_KEY": api_key},
     )
     assert resp.status_code == 201, resp.text
@@ -296,16 +308,28 @@ def test_post_account_null_currency_is_idr(client, api_key, db_session):
         _cleanup(db_session, account_ids=[resp.json()["id"]])
 
 
-def test_put_account_usd_is_422_unchanged(client, api_key, db_session):
+def test_post_account_out_of_set_is_422(client, api_key, db_session):
+    name = _unique_name("ZZ44 eur")
+    resp = client.post(
+        "/accounts",
+        json={"name": name, "type": "liquid", "currency": "EUR"},
+        headers={"MONAI_API_KEY": api_key},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "IDR" in resp.text and "USD" in resp.text
+    assert _account_count(db_session, name) == 0
+
+
+def test_put_account_currency_on_empty_account(client, api_key, db_session):
     from backend.models import Account
 
-    acc_id = _make_account(db_session, _unique_name("AccPutUsd"))
+    acc_id = _make_account(db_session, _unique_name("ZZ44 putccy"))
     try:
         headers = {"MONAI_API_KEY": api_key}
         resp = client.put(f"/accounts/{acc_id}", json={"currency": "USD"}, headers=headers)
-        assert resp.status_code == 422, resp.text
+        assert resp.status_code == 200, resp.text
         db_session.expire_all()
-        assert db_session.get(Account, acc_id).currency == "IDR"
+        assert db_session.get(Account, acc_id).currency == "USD"
 
         resp = client.put(f"/accounts/{acc_id}", json={"currency": "idr"}, headers=headers)
         assert resp.status_code == 200, resp.text
@@ -320,13 +344,15 @@ def test_apply_add_account_currency_rules(db_session):
     from backend.writes import apply_add_account
 
     try:
-        acc = apply_add_account(db_session, {"name": _unique_name("AccPrim"), "type": "liquid", "currency": None})
-        db_session.flush()
-        assert acc.currency == "IDR"
-        audit = db_session.query(AuditLog).filter_by(entity="account", entity_id=acc.id).one()
-        assert audit.after["currency"] == "IDR"
+        for given, expected in [(None, "IDR"), ("", "IDR"), ("  ", "IDR"), ("usd", "USD"), (" usd ", "USD")]:
+            acc = apply_add_account(db_session, {"name": _unique_name("ZZ44 prim"), "type": "liquid", "currency": given})
+            db_session.flush()
+            assert acc.currency == expected
+            audit = db_session.query(AuditLog).filter_by(entity="account", entity_id=acc.id).one()
+            assert audit.after["currency"] == expected
 
-        with pytest.raises(ValueError, match="not available yet"):
-            apply_add_account(db_session, {"name": _unique_name("AccPrim"), "type": "liquid", "currency": "USD"})
+        with pytest.raises(ValueError, match="IDR") as exc:
+            apply_add_account(db_session, {"name": _unique_name("ZZ44 prim"), "type": "liquid", "currency": "EUR"})
+        assert "USD" in str(exc.value)
     finally:
         db_session.rollback()

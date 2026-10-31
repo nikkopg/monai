@@ -122,3 +122,58 @@ test.describe("/settings page", () => {
     await expect(items).toHaveText(["Edit", "Delete"]);
   });
 });
+
+// Phase 44-01 — AccountManager currency surfaces. Synthetic data; GETs are
+// mocked and every non-GET is fulfilled by the test, so nothing reaches the
+// live backend through the dev server's proxy.
+test.describe("AccountManager currency (Phase 44)", () => {
+  const mockSummary = async (pg: Page, accounts: object[]) => {
+    await pg.route("**/api/categories*", (route) =>
+      route.request().method() === "GET"
+        ? route.fulfill({ json: [] })
+        : route.fulfill({ status: 500, json: { detail: "blocked in test" } })
+    );
+    await pg.route("**/api/cashflow/summary**", (route) =>
+      route.request().method() === "GET"
+        ? route.fulfill({ json: { accounts } })
+        : route.fulfill({ status: 500, json: { detail: "blocked in test" } })
+    );
+  };
+
+  test("USD account create and chip", async ({ page }) => {
+    await mockSummary(page, [
+      { id: 1, name: "ZZ44 Cash", current_balance: 0, type: "liquid", currency: "IDR" },
+      { id: 2, name: "ZZ44 Wallet", current_balance: 0, type: "liquid", currency: "USD" },
+      { id: 3, name: "ZZ44 Card", current_balance: 0, type: "liquid" },
+    ]);
+    const posted: unknown[] = [];
+    await page.route("**/api/accounts", (route) => {
+      if (route.request().method() !== "POST") return route.fulfill({ status: 500, json: { detail: "blocked in test" } });
+      posted.push(route.request().postDataJSON());
+      return route.fulfill({ status: 201, json: { id: 9, name: "ZZ44 New", type: "liquid", currency: "USD" } });
+    });
+    await page.goto("/settings");
+
+    const chip = (name: string) =>
+      page.locator("tr", { hasText: name }).getByText(/^(IDR|USD)$/);
+    await expect(chip("ZZ44 Cash")).toHaveText("IDR");
+    await expect(chip("ZZ44 Wallet")).toHaveText("USD");
+    await expect(chip("ZZ44 Card")).toHaveText("IDR");
+
+    await page.getByRole("button", { name: "Add account", exact: true }).click();
+    const select = page.getByLabel("Account currency");
+    expect(
+      await select.locator("option").evaluateAll((o) => o.map((x) => (x as HTMLOptionElement).value))
+    ).toEqual(["IDR", "USD"]);
+    await expect(select).toHaveValue("IDR");
+
+    await select.selectOption("USD");
+    await page.getByPlaceholder("Account name").fill("ZZ44 New");
+    await page.getByRole("button", { name: "Add account", exact: true }).click();
+    await expect.poll(() => posted.length).toBe(1);
+    expect(posted[0]).toEqual({ name: "ZZ44 New", type: "liquid", currency: "USD" });
+
+    await page.getByRole("button", { name: "Add account", exact: true }).click();
+    await expect(page.getByLabel("Account currency")).toHaveValue("IDR");
+  });
+});
