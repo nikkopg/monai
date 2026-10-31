@@ -665,6 +665,7 @@ def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
 
 
 _EDITABLE_EVENT_TYPES = ("buy", "sell", "dividend")
+_DELETABLE_EVENT_TYPES = _EDITABLE_EVENT_TYPES + ("deposit",)  # a deposit is delete-only
 
 
 def _portfolio_event_snapshot(ev: PortfolioEvent) -> dict:
@@ -683,14 +684,16 @@ def _portfolio_event_snapshot(ev: PortfolioEvent) -> dict:
     }
 
 
-def _load_editable_event(db: Session, event_id: int) -> PortfolioEvent:
+def _load_editable_event(
+    db: Session, event_id: int, allowed: tuple[str, ...] = _EDITABLE_EVENT_TYPES
+) -> PortfolioEvent:
     ev = db.get(PortfolioEvent, event_id)
     if ev is None:
         raise ValueError(f"portfolio event {event_id} not found")
-    if ev.event_type not in _EDITABLE_EVENT_TYPES:
+    if ev.event_type not in allowed:
         raise ValueError(
-            f"portfolio event {event_id} is a {ev.event_type}; only buy/sell/dividend "
-            "events can be edited or deleted here"
+            f"portfolio event {event_id} is a {ev.event_type}; only "
+            f"{'/'.join(allowed)} events can be changed this way"
         )
     return ev
 
@@ -758,13 +761,20 @@ def apply_edit_portfolio_event(
 
 
 def apply_delete_portfolio_event(db: Session, event_id: int, before: dict | None) -> int | None:
-    """Delete a buy/sell/dividend event (and its linked cash leg), then recompute.
+    """Delete a buy/sell/dividend/deposit event (and its linked cash leg), then recompute.
 
     Returns the deleted cash-leg transaction id, or None. A position left with
     no events becomes a zero-quantity holding row (D-04). Does NOT commit.
+
+    A deposit is deletable but not editable. One made by apply_add_investment_transfer
+    has no linked cash leg, so its source-account debit is left alone (delete it
+    separately via DELETE /transactions/{id} if it was also a mistake). A hand-linked
+    leg that is transfer-paired is refused by apply_delete_transaction's pair guard
+    (ValueError -> 422).
     """
-    ev = _load_editable_event(db, event_id)
+    ev = _load_editable_event(db, event_id, _DELETABLE_EVENT_TYPES)
     ticker, platform_id, tx_id = ev.ticker, ev.platform_id, ev.transaction_id
+    is_deposit = ev.event_type == "deposit"
     deleted_tx_id = None
     if tx_id is not None:
         tx = db.get(Transaction, tx_id)
@@ -776,7 +786,11 @@ def apply_delete_portfolio_event(db: Session, event_id: int, before: dict | None
     db.add(AuditLog(entity="portfolio_event", entity_id=event_id, operation="delete",
                     before=before, after=None))
     db.flush()  # LOAD-BEARING: autoflush=False, recompute's SELECT must not see the deleted rows
-    recompute_holding_from_events(db, ticker, platform_id)
+    # deposits never feed recompute (portfolio.py folds buy/sell/dividend only), so
+    # recomputing could only clobber a manually set CASH holding
+    # (recompute-clobbers-eventless-holdings)
+    if not is_deposit:
+        recompute_holding_from_events(db, ticker, platform_id)
     return deleted_tx_id
 
 

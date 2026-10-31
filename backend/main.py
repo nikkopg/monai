@@ -625,7 +625,7 @@ def update_portfolio_event(event_id: int, payload: PortfolioEventUpdate, db: Ses
 
 @app.delete("/portfolio-events/{event_id}", dependencies=[Depends(require_api_key)])
 def delete_portfolio_event(event_id: int, db: Session = Depends(get_session)):
-    """Delete a buy/sell/dividend event (and its linked cash leg); the holding is recomputed."""
+    """Delete a buy/sell/dividend/deposit event (and its linked cash leg); non-deposit deletes recompute the holding."""
     ev = db.get(PortfolioEvent, event_id)
     if ev is None:
         raise HTTPException(status_code=404, detail=f"Portfolio event {event_id} not found")
