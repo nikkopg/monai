@@ -211,3 +211,63 @@ test.describe("Spending by category card layout", () => {
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Phase 44 plan 03 — USD balances (DISP-01). Mocked, synthetic: ZZ44 names,
+// round example rates and dates.
+// ---------------------------------------------------------------------------
+function netWorthFixture(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    ...layoutNetWorth,
+    accounts_total: 2,
+    accounts_covered: 2,
+    ...overrides,
+  };
+}
+
+async function mockNetWorth(page: Page, body: unknown) {
+  await page.route("**/api/net-worth", (route) => route.fulfill({ json: body }));
+}
+
+const usdWallet = {
+  id: 2,
+  name: "ZZ44 Wallet",
+  type: "liquid",
+  currency: "USD",
+  native_balance: -12.34,
+  current_balance: -200_525,
+  fx_rate: 16250,
+  fx_as_of: "2026-10-30",
+  fx_stale: false,
+  fx_note: null,
+  period_net: 0,
+};
+
+test.describe("USD balances (Phase 44)", () => {
+  test("USD balance shows native, ≈ IDR and the rate", async ({ page }) => {
+    await mockSummary(page);
+    await mockNetWorth(
+      page,
+      netWorthFixture({
+        liquid_accounts: [
+          { id: 1, name: "ZZ44 Cash", type: "liquid", current_balance: 4_000_000, period_net: 0 },
+          usdWallet,
+        ],
+      })
+    );
+    await page.goto("/cashflow");
+
+    const wallet = page.getByText("ZZ44 Wallet", { exact: true }).locator("xpath=../..");
+    await expect(wallet.getByText("-12.34 USD", { exact: true })).toBeVisible();
+    await expect(wallet.getByText("≈ -200,525", { exact: true })).toBeVisible();
+    await expect(wallet.locator("[title]")).toHaveAttribute(
+      "title",
+      "1 USD = 16,250 IDR · rate of 30 Oct 2026"
+    );
+
+    const cash = page.getByText("ZZ44 Cash", { exact: true }).locator("xpath=../..");
+    await expect(cash.getByText("4,000,000", { exact: true })).toBeVisible();
+    await expect(cash).not.toContainText("≈");
+    await expect(cash.locator("[title]")).toHaveCount(0);
+  });
+});
