@@ -955,3 +955,68 @@ def test_o3y_edit_delete_error_cases(client, api_key, db_session):
         _cleanup_o3y_audit(db_session, ids, [])
         _cleanup_ticker(db_session, ticker)
         _cleanup_platform(db_session, plat_id)
+
+
+# ---------------------------------------------------------------------------
+# Quick 261031-gff: audited delete of a deposit event
+# ---------------------------------------------------------------------------
+
+def test_gff_delete_deposit_event(client, api_key, db_session):
+    from backend.models import AuditLog, Holding, PortfolioEvent, Transaction
+
+    name = "zzgff-DepositSource"
+    plat_id = _make_platform(db_session, "zzgff-plat-deposit")
+    acc_id = _make_account(db_session, name)
+    hdr = {"MONAI_API_KEY": api_key}
+    ev_id = tx_id = None
+    try:
+        r = client.post(
+            "/transactions/investment-transfer",
+            json={"from_account": name, "platform_id": plat_id, "amount": 250000,
+                  "currency": "IDR", "date": "2024-03-11"},
+            headers=hdr,
+        )
+        assert r.status_code == 201, r.text
+        ev_id, tx_id = r.json()["portfolio_event_id"], r.json()["transaction_id"]
+
+        # simulate a manually set CASH quantity (a deposit never feeds recompute)
+        h = _o3y_holding(db_session, "CASH", plat_id)
+        assert h is not None
+        h.quantity = Decimal("250000")
+        db_session.commit()
+
+        # edit stays buy/sell/dividend only
+        assert client.put(f"/portfolio-events/{ev_id}", json={"quantity": 1}, headers=hdr).status_code == 422
+
+        r = client.delete(f"/portfolio-events/{ev_id}", headers=hdr)
+        assert r.status_code == 200, r.text
+        assert r.json()["deleted_transaction_id"] is None
+
+        db_session.expire_all()
+        assert db_session.get(PortfolioEvent, ev_id) is None
+        assert db_session.query(AuditLog).filter(
+            AuditLog.entity == "portfolio_event", AuditLog.entity_id == ev_id, AuditLog.operation == "delete"
+        ).count() == 1
+        assert db_session.get(Transaction, tx_id) is not None  # unlinked cash leg untouched
+        assert _o3y_holding(db_session, "CASH", plat_id).quantity == Decimal("250000")
+    finally:
+        db_session.rollback()
+        _cleanup_o3y_audit(db_session, [ev_id] if ev_id else [], [])
+        # CASH is a shared sentinel ticker — scope cleanup to this test's platform
+        eids = [e.id for e in db_session.query(PortfolioEvent).filter(
+            PortfolioEvent.platform_id == plat_id, PortfolioEvent.ticker == "CASH").all()]
+        if eids:
+            db_session.query(AuditLog).filter(
+                AuditLog.entity == "portfolio_event", AuditLog.entity_id.in_(eids)
+            ).delete(synchronize_session=False)
+            db_session.query(PortfolioEvent).filter(PortfolioEvent.id.in_(eids)).delete(synchronize_session=False)
+        hids = [h.id for h in db_session.query(Holding).filter(
+            Holding.platform_id == plat_id, Holding.ticker == "CASH").all()]
+        if hids:
+            db_session.query(AuditLog).filter(
+                AuditLog.entity == "holding", AuditLog.entity_id.in_(hids)
+            ).delete(synchronize_session=False)
+            db_session.query(Holding).filter(Holding.id.in_(hids)).delete(synchronize_session=False)
+        db_session.commit()
+        _cleanup_platform(db_session, plat_id)
+        _cleanup_account(db_session, name)
