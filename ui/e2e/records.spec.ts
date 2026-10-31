@@ -494,4 +494,59 @@ test.describe("Record modal currency (Phase 44)", () => {
     await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
     await expect(page.getByLabel("Currency", { exact: true })).toHaveText("USD");
   });
+
+  test("transfer lists same-currency accounts only", async ({ page }) => {
+    await mockRecords(page, transactionsFixture(), accountsWithUsd());
+    let posted: Record<string, unknown> | null = null;
+    await page.route("**/api/transactions/transfer", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.fallback();
+        return;
+      }
+      posted = route.request().postDataJSON();
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({ leg_a_id: 1, leg_b_id: 2, transfer_pair_id: 1 }),
+      });
+    });
+    await page.goto("/records");
+    await page.getByRole("button", { name: "+ Add record" }).click();
+    await page.getByRole("button", { name: "Transfer", exact: true }).click();
+
+    const from = page.getByLabel("From account", { exact: true });
+    const to = page.getByLabel("To account", { exact: true });
+    await from.selectOption({ label: "Cash" });
+    await expect(to.locator("option")).toHaveText(["Bank"]);
+    await expect(
+      page.getByText("Only IDR accounts are listed. Transfers between currencies aren't available yet.")
+    ).toBeVisible();
+
+    await from.selectOption({ label: "ZZ44 Wallet" });
+    await expect(to.locator("option")).toHaveText(["ZZ44 Spare"]);
+    await expect(to.locator("option:checked")).toHaveText("ZZ44 Spare");
+    await expect(page.getByLabel("Currency", { exact: true })).toHaveText("USD");
+
+    await page.getByLabel("Amount", { exact: true }).fill("25.5");
+    await page.getByRole("button", { name: "Add transfer", exact: true }).click();
+    await expect.poll(() => posted !== null).toBe(true);
+    const body = posted as unknown as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(["amount", "date", "from_account", "notes", "to_account"]);
+    expect(body.to_account).toBe("ZZ44 Spare");
+  });
+
+  test("transfer with no same-currency account", async ({ page }) => {
+    await mockRecords(page, transactionsFixture(), [
+      ...accountsFixture().slice(0, 1),
+      { id: 3, name: "ZZ44 Wallet", currency: "USD" },
+    ]);
+    await page.goto("/records");
+    await page.getByRole("button", { name: "+ Add record" }).click();
+    await page.getByRole("button", { name: "Transfer", exact: true }).click();
+    await page.getByLabel("From account", { exact: true }).selectOption({ label: "ZZ44 Wallet" });
+
+    await expect(page.getByText("No other USD account to transfer to.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Add transfer", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Save & add another" })).toBeDisabled();
+  });
 });

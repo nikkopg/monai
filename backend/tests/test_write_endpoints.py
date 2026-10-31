@@ -177,6 +177,96 @@ def test_post_transaction_usd_account_without_currency(client, api_key, db_sessi
         _cleanup_account(db_session, name)
 
 
+def test_transfer_usd_to_usd_without_currency(client, api_key, db_session):
+    """Phase 44 D-10: two USD accounts, no currency in the body -> 201, both
+    legs USD with their exact cents, one pair id, audit after.currency USD."""
+    import uuid
+    from backend.models import AuditLog, Transaction
+
+    sfx = uuid.uuid4().hex[:6]
+    name_a, name_b = f"ZZ44 xfer usd A-{sfx}", f"ZZ44 xfer usd B-{sfx}"
+    acc_a = _make_account(db_session, name_a, currency="USD")
+    acc_b = _make_account(db_session, name_b, currency="USD")
+    try:
+        resp = client.post(
+            "/transactions/transfer",
+            json={"from_account": name_a, "to_account": name_b, "amount": 25.5, "date": "1997-06-06"},
+            headers={"MONAI_API_KEY": api_key},
+        )
+        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
+
+        db_session.expire_all()
+        rows = db_session.query(Transaction).filter(Transaction.account_id.in_([acc_a, acc_b])).all()
+        assert len(rows) == 2
+        assert {r.currency for r in rows} == {"USD"}
+        assert {r.amount for r in rows} == {Decimal("-25.50"), Decimal("25.50")}
+        pair_ids = {r.transfer_pair_id for r in rows}
+        assert len(pair_ids) == 1 and None not in pair_ids
+        audits = db_session.query(AuditLog).filter(
+            AuditLog.entity == "transaction", AuditLog.entity_id.in_([r.id for r in rows]),
+            AuditLog.operation == "add",
+        ).all()
+        assert len(audits) == 2 and all(a.after["currency"] == "USD" for a in audits)
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name_a)
+        _cleanup_account(db_session, name_b)
+
+
+def test_transfer_cross_currency_refused_nothing_written(client, api_key, db_session):
+    """Phase 44 D-11: USD -> IDR is a 422 naming both codes, whether currency
+    is omitted or sent, and neither leg is written."""
+    import uuid
+    from backend.models import Transaction
+
+    sfx = uuid.uuid4().hex[:6]
+    name_a, name_b = f"ZZ44 xfer mix usd-{sfx}", f"ZZ44 xfer mix idr-{sfx}"
+    acc_a = _make_account(db_session, name_a, currency="USD")
+    acc_b = _make_account(db_session, name_b)
+    try:
+        for extra in ({}, {"currency": "USD"}):
+            resp = client.post(
+                "/transactions/transfer",
+                json={"from_account": name_a, "to_account": name_b, "amount": 25, "date": "1997-06-06", **extra},
+                headers={"MONAI_API_KEY": api_key},
+            )
+            assert resp.status_code == 422, f"{extra}: expected 422, got {resp.status_code}: {resp.text}"
+            detail = resp.json()["detail"]
+            assert "USD" in detail and "IDR" in detail
+        db_session.expire_all()
+        assert db_session.query(Transaction).filter(Transaction.account_id.in_([acc_a, acc_b])).count() == 0
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name_a)
+        _cleanup_account(db_session, name_b)
+
+
+def test_apply_add_transfer_cross_currency_refused(db_session):
+    """Phase 44 D-11: the primitive itself refuses (chat/MCP confirms reach it)
+    before either leg is flushed."""
+    import uuid
+    from backend.models import Transaction
+    from backend.writes import apply_add_transfer
+
+    sfx = uuid.uuid4().hex[:6]
+    name_a, name_b = f"ZZ44 prim usd-{sfx}", f"ZZ44 prim idr-{sfx}"
+    acc_a = _make_account(db_session, name_a, currency="USD")
+    acc_b = _make_account(db_session, name_b)
+    try:
+        with pytest.raises(ValueError, match="USD.*IDR"):
+            apply_add_transfer(
+                db_session,
+                {"account": name_a, "amount": "-25", "date": "1997-06-06"},
+                {"account": name_b, "amount": "25", "date": "1997-06-06"},
+            )
+        # Same session, autoflush on: nothing was added before the refusal.
+        assert db_session.query(Transaction).filter(Transaction.account_id.in_([acc_a, acc_b])).count() == 0
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name_a)
+        _cleanup_account(db_session, name_b)
+
+
 def test_post_investment_transfer(client, api_key, db_session):
     """POST /transactions/investment-transfer -> 201, cash leg + linked
     PortfolioEvent (ticker=='CASH', deposit sentinel, RESEARCH Q1) (XFER-02)."""
