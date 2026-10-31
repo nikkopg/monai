@@ -105,6 +105,14 @@ export default function TransactionModal({
   onSaved,
 }: Props) {
   const isEdit = editingTx != null;
+  // The account decides the currency (Phase 42); the modal only displays it
+  // and never sends one. Absent account currency means IDR.
+  const acctOf = (id: string) => accounts.find((a) => String(a.id) === id);
+  const ccyOf = (id: string) => acctOf(id)?.currency ?? "IDR";
+  // Transfers are same-currency only (D-11): To lists the From account's
+  // currency, never From itself.
+  const toOptionsFor = (fromId: string) =>
+    accounts.filter((a) => String(a.id) !== fromId && ccyOf(String(a.id)) === ccyOf(fromId));
   // Editing an existing transfer leg locks the segmented control to
   // "transfer" and keeps the row on the legacy single-leg PUT path — see the
   // segmented control and handleSubmit below (D-03 / RESEARCH Pitfall 1 /
@@ -149,9 +157,10 @@ export default function TransactionModal({
   const [fromAccountId, setFromAccountId] = useState<string>(
     accounts[0] ? String(accounts[0].id) : ""
   );
-  const [toAccountId, setToAccountId] = useState<string>(
-    accounts[1] ? String(accounts[1].id) : accounts[0] ? String(accounts[0].id) : ""
-  );
+  const [toAccountId, setToAccountId] = useState<string>(() => {
+    const first = toOptionsFor(accounts[0] ? String(accounts[0].id) : "")[0];
+    return first ? String(first.id) : "";
+  });
   const [notes, setNotes] = useState(editingTx?.notes ?? "");
 
   const [saving, setSaving] = useState(false);
@@ -205,10 +214,8 @@ export default function TransactionModal({
   // (D-03 / UI-SPEC Interaction States #7).
   const showFromTo = segment === "transfer" && !isEdit;
 
-  // The account decides the currency (Phase 42); the modal only displays it
-  // and never sends one. Absent account currency means IDR.
-  const acctOf = (id: string) => accounts.find((a) => String(a.id) === id);
-  const ccyOf = (id: string) => acctOf(id)?.currency ?? "IDR";
+  const toOptions = toOptionsFor(fromAccountId);
+  const noToAccount = showFromTo && toOptions.length === 0;
   const chipId = showFromTo ? fromAccountId : accountId;
   const chipCcy = isEdit
     ? editingTx!.currency ?? "IDR"
@@ -502,7 +509,14 @@ export default function TransactionModal({
                     id="tx-from-account"
                     style={input}
                     value={fromAccountId}
-                    onChange={(e) => setFromAccountId(e.target.value)}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setFromAccountId(next);
+                      const opts = toOptionsFor(next);
+                      if (!opts.some((a) => String(a.id) === toAccountId)) {
+                        setToAccountId(opts[0] ? String(opts[0].id) : "");
+                      }
+                    }}
                   >
                     {accounts.map((a) => (
                       <option key={a.id} value={a.id}>
@@ -515,18 +529,29 @@ export default function TransactionModal({
                   <label style={label} htmlFor="tx-to-account">
                     To account
                   </label>
-                  <select
-                    id="tx-to-account"
-                    style={input}
-                    value={toAccountId}
-                    onChange={(e) => setToAccountId(e.target.value)}
-                  >
-                    {accounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}
-                      </option>
-                    ))}
-                  </select>
+                  {noToAccount ? (
+                    <div style={{ fontSize: 12, color: tokens.color.terracottaText }}>
+                      No other {ccyOf(fromAccountId)} account to transfer to.
+                    </div>
+                  ) : (
+                    <select
+                      id="tx-to-account"
+                      style={input}
+                      value={toAccountId}
+                      onChange={(e) => setToAccountId(e.target.value)}
+                    >
+                      {toOptions.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {accounts.some((a) => ccyOf(String(a.id)) !== ccyOf(fromAccountId)) && (
+                    <div style={{ fontSize: 12, color: tokens.color.muted3, marginTop: 4 }}>
+                      Only {ccyOf(fromAccountId)} accounts are listed. Transfers between currencies aren&apos;t available yet.
+                    </div>
+                  )}
                 </div>
               </>
             ) : (
@@ -600,7 +625,7 @@ export default function TransactionModal({
             <button
               style={btn}
               type="submit"
-              disabled={saving}
+              disabled={saving || noToAccount}
               onClick={() => {
                 addAnotherRef.current = false;
               }}
@@ -617,7 +642,7 @@ export default function TransactionModal({
               <button
                 style={btn}
                 type="submit"
-                disabled={saving}
+                disabled={saving || noToAccount}
                 onClick={() => {
                   addAnotherRef.current = true;
                 }}

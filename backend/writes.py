@@ -300,7 +300,18 @@ def apply_add_transfer(db: Session, leg_a_after: dict, leg_b_after: dict) -> tup
     is set to leg A's own id (shared-group-id convention, D-03 — matches
     migration 011's `min(id)` scheme). Does NOT commit — caller owns the
     single transaction boundary (D-01).
+
+    Same-currency only until Phase 45 (MOVE-01): checked before either leg is
+    written, so a refusal leaves nothing behind.
     """
+    ccys = []
+    for leg in (leg_a_after, leg_b_after):
+        acc = db.query(Account).filter(Account.name == leg.get("account", "Unknown")).one_or_none()
+        ccys.append(acc.currency if acc is not None else "IDR")  # auto-created accounts are IDR
+    if ccys[0] != ccys[1]:
+        raise ValueError(
+            f"Transfers between {ccys[0]} and {ccys[1]} accounts need both amounts; not available yet"
+        )
     leg_a = apply_add_transaction(db, {**leg_a_after, "is_transfer": True})
     leg_b = apply_add_transaction(db, {**leg_b_after, "is_transfer": True})
     leg_a.transfer_pair_id = leg_a.id

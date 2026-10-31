@@ -263,7 +263,8 @@ class TransferCreate(BaseModel):
     from_account: str
     to_account: str
     amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude; sign is applied per leg")
-    currency: str = "IDR"
+    # Absent means the from-account's currency; a given value must match both accounts.
+    currency: str | None = None
     date: str | None = None
     notes: str | None = None
 
