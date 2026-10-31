@@ -11,7 +11,7 @@ import TransactionModal, {
 import ConfirmDialog from "../cashflow/ConfirmDialog";
 import RowMenu from "../components/RowMenu";
 import { formatDateRange } from "../chat/labels";
-import { fmtAmount, fmtAmountSigned, rateHover } from "../lib/money";
+import { fmtAmount, fmtAmountSigned, rateHover, sumIdr } from "../lib/money";
 
 // ---------------------------------------------------------------------------
 // Records ledger (REC-01/02/03/05) — date-grouped transaction history with a
@@ -558,7 +558,13 @@ function RecordsInner() {
             incoming.account_id
           )}`}
           meta={legA.date.slice(0, 10)}
-          amountText={fmtAmount(Math.abs(legA.amount), "IDR")}
+          amountText={fmtAmount(Math.abs(legA.amount), legA.currency)}
+          {...usdSecondary(
+            legA.currency,
+            legA.amount_idr == null ? null : Math.abs(legA.amount_idr),
+            legA.fx_rate,
+            legA.fx_rate_date
+          )}
           amountColor={tokens.color.ink}
           checked={selectedIds.has(legA.id) && selectedIds.has(legB.id)}
           onToggle={() => toggleSelection([legA.id, legB.id])}
@@ -931,9 +937,8 @@ function RecordsInner() {
           ) : (
             <>
               {groups.map((g, idx) => {
-                const net = g.rows
-                  .filter((r) => r.transfer_pair_id == null)
-                  .reduce((s, r) => s + r.amount, 0);
+                const dayRows = g.rows.filter((r) => r.transfer_pair_id == null);
+                const { total: net, unconverted } = sumIdr(dayRows);
                 return (
                   <section key={g.key}>
                     <div
@@ -953,7 +958,13 @@ function RecordsInner() {
                           color: net >= 0 ? tokens.color.green : tokens.color.terracotta,
                         }}
                       >
-                        Net {fmtAmountSigned(net, "IDR")}
+                        Net {unconverted > 0 && unconverted === dayRows.length ? "—" : fmtAmountSigned(net, "IDR")}
+                        {unconverted > 0 && (
+                          <span style={{ fontSize: 12, fontWeight: 400, color: tokens.color.terracottaText }}>
+                            {" · "}
+                            {unconverted} unconverted
+                          </span>
+                        )}
                       </span>
                     </div>
                     {collapseTransferPairs(g.rows).map((row) => ledgerRowFor(row))}

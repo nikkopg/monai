@@ -40,9 +40,19 @@ export function rateHover(
   return `1 USD = ${rateFmt.format(rate)} IDR · rate of ${fmtRowDate(isoDate)}`;
 }
 
+/**
+ * Sum rows in rupiah (D-17). Never adds a native non-IDR amount: a USD row counts
+ * only through its amount_idr, and with none it is tallied in `unconverted`.
+ */
 export function sumIdr(
   rows: { amount: number; currency?: string | null; amount_idr?: number | null }[]
 ): { total: number; unconverted: number } {
-  void rows;
-  return { total: 0, unconverted: -1 };
+  let total = 0;
+  let unconverted = 0;
+  for (const r of rows) {
+    if (!r.currency || r.currency === "IDR") total += r.amount_idr ?? r.amount;
+    else if (typeof r.amount_idr === "number" && Number.isFinite(r.amount_idr)) total += r.amount_idr;
+    else unconverted += 1;
+  }
+  return { total, unconverted };
 }
