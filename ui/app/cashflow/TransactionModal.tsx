@@ -51,9 +51,10 @@ export type Tx = {
   account_id: number | null;
   notes: string | null;
   is_transfer: boolean;
+  currency?: string | null; // absent means IDR
 };
 
-export type AccountOption = { id: number; name: string };
+export type AccountOption = { id: number; name: string; currency?: string | null };
 
 type Props = {
   editingTx: Tx | null;
@@ -125,7 +126,6 @@ export default function TransactionModal({
   const [amount, setAmount] = useState(
     editingTx ? String(Math.abs(editingTx.amount)) : ""
   );
-  const [currency, setCurrency] = useState("IDR"); // D-05, no FX/enum
   // Category is a select sourced from the GET /categories tree.
   // `categorySelection` holds the chosen <select> value: "" -> (no category),
   // otherwise the exact stored category name.
@@ -205,6 +205,17 @@ export default function TransactionModal({
   // (D-03 / UI-SPEC Interaction States #7).
   const showFromTo = segment === "transfer" && !isEdit;
 
+  // The account decides the currency (Phase 42); the modal only displays it
+  // and never sends one. Absent account currency means IDR.
+  const acctOf = (id: string) => accounts.find((a) => String(a.id) === id);
+  const ccyOf = (id: string) => acctOf(id)?.currency ?? "IDR";
+  const chipId = showFromTo ? fromAccountId : accountId;
+  const chipCcy = isEdit
+    ? editingTx!.currency ?? "IDR"
+    : acctOf(chipId)
+    ? ccyOf(chipId)
+    : "—";
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -226,7 +237,6 @@ export default function TransactionModal({
           from_account: fromAcc?.name ?? "",
           to_account: toAcc?.name ?? "",
           amount: Math.abs(parseFloat(amount)),
-          currency,
           date: new Date(date).toISOString(),
           notes: notes || null,
         };
@@ -277,7 +287,6 @@ export default function TransactionModal({
         category: categoryValue,
         merchant: merchant || null,
         notes: notes || null,
-        currency,
         // Explicit boolean — the old checkbox UI is removed (D-03). Only the
         // locked-transfer-leg edit sends true; everywhere else it's false.
         is_transfer: locked,
@@ -303,7 +312,7 @@ export default function TransactionModal({
       if (r.ok) {
         onSaved();
         if (!isEdit && addAnotherRef.current) {
-          // Sticky fields (D-06): segment, accountId, date, currency stay put.
+          // Sticky fields (D-06): segment, accountId, date stay put.
           setAmount("");
           setCategorySelection("");
           setMerchant("");
@@ -433,28 +442,35 @@ export default function TransactionModal({
               <label style={label} htmlFor="tx-amount">
                 Amount
               </label>
-              <input
-                id="tx-amount"
-                style={input}
-                type="number"
-                step="any"
-                required
-                value={amount}
-                placeholder="25000"
-                onChange={(e) => setAmount(e.target.value)}
-              />
-            </div>
-            <div>
-              <label style={label} htmlFor="tx-currency">
-                Currency
-              </label>
-              <input
-                id="tx-currency"
-                style={input}
-                type="text"
-                value={currency}
-                onChange={(e) => setCurrency(e.target.value)}
-              />
+              <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
+                <input
+                  id="tx-amount"
+                  style={{ ...input, flex: 1, minWidth: 0 }}
+                  type="number"
+                  step="any"
+                  required
+                  value={amount}
+                  placeholder="25000"
+                  onChange={(e) => setAmount(e.target.value)}
+                />
+                <span
+                  aria-label="Currency"
+                  style={{
+                    border: input.border,
+                    borderRadius: tokens.radius.sm,
+                    padding: "0 16px",
+                    display: "flex",
+                    alignItems: "center",
+                    background: tokens.color.sidebar,
+                    fontSize: 14,
+                    fontWeight: 600,
+                    color: tokens.color.muted3,
+                    flexShrink: 0,
+                  }}
+                >
+                  {chipCcy}
+                </span>
+              </div>
             </div>
             {categoryVisible && (
               <div>
