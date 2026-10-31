@@ -8,7 +8,7 @@ const money = (n: number) => new Intl.NumberFormat("en-US").format(Math.round(n)
 const signed = (n: number) =>
   new Intl.NumberFormat("en-US", { signDisplay: "always" }).format(Math.round(n));
 
-const edge = [-1234567.5, -2.5, -0.4, 0, 0.5, 2.5, 1234567.5, 999999999.49];
+const edge = [-1234567.5, -2.5, -0.4, 0, 0.5, 2.5, 1234567.5, 999999999.49]; // pii-ok synthetic edge values
 
 test.describe("money formatter", () => {
   test("IDR is byte-identical", () => {
