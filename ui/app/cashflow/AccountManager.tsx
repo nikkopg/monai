@@ -35,6 +35,8 @@ export type Account = {
   currency?: string | null; // absent means IDR
 };
 
+const ccy = (a: Account) => a.currency ?? "IDR";
+
 type Props = {
   accounts: Account[];
   onChanged: () => void;
@@ -46,6 +48,9 @@ type DeleteFlowState =
   | { stage: "reassign"; account: Account; affectedCount: number; targetId: string };
 
 export default function AccountManager({ accounts, onChanged }: Props) {
+  // D-06: records can only move into an account of the same currency.
+  const reassignCandidates = (account: Account) =>
+    accounts.filter((a) => a.id !== account.id && ccy(a) === ccy(account));
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
   const [adding, setAdding] = useState(false);
@@ -118,12 +123,12 @@ export default function AccountManager({ accounts, onChanged }: Props) {
       if (r.status === 422) {
         const errBody = await r.json().catch(() => ({}));
         const affectedCount = errBody?.detail?.affected_count ?? 0;
-        const otherAccounts = accounts.filter((a) => a.id !== account.id);
+        const candidates = reassignCandidates(account);
         setDeleteFlow({
           stage: "reassign",
           account,
           affectedCount,
-          targetId: otherAccounts[0] ? String(otherAccounts[0].id) : "",
+          targetId: candidates[0] ? String(candidates[0].id) : "",
         });
         return;
       }
@@ -143,6 +148,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
   async function confirmReassignDelete() {
     if (deleteFlow.stage !== "reassign") return;
     const { account, targetId } = deleteFlow;
+    if (targetId === "") return;
     setError(null);
     try {
       const r = await fetch(
@@ -305,7 +311,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
       {deleteFlow.stage === "confirm" && (
         <ConfirmDialog
           message="Delete this account? This can't be undone."
-          confirmLabel="Delete"
+          confirmLabel="Delete account"
           onCancel={() => setDeleteFlow({ stage: "idle" })}
           onConfirm={() => confirmDelete(deleteFlow.account)}
         />
@@ -317,22 +323,28 @@ export default function AccountManager({ accounts, onChanged }: Props) {
           confirmLabel="Reassign & delete"
           onCancel={() => setDeleteFlow({ stage: "idle" })}
           onConfirm={confirmReassignDelete}
+          confirmDisabled={deleteFlow.targetId === ""}
         >
-          <select
-            style={input}
-            value={deleteFlow.targetId}
-            onChange={(e) =>
-              setDeleteFlow({ ...deleteFlow, targetId: e.target.value })
-            }
-          >
-            {accounts
-              .filter((a) => a.id !== deleteFlow.account.id)
-              .map((a) => (
+          {deleteFlow.targetId === "" ? (
+            <p style={{ fontSize: 12, margin: 0, color: tokens.color.terracottaText }}>
+              No other {ccy(deleteFlow.account)} account to move these records to.
+            </p>
+          ) : (
+            <select
+              style={input}
+              aria-label="Destination account"
+              value={deleteFlow.targetId}
+              onChange={(e) =>
+                setDeleteFlow({ ...deleteFlow, targetId: e.target.value })
+              }
+            >
+              {reassignCandidates(deleteFlow.account).map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name}
                 </option>
               ))}
-          </select>
+            </select>
+          )}
         </ConfirmDialog>
       )}
 

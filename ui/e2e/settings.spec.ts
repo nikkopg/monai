@@ -203,7 +203,7 @@ test.describe("AccountManager currency (Phase 44)", () => {
     // USD account, no other USD account: no select, disabled confirm, Cancel closes.
     await startDelete("ZZ44 Wallet");
     await expect(page.getByText("No other USD account to move these records to.")).toBeVisible();
-    await expect(page.getByLabel("Destination account")).toHaveCount(0);
+    await expect(page.getByLabel("Destination account", { exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Reassign & delete", exact: true })).toBeDisabled();
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(page.getByRole("button", { name: "Reassign & delete", exact: true })).toHaveCount(0);
@@ -211,7 +211,7 @@ test.describe("AccountManager currency (Phase 44)", () => {
 
     // IDR account: only IDR accounts (a missing currency counts as IDR), never itself.
     await startDelete("ZZ44 Cash");
-    const dest = page.getByLabel("Destination account");
+    const dest = page.getByLabel("Destination account", { exact: true });
     expect(await dest.locator("option").allTextContents()).toEqual(["ZZ44 Bank", "ZZ44 Card"]);
     const confirm = page.getByRole("button", { name: "Reassign & delete", exact: true });
     await expect(confirm).toBeEnabled();

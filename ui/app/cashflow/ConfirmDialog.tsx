@@ -15,7 +15,8 @@ import { card, dangerBtn } from "../styles";
 // The optional `children` slot lets AccountManager inject a destination
 // `<select>` when the delete attempt comes back 422 (reassign-then-delete,
 // D-06) — the dialog's message + confirm button stay the same shape, only
-// the body content between message and buttons changes.
+// the body content between message and buttons changes. `confirmDisabled`
+// (default false) greys out the confirm button when there is nothing to confirm.
 // ---------------------------------------------------------------------------
 
 type Props = {
@@ -25,6 +26,7 @@ type Props = {
   onConfirm: () => void;
   onCancel: () => void;
   children?: ReactNode;
+  confirmDisabled?: boolean;
 };
 
 export default function ConfirmDialog({
@@ -34,6 +36,7 @@ export default function ConfirmDialog({
   onConfirm,
   onCancel,
   children,
+  confirmDisabled = false,
 }: Props) {
   const msgId = useId();
   const cancelRef = useRef<HTMLButtonElement>(null);
@@ -120,7 +123,12 @@ export default function ConfirmDialog({
           >
             {cancelLabel}
           </button>
-          <button type="button" style={dangerBtn} onClick={onConfirm}>
+          <button
+            type="button"
+            style={confirmDisabled ? { ...dangerBtn, opacity: 0.5, cursor: "not-allowed" } : dangerBtn}
+            disabled={confirmDisabled}
+            onClick={onConfirm}
+          >
             {confirmLabel}
           </button>
         </div>
