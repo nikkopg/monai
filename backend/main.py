@@ -891,6 +891,8 @@ def list_transactions(
     rows regardless of the requested `limit` (Pitfall 4) — the Records page
     pages via `offset`. Open read (no require_api_key), matching the
     unmodified endpoint's existing convention.
+    Each row also carries `amount_idr`, `fx_rate` and `fx_rate_date` from the
+    transactions_idr view (null when no rate within 7 days; D-16).
     """
     query = db.query(Transaction)
     if q:
@@ -944,12 +946,34 @@ def list_transactions(
         # to an exclusive upper bound so a same-day timestamp isn't dropped
         # (mirrors resolve_period's [start, end) convention).
         query = query.filter(Transaction.date < end)
-    return (
+    rows = (
         query.order_by(desc(Transaction.date))
         .offset(offset)
         .limit(min(limit, 500))
         .all()
     )
+    # D-16: enrich the page with amount_idr / fx_rate / fx_rate_date.
+    from backend import fx
+
+    usd_days = [r.date.date() for r in rows if r.currency != fx.BASE]
+    if usd_days:
+        try:
+            fx.ensure_flow_rates(db, min(usd_days), max(usd_days))
+        except fx.FxUnavailable:
+            pass  # the view then yields NULL and the row shows "no rate yet", never a guessed rate
+    idr = {
+        m["id"]: m
+        for m in db.execute(
+            text("SELECT id, amount_idr, fx_rate, fx_rate_date FROM transactions_idr WHERE id = ANY(:ids)"),
+            {"ids": [r.id for r in rows]},
+        ).mappings()
+    } if rows else {}
+    return [
+        TransactionOut.model_validate(r).model_copy(update={
+            k: idr[r.id][k] if r.id in idr else None for k in ("amount_idr", "fx_rate", "fx_rate_date")
+        })
+        for r in rows
+    ]
 
 
 def _category_rollup(db: Session, rows: list, children: dict) -> list[dict]:

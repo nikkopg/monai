@@ -48,6 +48,10 @@ class TransactionOut(BaseModel):
     account_id: int | None
     is_transfer: bool
     transfer_pair_id: int | None = None  # D-02/REC-05 — collapse-pair key for the ledger
+    # D-16: filled by GET /transactions from transactions_idr; null on POST/PUT responses.
+    amount_idr: MoneyDecimal | None = None
+    fx_rate: MoneyDecimal | None = None
+    fx_rate_date: _date | None = None
 
 
 class AccountOut(BaseModel):

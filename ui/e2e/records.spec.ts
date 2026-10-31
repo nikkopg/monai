@@ -581,8 +581,8 @@ test.describe("Records USD rows (Phase 44 D-13, D-14)", () => {
 
     const noRate = page.getByText("no rate yet", { exact: true });
     await expect(noRate).toHaveCount(1);
-    await expect(noRate.locator("xpath=..")).toContainText("-5.00 USD");
-    await expect(noRate.locator("xpath=..")).not.toHaveAttribute("title", /.*/);
+    await expect(noRate.locator("xpath=../..")).toContainText("-5.00 USD");
+    await expect(noRate.locator("xpath=../..")).not.toHaveAttribute("title", /.*/);
 
     // The IDR row is untouched: signed amount only, no secondary line, no title.
     const idr = page.getByText(signed(-25000), { exact: true });

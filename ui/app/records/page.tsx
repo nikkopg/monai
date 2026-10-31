@@ -11,6 +11,7 @@ import TransactionModal, {
 import ConfirmDialog from "../cashflow/ConfirmDialog";
 import RowMenu from "../components/RowMenu";
 import { formatDateRange } from "../chat/labels";
+import { fmtAmount, fmtAmountSigned, rateHover } from "../lib/money";
 
 // ---------------------------------------------------------------------------
 // Records ledger (REC-01/02/03/05) — date-grouped transaction history with a
@@ -21,7 +22,12 @@ import { formatDateRange } from "../chat/labels";
 // + bulk endpoints. Turns ui/e2e/records.spec.ts (17-02) GREEN.
 // ---------------------------------------------------------------------------
 
-type Tx = ModalTx & { transfer_pair_id: number | null };
+type Tx = ModalTx & {
+  transfer_pair_id: number | null;
+  amount_idr?: number | null;
+  fx_rate?: number | null;
+  fx_rate_date?: string | null;
+};
 
 // Categories are a 3-level hierarchy (GET /categories). Mirrors
 // TransactionModal.tsx's local flattenCategories helper verbatim — not
@@ -99,13 +105,22 @@ function dayLabel(iso: string): string {
   });
 }
 
-// Same money/signed convention as cashflow/page.tsx — plain grouped digits
-// (single-currency IDR, no symbol invented), `signed` adds an explicit +/-.
-const money = (n: number) => new Intl.NumberFormat("en-US").format(Math.round(n));
-const signed = (n: number) =>
-  new Intl.NumberFormat("en-US", { signDisplay: "always" }).format(
-    Math.round(n)
-  );
+// A USD row's "≈ IDR" line and rate hover (D-13, D-14). IDR / no currency: nothing.
+// A missing IDR value reads "no rate yet" with no title, never a number.
+function usdSecondary(
+  currency: string | null | undefined,
+  amountIdr: number | null | undefined,
+  rate: number | null | undefined,
+  rateDate: string | null | undefined
+): { amountSecondary?: React.ReactNode; amountTitle?: string } {
+  if (currency !== "USD") return {};
+  if (amountIdr == null) {
+    return {
+      amountSecondary: <span style={{ color: tokens.color.terracottaText }}>no rate yet</span>,
+    };
+  }
+  return { amountSecondary: `≈ ${fmtAmount(amountIdr, "IDR")}`, amountTitle: rateHover(rate, rateDate) };
+}
 
 // ---------------------------------------------------------------------------
 // Ledger row shell (Component 4/5) — copied verbatim from cashflow/page.tsx's
@@ -121,6 +136,8 @@ function LedgerRowShell({
   primary,
   meta,
   amountText,
+  amountSecondary,
+  amountTitle,
   amountColor,
   checked,
   onToggle,
@@ -133,6 +150,8 @@ function LedgerRowShell({
   primary: React.ReactNode;
   meta: React.ReactNode;
   amountText: string;
+  amountSecondary?: React.ReactNode;
+  amountTitle?: string;
   amountColor: string;
   checked: boolean;
   onToggle: () => void;
@@ -191,6 +210,7 @@ function LedgerRowShell({
         </span>
       </span>
       <div
+        title={amountTitle}
         style={{
           fontSize: 14,
           fontWeight: 600,
@@ -200,6 +220,20 @@ function LedgerRowShell({
         }}
       >
         {amountText}
+        {amountSecondary != null && (
+          <span
+            style={{
+              display: "block",
+              textAlign: "right",
+              marginTop: 4,
+              fontSize: 12,
+              fontWeight: 400,
+              color: tokens.color.muted3,
+            }}
+          >
+            {amountSecondary}
+          </span>
+        )}
       </div>
       <RowMenu
         label={`Record options: ${name}`}
@@ -494,7 +528,8 @@ function RecordsInner() {
           glyph={(tx.category || tx.merchant || "?").slice(0, 1).toUpperCase()}
           primary={tx.merchant || tx.category || "Transaction"}
           meta={`${(tx.category || "Uncategorized") + (tx.is_transfer ? " · transfer" : "")} · ${tx.date.slice(0, 10)}`}
-          amountText={signed(tx.amount)}
+          amountText={fmtAmountSigned(tx.amount, tx.currency)}
+          {...usdSecondary(tx.currency, tx.amount_idr, tx.fx_rate, tx.fx_rate_date)}
           amountColor={tx.amount < 0 ? tokens.color.terracotta : tokens.color.green}
           checked={selectedIds.has(tx.id)}
           onToggle={() => toggleSelection([tx.id])}
@@ -523,7 +558,7 @@ function RecordsInner() {
             incoming.account_id
           )}`}
           meta={legA.date.slice(0, 10)}
-          amountText={money(Math.abs(legA.amount))}
+          amountText={fmtAmount(Math.abs(legA.amount), "IDR")}
           amountColor={tokens.color.ink}
           checked={selectedIds.has(legA.id) && selectedIds.has(legB.id)}
           onToggle={() => toggleSelection([legA.id, legB.id])}
@@ -561,7 +596,8 @@ function RecordsInner() {
           </>
         }
         meta={`${legA.category || "Uncategorized"} · ${legA.date.slice(0, 10)}`}
-        amountText={signed(legA.amount)}
+        amountText={fmtAmountSigned(legA.amount, legA.currency)}
+        {...usdSecondary(legA.currency, legA.amount_idr, legA.fx_rate, legA.fx_rate_date)}
         amountColor={legA.amount < 0 ? tokens.color.terracotta : tokens.color.green}
         checked={selectedIds.has(legA.id)}
         onToggle={() => toggleSelection([legA.id])}
@@ -917,7 +953,7 @@ function RecordsInner() {
                           color: net >= 0 ? tokens.color.green : tokens.color.terracotta,
                         }}
                       >
-                        Net {signed(net)}
+                        Net {fmtAmountSigned(net, "IDR")}
                       </span>
                     </div>
                     {collapseTransferPairs(g.rows).map((row) => ledgerRowFor(row))}
