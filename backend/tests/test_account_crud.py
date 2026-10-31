@@ -527,3 +527,42 @@ def test_adjust_usd_account_native_delta(client, api_key, db_session):
         assert adj.amount == Decimal("62.34")
     finally:
         _cleanup(db_session, account_ids=[acc_id], tx_ids=[tx_id])
+
+
+# Phase 44 review fixes (WR-02, WR-03)
+# ---------------------------------------------------------------------------
+
+def test_put_blank_currency_leaves_currency_unchanged(client, api_key, db_session):
+    from backend.models import Account
+
+    acc_id = _make_account(db_session, _unique_name("ZZ44 blankccy"), "USD")
+    try:
+        resp = client.put(f"/accounts/{acc_id}", json={"currency": "  "}, headers={"MONAI_API_KEY": api_key})
+        assert resp.status_code == 200, resp.text
+        db_session.expire_all()
+        assert db_session.get(Account, acc_id).currency == "USD"
+    finally:
+        _cleanup(db_session, account_ids=[acc_id])
+
+
+def test_adjust_usd_delta_is_quantized_to_cents_in_row_and_audit(client, api_key, db_session):
+    from decimal import Decimal
+
+    from backend.models import AuditLog, Transaction
+
+    acc_id = _make_account(db_session, _unique_name("ZZ44 adjq"), "USD")
+    tx_id = _make_transaction(db_session, acc_id, currency="USD", amount=Decimal("-50.00"))
+    try:
+        resp = client.post(
+            f"/accounts/{acc_id}/adjust-balance",
+            json={"target_balance": 12.345},
+            headers={"MONAI_API_KEY": api_key},
+        )
+        assert resp.status_code == 201, resp.text
+        db_session.expire_all()
+        adj = db_session.query(Transaction).filter_by(account_id=acc_id, category="Adjustment").one()
+        assert adj.amount == Decimal("62.35")
+        audit = db_session.query(AuditLog).filter_by(entity="transaction", entity_id=adj.id, operation="add").one()
+        assert audit.after["amount"] == "62.35"
+    finally:
+        _cleanup(db_session, account_ids=[acc_id], tx_ids=[tx_id])
