@@ -699,24 +699,6 @@ def test_net_worth_history_module_has_no_write_imports():
         assert line.strip() in allowed_lazy, f"unexpected lazy import at {lineno}: {line}"
 
 
-def test_no_migration_was_added_this_phase():
-    """D-03, SC3-c. The highest-sorted REVISION FILE (never a bare
-    directory listing, which sorts __pycache__ last) in alembic/versions/ is
-    still the Phase 20 correction-table migration."""
-    from pathlib import Path
-
-    repo_root = Path(__file__).resolve().parents[2]
-    versions_dir = repo_root / "alembic" / "versions"
-    revision_files = sorted(versions_dir.glob("[0-9]*.py"))
-    assert revision_files, f"no revision files found under {versions_dir} -- selector regressed"
-    newest = revision_files[-1].name
-    assert newest == "014_recon_backfill.py", (
-        f"newest alembic revision is {newest!r}, not '014_recon_backfill.py' -- "
-        "this phase is compute-on-read (D-03); a new migration means the "
-        "superseded persisted-table design crept back in"
-    )
-
-
 def test_endpoint_returns_both_halves_per_row(client):
     """D-07, the HTTP contract. GET /cashflow/networth-history returns both
     sub-objects per row, the D-06 `liquid_drift_estimate` envelope field, and

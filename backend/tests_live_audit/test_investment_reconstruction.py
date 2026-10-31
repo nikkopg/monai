@@ -228,7 +228,7 @@ def test_unknown_event_type_gaps_the_position_instead_of_raising(db_session):
 
 def test_synthetic_opening_event_position_is_not_honest(db_session):
     """D-02. Provenance is read from the audit_log source marker, never a
-    date heuristic: ETH@64's only event (id 3266) is migration-012 synthetic
+    date heuristic: PYTH@64's only event (id 3267) is migration-012 synthetic
     and must gap; BTC@64's only event (id 215), dated the same day, is
     organic and must resolve to a real value. A date heuristic would fail
     this exact pair."""
@@ -241,15 +241,15 @@ def test_synthetic_opening_event_position_is_not_honest(db_session):
     bucket = result[-1]
     assert bucket["end_excl"] - timedelta(days=1) >= date(2026, 7, 11)
 
-    eth = bucket["replay_by_position"]["ETH@64"]
+    pyth = bucket["replay_by_position"]["PYTH@64"]
     btc = bucket["replay_by_position"]["BTC@64"]
-    assert eth["value"] is None
-    assert eth["gap_reason"] == "synthetic_opening_only"
+    assert pyth["value"] is None
+    assert pyth["gap_reason"] == "synthetic_opening_only"
     assert btc["value"] is not None
 
 
 def test_organic_dividend_does_not_clear_synthetic_only_gap(db_session):
-    """CR-01. ETH@64's only price-bearing event is migration-012 synthetic.
+    """CR-01. PYTH@64's only price-bearing event is migration-012 synthetic.
     Adding an ORGANIC dividend (no organic buy/sell) must not launder that
     fabricated price into a resolved value -- a dividend is income per unit,
     never an instrument mark, so it may not clear the D-02 gap."""
@@ -257,17 +257,17 @@ def test_organic_dividend_does_not_clear_synthetic_only_gap(db_session):
 
     try:
         _make_event(
-            db_session, ticker="ETH", platform_id=64, on_date=date(2026, 8, 1),
+            db_session, ticker="PYTH", platform_id=64, on_date=date(2026, 8, 1),
             event_type="dividend", quantity=Decimal("0"), price=Decimal("5.00"),
             currency="IDR",
         )
 
         result = recon.reconstructed_investment_by_month(months=3, db=db_session)
-        eth = result[-1]["replay_by_position"]["ETH@64"]
+        pyth = result[-1]["replay_by_position"]["PYTH@64"]
 
-        assert eth["value"] is None
-        assert eth["gap_reason"] == "synthetic_opening_only"
-        assert eth["basis_is_synthetic_only"] is True
+        assert pyth["value"] is None
+        assert pyth["gap_reason"] == "synthetic_opening_only"
+        assert pyth["basis_is_synthetic_only"] is True
     finally:
         db_session.rollback()
 
@@ -286,10 +286,12 @@ def test_cash_sentinel_appears_without_a_holdings_row(db_session):
     cash = bucket["replay_by_position"]["CASH@67"]
     assert cash["quantity"] == Decimal("500000.00000000")
 
+    # Scoped to platform 67: other platforms may legitimately hold a CASH row
+    # (e.g. on platform 64); only a CASH@67 row would mask the regression.
     zero_holdings = db_session.execute(
-        text("SELECT count(*) FROM holdings WHERE ticker = 'CASH'")
+        text("SELECT count(*) FROM holdings WHERE ticker = 'CASH' AND platform_id = 67")
     ).scalar()
-    assert zero_holdings == 0, "a holdings row for CASH would mask a join-based regression"
+    assert zero_holdings == 0, "a holdings row for CASH@67 would mask a join-based regression"
 
 
 def _func_line_range(source: str, func_name: str) -> tuple[int, int]:
