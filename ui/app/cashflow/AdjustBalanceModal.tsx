@@ -3,13 +3,14 @@
 import { useState } from "react";
 
 import { card, input, btn, label, tokens } from "../styles";
-import { extractDetail, fmtPlain } from "../lib/api";
+import { extractDetail } from "../lib/api";
+import { fmtAmount } from "../lib/money";
 import type { Account } from "./AccountManager";
 
 // ---------------------------------------------------------------------------
 // AdjustBalanceModal — ACCT-02 balance-adjustment entry point (D-01/D-02/D-07).
 // Single "Target balance" input with a live, presentation-only signed-delta
-// preview (target - account.current_balance). Submits exactly
+// preview (target - the account's native balance). Submits exactly
 // { target_balance } to POST /api/accounts/{id}/adjust-balance — the
 // authoritative delta is recomputed server-side from a fresh unfiltered SUM
 // (apply_add_balance_adjustment). Mirrors HoldingModal's overlay shell +
@@ -23,9 +24,12 @@ type Props = {
 };
 
 export default function AdjustBalanceModal({ account, onClose, onChanged }: Props) {
-  // Pre-filled with the current balance so the initial state is delta===0
-  // (submit disabled, "No change" copy) until the user actually edits it.
-  const [target, setTarget] = useState(String(account.current_balance));
+  // Works in the account's own currency (D-08): native_balance, falling back to
+  // current_balance for payloads that predate it. Pre-filled so the initial
+  // state is delta===0 (submit disabled, "No change" copy) until edited.
+  const isUsd = (account.currency ?? "IDR") === "USD";
+  const base = account.native_balance ?? account.current_balance ?? 0;
+  const [target, setTarget] = useState(String(base));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -33,8 +37,10 @@ export default function AdjustBalanceModal({ account, onClose, onChanged }: Prop
   // full balance wipe with submit enabled (an empty target is NaN → invalid,
   // not "0"), and the same parsed value feeds both preview and payload.
   const parsed = target.trim() === "" ? NaN : parseFloat(target);
-  const delta = Number.isNaN(parsed) ? 0 : parsed - account.current_balance;
-  const canSubmit = !saving && !Number.isNaN(parsed) && delta !== 0;
+  const delta = Number.isNaN(parsed) ? 0 : parsed - base;
+  // USD decides zero on the cent, so float noise never shows "+0.00 USD".
+  const shown = isUsd ? Math.round(delta * 100) / 100 : delta;
+  const canSubmit = !saving && !Number.isNaN(parsed) && shown !== 0;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -92,7 +98,7 @@ export default function AdjustBalanceModal({ account, onClose, onChanged }: Prop
         </h2>
         <form onSubmit={handleSubmit}>
           <div>
-            <label style={label}>Target balance</label>
+            <label style={label}>Target balance{isUsd ? " (USD)" : ""}</label>
             <input
               style={input}
               type="number"
@@ -108,18 +114,19 @@ export default function AdjustBalanceModal({ account, onClose, onChanged }: Prop
               fontSize: 13,
               marginTop: 10,
               color:
-                delta > 0
+                shown > 0
                   ? tokens.color.green
-                  : delta < 0
+                  : shown < 0
                   ? tokens.color.terracotta
                   : tokens.color.muted,
             }}
           >
-            {delta === 0
+            {shown === 0
               ? "No change — target equals current balance."
-              : delta > 0
-              ? `Adjustment: +Rp ${fmtPlain(delta)}`
-              : `Adjustment: −Rp ${fmtPlain(Math.abs(delta))}`}
+              : `Adjustment: ${shown > 0 ? "+" : "−"}${isUsd ? "" : "Rp "}${fmtAmount(
+                  Math.abs(shown),
+                  isUsd ? "USD" : "IDR"
+                )}`}
           </p>
 
           <div

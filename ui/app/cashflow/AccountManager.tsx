@@ -20,8 +20,9 @@ import AdjustBalanceModal from "./AdjustBalanceModal";
 // ---------------------------------------------------------------------------
 
 // current_balance is required — the parent (cashflow/page.tsx) always passes
-// the richer per-account balance rows from GET /cashflow/summary, which the
-// AdjustBalanceModal delta preview needs (period_net is simply ignored here).
+// the richer per-account balance rows from GET /cashflow/summary (period_net is
+// simply ignored here). It is the IDR value, null for a USD account with no
+// rate; the AdjustBalanceModal works against native_balance instead (D-08).
 // `type` (WR-04) distinguishes liquid vs investment accounts. GET
 // /cashflow/summary returns account_balances() unfiltered, so investment-type
 // rows arrive here too — an Adjustment written against them never reaches
@@ -30,9 +31,13 @@ import AdjustBalanceModal from "./AdjustBalanceModal";
 export type Account = {
   id: number;
   name: string;
-  current_balance: number;
+  current_balance: number | null;
   type: string;
   currency?: string | null; // absent means IDR
+  native_balance?: number;
+  fx_rate?: number | null;
+  fx_as_of?: string | null;
+  fx_stale?: boolean;
 };
 
 const ccy = (a: Account) => a.currency ?? "IDR";
