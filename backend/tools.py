@@ -516,8 +516,9 @@ def largest_transactions(period="all_time", start_date=None, end_date=None, limi
                 row.update(amount_native=float(r[5]), fx_rate=float(r[6]),
                            fx_rate_date=r[7].isoformat())
             rows.append(row)
-    return {"tool": "largest_transactions", "rows": rows, "kind": kind,
-            "currency": fx.BASE, "period": _period_label(period, s, e)}
+    return _noted({"tool": "largest_transactions", "rows": rows, "kind": kind,
+                   "currency": fx.BASE, "period": _period_label(period, s, e)},
+                  sum(1 for x in rows if x["currency"] != fx.BASE))
 
 
 def average_daily_spending(period="this_month", start_date=None, end_date=None) -> dict:
@@ -798,8 +799,10 @@ def find_transactions(
              "amount_idr": None if r[7] is None else float(r[7])}
             for r in c.execute(text(sql), p).fetchall()
         ]
-    return {"tool": "find_transactions", "rows": rows, "kind": kind,
-            "currency": fx.BASE, "period": _period_label(period, s, e)}
+    usd = [x for x in rows if x["currency"] != fx.BASE]
+    return _noted({"tool": "find_transactions", "rows": rows, "kind": kind,
+                   "currency": fx.BASE, "period": _period_label(period, s, e)},
+                  len(usd), sum(1 for x in usd if x["amount_idr"] is None))
 
 
 def find_platforms(name: str | None = None, limit: int = 10) -> dict:
@@ -1069,6 +1072,7 @@ def _build_group(key_type: str, grp: list, today: datetime.date,
         label = (f"{cat} \u00b7 ~{typical:,.0f}" if currency == "IDR"
                  else f"{cat} \u00b7 ~{typical:,.2f} {currency}")
     g = {
+        "_usd_rows": len(grp) if currency != fx.BASE else 0,  # popped by recurring_charges (D-15)
         "label": label, "key_type": key_type, "category": newest[7],
         "cadence": name, "median_interval_days": float(mi),
         "currency": currency,
@@ -1161,10 +1165,13 @@ def recurring_charges(months: int = 24, limit: int = 20) -> dict:
             f"{gaps} USD transaction(s) in the lookback window have no USD->IDR rate yet, "
             "so recurring charges cannot be stated in IDR.")}
     groups = _recurring_groups(rows, today)
-    return {"tool": "recurring_charges", "currency": fx.BASE, "months": m,
-            "total_detected": len(groups),
-            "groups": groups[:lim],
-            "note": "Likely recurring, detected from past transactions; not confirmed subscriptions."}
+    reported = groups[:lim]
+    n_usd = sum(g.pop("_usd_rows") for g in reported)  # USD rows behind the groups actually reported
+    return _noted({"tool": "recurring_charges", "currency": fx.BASE, "months": m,
+                   "total_detected": len(groups),
+                   "groups": reported,
+                   "note": "Likely recurring, detected from past transactions; not confirmed subscriptions."},
+                  n_usd)
 
 
 # Registry: name -> callable (read tools)
