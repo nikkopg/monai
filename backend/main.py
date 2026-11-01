@@ -1297,8 +1297,10 @@ def create_investment_transfer(payload: InvestmentTransferCreate, db: Session = 
 
     Cash leg debits the liquid source account; the investment side is a
     'deposit' PortfolioEvent using the documented CASH sentinel (ticker=CASH,
-    asset_type=cash, price=1, quantity=amount — matches the existing
-    asset_type=='cash' 1:1 valuation convention).
+    asset_type=cash, price=1, quantity=event_amount when given, else amount —
+    matches the existing asset_type=='cash' 1:1 valuation convention). The event
+    currency is the explicit event_currency, else the existing CASH holding's,
+    else the source account's; a differing currency needs event_amount.
     """
     cash_leg = {
         "account": payload.from_account, "amount": str(-abs(payload.amount)),
@@ -1306,11 +1308,14 @@ def create_investment_transfer(payload: InvestmentTransferCreate, db: Session = 
     }
     event = {
         "ticker": "CASH", "event_type": "deposit", "quantity": str(abs(payload.amount)),
-        "price": "1", "platform_id": payload.platform_id, "currency": payload.currency,
+        "price": "1", "platform_id": payload.platform_id, "currency": payload.event_currency,
         "date": payload.date, "asset_type": "cash",
     }
     try:
-        tx, ev = apply_add_investment_transfer(db, cash_leg, event)
+        tx, ev = apply_add_investment_transfer(
+            db, cash_leg, event,
+            event_amount=None if payload.event_amount is None else str(payload.event_amount),
+        )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     db.commit()
@@ -1853,7 +1858,7 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
                     apply_add_transfer(db, after["leg_a"], after["leg_b"], to_amount=after.get("to_amount"))
 
                 elif operation == "add_investment_transfer":
-                    apply_add_investment_transfer(db, after["cash_leg"], after["event"])
+                    apply_add_investment_transfer(db, after["cash_leg"], after["event"], event_amount=after.get("event_amount"))
 
                 elif operation == "add_funded_buy":
                     apply_add_funded_buy(db, after)

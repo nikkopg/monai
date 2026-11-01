@@ -348,21 +348,18 @@ def apply_add_transfer(
     return leg_a, leg_b
 
 
-# ponytail: blanket non-IDR refusal; Phase 45 (MOVE-02/03) takes the cash currency from the account and lifts this
-def _refuse_non_idr_funding(db: Session, account_name: str) -> None:
-    """Refuse moving money between a non-IDR liquid account and an investment platform."""
-    acc = db.query(Account).filter(Account.name == account_name).one_or_none()
-    if acc is not None and acc.currency != "IDR":
-        raise ValueError(
-            f"Account '{account_name}' is in {acc.currency}; "
-            "moving money between it and an investment platform isn't available yet"
-        )
+def currency_of_holding(db: Session, ticker: str, platform_id: int) -> str | None:
+    """Currency of the existing (ticker, platform_id) position, or None when there is none."""
+    holding = db.query(Holding).filter(
+        Holding.ticker == ticker, Holding.platform_id == platform_id
+    ).one_or_none()
+    return holding.currency if holding is not None else None
 
 
 def apply_add_investment_transfer(
-    db: Session, cash_leg_after: dict, event_after: dict
+    db: Session, cash_leg_after: dict, event_after: dict, event_amount=None
 ) -> tuple[Transaction, PortfolioEvent]:
-    """Insert a liquid->investment funding transfer (XFER-02/D-05).
+    """Insert a liquid->investment funding transfer (XFER-02/D-05, MOVE-02/D-07).
 
     Composes `apply_add_transaction` for the cash leg on the liquid SOURCE
     account (resolved by name; the layer forces is_transfer=True, mirroring
@@ -376,38 +373,77 @@ def apply_add_investment_transfer(
     PortfolioEvent linked back to its funding account. No extra top-level
     audit row — each primitive already writes its own (D-02). Does NOT
     commit — caller owns the transaction boundary (D-01).
+
+    The cash leg debits its amount in the account's currency; the CASH event
+    credits `event_amount` in the event currency, resolved as: explicit
+    event currency (IDR/USD), else the existing (CASH, platform) holding's,
+    else the source account's. When the two currencies differ `event_amount`
+    is required; when they match it must equal the cash amount. No rate is
+    computed; every refusal happens before the first write.
     """
-    _refuse_non_idr_funding(db, cash_leg_after.get("account", "Unknown"))
+    cash_ccy = currency_of_account(db, cash_leg_after.get("account", "Unknown"))
+    explicit = (event_after.get("currency") or "").strip()
+    ev_ccy = _account_currency(explicit) if explicit else (
+        currency_of_holding(db, event_after["ticker"], event_after["platform_id"]) or cash_ccy
+    )
+    given = None if event_amount is None else _positive_amount(event_amount, "event_amount")
+    cash_mag = abs(Decimal(str(cash_leg_after["amount"])))
+    if ev_ccy != cash_ccy:
+        if given is None:
+            raise ValueError(f"A deposit from a {cash_ccy} account into {ev_ccy} cash needs both amounts")
+    elif given is not None and given != cash_mag:
+        raise ValueError(f"A deposit between {cash_ccy} amounts moves one amount; record a fee as a separate expense")
+    _check_position_target(db, event_after["ticker"], event_after["platform_id"], ev_ccy)  # refuse before any write
+    event_after = {
+        **event_after, "currency": ev_ccy,
+        "quantity": str(given if given is not None else cash_mag), "price": "1",
+    }
     tx = apply_add_transaction(db, {**cash_leg_after, "is_transfer": True})
     ev = apply_add_portfolio_event(db, event_after)
     ev.source_account_id = tx.account_id
     return tx, ev
 
 
+def _funded_event_currency(db: Session, after: dict) -> str:
+    """Event currency of a funded trade: explicit, else the holding's, else the cash account's (D-02).
+
+    Checked before the cash leg is written, so a position mismatch leaves nothing behind.
+    """
+    ev_ccy = (
+        after.get("event_currency")
+        or currency_of_holding(db, after["ticker"], after["platform_id"])
+        or currency_of_account(db, after["source_account_name"])
+    )
+    _check_position_target(db, after["ticker"], after["platform_id"], ev_ccy)
+    return ev_ccy
+
+
 def apply_add_funded_buy(db: Session, after: dict) -> dict:
     """Insert a funded 'buy' — cash leg + portfolio event, one commit boundary (XFER-03).
 
-    `after` carries both the cash side (source_account_name, cash_currency,
-    cash_amount) and the investment side (ticker, quantity, price,
-    platform_id, event_currency) as one dict (locked contract, Plan 13-01).
-    The cash leg DEBITS the liquid source account (negative amount,
-    is_transfer=True, category='Investment' — the human-readable
+    `after` carries both the cash side (source_account_name, optional
+    cash_currency, cash_amount) and the investment side (ticker, quantity,
+    price, platform_id, optional event_currency) as one dict (locked contract,
+    Plan 13-01). The cash leg DEBITS the liquid source account (negative
+    amount, is_transfer=True, category='Investment' — the human-readable
     disambiguator that keeps the leg out of spending/income totals while
-    remaining distinguishable from a plain transfer, D-08/Open-Question-2).
-    The investment leg is a 'buy' PortfolioEvent, which already triggers
-    `recompute_holding_from_events` internally (D-06) — this function never
-    hand-rolls a holding update. The cash-leg `Transaction.currency` and the
-    `PortfolioEvent.currency` are set independently from the two `after`
-    inputs (D-09 dual-currency) — no live FX rate is ever called here
-    (D-10); `recompute_holding_from_events` resolves historical, date-keyed
-    rates itself when it needs an IDR valuation. Does NOT commit.
+    remaining distinguishable from a plain transfer, D-08/Open-Question-2) in
+    the account's own currency; a given cash_currency that differs is refused,
+    never relabelled. The event currency defaults to the existing position's,
+    else the account's (D-02). The investment leg is a 'buy' PortfolioEvent,
+    which already triggers `recompute_holding_from_events` internally (D-06) —
+    this function never hand-rolls a holding update. The two amounts are
+    stored as entered, never cross-checked against each other, and no live FX
+    rate is ever called here (D-10); `recompute_holding_from_events` resolves
+    historical, date-keyed rates itself when it needs an IDR valuation. Does
+    NOT commit.
     """
-    _refuse_non_idr_funding(db, after["source_account_name"])
+    ev_ccy = _funded_event_currency(db, after)
     cash_amount = -abs(after["cash_amount"])  # buy DEBITS the source; Decimal() happens inside apply_add_transaction
     tx = apply_add_transaction(db, {
         "account": after["source_account_name"],
         "amount": cash_amount,
-        "currency": after["cash_currency"],
+        "currency": after.get("cash_currency"),
         "category": "Investment",
         "is_transfer": True,
         "date": after.get("date"),
@@ -419,7 +455,7 @@ def apply_add_funded_buy(db: Session, after: dict) -> dict:
         "quantity": after["quantity"],
         "price": after["price"],
         "platform_id": after["platform_id"],
-        "currency": after.get("event_currency"),
+        "currency": ev_ccy,
         "date": after.get("date"),
         "asset_type": after.get("asset_type"),
     })
@@ -435,15 +471,16 @@ def apply_add_funded_sell(db: Session, after: dict) -> dict:
     destination account (positive amount) instead of debiting it, and the
     investment leg is a 'sell' PortfolioEvent (which already realizes P&L via
     `recompute_holding_from_events`, D-06 — never hand-rolled here). Same
-    is_transfer/category tagging, dual-currency handling (D-09), and no-live-FX
-    contract (D-10) as the buy side. Does NOT commit.
+    is_transfer/category tagging, currency handling (cash in the account's
+    currency, event currency per D-02), and no-live-FX contract (D-10) as the
+    buy side. Does NOT commit.
     """
-    _refuse_non_idr_funding(db, after["source_account_name"])
+    ev_ccy = _funded_event_currency(db, after)
     cash_amount = abs(after["cash_amount"])  # sell CREDITS the destination; Decimal() happens inside apply_add_transaction
     tx = apply_add_transaction(db, {
         "account": after["source_account_name"],
         "amount": cash_amount,
-        "currency": after["cash_currency"],
+        "currency": after.get("cash_currency"),
         "category": "Investment",
         "is_transfer": True,
         "date": after.get("date"),
@@ -455,7 +492,7 @@ def apply_add_funded_sell(db: Session, after: dict) -> dict:
         "quantity": after["quantity"],
         "price": after["price"],
         "platform_id": after["platform_id"],
-        "currency": after.get("event_currency"),
+        "currency": ev_ccy,
         "date": after.get("date"),
         "asset_type": after.get("asset_type"),
     })

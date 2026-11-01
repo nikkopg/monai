@@ -284,8 +284,16 @@ class InvestmentTransferCreate(BaseModel):
 
     from_account: str
     platform_id: int = Field(..., description="Required — no by-name resolution, mirrors account-id precedent")
-    amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude")
-    currency: str = "IDR"
+    amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude, in the source account's currency")
+    # Absent means the source account's currency; a given value must match it.
+    currency: str | None = None
+    event_amount: MoneyDecimal | None = Field(
+        None, gt=0,
+        description="Amount credited to the platform's cash, in the event currency; "
+        "required when that differs from the source account's currency",
+    )
+    # Absent: the existing CASH holding's currency, else the source account's (D-07).
+    event_currency: str | None = None
     date: str | None = None
     notes: str | None = None
 
@@ -299,8 +307,8 @@ class FundedBuyCreate(BaseModel):
     quantity: MoneyDecimal = Field(..., gt=0, description="Units; must be positive")
     price: MoneyDecimal = Field(..., gt=0, description="Price per unit in the event's native currency")
     cash_amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude; the primitive always debits")
-    cash_currency: str = "IDR"
-    event_currency: str = "IDR"
+    cash_currency: str | None = None  # absent: the account's currency; a different value is refused
+    event_currency: str | None = None  # absent: the holding's currency, else the account's (D-02)
     date: str | None = None
     notes: str | None = None
     asset_type: str | None = None
@@ -315,8 +323,8 @@ class FundedSellCreate(BaseModel):
     quantity: MoneyDecimal = Field(..., gt=0, description="Units; must be positive")
     price: MoneyDecimal = Field(..., gt=0, description="Price per unit in the event's native currency")
     cash_amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude; the primitive always credits")
-    cash_currency: str = "IDR"
-    event_currency: str = "IDR"
+    cash_currency: str | None = None  # absent: the account's currency; a different value is refused
+    event_currency: str | None = None  # absent: the holding's currency, else the account's (D-02)
     date: str | None = None
     notes: str | None = None
     asset_type: str | None = None
