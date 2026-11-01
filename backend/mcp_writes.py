@@ -281,7 +281,7 @@ def _load_refs(db: Session):
     """(liquid accounts by casefolded name, casefolded -> canonical category)."""
     accounts: dict[str, list] = {}
     for id_, name, currency in db.execute(text("SELECT id, name, currency FROM accounts WHERE type = 'liquid'")):
-        accounts.setdefault(name.strip().casefold(), []).append((id_, name, currency or "IDR"))
+        accounts.setdefault(name.strip().casefold(), []).append((id_, name, currency))
     cats: dict[str, str] = {}
     for (name,) in db.execute(text("SELECT name FROM categories ORDER BY id")):
         cats.setdefault(name.strip().casefold(), name)  # lowest id wins a case-insensitive tie
@@ -440,7 +440,7 @@ def propose_batch(
         if row is None:
             raise BatchRefused("The account for this file can't take transactions any more. "
                                "Upload it again with another account.")
-        account = (row[0], row[1], row[2] or "IDR")
+        account = (row[0], row[1], row[2])
     for i, r in enumerate(rows):
         errs = []
         acct, err = (account, None) if upload else _resolve_account(accounts, r.account)
