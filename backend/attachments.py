@@ -545,9 +545,15 @@ def _period(text: str) -> tuple[date, date] | None:
 
 
 def _row_date(token: str, period: tuple[date, date] | None) -> str:
-    """ISO date; a year-less dd/mm takes its year from the period (ValueError if it fits none of them)."""
+    """ISO date; a year-less dd/mm takes its year from the period (ValueError if it fits none of them).
+
+    A full date must also fall inside the period: it is refused, never re-dated.
+    """
     if len(token) > 5:
-        return parse_date(token, "dmy")
+        iso = parse_date(token, "dmy")
+        if period is not None and not period[0] <= date.fromisoformat(iso) <= period[1]:
+            raise ValueError("outside the period")
+        return iso
     d, mo = int(token[:2]), int(token[3:])
     for y in range(period[0].year, period[1].year + 1):
         try:
@@ -575,7 +581,8 @@ def parse_pdf_statement(data: bytes, password: str | None, *, account_currency: 
     amount there is a credit. Otherwise the file is refused, never guessed. White text is
     counted and kept; characters under 2 pt or off the page are dropped and
     counted (D-09a). Raises NeedsPassword. `account_currency` is the picked
-    account's: statements are not currency-detected.
+    account's and gives both the currency and the separator prior: statements
+    are not currency-detected.
     """
     meta = {"layout": "generic", "invariant": "none", "hidden_white_chars": 0, "dropped_chars": 0}
     with open_pdf(data, password) as pdf:
@@ -592,7 +599,7 @@ def parse_pdf_statement(data: bytes, password: str | None, *, account_currency: 
             meta["dropped_chars"] += sum(map(gone, page.chars))
             meta["hidden_white_chars"] += sum(_is_white(c) and not gone(c) for c in page.chars)
             texts.append(page.filter(lambda o: o.get("object_type") != "char" or not gone(o)).extract_text() or "")
-    return _reconcile("\n".join(texts)[:MAX_TEXT_CHARS], meta)
+    return _reconcile("\n".join(texts)[:MAX_TEXT_CHARS], meta, default=_sep_prior(account_currency))
 
 
 def _is_white(char: dict) -> bool:
@@ -601,8 +608,11 @@ def _is_white(char: dict) -> bool:
     return bool(color) and all(v == 1 for v in color)
 
 
-def _reconcile(text: str, meta: dict) -> Parsed:
-    """Read the statement lines in `text` and apply the balance invariants."""
+def _reconcile(text: str, meta: dict, default: str = ",") -> Parsed:
+    """Read the statement lines in `text` and apply the balance invariants.
+
+    `default` is the separator prior used when the amounts give no evidence.
+    """
     low = text.casefold()
     layout = next(L for L in LAYOUTS if all(w in low for w in L["header_words"]))
     period = _period(text)
@@ -646,7 +656,7 @@ def _reconcile(text: str, meta: dict) -> Parsed:
         return refuse("No statement period found, so the year of each row is unknown.")
 
     tokens = [opening, closing] + [t for r in rows for t in (r["a1"], r["a2"]) if t] + [a for _, a in foot.values()]
-    sep, evidence = infer_decimal_sep_with_evidence(tokens)
+    sep, evidence = infer_decimal_sep_with_evidence(tokens, default=default)
     meta["separator"] = {"sep": sep, "evidence": evidence}
 
     def show(d):
