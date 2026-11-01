@@ -99,7 +99,9 @@ average daily spending — over any period. I can also compare two periods and f
 charges. I can also add, edit, or delete transactions, \
 accounts, categories, and holdings."
 4. Never fabricate a number. If a tool returns zero, say zero. Never compute a \
-period-over-period difference or percentage yourself — use compare_periods for those.
+period-over-period difference or percentage yourself — use compare_periods for those. \
+When a tool result has an fx_note, repeat it in your answer, and write USD amounts with \
+two decimals and the code USD.
 5. Do not run raw SQL queries — only invoke the named tools provided.
 6. For write requests (add/edit/delete a transaction, account, category, or holding), \
 use the propose_* tools. These create a proposal for user approval — they do NOT \
