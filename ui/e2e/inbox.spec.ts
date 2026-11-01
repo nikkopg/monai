@@ -335,6 +335,62 @@ test.describe("card rows", () => {
     ).toBeVisible();
   });
 
+  // Phase 45 (D-04, D-09): a cross-currency transfer reads as two real amounts plus the
+  // implied-vs-ECB line. Synthetic values only; /api/fx/rate is always fulfilled here.
+  const crossXfer = (legB: Record<string, unknown> = { currency: "IDR" }) => {
+    const x = transferProposal();
+    x.payload.rows[0].after = {
+      leg_a: { account: "Account USD", amount: "-100.00", currency: "USD", date: null },
+      leg_b: { account: "Account IDR", amount: "1631000", ...legB },
+      to_amount: "1631000",
+    };
+    return x;
+  };
+  const jakartaToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
+
+  test("cross-currency transfer card shows both legs and the rate", async ({ page }) => {
+    await mockInbox(page, { list: [crossXfer()] });
+    const asked: string[] = [];
+    await page.route("**/api/fx/rate**", (route) => {
+      asked.push(route.request().url());
+      return route.fulfill({ json: { rate: "16250", rate_date: "2026-10-30" } });
+    });
+    await openInbox(page);
+    const card = art(page, "Add 1 transfer");
+    await expect(
+      card.getByText("Transfer 100.00 USD from Account USD to Account IDR, receiving 1,631,000 on the approval date")
+    ).toBeVisible();
+    await expect(card.getByText("Implied 1 USD = 16,310 IDR · ECB 16,250 (rate of 30 Oct 2026)")).toBeVisible();
+    expect(new URL(asked[0]).searchParams.get("on")).toBe(jakartaToday());
+  });
+
+  for (const mode of ["null", "500"] as const) {
+    test(`cross-currency card without a rate (${mode}) keeps Approve and Reject enabled`, async ({ page }) => {
+      await mockInbox(page, { list: [crossXfer()] });
+      await page.route("**/api/fx/rate**", (route) =>
+        mode === "null"
+          ? route.fulfill({ json: { rate: null, rate_date: null } })
+          : route.fulfill({ status: 500, json: { detail: "down" } })
+      );
+      await openInbox(page);
+      const card = art(page, "Add 1 transfer");
+      await expect(card.getByText("Implied 1 USD = 16,310 IDR · ECB rate unavailable")).toBeVisible();
+      await expect(approveBtn(card)).toBeEnabled();
+      await expect(rejectBtn(card)).toBeEnabled();
+    });
+  }
+
+  test("same-currency USD transfer card has no rate line", async ({ page }) => {
+    const x = crossXfer({ currency: "USD", amount: "100.00" });
+    (x.payload.rows[0].after as { leg_a: Record<string, unknown> }).leg_a.date = "2026-10-07";
+    await mockInbox(page, { list: [x] });
+    await page.route("**/api/fx/rate**", (route) => route.fulfill({ json: { rate: "16250", rate_date: "2026-10-30" } }));
+    await openInbox(page);
+    const card = art(page, "Add 1 transfer");
+    await expect(card.getByText("Transfer 100.00 USD from Account USD to Account IDR on 7 Oct 2026")).toBeVisible();
+    await expect(card).not.toContainText("Implied");
+  });
+
   test("edit proposal renders the shared before-to-after diff", async ({ page }) => {
     await mockInbox(page, { list: [editProposal()] });
     await openInbox(page);
