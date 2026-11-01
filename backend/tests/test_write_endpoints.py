@@ -214,8 +214,9 @@ def test_transfer_usd_to_usd_without_currency(client, api_key, db_session):
 
 
 def test_transfer_cross_currency_refused_nothing_written(client, api_key, db_session):
-    """Phase 44 D-11: USD -> IDR is a 422 naming both codes, whether currency
-    is omitted or sent, and neither leg is written."""
+    """Phase 45 D-06: USD -> IDR without to_amount is a 422 naming both codes
+    and "need both amounts", whether currency is omitted or sent, and neither
+    leg is written."""
     import uuid
     from backend.models import Transaction
 
@@ -232,7 +233,7 @@ def test_transfer_cross_currency_refused_nothing_written(client, api_key, db_ses
             )
             assert resp.status_code == 422, f"{extra}: expected 422, got {resp.status_code}: {resp.text}"
             detail = resp.json()["detail"]
-            assert "USD" in detail and "IDR" in detail
+            assert "USD" in detail and "IDR" in detail and "need both amounts" in detail
         db_session.expire_all()
         assert db_session.query(Transaction).filter(Transaction.account_id.in_([acc_a, acc_b])).count() == 0
     finally:
@@ -242,8 +243,8 @@ def test_transfer_cross_currency_refused_nothing_written(client, api_key, db_ses
 
 
 def test_apply_add_transfer_cross_currency_refused(db_session):
-    """Phase 44 D-11: the primitive itself refuses (chat/MCP confirms reach it)
-    before either leg is flushed."""
+    """Phase 45 D-06: the primitive itself refuses a cross-currency pair with no
+    to_amount (chat/MCP confirms reach it) before either leg is flushed."""
     import uuid
     from backend.models import Transaction
     from backend.writes import apply_add_transfer
@@ -253,7 +254,7 @@ def test_apply_add_transfer_cross_currency_refused(db_session):
     acc_a = _make_account(db_session, name_a, currency="USD")
     acc_b = _make_account(db_session, name_b)
     try:
-        with pytest.raises(ValueError, match="USD.*IDR"):
+        with pytest.raises(ValueError, match="USD.*IDR.*need both amounts"):
             apply_add_transfer(
                 db_session,
                 {"account": name_a, "amount": "-25", "date": "1997-06-06"},
