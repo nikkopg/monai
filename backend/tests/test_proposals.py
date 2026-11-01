@@ -806,7 +806,7 @@ def test_confirm_transfer_writes_both_legs(client, api_key, db_session):
         from backend.tools import propose_add_transfer  # RED: not implemented until Plan 14-02
 
         result = propose_add_transfer(
-            from_account=name_a, to_account=name_b, amount=100000, currency="IDR",
+            from_account=name_a, to_account=name_b, amount=100000,
             date="2024-03-01", notes="test transfer",
         )
         resp = client.post(
@@ -853,7 +853,7 @@ def test_confirm_investment_transfer_links_event(client, api_key, db_session):
         from backend.tools import propose_add_investment_transfer  # RED: not implemented until Plan 14-02
 
         result = propose_add_investment_transfer(
-            from_account=name, platform_id=plat_id, amount=500000, currency="IDR",
+            from_account=name, platform_id=plat_id, amount=500000,
             date="2024-03-02", notes="fund platform",
         )
         resp = client.post(
@@ -919,8 +919,8 @@ def test_confirm_funded_buy_writes_both_sides(client, api_key, db_session):
 
         result = propose_add_funded_buy(
             source_account_name=name, platform_id=plat_id, ticker=ticker,
-            quantity=10, price=100000, cash_amount=1000000, cash_currency="IDR",
-            event_currency="IDR", date="2024-03-03",
+            quantity=10, price=100000, cash_amount=1000000,
+            date="2024-03-03",
         )
         resp = client.post(
             f"/proposals/{result['proposal_id']}/confirm",
@@ -965,8 +965,8 @@ def test_confirm_funded_sell_writes_both_sides(client, api_key, db_session):
 
         result = propose_add_funded_sell(
             source_account_name=name, platform_id=plat_id, ticker=ticker,
-            quantity=10, price=100000, cash_amount=1000000, cash_currency="IDR",
-            event_currency="IDR", date="2024-03-04",
+            quantity=10, price=100000, cash_amount=1000000,
+            date="2024-03-04",
         )
         resp = client.post(
             f"/proposals/{result['proposal_id']}/confirm",
@@ -1242,3 +1242,120 @@ def test_legacy_add_transaction_payload_currency(client, api_key, zz45):
     zz45.proposal_ids.append(uuid.UUID(pid))
     assert _post(client, api_key, f"/proposals/{pid}/confirm", {"token": token}).status_code == 200
     assert [r.currency for r in zz45.tx_rows(usd)] == ["USD"]
+
+
+def test_producers_have_no_model_currency():
+    from backend.tools import TOOLS
+    sig = {n: inspect.signature(TOOLS[n]).parameters for n in (
+        "propose_add_transfer", "propose_add_investment_transfer", "propose_add_funded_buy",
+        "propose_add_funded_sell", "propose_add_holding")}
+    assert "currency" not in sig["propose_add_transfer"] and "to_amount" in sig["propose_add_transfer"]
+    assert "currency" not in sig["propose_add_investment_transfer"]
+    assert sig["propose_add_investment_transfer"]["event_amount"].default is None
+    assert sig["propose_add_investment_transfer"]["event_currency"].default is None
+    for n in ("propose_add_funded_buy", "propose_add_funded_sell"):
+        assert "cash_currency" not in sig[n] and sig[n]["event_currency"].default is None
+    assert "currency" in sig["propose_add_holding"]
+
+
+def test_propose_transfer_cross_currency_both_amounts(client, api_key, zz45):
+    from backend.tools import propose_add_transfer
+    usd, idr = zz45.account("usd", "USD"), zz45.account("idr")
+    result = _track(zz45, propose_add_transfer(
+        from_account=usd, to_account=idr, amount=100.0, to_amount=1631000.0, date=_ISO_DAY))
+    after = result["after"]
+    assert (after["leg_a"]["amount"], after["leg_a"]["currency"]) == ("-100.0", "USD")
+    assert (after["leg_b"]["amount"], after["leg_b"]["currency"]) == ("1631000.0", "IDR")
+    assert after["to_amount"] == "1631000.0"
+    assert result["summary"] == f"Transfer 100.0 USD from {usd} to {idr}, receiving 1631000.0 IDR"
+    assert zz45.tx_rows(usd, idr) == []
+    assert _confirm(client, api_key, result).status_code == 200
+    by_ccy = {r.currency: r.amount for r in zz45.tx_rows(usd, idr)}
+    assert by_ccy == {"USD": Decimal("-100.0"), "IDR": Decimal("1631000.0")}
+
+
+def test_propose_transfer_same_currency_unchanged(client, api_key, zz45):
+    from backend.tools import propose_add_transfer
+    a, b = zz45.account("idr-a"), zz45.account("idr-b")
+    result = _track(zz45, propose_add_transfer(from_account=a, to_account=b, amount=5000.0, date=_ISO_DAY))
+    assert "to_amount" not in result["after"] and "receiving" not in result["summary"]
+    assert _confirm(client, api_key, result).status_code == 200
+    assert sorted(r.amount for r in zz45.tx_rows(a, b)) == [Decimal("-5000.0"), Decimal("5000.0")]
+
+
+def test_propose_transfer_refusals_create_no_proposal(zz45):
+    from backend.tools import propose_add_transfer
+    usd, idr, idr2 = zz45.account("usd", "USD"), zz45.account("idr"), zz45.account("idr2")
+    before = _proposal_count(zz45.db)
+    missing = propose_add_transfer(from_account=usd, to_account=idr, amount=100.0, date=_ISO_DAY)
+    assert missing["tool"] == "propose_add_transfer" and "proposal_id" not in missing
+    assert "USD" in missing["error"] and "IDR" in missing["error"]
+    fee = propose_add_transfer(from_account=idr, to_account=idr2, amount=100.0, to_amount=90.0, date=_ISO_DAY)
+    assert "error" in fee and "fee" in fee["error"]
+    assert _proposal_count(zz45.db) == before
+
+
+def test_propose_investment_transfer_cross_currency(client, api_key, zz45):
+    from backend.tools import propose_add_investment_transfer
+    idr, plat = zz45.account("idr"), zz45.platform()
+    zz45.rate(_ISO_DAY)
+    _seed_event(zz45, plat, "CASH", "deposit", "50.00", 1, "USD")
+    before = _proposal_count(zz45.db)
+    refused = propose_add_investment_transfer(from_account=idr, platform_id=plat, amount=1631000.0, date=_ISO_DAY)
+    assert "error" in refused and "IDR" in refused["error"] and "USD" in refused["error"]
+    assert _proposal_count(zz45.db) == before
+
+    result = _track(zz45, propose_add_investment_transfer(
+        from_account=idr, platform_id=plat, amount=1631000.0, event_amount=100.0, date=_ISO_DAY))
+    after = result["after"]
+    assert (after["cash_leg"]["amount"], after["cash_leg"]["currency"]) == ("-1631000.0", "IDR")
+    assert (after["event"]["currency"], after["event"]["quantity"]) == ("USD", "100.0")
+    assert after["event_amount"] == "100.0"
+    assert _confirm(client, api_key, result).status_code == 200
+    (leg,) = zz45.tx_rows(idr)
+    assert (leg.amount, leg.currency) == (Decimal("-1631000.0"), "IDR")
+    new_event = _events(zz45, plat)[-1]
+    assert (new_event.currency, new_event.quantity) == ("USD", Decimal("100.0"))
+
+
+def test_propose_investment_transfer_same_currency_unchanged(client, api_key, zz45):
+    from backend.tools import propose_add_investment_transfer
+    idr, plat = zz45.account("idr"), zz45.platform()
+    result = _track(zz45, propose_add_investment_transfer(
+        from_account=idr, platform_id=plat, amount=5000.0, date=_ISO_DAY))
+    assert "event_amount" not in result["after"] and result["after"]["event"]["currency"] == "IDR"
+    assert _confirm(client, api_key, result).status_code == 200
+    assert _events(zz45, plat)[-1].quantity == Decimal("5000.0")
+
+
+def test_propose_funded_buy_from_usd_account(client, api_key, zz45):
+    from backend.tools import propose_add_funded_buy
+    usd, plat, plat2 = zz45.account("usd", "USD"), zz45.platform(), zz45.platform("held")
+    zz45.rate(_ISO_DAY)
+    result = _track(zz45, propose_add_funded_buy(
+        source_account_name=usd, platform_id=plat, ticker="ZZ45T", quantity=1, price=50, cash_amount=50, date=_ISO_DAY))
+    assert (result["after"]["cash_currency"], result["after"]["event_currency"]) == ("USD", "USD")
+    assert "50.0 USD" in result["summary"]
+    assert _confirm(client, api_key, result).status_code == 200
+    (leg,) = zz45.tx_rows(usd)
+    assert (leg.amount, leg.currency) == (Decimal("-50.0"), "USD")
+
+    _seed_event(zz45, plat2, "ZZ45H", "buy", 1, 10, "IDR")  # an existing IDR position keeps its currency
+    held = _track(zz45, propose_add_funded_buy(
+        source_account_name=usd, platform_id=plat2, ticker="ZZ45H", quantity=1, price=10, cash_amount=5, date=_ISO_DAY))
+    assert (held["after"]["cash_currency"], held["after"]["event_currency"]) == ("USD", "IDR")
+    assert _confirm(client, api_key, held).status_code == 200
+    assert _events(zz45, plat2)[-1].currency == "IDR"
+
+
+def test_propose_funded_sell_into_usd_account(client, api_key, zz45):
+    from backend.tools import propose_add_funded_sell
+    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    zz45.rate(_ISO_DAY)
+    _seed_event(zz45, plat, "ZZ45T", "buy", 2, 50, "USD")
+    result = _track(zz45, propose_add_funded_sell(
+        source_account_name=usd, platform_id=plat, ticker="ZZ45T", quantity=1, price=60, cash_amount=60, date=_ISO_DAY))
+    assert (result["after"]["cash_currency"], result["after"]["event_currency"]) == ("USD", "USD")
+    assert _confirm(client, api_key, result).status_code == 200
+    (leg,) = zz45.tx_rows(usd)
+    assert (leg.amount, leg.currency) == (Decimal("60.0"), "USD")
