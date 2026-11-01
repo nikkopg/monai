@@ -63,7 +63,7 @@ import logging
 import re
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -1057,6 +1057,28 @@ def cashflow_summary(
         totals=totals, by_category=by_category, accounts=accounts, trend=trend,
         unconverted_count=t["unconverted_count"], unconverted_usd=float(t["unconverted_usd"]),
         currency="IDR")
+
+
+@app.get("/fx/rate", dependencies=[Depends(require_api_key)])
+def fx_rate(currency: str = "USD", on: str | None = None, db: Session = Depends(get_session)):
+    """Cached ECB rate for `currency`->IDR on a date (MOVE-04, D-09).
+
+    A display hint only, for the implied-vs-ECB line next to a two-amount move.
+    Cache only: never the vendor, never a default rate. A date with no cache row
+    within 7 days answers rate/rate_date null; a weekend carries Friday's
+    rate_date back.
+    """
+    from backend import fx
+    try:
+        day = date.fromisoformat(on) if on else fx._jakarta_today()
+    except ValueError:
+        raise HTTPException(status_code=422, detail="on must be a YYYY-MM-DD date")
+    found = fx.cached_rate_within(db, currency, day, 7)
+    return {
+        "currency": currency.strip().upper(), "on": day.isoformat(),
+        "rate": None if found is None else str(found[0]),
+        "rate_date": None if found is None else found[1].isoformat(),
+    }
 
 
 @app.get("/net-worth", response_model=NetWorth, dependencies=[Depends(require_api_key)])
