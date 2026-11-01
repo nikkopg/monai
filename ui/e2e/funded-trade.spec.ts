@@ -366,7 +366,8 @@ test.describe("funded buy/sell (XFER-03)", () => {
     await expect(fundingSelect(page)).toBeDisabled();
 
     await page.getByPlaceholder("BBCA").fill("ETH");
-    await priceInput(page).fill("500");
+    // The dividend path keeps its own "(IDR)" label.
+    await page.getByLabel("Dividend amount (IDR)", { exact: true }).fill("500");
 
     await page.getByRole("button", { name: "Log event", exact: true }).click();
 

@@ -616,6 +616,11 @@ export default function PlatformDetailPage() {
                   : [{ id: Number(platformId), name: detail.platform_name }]
               }
               defaultPlatformId={Number(platformId)}
+              positions={detail.holdings.map((h) => ({
+                ticker: h.ticker,
+                platformId: Number(platformId),
+                currency: h.currency ?? "IDR",
+              }))}
               editEvent={{
                 ...editingEvent,
                 event_type: editingEvent.event_type as "buy" | "sell" | "dividend",
@@ -635,6 +640,11 @@ export default function PlatformDetailPage() {
                     [{ id: Number(platformId), name: detail.platform_name }]
               }
               defaultPlatformId={Number(platformId)}
+              positions={detail.holdings.map((h) => ({
+                ticker: h.ticker,
+                platformId: Number(platformId),
+                currency: h.currency ?? "IDR",
+              }))}
               onClose={() => setShowLogEvent(false)}
               onSaved={() => load({ silent: true })}
             />

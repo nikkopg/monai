@@ -27,6 +27,7 @@ export type PlatformOption = { id: number; name: string };
 export type HoldingRow = {
   id: number;
   ticker: string;
+  currency?: string | null; // absent means IDR
   asset_type: string | null;
   quantity: number;
   avg_cost: number;
@@ -804,6 +805,15 @@ export default function InvestmentsPage() {
       {showEvent && (
         <HoldingModal
           platforms={platformOptions}
+          positions={(summary?.groups ?? []).flatMap((g) =>
+            g.platform_id === null
+              ? []
+              : g.holdings.map((h) => ({
+                  ticker: h.ticker,
+                  platformId: g.platform_id as number,
+                  currency: h.currency ?? "IDR",
+                }))
+          )}
           onClose={() => setShowEvent(false)}
           onSaved={load}
         />
