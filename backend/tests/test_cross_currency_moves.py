@@ -231,6 +231,8 @@ def test_to_amount_bad_values_refused(client, api_key, zz45):
 def test_cross_currency_pair_leaves_cashflow_unchanged(client, api_key, zz45):
     from backend import tools
     usd, idr = zz45.account("usd", "USD"), zz45.account("idr")
+    # Totals demand a cached rate for any USD row's day, transfers included (Phase 43 gap check).
+    zz45.rate(_ISO_DAY)
     window = {"period": "custom", "start_date": "1996-03-01", "end_date": "1996-03-31"}
     before = (tools.TOOLS["spending_total"](**window), tools.TOOLS["income_total"](**window))
     resp = _post(client, api_key, "/transactions/transfer", {

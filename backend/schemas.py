@@ -267,7 +267,13 @@ class TransferCreate(BaseModel):
     from_account: str
     to_account: str
     amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude; sign is applied per leg")
-    # Absent means the from-account's currency; a given value must match both accounts.
+    to_amount: MoneyDecimal | None = Field(
+        None, gt=0,
+        description="Amount received, unsigned, in the destination account's currency; "
+        "required when the two accounts' currencies differ",
+    )
+    # Absent means the from-account's currency; a given value applies to the from leg and,
+    # for a same-currency transfer, to both legs.
     currency: str | None = None
     date: str | None = None
     notes: str | None = None

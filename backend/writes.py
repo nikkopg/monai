@@ -14,7 +14,7 @@ Every apply_* function:
 """
 
 from datetime import date, datetime, timedelta, timezone
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -289,8 +289,31 @@ def apply_delete_transaction_or_pair(db: Session, tx_id: int, before: dict | Non
     return [tx_id]
 
 
-def apply_add_transfer(db: Session, leg_a_after: dict, leg_b_after: dict) -> tuple[Transaction, Transaction]:
-    """Insert a paired liquid->liquid transfer (XFER-01/D-03/D-09).
+def currency_of_account(db: Session, name: str) -> str:
+    """Currency of the account called `name` (exact-name lookup).
+
+    A missing account reads as "IDR": apply_add_transaction would auto-create
+    it as IDR, so that is the currency its leg would carry.
+    """
+    acc = db.query(Account).filter(Account.name == name).one_or_none()
+    return acc.currency if acc is not None else "IDR"
+
+
+def _positive_amount(value, label: str) -> Decimal:
+    """Parse a second amount: finite and > 0, else ValueError (T-45-01)."""
+    try:
+        amount = Decimal(str(value))
+    except InvalidOperation:
+        raise ValueError(f"{label} must be a positive amount")
+    if not amount.is_finite() or amount <= 0:
+        raise ValueError(f"{label} must be a positive amount")
+    return amount
+
+
+def apply_add_transfer(
+    db: Session, leg_a_after: dict, leg_b_after: dict, to_amount=None
+) -> tuple[Transaction, Transaction]:
+    """Insert a paired liquid->liquid transfer (XFER-01/D-03/D-09, MOVE-01/D-06).
 
     Composes `apply_add_transaction` twice — one call per leg — so each leg
     gets account resolution by name, the Decimal money idiom, and its own
@@ -302,17 +325,22 @@ def apply_add_transfer(db: Session, leg_a_after: dict, leg_b_after: dict) -> tup
     migration 011's `min(id)` scheme). Does NOT commit — caller owns the
     single transaction boundary (D-01).
 
-    Same-currency only until Phase 45 (MOVE-01): checked before either leg is
-    written, so a refusal leaves nothing behind.
+    Two accounts in different currencies need BOTH amounts: leg A's amount is
+    what leaves the from account, `to_amount` (unsigned, in the destination's
+    currency) is what arrives. Neither is computed from the other and no rate
+    is stored (MOVE-04). Two accounts in the same currency move one amount, so
+    a `to_amount` that differs is refused. Every refusal happens before either
+    leg is written, so it leaves nothing behind.
     """
-    ccys = []
-    for leg in (leg_a_after, leg_b_after):
-        acc = db.query(Account).filter(Account.name == leg.get("account", "Unknown")).one_or_none()
-        ccys.append(acc.currency if acc is not None else "IDR")  # auto-created accounts are IDR
-    if ccys[0] != ccys[1]:
-        raise ValueError(
-            f"Transfers between {ccys[0]} and {ccys[1]} accounts need both amounts; not available yet"
-        )
+    given = None if to_amount is None else _positive_amount(to_amount, "to_amount")
+    a = currency_of_account(db, leg_a_after.get("account", "Unknown"))
+    b = currency_of_account(db, leg_b_after.get("account", "Unknown"))
+    if a != b:
+        if given is None:
+            raise ValueError(f"Transfers between {a} and {b} accounts need both amounts")
+        leg_b_after = {**leg_b_after, "amount": str(given)}
+    elif given is not None and given != abs(Decimal(str(leg_a_after["amount"]))):
+        raise ValueError(f"A transfer between two {a} accounts moves one amount; record a fee as a separate expense")
     leg_a = apply_add_transaction(db, {**leg_a_after, "is_transfer": True})
     leg_b = apply_add_transaction(db, {**leg_b_after, "is_transfer": True})
     leg_a.transfer_pair_id = leg_a.id

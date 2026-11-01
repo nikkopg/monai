@@ -1272,10 +1272,15 @@ def create_transfer(payload: TransferCreate, db: Session = Depends(get_session))
     }
     leg_b_after = {
         "account": payload.to_account, "amount": str(abs(payload.amount)),
-        "currency": payload.currency, "date": payload.date, "notes": payload.notes,
+        # With a to_amount the leg-B currency is the destination account's, not payload.currency.
+        "currency": payload.currency if payload.to_amount is None else None,
+        "date": payload.date, "notes": payload.notes,
     }
     try:
-        leg_a, leg_b = apply_add_transfer(db, leg_a_after, leg_b_after)
+        leg_a, leg_b = apply_add_transfer(
+            db, leg_a_after, leg_b_after,
+            to_amount=None if payload.to_amount is None else str(payload.to_amount),
+        )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     db.commit()
@@ -1845,7 +1850,7 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
             # decision 4) — the confirm endpoint already maps ValueError to 422.
             try:
                 if operation == "add_transfer":
-                    apply_add_transfer(db, after["leg_a"], after["leg_b"])
+                    apply_add_transfer(db, after["leg_a"], after["leg_b"], to_amount=after.get("to_amount"))
 
                 elif operation == "add_investment_transfer":
                     apply_add_investment_transfer(db, after["cash_leg"], after["event"])
