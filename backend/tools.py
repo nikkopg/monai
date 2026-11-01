@@ -112,6 +112,32 @@ def _rate_note(rate, as_of: datetime.date, stale: bool) -> str:
             f"(rate of {as_of.day} {as_of:%b %Y})" + (", stale" if stale else ""))
 
 
+def _flow_note(n_usd: int, n_unconverted: int = 0) -> str | None:
+    """D-15: how many USD rows a flow answer includes. None when there are none, so IDR-only
+    results keep their keys. Built here, never by the model."""
+    if not n_usd:
+        return None
+    note = f"Includes {n_usd} USD row(s), each converted at its transaction-date rate"
+    if n_unconverted:
+        note += f"; {n_unconverted} {'has' if n_unconverted == 1 else 'have'} no IDR value yet"
+    return note
+
+
+def _noted(result: dict, n_usd: int, n_unconverted: int = 0) -> dict:
+    """Add fx_note to a success result only when USD rows are involved."""
+    if (note := _flow_note(n_usd, n_unconverted)) is not None:
+        result["fx_note"] = note
+    return result
+
+
+def _usd_rows(conn, start, end_excl, extra_sql: str = "", extra_params: dict | None = None) -> int:
+    """COUNT of non-transfer USD rows in range under the caller's own predicate (COUNT, never SUM)."""
+    p = dict(extra_params or {})
+    sql = ("SELECT COUNT(*) FROM cashflow_transactions WHERE is_transfer = false AND currency <> 'IDR'"
+           + _date_clause(start, end_excl, p) + extra_sql)
+    return int(conn.execute(text(sql), p).scalar() or 0)
+
+
 def _flow_fx(conn, start, end_excl) -> str | None:
     """Fill missing USD->IDR rates for the range; return the FxUnavailable text or None.
     ensure_flow_rates' upper bound is inclusive, so pass the day before end_excl."""
@@ -161,7 +187,10 @@ def _flow_totals(start, end_excl) -> dict:
         out = _unconverted(c, start, end_excl)
         p: dict = {}
         inc, exp, net = c.execute(text(_FLOW_TOTALS_SQL + _date_clause(start, end_excl, p)), p).one()
-    return {**out, "income": inc, "expense": exp, "net": net}
+        usd = {"usd_expense": _usd_rows(c, start, end_excl, " AND amount < 0"),
+               "usd_income": _usd_rows(c, start, end_excl, " AND amount > 0"),
+               "usd_all": _usd_rows(c, start, end_excl)}
+    return {**out, **usd, "income": inc, "expense": exp, "net": net}
 
 
 def _period_label(period, start, end) -> str:
@@ -188,9 +217,9 @@ def spending_total(period="all_time", start_date=None, end_date=None) -> dict:
     """
     s, e = resolve_period(period, start_date, end_date)
     t = _flow_totals(s, e)
-    return _unconverted_error("spending_total", t) or {
+    return _unconverted_error("spending_total", t) or _noted({
         "tool": "spending_total", "total": float(t["expense"]), "currency": fx.BASE,
-        "period": _period_label(period, s, e)}
+        "period": _period_label(period, s, e)}, t["usd_expense"])
 
 
 def income_total(period="all_time", start_date=None, end_date=None) -> dict:
@@ -201,9 +230,9 @@ def income_total(period="all_time", start_date=None, end_date=None) -> dict:
     """
     s, e = resolve_period(period, start_date, end_date)
     t = _flow_totals(s, e)
-    return _unconverted_error("income_total", t) or {
+    return _unconverted_error("income_total", t) or _noted({
         "tool": "income_total", "total": float(t["income"]), "currency": fx.BASE,
-        "period": _period_label(period, s, e)}
+        "period": _period_label(period, s, e)}, t["usd_income"])
 
 
 def net_total(period="all_time", start_date=None, end_date=None) -> dict:
@@ -214,9 +243,9 @@ def net_total(period="all_time", start_date=None, end_date=None) -> dict:
     """
     s, e = resolve_period(period, start_date, end_date)
     t = _flow_totals(s, e)
-    return _unconverted_error("net_total", t) or {
+    return _unconverted_error("net_total", t) or _noted({
         "tool": "net_total", "net": float(t["net"]), "currency": fx.BASE,
-        "period": _period_label(period, s, e)}
+        "period": _period_label(period, s, e)}, t["usd_all"])
 
 
 def _category_tree() -> list[dict]:
@@ -317,11 +346,14 @@ def _spending_by_category(start, end_excl, lim) -> dict:
         info = _unconverted(conn, start, end_excl)
         rows = [(r[0], float(r[1])) for r in conn.execute(text(sql), p).fetchall()]
         crows = conn.execute(text(child_sql), p).fetchall()
+        # Same rollup scope as the totals above (categorised, non-system expenses).
+        usd_rows = int(conn.execute(text(
+            "SELECT COUNT(*) " + _ROLLUP_FROM + " AND t.currency <> 'IDR'" + date_pred), p).scalar() or 0)
     children: dict[str, list] = {name: [] for name, _ in rows}
     for top_name, sub_name, total in crows:
         if top_name in children:
             children[top_name].append((sub_name, float(total)))
-    return {**info, "rows": rows, "children": children}
+    return {**info, "rows": rows, "children": children, "usd_rows": usd_rows}
 
 
 def spending_by_category(period="all_time", start_date=None, end_date=None, limit=5) -> dict:
@@ -337,8 +369,8 @@ def spending_by_category(period="all_time", start_date=None, end_date=None, limi
     refusal = _unconverted_error("spending_by_category", r)
     if refusal:
         return refusal
-    return {"tool": "spending_by_category", "rows": r["rows"], "children": r["children"],
-            "currency": fx.BASE, "period": _period_label(period, s, e)}
+    return _noted({"tool": "spending_by_category", "rows": r["rows"], "children": r["children"],
+                   "currency": fx.BASE, "period": _period_label(period, s, e)}, r["usd_rows"])
 
 
 def spending_in_category(category: str, period="all_time", start_date=None, end_date=None) -> dict:
@@ -349,12 +381,18 @@ def spending_in_category(category: str, period="all_time", start_date=None, end_
     (end_date inclusive); leaving period='all_time' for a month question
     returns a wrong, inflated total.
     """
+    result, n_usd = _spent_in_category(category, period, start_date, end_date)
+    return _noted(result, n_usd)
+
+
+def _spent_in_category(category, period, start_date, end_date) -> tuple[dict, int]:
+    """spending_in_category's body plus the USD row count behind its total (the same category scope)."""
     s, e = resolve_period(period, start_date, end_date)
     node = _find_category_node(category)
     if node is None:
         return {"tool": "spending_in_category", "category": category,
                 "error": f"No category matching '{category}' found. "
-                         "Use list_categories to see the category tree."}
+                         "Use list_categories to see the category tree."}, 0
     p: dict = {"ids": _descendant_ids(node)}
     sql = (
         "SELECT ROUND(COALESCE(SUM(-amount_idr), 0), 2) FROM cashflow_transactions "
@@ -364,10 +402,11 @@ def spending_in_category(category: str, period="all_time", start_date=None, end_
     with engine.connect() as c:
         refusal = _unconverted_error("spending_in_category", _unconverted(c, s, e))
         if refusal:
-            return refusal
+            return refusal, 0
         total = float(c.execute(text(sql), p).scalar() or 0)
+        n_usd = _usd_rows(c, s, e, " AND amount < 0 AND category_id = ANY(:ids)", {"ids": p["ids"]})
     return {"tool": "spending_in_category", "category": category, "total": total,
-            "currency": fx.BASE, "period": _period_label(period, s, e)}
+            "currency": fx.BASE, "period": _period_label(period, s, e)}, n_usd
 
 
 def spending_before_after_purchase(ticker: str, category: str) -> dict:
@@ -404,12 +443,9 @@ def spending_before_after_purchase(ticker: str, category: str) -> dict:
     # Equal-length windows. end_date is inclusive per spending_in_category's
     # custom-period contract: before = [pivot-n_days, pivot-1], after = [pivot, today].
     before_start = pivot - datetime.timedelta(days=n_days)
-    before = spending_in_category(category, period="custom",
-                                  start_date=before_start.isoformat(),
-                                  end_date=(pivot - datetime.timedelta(days=1)).isoformat())
-    after = spending_in_category(category, period="custom",
-                                 start_date=pivot.isoformat(),
-                                 end_date=today.isoformat())
+    before, n_before = _spent_in_category(category, "custom", before_start.isoformat(),
+                                          (pivot - datetime.timedelta(days=1)).isoformat())
+    after, n_after = _spent_in_category(category, "custom", pivot.isoformat(), today.isoformat())
 
     # spending_in_category returns an error dict for an unknown category name —
     # propagate it instead of fabricating (or crashing on) a number.
@@ -418,7 +454,7 @@ def spending_before_after_purchase(ticker: str, category: str) -> dict:
                 "error": before.get("error") or after.get("error")}
 
     delta = after["total"] - before["total"]
-    return {
+    return _noted({
         "tool": "spending_before_after_purchase",
         "currency": fx.BASE,
         "ticker": ticker,
@@ -429,7 +465,7 @@ def spending_before_after_purchase(ticker: str, category: str) -> dict:
         "after_total": after["total"],
         "delta": delta,
         "delta_pct": (delta / before["total"] * 100) if before["total"] else None,
-    }
+    }, n_before + n_after)
 
 
 def transaction_count(period="all_time", start_date=None, end_date=None, kind="all") -> dict:
@@ -504,8 +540,9 @@ def average_daily_spending(period="this_month", start_date=None, end_date=None) 
             row = c.execute(text("SELECT MIN(date), MAX(date) FROM transactions")).fetchone()
         days = ((row[1].date() - row[0].date()).days + 1) if row and row[0] else 1
     days = max(days, 1)
-    return {"tool": "average_daily_spending", "average": total / days, "days": days,
-            "total": total, "currency": fx.BASE, "period": _period_label(period, s, e)}
+    return _noted({"tool": "average_daily_spending", "average": total / days, "days": days,
+                   "total": total, "currency": fx.BASE, "period": _period_label(period, s, e)},
+                  t["usd_expense"])
 
 
 def _monthly_trend(months: int) -> dict:
@@ -533,7 +570,8 @@ def _monthly_trend(months: int) -> dict:
              "expense": float(r[2]), "net": float(r[3]), "unconverted_count": int(r[4])}
             for r in c.execute(text(sql), p).fetchall()
         ]
-    return {"rows": rows, "fx_error": fx_error}
+        usd_rows = _usd_rows(c, start, None)
+    return {"rows": rows, "fx_error": fx_error, "usd_rows": usd_rows}
 
 
 def monthly_trend(months: int = 6) -> dict:
@@ -550,7 +588,7 @@ def monthly_trend(months: int = 6) -> dict:
             f"{sum(x['unconverted_count'] for x in gaps)} USD transaction(s) in "
             f"{', '.join(x['month'] for x in gaps)} have no USD->IDR rate yet")
         return {"tool": "monthly_trend", "error": f"{msg}, so this trend cannot be stated in IDR."}
-    return {"tool": "monthly_trend", "rows": r["rows"], "currency": fx.BASE}
+    return _noted({"tool": "monthly_trend", "rows": r["rows"], "currency": fx.BASE}, r["usd_rows"])
 
 
 def account_balances(period_start=None, period_end=None) -> dict:
@@ -892,6 +930,7 @@ def compare_periods(
         t = _flow_totals(s, e)
         if (err := _unconverted_error("compare_periods", t)) is not None:
             return err
+        _noted(meta[-1], t["usd_all"])  # one note per period entry
         sp = float(t["expense"])
         totals_raw["spending"].append(sp)
         totals_raw["income"].append(float(t["income"]))
