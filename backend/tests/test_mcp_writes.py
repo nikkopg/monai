@@ -397,10 +397,43 @@ def test_transfer_valid_and_refusals(db_session, wallets, track):
     assert after["leg_a"]["currency"] == after["leg_b"]["currency"] == "IDR"
     n = _count(db_session)
     for args, msg in [((a.name, a.name, 10, "2026-01-10"), "different"), ((a.name, b.name, 0, "2026-01-10"), "positive"),
-                      ((a.name, b.name, -5, "2026-01-10"), "positive"), ((a.name, usd.name, 10, "2026-01-10"), "same currency")]:
+                      ((a.name, b.name, -5, "2026-01-10"), "positive"), ((a.name, usd.name, 10, "2026-01-10"), "both amounts")]:
         with pytest.raises(ToolError, match=msg):
             mcp_writes.propose_transfer(*args)
+    for kw, msg in [({"to_amount": 11}, "one amount")]:
+        with pytest.raises(ToolError, match=msg):
+            mcp_writes.propose_transfer(a.name, b.name, 10, "2026-01-10", **kw)
+    for bad in (0, -5, "abc", "1.234"):
+        with pytest.raises(ToolError, match="positive number with at most 2 decimals"):
+            mcp_writes.propose_transfer(a.name, usd.name, 10, "2026-01-10", to_amount=bad)
     assert _count(db_session) == n
+
+
+def test_transfer_cross_currency_both_amounts(db_session, wallets, track):
+    usd, idr = wallets(currency="USD"), wallets(currency="IDR")
+    r = mcp_writes.propose_transfer(usd.name, idr.name, 100, "2026-01-10", to_amount=1631000)
+    track.append(r["proposal_id"])
+    after = _db_row(db_session, r["proposal_id"]).payload["rows"][0]["after"]
+    assert after["leg_a"]["account"] == usd.name and Decimal(after["leg_a"]["amount"]) == -100
+    assert after["leg_a"]["currency"] == "USD"
+    assert after["leg_b"]["account"] == idr.name and Decimal(after["leg_b"]["amount"]) == 1631000
+    assert after["leg_b"]["currency"] == "IDR" and after["to_amount"] == "1631000"
+    assert "100" in r["summary"] and "USD" in r["summary"] and "1631000" in r["summary"] and "IDR" in r["summary"]
+
+
+def test_confirm_cross_currency_transfer_writes_exact_legs(db_session, wallets, track):
+    usd, idr = wallets(currency="USD"), wallets(currency="IDR")
+    r = mcp_writes.propose_transfer(usd.name, idr.name, 100, "2026-01-10", to_amount=1631000)
+    track.append(r["proposal_id"])
+    from backend.models import Proposal
+    p = db_session.get(Proposal, uuid.UUID(r["proposal_id"]))
+    code = _db_row(db_session, p.id).code
+    _confirm(p, code)
+    rows = lambda acc: db_session.execute(text("SELECT amount, currency FROM transactions WHERE account_id = :a"),
+                                          {"a": acc.id}).all()
+    db_session.rollback()
+    assert [(Decimal(a), c) for a, c in rows(usd)] == [(Decimal(-100), "USD")]
+    assert [(Decimal(a), c) for a, c in rows(idr)] == [(Decimal(1631000), "IDR")]
 
 
 # ---------------------------------------------------------------------------
@@ -520,7 +553,7 @@ def test_wrappers_are_not_registered_as_agent_tools_and_have_fixed_params():
         assert name not in tools.TOOLS and name not in tools.READ_TOOL_NAMES
     params = lambda f: list(inspect.signature(f).parameters)
     assert params(mcp_writes.propose_transactions) == ["rows", "replaces"]
-    assert params(mcp_writes.propose_transfer) == ["from_account", "to_account", "amount", "date", "notes", "replaces"]
+    assert params(mcp_writes.propose_transfer) == ["from_account", "to_account", "amount", "date", "notes", "to_amount", "replaces"]
     assert params(mcp_writes.reject_proposal) == ["proposal_id"]
 
 
