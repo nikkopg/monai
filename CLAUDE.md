@@ -31,7 +31,7 @@ data without your say-so.
 - **Safety**: All agent writes require explicit user confirmation before applying; validated; audit-logged
 - **Deployment**: Self-hosted via Docker Compose; single-user; local-first / privacy-respecting
 - **Schema**: New `holdings` and `portfolio_events` tables + any column additions need a migration story (no Alembic today)
-- **Currency**: Single-currency (IDR) assumption holds for spending; investments may span instruments/currencies
+- **Currency**: IDR is the base and reporting currency. From v1.7, liquid accounts may be IDR or USD, and every total converts to IDR before adding up. Investments may span instruments and currencies.
 <!-- GSD:project-end -->
 
 <!-- GSD:stack-start source:codebase/STACK.md -->
