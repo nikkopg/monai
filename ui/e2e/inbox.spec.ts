@@ -346,7 +346,9 @@ test.describe("card rows", () => {
     };
     return x;
   };
-  const jakartaToday = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" });
+  // The page clock is pinned by mockInbox, so ask the page rather than the test process.
+  const jakartaToday = (page: Page) =>
+    page.evaluate(() => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" }));
 
   test("cross-currency transfer card shows both legs and the rate", async ({ page }) => {
     await mockInbox(page, { list: [crossXfer()] });
@@ -361,7 +363,7 @@ test.describe("card rows", () => {
       card.getByText("Transfer 100.00 USD from Account USD to Account IDR, receiving 1,631,000 on the approval date")
     ).toBeVisible();
     await expect(card.getByText("Implied 1 USD = 16,310 IDR · ECB 16,250 (rate of 30 Oct 2026)")).toBeVisible();
-    expect(new URL(asked[0]).searchParams.get("on")).toBe(jakartaToday());
+    expect(new URL(asked[0]).searchParams.get("on")).toBe(await jakartaToday(page));
   });
 
   for (const mode of ["null", "500"] as const) {

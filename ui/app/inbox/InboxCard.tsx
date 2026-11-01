@@ -10,6 +10,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import ProposalDiff from "../components/ProposalDiff";
+import TransferLine from "../components/TransferLine";
 import { extractDetail } from "../lib/api";
 import { INBOX_SURFACE_HEADER } from "../lib/approverAllowlist";
 import {
@@ -24,7 +25,6 @@ import {
   fmtMoney,
   fmtRowDate,
   fmtSigned,
-  fmtUnsigned,
   hhmm,
   invariantBadge,
   isLocked,
@@ -655,10 +655,7 @@ export default function InboxCard({
           </>
         ) : op === "add_transfer" ? (
           <>
-            <div style={{ fontSize: 14, color: c.ink }}>
-              Transfer {fmtUnsigned(transfer?.leg_a?.amount)} from {text(transfer?.leg_a?.account)} to{" "}
-              {text(transfer?.leg_b?.account)} on {onDate(transfer?.leg_a?.date)}
-            </div>
+            <TransferLine legA={transfer?.leg_a} legB={transfer?.leg_b} showRate />
             {flagsOf(rows[0]).length > 0 && (
               <div style={{ marginTop: 8 }}>
                 <DuplicateFlags flags={flagsOf(rows[0])} selfId={id} onPageIds={onPageIds} />
