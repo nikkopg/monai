@@ -1,4 +1,6 @@
 """Phase 39 code-only CSV attachment parser (D-08, D-08a, D-12); synthetic values only."""
+from decimal import Decimal
+
 import pytest
 
 from backend import attachments as att
@@ -144,3 +146,43 @@ def test_date_order_inference_unit():
     assert att.infer_date_order([]) == ("dmy", "none")
     assert att.parse_date("5/3/26", "dmy") == "2026-03-05"
     assert att.parse_date("5/3/70", "mdy") == "1970-05-03"
+
+
+# --- Phase 45: USD accounts (D-11, D-12) -----------------------------------
+
+AMBIGUOUS_CSV = "Date,Description,Amount\n03/25/1996,ZZ45 One,\"-1,250\"\n03/26/1996,ZZ45 Two,\"20,000\"\n"
+
+
+def test_generic_usd_csv_uses_dot_prior():
+    p = parse(AMBIGUOUS_CSV, cur="USD")
+    assert p.status == "ok"
+    assert [Decimal(r["amount"]) for r in p.rows] == [Decimal("-1250"), Decimal("20000")]
+    assert p.meta["separator"] == {"sep": ".", "evidence": "none"}
+    assert all(SEP_ASSUMPTION in r["assumptions"] for r in p.rows)
+    q = parse(AMBIGUOUS_CSV, cur="IDR")
+    assert [Decimal(r["amount"]) for r in q.rows] == [Decimal("-1.25"), Decimal("20")]
+
+
+def test_normalise_currency_tokens():
+    n = att.normalise_currency
+    assert [n(x) for x in (" usd ", "US$", "USDT", "us  dollar")] == ["USD"] * 4
+    assert [n(x) for x in ("Rp", "Rp.", "rupiah", "idr")] == ["IDR"] * 4
+    assert n("sgd") == "SGD"
+    assert n("$") is None and n("") is None and n("   ") is None
+
+
+def test_wallet_usd_tokens_accepted():
+    head = fx.WALLET_CSV.splitlines()[0]
+    rows = "".join(
+        f"ZZ Cash;Food;{c};-5.00;-5.00;Expenses;ZZ45 Diner;n;1996-03-0{i} 19:00:00;false\n"
+        for i, c in enumerate(("USD", " usd ", "USDT"), 1)
+    )
+    p = parse(head + "\n" + rows, cur="USD")
+    assert p.status == "ok" and len(p.rows) == 3
+
+
+def test_wallet_idr_row_on_usd_account_refused():
+    head = fx.WALLET_CSV.splitlines()[0]
+    p = parse(head + "\nZZ Cash;Food;IDR;-5000.00;-5000.00;Expenses;ZZ45 Diner;n;1996-03-01 19:00:00;false\n", cur="USD")
+    assert p.status == "refused" and p.rows == []
+    assert p.note == "1 row is in IDR, not USD; nothing was proposed."
