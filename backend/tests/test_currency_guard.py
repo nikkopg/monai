@@ -234,6 +234,45 @@ def flow_seed(flow_env):
     yield _seed_flows()
 
 
+def _flow_note_text(n: int) -> str:
+    """D-15 flow note, built from a seed-derived count."""
+    return f"Includes {n} USD row(s), each converted at its transaction-date rate"
+
+
+# flow_seed USD rows by direction: two expenses (Fri, Sat), one income (Mon).
+USD_EXPENSE_ROWS, USD_INCOME_ROWS = 2, 1
+IDR_ONLY = {"period": "custom", "start_date": "1995-06-20", "end_date": "1995-06-20"}
+
+
+def _add_idr_row(acc_id: int, day: date, amount: str = "-7000.00", cat_id: int | None = None) -> None:
+    s = SessionLocal()
+    try:
+        s.execute(text(
+            "INSERT INTO transactions (date, amount, currency, merchant, category, category_id, account_id, "
+            "is_transfer) VALUES (:d, :a, 'IDR', 'zz43 idr only', :cat, :cid, :acc, false)"),
+            {"d": datetime(day.year, day.month, day.day, 12), "a": amount,
+             "cat": "zz43-IdrOnly" if cat_id else None, "cid": cat_id, "acc": acc_id})
+        s.commit()
+    finally:
+        s.close()
+
+
+@pytest.fixture()
+def idr_only_seed(flow_seed):
+    """flow_seed plus an IDR-only day (06-20) and a category that holds only IDR rows."""
+    s = SessionLocal()
+    try:
+        cid = s.execute(text(
+            "INSERT INTO categories (name, parent_id, kind, is_system) "
+            "VALUES ('zz43-IdrOnly', NULL, 'expense', false) RETURNING id")).scalar()
+        s.commit()
+    finally:
+        s.close()
+    _add_idr_row(flow_seed["acc"]["IDR"], date(1995, 6, 20))
+    _add_idr_row(flow_seed["acc"]["IDR"], D_FRI, cat_id=cid)
+    yield {**flow_seed, "idr_cat": cid}
+
+
 # ---------------------------------------------------------------------------
 # Behavioural layer: one test per MONEY tool. The IDR value is asserted before
 # the currency label so a failure shows the wrong number.
@@ -243,6 +282,17 @@ def test_money_spending_total(flow_seed):
     r = tools.TOOLS["spending_total"](**RANGE)
     assert r["total"] == float(SPEND)  # HEAD adds dollars to rupiah (50022.5)
     assert r["currency"] == "IDR"
+    assert r["fx_note"] == _flow_note_text(USD_EXPENSE_ROWS)
+
+
+def test_flow_note_absent_without_usd_rows(idr_only_seed):
+    """D-15: no USD row in the total, no fx_note key, on every flow total and row list."""
+    for name in ("spending_total", "income_total", "net_total", "average_daily_spending",
+                 "spending_by_category", "largest_transactions"):
+        assert "fx_note" not in tools.TOOLS[name](**IDR_ONLY), name
+    in_cat = tools.TOOLS["spending_in_category"](category="zz43-IdrOnly", **RANGE)
+    assert in_cat["total"] == 7000.0  # the IDR-only category sees no USD row of the range
+    assert "fx_note" not in in_cat
 
 
 def test_flow_rounds_once_per_aggregate(flow_env):
@@ -272,12 +322,14 @@ def test_money_income_total(flow_seed):
     r = tools.TOOLS["income_total"](**RANGE)
     assert r["total"] == float(INCOME)
     assert r["currency"] == "IDR"
+    assert r["fx_note"] == _flow_note_text(USD_INCOME_ROWS)  # the two USD expenses are not income
 
 
 def test_money_net_total(flow_seed):
     r = tools.TOOLS["net_total"](**RANGE)
     assert r["net"] == float(NET)
     assert r["currency"] == "IDR"
+    assert r["fx_note"] == _flow_note_text(USD_EXPENSE_ROWS + USD_INCOME_ROWS)
 
 
 def test_money_average_daily_spending(flow_seed):
@@ -286,6 +338,7 @@ def test_money_average_daily_spending(flow_seed):
     assert r["total"] == float(SPEND)
     assert r["average"] == float(SPEND / 4)
     assert r["currency"] == "IDR"
+    assert r["fx_note"] == _flow_note_text(USD_EXPENSE_ROWS)
 
 
 def test_money_spending_by_category(flow_seed):
@@ -293,12 +346,14 @@ def test_money_spending_by_category(flow_seed):
     assert dict(r["rows"])["zz43-Guard"] == float(SPEND)
     assert sum(t for _, t in r["children"]["zz43-Guard"]) == pytest.approx(float(SPEND))
     assert r["currency"] == "IDR"
+    assert r["fx_note"] == _flow_note_text(USD_EXPENSE_ROWS)
 
 
 def test_money_spending_in_category(flow_seed):
     r = tools.TOOLS["spending_in_category"](category="zz43-Guard", **RANGE)
     assert r["total"] == float(SPEND)
     assert r["currency"] == "IDR"
+    assert r["fx_note"] == _flow_note_text(USD_EXPENSE_ROWS)
 
 
 def test_money_largest_transactions(flow_seed):
@@ -335,6 +390,9 @@ def test_money_compare_periods(flow_seed):
         period_a="custom", a_start_date="1995-06-09", a_end_date="1995-06-10",
         period_b="custom", b_start_date="1995-06-11", b_end_date="1995-06-12")
     t = r["totals"]
+    # One note per period entry: base (Fri, Sat) holds both USD expenses, current (Sun, Mon) the USD income.
+    assert r["base"]["fx_note"] == _flow_note_text(USD_EXPENSE_ROWS)
+    assert r["current"]["fx_note"] == _flow_note_text(USD_INCOME_ROWS)
     assert (t["spending"]["base"], t["spending"]["current"]) == (float(SPEND), 0.0)
     assert (t["income"]["base"], t["income"]["current"]) == (0.0, float(INCOME))
     assert (t["net"]["base"], t["net"]["current"]) == (-float(SPEND), float(INCOME))
@@ -360,6 +418,7 @@ def test_money_spending_before_after_purchase(purchase_seed):
     assert r["before_total"] == float(SPEND)
     assert r["after_total"] == 0.0
     assert r["currency"] == "IDR"
+    assert r["fx_note"] == _flow_note_text(USD_EXPENSE_ROWS)  # the inner windows' rows, added up
 
 
 # --- balances and net worth (D-11, D-12, D-13) -----------------------------
@@ -533,6 +592,8 @@ def recent_seed(monkeypatch):
     s = SessionLocal()
     try:
         baseline = _trend_expense()
+        before_note = tools.TOOLS["monthly_trend"]().get("fx_note")
+        usd_before = int(before_note.split()[1]) if before_note else 0
         for cur, name, amt in (("USD", "ZZ43 rec usd", "-9.99"), ("IDR", "ZZ43 rec idr", "-150000.00")):
             acc = s.execute(text(
                 "INSERT INTO accounts (name, type, currency) VALUES (:n, 'liquid', :c) RETURNING id"),
@@ -551,7 +612,7 @@ def recent_seed(monkeypatch):
     finally:
         s.close()
     try:
-        yield {"baseline": baseline}
+        yield {"baseline": baseline, "usd_before": usd_before}
     finally:
         _clean()
         _clean_sub_rates()
@@ -560,7 +621,9 @@ def recent_seed(monkeypatch):
 def test_money_monthly_trend(recent_seed):
     expected = 4 * Decimal("150000") + Decimal("9.99") * sum(SUB_RATES.values())
     assert _trend_expense() - recent_seed["baseline"] == pytest.approx(float(expected), abs=0.05)
-    assert tools.TOOLS["monthly_trend"]()["currency"] == "IDR"
+    r = tools.TOOLS["monthly_trend"]()
+    assert r["currency"] == "IDR"
+    assert r["fx_note"] == _flow_note_text(recent_seed["usd_before"] + len(SUB_RATES))
 
 
 def test_money_recurring_charges(recent_seed):
