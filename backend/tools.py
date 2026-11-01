@@ -105,6 +105,13 @@ def _date_clause(start, end, params: dict) -> str:
     return (" AND " + " AND ".join(parts)) if parts else ""
 
 
+def _rate_note(rate, as_of: datetime.date, stale: bool) -> str:
+    """D-15: the balance conversion line, built here and never composed by the model.
+    Whole IDR; the day is as_of.day so no platform-specific strftime flag is needed."""
+    return (f"USD converted at 1 USD = {Decimal(rate):,.0f} IDR "
+            f"(rate of {as_of.day} {as_of:%b %Y})" + (", stale" if stale else ""))
+
+
 def _flow_fx(conn, start, end_excl) -> str | None:
     """Fill missing USD->IDR rates for the range; return the FxUnavailable text or None.
     ensure_flow_rates' upper bound is inclusive, so pass the day before end_excl."""
@@ -608,9 +615,10 @@ def account_balances(period_start=None, period_end=None) -> dict:
         else:
             row.update(current_balance=float(fx.at_rate(native, rate[0])), fx_rate=float(rate[0]),
                        fx_as_of=rate[1].isoformat(), fx_stale=rate[2],
-                       fx_note=f"stale, rate of {rate[1].isoformat()}" if rate[2] else None)
+                       fx_note=_rate_note(*rate))
         rows.append(row)
-    return {"tool": "account_balances", "rows": rows, "currency": fx.BASE}
+    return {"tool": "account_balances", "rows": rows, "currency": fx.BASE,
+            "fx_note": next((r["fx_note"] for r in rows if r["fx_note"]), None)}
 
 
 def net_worth(db=None) -> dict:
