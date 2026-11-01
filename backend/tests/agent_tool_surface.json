@@ -475,7 +475,7 @@
     "name": "compare_periods"
   },
   {
-    "description": "propose_add_transaction(date: str, amount: float, account: str, category: str | None = None, merchant: str | None = None, notes: str | None = None, currency: str = 'IDR', is_transfer: bool = False) -> dict\nPropose adding a new transaction. Returns a proposal for user confirmation.\nDoes NOT add any data — user must approve. amount is signed (negative=expense, positive=income).",
+    "description": "propose_add_transaction(date: str, amount: float, account: str, category: str | None = None, merchant: str | None = None, notes: str | None = None, is_transfer: bool = False) -> dict\nPropose adding a new transaction. Returns a proposal for user confirmation.\nDoes NOT add any data — user must approve. amount is signed (negative=expense, positive=income).\nThe row's currency is the account's; there is no currency argument.",
     "fn_schema": {
       "properties": {
         "account": {
@@ -497,11 +497,6 @@
           ],
           "default": null,
           "title": "Category"
-        },
-        "currency": {
-          "default": "IDR",
-          "title": "Currency",
-          "type": "string"
         },
         "date": {
           "title": "Date",
@@ -947,17 +942,12 @@
     "name": "propose_delete_holding"
   },
   {
-    "description": "propose_add_transfer(from_account: str, to_account: str, amount: float, currency: str = 'IDR', date: str | None = None, notes: str | None = None) -> dict\nPropose a transfer between two liquid accounts. amount is an unsigned\nmagnitude — the source leg is debited (-abs) and the destination leg is\ncredited (+abs); do not pass a signed amount. Returns a proposal for user\nconfirmation. Does NOT move any money — user must approve. (XFER-01)",
+    "description": "propose_add_transfer(from_account: str, to_account: str, amount: float, date: str | None = None, notes: str | None = None, to_amount: float | None = None) -> dict\nPropose a transfer between two liquid accounts. amount is an unsigned\nmagnitude in the from-account's currency — the source leg is debited\n(-abs) and the destination leg is credited; do not pass a signed amount.\nThe legs' currencies are the accounts' own; there is no currency argument.\nWhen the two accounts' currencies differ, to_amount (the amount received,\nas the destination account shows it) is required; between same-currency\naccounts leave it out. Returns a proposal for user confirmation.\nDoes NOT move any money — user must approve. (XFER-01)",
     "fn_schema": {
       "properties": {
         "amount": {
           "title": "Amount",
           "type": "number"
-        },
-        "currency": {
-          "default": "IDR",
-          "title": "Currency",
-          "type": "string"
         },
         "date": {
           "anyOf": [
@@ -990,6 +980,18 @@
         "to_account": {
           "title": "To Account",
           "type": "string"
+        },
+        "to_amount": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "To Amount"
         }
       },
       "required": [
@@ -1003,17 +1005,12 @@
     "name": "propose_add_transfer"
   },
   {
-    "description": "propose_add_investment_transfer(from_account: str, platform_id: int, amount: float, currency: str = 'IDR', date: str | None = None, notes: str | None = None) -> dict\nPropose moving cash from a liquid account into an investment\nplatform with no immediate buy (a plain funding deposit, recorded as a\nCASH sentinel position). platform_id is an int — use find_platforms\nfirst to resolve a platform name to its id. amount is an unsigned\nmagnitude. Returns a proposal for user confirmation — never moves\nmoney directly.",
+    "description": "propose_add_investment_transfer(from_account: str, platform_id: int, amount: float, date: str | None = None, notes: str | None = None, event_amount: float | None = None, event_currency: str | None = None) -> dict\nPropose moving cash from a liquid account into an investment\nplatform with no immediate buy (a plain funding deposit, recorded as a\nCASH sentinel position). platform_id is an int — use find_platforms\nfirst to resolve a platform name to its id. amount is an unsigned\nmagnitude in the from-account's currency; there is no currency argument.\nevent_amount is the amount the platform credits, required when its cash\ncurrency differs from the account's (event_currency picks that currency;\nleave it out to use the platform's existing cash). Returns a proposal for\nuser confirmation — never moves money directly.",
     "fn_schema": {
       "properties": {
         "amount": {
           "title": "Amount",
           "type": "number"
-        },
-        "currency": {
-          "default": "IDR",
-          "title": "Currency",
-          "type": "string"
         },
         "date": {
           "anyOf": [
@@ -1026,6 +1023,30 @@
           ],
           "default": null,
           "title": "Date"
+        },
+        "event_amount": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Event Amount"
+        },
+        "event_currency": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Event Currency"
         },
         "from_account": {
           "title": "From Account",
@@ -1059,7 +1080,7 @@
     "name": "propose_add_investment_transfer"
   },
   {
-    "description": "propose_add_funded_buy(source_account_name: str, platform_id: int, ticker: str, quantity: float, price: float, cash_amount: float, cash_currency: str = 'IDR', event_currency: str = 'IDR', date: str | None = None, notes: str | None = None, asset_type: str | None = None) -> dict\nPropose a funded buy: debits source_account_name and records a\n'buy' portfolio event. cash_amount, quantity, and price must be\nunsigned positive magnitudes — the primitive owns the debit sign.\nplatform_id is an int — use find_platforms first to resolve a\nplatform name to its id. Returns a proposal for user confirmation —\nnever moves money directly.",
+    "description": "propose_add_funded_buy(source_account_name: str, platform_id: int, ticker: str, quantity: float, price: float, cash_amount: float, event_currency: str | None = None, date: str | None = None, notes: str | None = None, asset_type: str | None = None) -> dict\nPropose a funded buy: debits source_account_name and records a\n'buy' portfolio event. cash_amount, quantity, and price must be\nunsigned positive magnitudes — the primitive owns the debit sign.\ncash_amount is in the source account's currency (there is no cash\ncurrency argument); price is in event_currency, which defaults to the\nexisting position's currency. platform_id is an int — use find_platforms\nfirst to resolve a platform name to its id. Returns a proposal for user\nconfirmation — never moves money directly.",
     "fn_schema": {
       "properties": {
         "asset_type": {
@@ -1078,11 +1099,6 @@
           "title": "Cash Amount",
           "type": "number"
         },
-        "cash_currency": {
-          "default": "IDR",
-          "title": "Cash Currency",
-          "type": "string"
-        },
         "date": {
           "anyOf": [
             {
@@ -1096,9 +1112,16 @@
           "title": "Date"
         },
         "event_currency": {
-          "default": "IDR",
-          "title": "Event Currency",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Event Currency"
         },
         "notes": {
           "anyOf": [
@@ -1147,7 +1170,7 @@
     "name": "propose_add_funded_buy"
   },
   {
-    "description": "propose_add_funded_sell(source_account_name: str, platform_id: int, ticker: str, quantity: float, price: float, cash_amount: float, cash_currency: str = 'IDR', event_currency: str = 'IDR', date: str | None = None, notes: str | None = None, asset_type: str | None = None) -> dict\nPropose a funded sell: credits source_account_name and records a\n'sell' portfolio event. cash_amount, quantity, and price must be\nunsigned positive magnitudes — the primitive owns the credit sign.\nplatform_id is an int — use find_platforms first to resolve a\nplatform name to its id. Returns a proposal for user confirmation —\nnever moves money directly.",
+    "description": "propose_add_funded_sell(source_account_name: str, platform_id: int, ticker: str, quantity: float, price: float, cash_amount: float, event_currency: str | None = None, date: str | None = None, notes: str | None = None, asset_type: str | None = None) -> dict\nPropose a funded sell: credits source_account_name and records a\n'sell' portfolio event. cash_amount, quantity, and price must be\nunsigned positive magnitudes — the primitive owns the credit sign.\ncash_amount is in the source account's currency (there is no cash\ncurrency argument); price is in event_currency, which defaults to the\nexisting position's currency. platform_id is an int — use find_platforms\nfirst to resolve a platform name to its id. Returns a proposal for user\nconfirmation — never moves money directly.",
     "fn_schema": {
       "properties": {
         "asset_type": {
@@ -1166,11 +1189,6 @@
           "title": "Cash Amount",
           "type": "number"
         },
-        "cash_currency": {
-          "default": "IDR",
-          "title": "Cash Currency",
-          "type": "string"
-        },
         "date": {
           "anyOf": [
             {
@@ -1184,9 +1202,16 @@
           "title": "Date"
         },
         "event_currency": {
-          "default": "IDR",
-          "title": "Event Currency",
-          "type": "string"
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Event Currency"
         },
         "notes": {
           "anyOf": [
