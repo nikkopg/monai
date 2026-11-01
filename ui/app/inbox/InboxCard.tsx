@@ -47,6 +47,7 @@ import {
   type HeldCard,
   type ProposalRow,
 } from "../lib/inbox";
+import { fmtAmountSigned } from "../lib/money";
 import { btn, btnGhost, card as cardStyle, dangerBtn, input, tokens } from "../styles";
 
 type Busy = null | "approve" | "reject" | number;
@@ -595,7 +596,7 @@ export default function InboxCard({
                           ...struck,
                         }}
                       >
-                        {fmtSigned(a.amount)}
+                        {text(a.currency) === "USD" ? fmtAmountSigned(Number(a.amount), "USD") : fmtSigned(a.amount)}
                       </td>
                       <td className="inbox-c-skip" style={cell}>
                         {live && (
@@ -671,7 +672,11 @@ export default function InboxCard({
             <div style={{ fontSize: 14, color: c.ink }}>
               Move {fmtMoney(investTransfer?.cash_leg?.amount, investTransfer?.cash_leg?.currency)}{" "}
               {text(investTransfer?.cash_leg?.currency)} from{" "}
-              {text(investTransfer?.cash_leg?.account)} to platform #{text(investTransfer?.event?.platform_id)} on{" "}
+              {text(investTransfer?.cash_leg?.account)} to platform #{text(investTransfer?.event?.platform_id)}
+              {text(investTransfer?.event?.currency) !== "" &&
+                text(investTransfer?.event?.currency) !== (text(investTransfer?.cash_leg?.currency) || "IDR") &&
+                `, crediting ${fmtMoney(investTransfer?.event?.quantity, investTransfer?.event?.currency)} ${text(investTransfer?.event?.currency)}`}{" "}
+              on{" "}
               {onDate(investTransfer?.cash_leg?.date)}
             </div>
             {text(investTransfer?.cash_leg?.notes) !== "" && (
