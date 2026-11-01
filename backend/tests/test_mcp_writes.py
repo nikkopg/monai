@@ -417,7 +417,7 @@ def test_transfer_cross_currency_both_amounts(db_session, wallets, track):
     assert after["leg_a"]["account"] == usd.name and Decimal(after["leg_a"]["amount"]) == -100
     assert after["leg_a"]["currency"] == "USD"
     assert after["leg_b"]["account"] == idr.name and Decimal(after["leg_b"]["amount"]) == 1631000
-    assert after["leg_b"]["currency"] == "IDR" and after["to_amount"] == "1631000"
+    assert after["leg_b"]["currency"] == "IDR" and Decimal(after["to_amount"]) == 1631000
     assert "100" in r["summary"] and "USD" in r["summary"] and "1631000" in r["summary"] and "IDR" in r["summary"]
 
 

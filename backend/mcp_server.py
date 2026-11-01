@@ -136,9 +136,11 @@ MCP_DESCRIPTIONS: dict[str, str] = {
         "proposal call again with replaces=<proposal_id>. " + NEXT_STEP
     ),
     "propose_transfer": (
-        "Propose one transfer between two existing liquid accounts in the same currency (two ledger rows); "
-        "nothing is written until approved. amount is a positive magnitude: the source is debited and the "
-        "destination credited. date is YYYY-MM-DD, not in the future. replaces=<proposal_id> fixes a "
+        "Propose one transfer between two existing liquid accounts (two ledger rows); nothing is written "
+        "until approved. amount is a positive magnitude in the source account's currency: the source is "
+        "debited and the destination credited. When the two accounts use different currencies pass "
+        "to_amount, the positive amount the destination received in its own currency; each leg's currency "
+        "comes from its account. date is YYYY-MM-DD, not in the future. replaces=<proposal_id> fixes a "
         "pending one. " + NEXT_STEP
     ),
     "confirm_proposal": (

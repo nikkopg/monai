@@ -507,6 +507,7 @@ def propose_transfer(
     amount: str | int | float,
     date: str,
     notes: str | None = None,
+    to_amount: str | int | float | None = None,
     replaces: str | None = None,
 ) -> dict:
     today = datetime.now(_JAKARTA).date()
@@ -521,20 +522,33 @@ def propose_transfer(
             errors.append(f"to_account: {err}")
         if src and dst and src[0] == dst[0]:
             errors.append("from_account and to_account must be different accounts")
-        elif src and dst and src[2] != dst[2]:
-            errors.append("Both accounts must use the same currency.")
         mag = _parse_amount(amount)
         if mag is None or mag <= 0:
             errors.append("amount must be a positive number with at most 2 decimals")
+        to_mag = None if to_amount is None else _parse_amount(to_amount)
+        if to_amount is not None and (to_mag is None or to_mag <= 0):
+            errors.append("to_amount must be a positive number with at most 2 decimals")
+        elif src and dst and src[0] != dst[0]:
+            cross = src[2] != dst[2]
+            if cross and to_amount is None:
+                errors.append(f"Transfers between {src[2]} and {dst[2]} accounts need both amounts: "
+                              "pass to_amount, the amount received")
+            elif not cross and to_mag is not None and to_mag != mag:
+                errors.append("A transfer between two accounts in the same currency moves one amount; "
+                              "record a fee as a separate expense")
         errors += [e for e in (_date_error(date, today), _text_error("notes", notes)) if e]
         if errors:
             _refuse("Nothing was proposed. " + "; ".join(errors))
-        cur, notes = src[2], _clean_text(notes, None)
-        leg = lambda acct, amt: {"account": acct[1], "amount": str(amt), "currency": cur, "date": date, "notes": notes}
-        payload = {"operation": "add_transfer",
-                   "rows": [{"before": None, "after": {"leg_a": leg(src, -mag), "leg_b": leg(dst, mag)}}]}
+        notes = _clean_text(notes, None)
+        cross = src[2] != dst[2]
+        leg = lambda acct, amt: {"account": acct[1], "amount": str(amt), "currency": acct[2], "date": date, "notes": notes}
+        after = {"leg_a": leg(src, -mag), "leg_b": leg(dst, to_mag if cross else mag)}
+        if to_mag is not None:
+            after["to_amount"] = str(to_mag)
+        payload = {"operation": "add_transfer", "rows": [{"before": None, "after": after}]}
         return _create(db, "add_transfer", payload, replaces,
-                       f"Transfer {mag} {cur} from {src[1]} to {dst[1]} on {date}", many=False)
+                       f"Transfer {mag} {src[2]} from {src[1]} to {dst[1]}"
+                       + (f", receiving {to_mag} {dst[2]}" if cross else "") + f" on {date}", many=False)
 
 
 @_safe
