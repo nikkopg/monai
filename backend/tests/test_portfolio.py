@@ -601,6 +601,33 @@ def test_summary_realized_pnl_fx_converted_for_non_idr_position(db_session, monk
         _cleanup_ticker(db_session, t)
 
 
+def test_holding_dict_carries_currency(db_session):
+    """45-05: every holding dict exposes the holding's own currency so the
+    deposit and funded-trade modals can tell a USD position from an IDR one."""
+    from decimal import Decimal
+    from backend.models import Holding
+    from backend import portfolio as portfolio_mod
+
+    plat = _make_platform(db_session, "zz45-holding-currency")
+    t_usd, t_idr = _random_ticker(), _random_ticker()
+    for t, ccy in ((t_usd, "USD"), (t_idr, "IDR")):
+        db_session.add(Holding(
+            ticker=t, quantity=Decimal("1"), avg_cost=Decimal("1"),
+            currency=ccy, asset_type="stock", platform_id=plat,
+        ))
+    db_session.commit()
+    try:
+        summary = portfolio_mod.portfolio_summary(db_session)
+        by_ticker = {
+            h["ticker"]: h for g in summary["groups"] for h in g["holdings"]
+        }
+        assert by_ticker[t_usd]["currency"] == "USD"
+        assert by_ticker[t_idr]["currency"] == "IDR"
+    finally:
+        _cleanup_ticker(db_session, t_usd)
+        _cleanup_ticker(db_session, t_idr)
+
+
 def test_cash_holding_values_via_fx_with_no_price_cache_row(db_session, monkeypatch):
     """CG-01: a cash holding (asset_type='cash') values as quantity ×
     fx_rate(currency, 'IDR', today) with NO price_cache row present at all —
