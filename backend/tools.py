@@ -1719,41 +1719,57 @@ def propose_add_transfer(
     from_account: str,
     to_account: str,
     amount: float,
-    currency: str = "IDR",
     date: str | None = None,
     notes: str | None = None,
+    to_amount: float | None = None,
 ) -> dict:
     """Propose a transfer between two liquid accounts. amount is an unsigned
-    magnitude — the source leg is debited (-abs) and the destination leg is
-    credited (+abs); do not pass a signed amount. Returns a proposal for user
-    confirmation. Does NOT move any money — user must approve. (XFER-01)
+    magnitude in the from-account's currency — the source leg is debited
+    (-abs) and the destination leg is credited; do not pass a signed amount.
+    The legs' currencies are the accounts' own; there is no currency argument.
+    When the two accounts' currencies differ, to_amount (the amount received,
+    as the destination account shows it) is required; between same-currency
+    accounts leave it out. Returns a proposal for user confirmation.
+    Does NOT move any money — user must approve. (XFER-01)
     """
+    ccy_a = _account_currency_for(from_account)
+    ccy_b = _account_currency_for(to_account)
+    if ccy_a != ccy_b and to_amount is None:
+        return {"tool": "propose_add_transfer", "error": (
+            f"Transfers between {ccy_a} and {ccy_b} accounts need both amounts; "
+            "ask the owner for the amount received")}
+    if ccy_a == ccy_b and to_amount is not None and abs(to_amount) != abs(amount):
+        return {"tool": "propose_add_transfer", "error": (
+            f"A transfer between two {ccy_a} accounts moves one amount; "
+            "record a fee as a separate expense")}
+    received = abs(to_amount) if ccy_a != ccy_b else abs(amount)
     leg_a = {
         "account": from_account,
         "amount": str(Decimal(str(-abs(amount)))),
-        "currency": currency,
+        "currency": ccy_a,
         "date": date,
         "notes": notes,
     }
     leg_b = {
         "account": to_account,
-        "amount": str(Decimal(str(abs(amount)))),
-        "currency": currency,
+        "amount": str(Decimal(str(received))),
+        "currency": ccy_b,
         "date": date,
         "notes": notes,
     }
-    payload = {
-        "operation": "add_transfer",
-        "rows": [{"before": None, "after": {"leg_a": leg_a, "leg_b": leg_b}}],
-    }
+    after = {"leg_a": leg_a, "leg_b": leg_b}
+    if to_amount is not None:
+        after["to_amount"] = str(Decimal(str(abs(to_amount))))
+    payload = {"operation": "add_transfer", "rows": [{"before": None, "after": after}]}
     proposal_id, proposal_token = _make_proposal("add_transfer", payload)
     return {
         "tool": "propose_add_transfer",
         "proposal_id": proposal_id,
         "proposal_token": proposal_token,
-        "summary": f"Transfer {amount} {currency} from {from_account} to {to_account}",
+        "summary": f"Transfer {amount} {ccy_a} from {from_account} to {to_account}"
+        + (f", receiving {to_amount} {ccy_b}" if ccy_a != ccy_b else ""),
         "before": None,
-        "after": {"leg_a": leg_a, "leg_b": leg_b},
+        "after": after,
     }
 
 
@@ -1761,46 +1777,85 @@ def propose_add_investment_transfer(
     from_account: str,
     platform_id: int,
     amount: float,
-    currency: str = "IDR",
     date: str | None = None,
     notes: str | None = None,
+    event_amount: float | None = None,
+    event_currency: str | None = None,
 ) -> dict:
     """Propose moving cash from a liquid account into an investment
     platform with no immediate buy (a plain funding deposit, recorded as a
     CASH sentinel position). platform_id is an int — use find_platforms
     first to resolve a platform name to its id. amount is an unsigned
-    magnitude. Returns a proposal for user confirmation — never moves
-    money directly.
+    magnitude in the from-account's currency; there is no currency argument.
+    event_amount is the amount the platform credits, required when its cash
+    currency differs from the account's (event_currency picks that currency;
+    leave it out to use the platform's existing cash). Returns a proposal for
+    user confirmation — never moves money directly.
     """
+    cash_ccy = _account_currency_for(from_account)
+    ev_ccy = (event_currency or "").strip().upper() or _holding_currency_for("CASH", platform_id) or cash_ccy
+    if ev_ccy != cash_ccy and event_amount is None:
+        return {"tool": "propose_add_investment_transfer", "error": (
+            f"A deposit from a {cash_ccy} account into {ev_ccy} cash needs both amounts; "
+            "ask the owner for the amount the platform receives")}
+    if ev_ccy == cash_ccy and event_amount is not None and abs(event_amount) != abs(amount):
+        return {"tool": "propose_add_investment_transfer", "error": (
+            f"A deposit between {cash_ccy} amounts moves one amount; "
+            "record a fee as a separate expense")}
+    credited = abs(event_amount) if event_amount is not None else abs(amount)
     cash_leg = {
         "account": from_account,
         "amount": str(Decimal(str(-abs(amount)))),
-        "currency": currency,
+        "currency": cash_ccy,
         "date": date,
         "notes": notes,
     }
     event = {
         "ticker": "CASH",
         "event_type": "deposit",
-        "quantity": str(Decimal(str(abs(amount)))),
+        "quantity": str(Decimal(str(credited))),
         "price": "1",
         "platform_id": platform_id,
-        "currency": currency,
+        "currency": ev_ccy,
         "date": date,
         "asset_type": "cash",
     }
-    payload = {
-        "operation": "add_investment_transfer",
-        "rows": [{"before": None, "after": {"cash_leg": cash_leg, "event": event}}],
-    }
+    after = {"cash_leg": cash_leg, "event": event}
+    if event_amount is not None:
+        after["event_amount"] = str(Decimal(str(abs(event_amount))))
+    payload = {"operation": "add_investment_transfer", "rows": [{"before": None, "after": after}]}
     proposal_id, proposal_token = _make_proposal("add_investment_transfer", payload)
     return {
         "tool": "propose_add_investment_transfer",
         "proposal_id": proposal_id,
         "proposal_token": proposal_token,
-        "summary": f"Fund platform #{platform_id} with {amount} {currency} from {from_account}",
+        "summary": f"Fund platform #{platform_id} with {credited} {ev_ccy} from {amount} {cash_ccy} in {from_account}",
         "before": None,
-        "after": {"cash_leg": cash_leg, "event": event},
+        "after": after,
+    }
+
+
+def _funded_after(
+    source_account_name: str, platform_id: int, ticker: str, quantity: float, price: float,
+    cash_amount: float, event_currency: str | None, date: str | None, notes: str | None,
+    asset_type: str | None,
+) -> dict:
+    """Shared `after` of a funded buy/sell: the cash currency is the account's and the event
+    currency is explicit, else the existing position's, else the cash currency (D-02, D-08)."""
+    cash_ccy = _account_currency_for(source_account_name)
+    return {
+        "source_account_name": source_account_name,
+        "cash_currency": cash_ccy,
+        "cash_amount": abs(float(cash_amount)),
+        "ticker": ticker,
+        "quantity": abs(float(quantity)),
+        "price": abs(float(price)),
+        "platform_id": platform_id,
+        "event_currency": (event_currency or "").strip().upper()
+        or _holding_currency_for(ticker, platform_id) or cash_ccy,
+        "date": date,
+        "notes": notes,
+        "asset_type": asset_type,
     }
 
 
@@ -1811,8 +1866,7 @@ def propose_add_funded_buy(
     quantity: float,
     price: float,
     cash_amount: float,
-    cash_currency: str = "IDR",
-    event_currency: str = "IDR",
+    event_currency: str | None = None,
     date: str | None = None,
     notes: str | None = None,
     asset_type: str | None = None,
@@ -1820,30 +1874,21 @@ def propose_add_funded_buy(
     """Propose a funded buy: debits source_account_name and records a
     'buy' portfolio event. cash_amount, quantity, and price must be
     unsigned positive magnitudes — the primitive owns the debit sign.
-    platform_id is an int — use find_platforms first to resolve a
-    platform name to its id. Returns a proposal for user confirmation —
-    never moves money directly.
+    cash_amount is in the source account's currency (there is no cash
+    currency argument); price is in event_currency, which defaults to the
+    existing position's currency. platform_id is an int — use find_platforms
+    first to resolve a platform name to its id. Returns a proposal for user
+    confirmation — never moves money directly.
     """
-    after = {
-        "source_account_name": source_account_name,
-        "cash_currency": cash_currency,
-        "cash_amount": abs(float(cash_amount)),
-        "ticker": ticker,
-        "quantity": abs(float(quantity)),
-        "price": abs(float(price)),
-        "platform_id": platform_id,
-        "event_currency": event_currency,
-        "date": date,
-        "notes": notes,
-        "asset_type": asset_type,
-    }
+    after = _funded_after(source_account_name, platform_id, ticker, quantity, price,
+                          cash_amount, event_currency, date, notes, asset_type)
     payload = {"operation": "add_funded_buy", "rows": [{"before": None, "after": after}]}
     proposal_id, proposal_token = _make_proposal("add_funded_buy", payload)
     return {
         "tool": "propose_add_funded_buy",
         "proposal_id": proposal_id,
         "proposal_token": proposal_token,
-        "summary": f"Buy {quantity} {ticker} @ {price} {event_currency} funded by {cash_amount} {cash_currency} from {source_account_name}",
+        "summary": f"Buy {quantity} {ticker} @ {price} {after['event_currency']} funded by {cash_amount} {after['cash_currency']} from {source_account_name}",
         "before": None,
         "after": after,
     }
@@ -1856,8 +1901,7 @@ def propose_add_funded_sell(
     quantity: float,
     price: float,
     cash_amount: float,
-    cash_currency: str = "IDR",
-    event_currency: str = "IDR",
+    event_currency: str | None = None,
     date: str | None = None,
     notes: str | None = None,
     asset_type: str | None = None,
@@ -1865,30 +1909,21 @@ def propose_add_funded_sell(
     """Propose a funded sell: credits source_account_name and records a
     'sell' portfolio event. cash_amount, quantity, and price must be
     unsigned positive magnitudes — the primitive owns the credit sign.
-    platform_id is an int — use find_platforms first to resolve a
-    platform name to its id. Returns a proposal for user confirmation —
-    never moves money directly.
+    cash_amount is in the source account's currency (there is no cash
+    currency argument); price is in event_currency, which defaults to the
+    existing position's currency. platform_id is an int — use find_platforms
+    first to resolve a platform name to its id. Returns a proposal for user
+    confirmation — never moves money directly.
     """
-    after = {
-        "source_account_name": source_account_name,
-        "cash_currency": cash_currency,
-        "cash_amount": abs(float(cash_amount)),
-        "ticker": ticker,
-        "quantity": abs(float(quantity)),
-        "price": abs(float(price)),
-        "platform_id": platform_id,
-        "event_currency": event_currency,
-        "date": date,
-        "notes": notes,
-        "asset_type": asset_type,
-    }
+    after = _funded_after(source_account_name, platform_id, ticker, quantity, price,
+                          cash_amount, event_currency, date, notes, asset_type)
     payload = {"operation": "add_funded_sell", "rows": [{"before": None, "after": after}]}
     proposal_id, proposal_token = _make_proposal("add_funded_sell", payload)
     return {
         "tool": "propose_add_funded_sell",
         "proposal_id": proposal_id,
         "proposal_token": proposal_token,
-        "summary": f"Sell {quantity} {ticker} @ {price} {event_currency}, credit {cash_amount} {cash_currency} to {source_account_name}",
+        "summary": f"Sell {quantity} {ticker} @ {price} {after['event_currency']}, credit {cash_amount} {after['cash_currency']} to {source_account_name}",
         "before": None,
         "after": after,
     }

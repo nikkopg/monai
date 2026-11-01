@@ -1335,7 +1335,7 @@ def test_propose_funded_buy_from_usd_account(client, api_key, zz45):
     result = _track(zz45, propose_add_funded_buy(
         source_account_name=usd, platform_id=plat, ticker="ZZ45T", quantity=1, price=50, cash_amount=50, date=_ISO_DAY))
     assert (result["after"]["cash_currency"], result["after"]["event_currency"]) == ("USD", "USD")
-    assert "50.0 USD" in result["summary"]
+    assert "funded by 50 USD" in result["summary"]
     assert _confirm(client, api_key, result).status_code == 200
     (leg,) = zz45.tx_rows(usd)
     assert (leg.amount, leg.currency) == (Decimal("-50.0"), "USD")
