@@ -252,8 +252,11 @@ test.describe("card rows", () => {
     await expect(card.getByRole("cell", { name: "7 Oct 2026" }).first()).toBeVisible();
     await expect(card.getByRole("cell", { name: "-35,000", exact: true })).toBeVisible();
     await expect(card.getByRole("cell", { name: "+250,000", exact: true })).toBeVisible();
-    await expect(card.getByText("Uncategorized", { exact: true })).toHaveCount(2);
-    await expect(card.getByText("Groceries", { exact: true })).toBeVisible();
+    // /api/categories is unmocked here (500): the select still shows the current category.
+    const catSel = (n: number) => card.getByRole("combobox", { name: new RegExp(`^Category for row ${n}:`) });
+    await expect(catSel(1)).toHaveValue("");
+    await expect(catSel(2)).toHaveValue("Groceries");
+    await expect(catSel(3)).toHaveValue("");
     await expect(card.getByText("Synthetic note", { exact: true })).toBeVisible();
     await expect(card.getByText("Possible duplicate", { exact: true })).toHaveCount(2);
     await expect(
@@ -1463,5 +1466,71 @@ test.describe("chat card", () => {
     await page.getByRole("button", { name: "Reject", exact: true }).click();
     await expect(page.getByText("Rejected — no changes made.")).toBeVisible();
     expect(posts.map((p) => p.path)).toEqual([`/api/proposals/${pid}/reject`]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// quick 261101-fk9 — editable row category (PATCH rows with {category}).
+// ---------------------------------------------------------------------------
+
+type CatNode = { id: number; name: string; is_system: boolean; children: CatNode[] };
+const catNode = (id: number, name: string, children: CatNode[] = [], is_system = false): CatNode => ({
+  id,
+  name,
+  is_system,
+  children,
+});
+const CAT_TREE = [
+  catNode(1, "Groceries"),
+  catNode(2, "ZZ Food", [catNode(3, "ZZ Snacks")]),
+  catNode(4, "Uncategorized", [], true),
+];
+
+/** Registered AFTER mockInbox so it wins: serves the tree and applies skip/category like the backend. */
+async function mockCategoryEdit(page: Page, inbox: InboxMock) {
+  const patches: { index: number; body: { skip?: boolean; category?: string | null } }[] = [];
+  await page.route(/\/api\/categories$/, (route) => route.fulfill({ json: CAT_TREE }));
+  await page.route(/\/api\/proposals\/[0-9a-fA-F-]{36}\/rows\/\d+$/, (route) => {
+    const req = route.request();
+    const url = req.url();
+    const id = /\/proposals\/([0-9a-fA-F-]{36})/.exec(url)?.[1];
+    const index = Number(/\/rows\/(\d+)$/.exec(url)?.[1]);
+    const body = JSON.parse(req.postData() ?? "{}");
+    patches.push({ index, body });
+    const p = inbox.list.find((x) => x.id === id);
+    if (!p || !p.payload.rows[index]) return route.fulfill({ status: 404, json: { detail: "Proposal not found" } });
+    const row = p.payload.rows[index];
+    if ("skip" in body) row.skip = body.skip === true;
+    if ("category" in body) {
+      row.after = { ...row.after, category: body.category };
+      delete row.category_suggested;
+    }
+    const copy: InboxProposal = JSON.parse(JSON.stringify(p));
+    copy.payload.rows.forEach((r) => delete r.duplicates);
+    return route.fulfill({ json: copy });
+  });
+  return patches;
+}
+
+test.describe("row category", () => {
+  test("category: the owner sets and clears a row category", async ({ page }) => {
+    const inbox = await mockInbox(page, { list: [batch3()] });
+    const patches = await mockCategoryEdit(page, inbox);
+    await openInbox(page);
+    const card = byId(page, ids.a);
+    const sel = (n: number) => card.getByRole("combobox", { name: new RegExp(`^Category for row ${n}:`) });
+
+    await expect(sel(1)).toHaveValue("");
+    await expect(sel(2)).toHaveValue("Groceries");
+    await expect(sel(1).locator("option")).toHaveText(["Uncategorized", "Groceries", "ZZ Food", "ZZ Snacks"]);
+
+    await sel(1).selectOption({ label: "ZZ Snacks" });
+    await expect(sel(1)).toHaveValue("ZZ Snacks");
+    expect(patches).toEqual([{ index: 0, body: { category: "ZZ Snacks" } }]);
+    await expect(live(page)).toContainText("Row 1 category set to ZZ Snacks");
+
+    await sel(2).selectOption({ label: "Uncategorized" });
+    await expect(sel(2)).toHaveValue("");
+    expect(patches[1]).toEqual({ index: 1, body: { category: null } });
   });
 });
