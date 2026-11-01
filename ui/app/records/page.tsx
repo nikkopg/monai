@@ -11,7 +11,7 @@ import TransactionModal, {
 import ConfirmDialog from "../cashflow/ConfirmDialog";
 import RowMenu from "../components/RowMenu";
 import { formatDateRange } from "../chat/labels";
-import { fmtAmount, fmtAmountSigned, rateHover, sumIdr } from "../lib/money";
+import { fmtAmount, fmtAmountSigned, fmtRateCompare, impliedRate, rateHover, sumIdr } from "../lib/money";
 
 // ---------------------------------------------------------------------------
 // Records ledger (REC-01/02/03/05) — date-grouped transaction history with a
@@ -548,6 +548,14 @@ function RecordsInner() {
       // (negative) leg, To = the incoming (positive) leg.
       const outgoing = legA.amount < 0 ? legA : legB;
       const incoming = legA.amount < 0 ? legB : legA;
+      // USD<->IDR pair (Phase 45 D-09): both real amounts, plus the rate they imply
+      // next to the ECB rate the backend stored on the USD leg. No fetch here.
+      const usdLeg = [legA, legB].find((l) => l.currency === "USD");
+      const idrLeg = [legA, legB].find((l) => (l.currency ?? "IDR") === "IDR");
+      const crossPair = usdLeg && idrLeg && usdLeg !== idrLeg;
+      const implied = crossPair ? impliedRate(idrLeg.amount, usdLeg.amount) : null;
+      const baseMeta = legA.date.slice(0, 10);
+      const rateState = usdLeg?.fx_rate != null && usdLeg.fx_rate_date ? "ok" : "none";
       return (
         <LedgerRowShell
           key={legA.id}
@@ -557,14 +565,24 @@ function RecordsInner() {
           primary={`Transfer: ${accountName(outgoing.account_id)} → ${accountName(
             incoming.account_id
           )}`}
-          meta={legA.date.slice(0, 10)}
-          amountText={fmtAmount(Math.abs(legA.amount), legA.currency)}
-          {...usdSecondary(
-            legA.currency,
-            legA.amount_idr == null ? null : Math.abs(legA.amount_idr),
-            legA.fx_rate,
-            legA.fx_rate_date
-          )}
+          meta={
+            crossPair && implied !== null
+              ? `${baseMeta} · ${fmtRateCompare(implied, usdLeg.fx_rate, usdLeg.fx_rate_date, rateState)}`
+              : baseMeta
+          }
+          amountText={
+            crossPair
+              ? fmtAmount(Math.abs(outgoing.amount), outgoing.currency)
+              : fmtAmount(Math.abs(legA.amount), legA.currency)
+          }
+          {...(crossPair
+            ? { amountSecondary: `received ${fmtAmount(Math.abs(incoming.amount), incoming.currency)}` }
+            : usdSecondary(
+                legA.currency,
+                legA.amount_idr == null ? null : Math.abs(legA.amount_idr),
+                legA.fx_rate,
+                legA.fx_rate_date
+              ))}
           amountColor={tokens.color.ink}
           checked={selectedIds.has(legA.id) && selectedIds.has(legB.id)}
           onToggle={() => toggleSelection([legA.id, legB.id])}
