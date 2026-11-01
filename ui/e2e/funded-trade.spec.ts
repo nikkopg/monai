@@ -18,15 +18,29 @@ import { test, expect, type Page } from "@playwright/test";
 
 const fmtPlain = (n: number) => new Intl.NumberFormat("en-US").format(Math.round(n));
 
-function platformDetailFixture() {
+function platformDetailFixture(holdings: unknown[] = []) {
   return {
     platform_id: 5,
     platform_name: "Bibit",
     kind: "mutual fund app",
     subtotal: 6000000,
-    holdings: [],
+    holdings,
   };
 }
+
+// A held position in a given currency (ZZ45 = synthetic).
+const heldFixture = (ticker: string, currency: string) => ({
+  id: 7,
+  ticker,
+  currency,
+  asset_type: "stock",
+  quantity: 3,
+  avg_cost: 10,
+  current_price: null,
+  current_value: null,
+  unrealized_pnl: null,
+  realized_pnl: 0,
+});
 
 function platformsFixture() {
   return [{ id: 5, name: "Bibit", kind: "mutual fund app" }];
@@ -37,15 +51,16 @@ function accountsFixture() {
     { id: 1, name: "BCA", type: "liquid", currency: "IDR" },
     { id: 2, name: "Cash Wallet", type: "liquid", currency: "IDR" },
     { id: 3, name: "Bibit", type: "investment", currency: "IDR" },
+    { id: 4, name: "ZZ45 Wallet", type: "liquid", currency: "USD" },
   ];
 }
 
-async function mockPlatformDetail(page: Page) {
+async function mockPlatformDetail(page: Page, holdings: unknown[] = []) {
   await page.route("**/api/platforms/*/detail", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(platformDetailFixture()),
+      body: JSON.stringify(platformDetailFixture(holdings)),
     });
   });
 }
@@ -127,8 +142,8 @@ async function openFundedModal(page: Page) {
 function fundingSelect(page: Page) {
   return page.locator('label:text-is("Funding account") + select');
 }
-function cashAmountInput(page: Page) {
-  return page.locator('label:text-is("Cash amount (IDR)") + input');
+function cashAmountInput(page: Page, ccy = "IDR") {
+  return page.getByLabel(`Cash amount (${ccy})`, { exact: true });
 }
 function eventTypeSelect(page: Page) {
   return page.locator('label:text-is("Event type") + select');
@@ -136,8 +151,8 @@ function eventTypeSelect(page: Page) {
 function quantityInput(page: Page) {
   return page.locator('label:text-is("Quantity") + input');
 }
-function priceInput(page: Page) {
-  return page.locator('label:text-is("Price per unit (IDR)") + input');
+function priceInput(page: Page, ccy = "IDR") {
+  return page.getByLabel(`Price per unit (${ccy})`, { exact: true });
 }
 
 // Lock the timezone so the CR-02 date regression is deterministic regardless
@@ -184,10 +199,12 @@ test.describe("funded buy/sell (XFER-03)", () => {
       // fields CR-02 / WR-10 depend on — previously unasserted, which is why
       // the day-early date shipped green:
       date: "2026-08-17",
-      cash_currency: "IDR",
+      // 45-05: an IDR account and a new position; the cash currency is derived
+      // by the backend, the event currency comes from the select's default.
       event_currency: "IDR",
       asset_type: "crypto",
     });
+    expect(posted[0]).not.toHaveProperty("cash_currency");
   });
 
   test("Test B: cash_amount defaults to quantity x price and an edited value is posted", async ({
@@ -360,5 +377,126 @@ test.describe("funded buy/sell (XFER-03)", () => {
       platform_id: 5,
     });
     expect(fundedBuyCalled).toBe(false);
+  });
+
+  test("funded buy from a USD account", async ({ page }) => {
+    await mockPlatformDetail(page, [heldFixture("ZZ45X", "USD")]);
+    await mockPlatformsList(page);
+    await mockAccounts(page);
+    await mockPortfolioEvents(page);
+    const posted: Record<string, unknown>[] = [];
+    await mockFundedBuy(page, (body) => posted.push(body));
+
+    await openFundedModal(page);
+    await fundingSelect(page).selectOption({ label: "ZZ45 Wallet" });
+    await page.getByPlaceholder("BBCA").fill("ZZ45X");
+
+    await expect(cashAmountInput(page, "USD")).toBeVisible();
+    await expect(page.getByLabel("Cash currency")).toHaveText("USD");
+    await expect(priceInput(page, "USD")).toBeVisible();
+    await expect(page.getByLabel("Position currency")).toHaveText("USD");
+    expect(await page.getByLabel("Position currency").evaluate((el) => el.tagName)).toBe("SPAN");
+
+    await quantityInput(page).fill("1");
+    await priceInput(page, "USD").fill("12.5");
+    await expect(cashAmountInput(page, "USD")).toHaveValue("12.5");
+    await expect(page.getByText("Debits ZZ45 Wallet 12.50 USD, +1 ZZ45X")).toBeVisible();
+
+    await page.getByRole("button", { name: "Log funded Buy", exact: true }).click();
+    await expect.poll(() => posted.length).toBe(1);
+    expect(posted[0]).toMatchObject({ source_account_name: "ZZ45 Wallet", ticker: "ZZ45X", cash_amount: 12.5 });
+    expect(posted[0]).not.toHaveProperty("cash_currency");
+    expect(posted[0]).not.toHaveProperty("event_currency");
+  });
+
+  test("funded sell into a USD account credits dollars", async ({ page }) => {
+    await mockPlatformDetail(page, [heldFixture("ZZ45X", "USD")]);
+    await mockPlatformsList(page);
+    await mockAccounts(page);
+    await mockPortfolioEvents(page);
+
+    await openFundedModal(page);
+    await eventTypeSelect(page).selectOption({ label: "Sell" });
+    await fundingSelect(page).selectOption({ label: "ZZ45 Wallet" });
+    await page.getByPlaceholder("BBCA").fill("ZZ45X");
+    await quantityInput(page).fill("2");
+    await priceInput(page, "USD").fill("5");
+    await expect(page.getByText("Credits ZZ45 Wallet 10.00 USD, −2 ZZ45X")).toBeVisible();
+  });
+
+  test("new position offers a position currency", async ({ page }) => {
+    await mockPlatformDetail(page);
+    await mockPlatformsList(page);
+    await mockAccounts(page);
+    await mockPortfolioEvents(page);
+    const posted: Record<string, unknown>[] = [];
+    await mockFundedBuy(page, (body) => posted.push(body));
+
+    await openFundedModal(page);
+    await fundingSelect(page).selectOption({ label: "ZZ45 Wallet" });
+    await page.getByPlaceholder("BBCA").fill("ZZ45N");
+
+    const pos = page.getByLabel("Position currency");
+    expect(await pos.evaluate((el) => el.tagName)).toBe("SELECT");
+    await expect(pos.locator("option")).toHaveText(["IDR", "USD"]);
+    await expect(pos).toHaveValue("USD"); // defaults to the funding account's currency
+
+    await pos.selectOption("IDR");
+    await expect(priceInput(page, "IDR")).toBeVisible();
+    await pos.selectOption("USD");
+    await quantityInput(page).fill("1");
+    await priceInput(page, "USD").fill("4");
+    await page.getByRole("button", { name: "Log funded Buy", exact: true }).click();
+    await expect.poll(() => posted.length).toBe(1);
+    expect(posted[0]).toMatchObject({ ticker: "ZZ45N", event_currency: "USD" });
+    expect(posted[0]).not.toHaveProperty("cash_currency");
+  });
+
+  test("no auto-fill across currencies", async ({ page }) => {
+    await mockPlatformDetail(page, [heldFixture("ZZ45X", "USD"), heldFixture("ZZ45I", "IDR")]);
+    await mockPlatformsList(page);
+    await mockAccounts(page);
+    await mockPortfolioEvents(page);
+
+    await openFundedModal(page);
+    await fundingSelect(page).selectOption({ label: "BCA" });
+    await page.getByPlaceholder("BBCA").fill("ZZ45X");
+    await quantityInput(page).fill("2");
+    await priceInput(page, "USD").fill("12.5");
+    // IDR account, USD position: a USD price is never copied into the IDR cash field.
+    await expect(cashAmountInput(page, "IDR")).toHaveValue("");
+
+    // IDR position: still fills quantity x price while untouched.
+    await page.getByPlaceholder("BBCA").fill("ZZ45I");
+    await priceInput(page, "IDR").fill("100");
+    await expect(cashAmountInput(page, "IDR")).toHaveValue("200");
+
+    // Switching to a USD position clears the value the modal filled itself.
+    await page.getByPlaceholder("BBCA").fill("ZZ45X");
+    await expect(cashAmountInput(page, "IDR")).toHaveValue("");
+  });
+
+  test("422 one-currency-per-position refusal is shown verbatim", async ({ page }) => {
+    await mockPlatformDetail(page);
+    await mockPlatformsList(page);
+    await mockAccounts(page);
+    await mockPortfolioEvents(page);
+    await page.route("**/api/portfolio-events/funded-buy", async (route) => {
+      await route.fulfill({
+        status: 422,
+        contentType: "application/json",
+        body: JSON.stringify({ detail: "event currency USD does not match holding currency IDR (one currency per position)" }),
+      });
+    });
+
+    await openFundedModal(page);
+    await fundingSelect(page).selectOption({ label: "ZZ45 Wallet" });
+    await page.getByPlaceholder("BBCA").fill("ZZ45N");
+    await quantityInput(page).fill("1");
+    await priceInput(page, "USD").fill("4");
+    await page.getByRole("button", { name: "Log funded Buy", exact: true }).click();
+    await expect(
+      page.getByText("Couldn't log funded buy: event currency USD does not match holding currency IDR (one currency per position). Nothing was changed.")
+    ).toBeVisible();
   });
 });
