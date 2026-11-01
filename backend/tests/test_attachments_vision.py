@@ -242,3 +242,48 @@ def test_read_vision_json_shapes():
     for bad in ("nope", "[1]", '{"date": "2026-03-14"}'):
         with pytest.raises(ValueError):
             att.read_vision_json(bad)
+
+
+# --- Phase 45: receipt currency rules for USD accounts (D-13) ---------------------
+
+USD_READING = {"date": "1996-03-14", "total": "12.50", "currency": "USD", "merchant": "ZZ45 Cafe", "items": []}
+
+
+@pytest.mark.parametrize("shown", [None, "", "   ", "$", " $ "])
+def test_usd_receipt_without_a_clear_currency_is_unclear(llm, shown):
+    p = read(llm, {**USD_READING, "currency": shown}, currency="USD")
+    assert p.status == "refused" and p.rows == []
+    assert p.note.startswith("Currency unclear") and p.meta["currency_unclear"] is True
+    assert p.text  # still askable
+
+
+@pytest.mark.parametrize("shown", ["USD", " usd ", "US$", "USDT"])
+def test_usd_receipt_explicit_codes_accepted(llm, shown):
+    p = read(llm, {**USD_READING, "currency": shown}, currency="USD")
+    assert p.status == "llm_read" and p.meta["currency"] == "USD"
+    assert p.rows[0]["amount"] == "-12.50"
+
+
+def test_usd_receipt_total_without_evidence_uses_the_dot_prior(llm):
+    p = read(llm, {**USD_READING, "total": "1,250"}, currency="USD")
+    assert p.rows[0]["amount"] == "-1250"
+
+
+def test_receipt_known_code_mismatch_names_both(llm):
+    p = read(llm, {**USD_READING, "currency": "SGD"}, currency="USD")
+    assert p.status == "refused" and p.note == "The receipt is in SGD, not USD; nothing can be proposed."
+    p = read(llm, USD_READING, currency="IDR")
+    assert p.note == "The receipt is in USD, not IDR; nothing can be proposed."
+
+
+def test_idr_receipt_currency_rules(llm):
+    p = read(llm, {**READING, "currency": None})
+    assert p.status == "llm_read" and p.rows[0]["assumptions"] == ["Currency not printed; assumed IDR."]
+    p = read(llm, {**READING, "currency": "$"})
+    assert p.status == "refused" and p.note.startswith("Currency unclear") and p.meta["currency_unclear"] is True
+    assert read(llm, {**READING, "currency": "Rp."}).status == "llm_read"
+
+
+def test_refused_receipt_made_exactly_one_vision_call(llm):
+    p = read(llm, {**USD_READING, "currency": "$"}, currency="USD")
+    assert p.status == "refused" and p.rows == [] and len(llm.calls) == 1
