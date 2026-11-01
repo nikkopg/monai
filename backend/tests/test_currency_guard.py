@@ -370,6 +370,11 @@ def test_money_largest_transactions(flow_seed):
         assert row["fx_rate_date"] == "1995-06-09"  # Saturday falls back to Friday
     assert by["zz43 idr out"]["currency"] == "IDR"
     assert r["currency"] == "IDR"
+    assert r["fx_note"] == _flow_note_text(USD_EXPENSE_ROWS)  # the two listed USD rows
+    # Only the IDR income row is listed: no USD row listed, no note, though the range holds USD rows.
+    top_income = tools.TOOLS["largest_transactions"](limit=1, kind="income", **RANGE)
+    assert [x["currency"] for x in top_income["rows"]] == ["IDR"]
+    assert "fx_note" not in top_income
 
 
 def test_money_find_transactions(flow_seed):
@@ -383,6 +388,9 @@ def test_money_find_transactions(flow_seed):
     for merchant in ("zz43 idr out", "zz43 idr in"):
         assert by[merchant].get("amount_idr") == by[merchant]["amount"]
     assert r.get("currency") == "IDR"
+    assert r["fx_note"] == _flow_note_text(USD_EXPENSE_ROWS + USD_INCOME_ROWS)  # all converted: no suffix
+    only_idr = tools.TOOLS["find_transactions"](merchant="zz43 idr", **RANGE)
+    assert "fx_note" not in only_idr
 
 
 def test_money_compare_periods(flow_seed):
@@ -631,6 +639,14 @@ def test_money_recurring_charges(recent_seed):
     r = tools.TOOLS["recurring_charges"](months=24, limit=50)
     groups = [g for g in r["groups"] if g["label"] == "zz43-sub"]
     assert len(groups) == 2
+    # The note counts the USD rows behind the groups it reports, not rows it merely read.
+    n_usd = sum(g["occurrences"] for g in r["groups"] if g.get("currency") == "USD")
+    assert n_usd >= len(SUB_RATES)
+    assert r["fx_note"] == _flow_note_text(n_usd)
+    assert not any("_usd_rows" in g for g in r["groups"])
+    first = tools.TOOLS["recurring_charges"](months=24, limit=1)
+    n_first = first["groups"][0]["occurrences"] if first["groups"][0].get("currency") == "USD" else 0
+    assert first.get("fx_note") == _flow_note_text(n_first)
     usd = next(g for g in groups if g.get("currency") == "USD")
     idr = next(g for g in groups if g.get("currency") == "IDR")
     mid = sorted(Decimal("9.99") * v for v in SUB_RATES.values())
@@ -745,6 +761,10 @@ def test_find_transactions_lists_unconverted_rows(flow_seed):
         assert by[merchant]["amount"] == native
         assert by[merchant]["amount_idr"] is None
     assert by["zz43 usd mon"]["amount_idr"] == float(Decimal("5.00") * RATE_MON)
+    # Three listed USD rows, two of them without an IDR value yet (exact suffix, plural verb).
+    assert r["fx_note"] == _flow_note_text(3) + "; 2 have no IDR value yet"
+    one = tools.TOOLS["find_transactions"](merchant="zz43 usd fri", **RANGE)
+    assert one["fx_note"] == _flow_note_text(1) + "; 1 has no IDR value yet"
 
 
 def test_dashboard_trend_counts_unconverted(recent_seed, authed):
