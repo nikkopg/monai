@@ -234,3 +234,50 @@ def test_period_forms(line, want):
 def test_row_outside_the_period_is_refused():
     rows = ((date(2026, 5, 2), "ZZ A", Decimal("-1000.00")),)
     refused(fx.bca_like_statement(rows), startswith="Row 1 (02/05) has a date")
+
+
+# --- Phase 45: a USD text statement (D-14); synthetic values only -----------------
+
+
+def _usd_statement(rows=None, *, opening="1,000.00", closing="1,080.25", period="01/03/1996 - 31/03/1996",
+                   open_label="Opening Balance", close_label="Closing Balance") -> bytes:
+    rows = rows if rows is not None else [
+        "05/03/1996 ZZ45 Cafe 12.50 DB", "12/03/1996 ZZ45 Refund 100.00 CR", "20/03/1996 ZZ45 Fuel 7.25 DB",
+    ]
+    lines = [f"Period: {period}", f"{open_label} {opening}", *rows, f"{close_label} {closing}"]
+    return fx.make_pdf([[(40, 800 - 14 * i, t, 9, fx.BLACK) for i, t in enumerate(lines)]])
+
+
+def parse_usd(data):
+    return att.parse_pdf_statement(data, None, account_currency="USD")
+
+
+def test_usd_generic_statement_reconciles():
+    p = parse_usd(_usd_statement())
+    assert p.status == "ok", p.note
+    assert [Decimal(r["amount"]) for r in p.rows] == [Decimal("-12.50"), Decimal("100.00"), Decimal("-7.25")]
+    assert p.meta["separator"]["sep"] == "." and p.meta["opening"] == "1000.00" and p.meta["closing"] == "1080.25"
+
+
+def test_usd_statement_off_by_one_cent_refused():
+    p = parse_usd(_usd_statement(closing="1,080.26"))
+    assert p.status == "refused" and p.rows == [] and p.note == "Closing balance off by -0.01."
+
+
+def test_usd_statement_row_outside_period_refused():
+    rows = ["03/05/1996 ZZ45 Cafe 12.50 DB"]  # 3 May, day first
+    p = parse_usd(_usd_statement(rows, closing="987.50"))
+    assert p.status == "refused" and p.rows == []
+    assert "lies outside the statement period" in p.note
+
+
+def test_usd_statement_with_no_rows_proposes_nothing():
+    # shortcut: an empty statement is refused even when opening equals closing; it has nothing to propose.
+    for closing in ("1,000.00", "1,000.01"):
+        p = parse_usd(_usd_statement([], closing=closing))
+        assert p.status == "refused" and p.rows == []
+
+
+def test_usd_statement_upper_case_labels():
+    p = parse_usd(_usd_statement(open_label="OPENING BALANCE", close_label="CLOSING BALANCE"))
+    assert p.status == "ok" and len(p.rows) == 3
