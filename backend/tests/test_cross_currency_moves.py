@@ -411,3 +411,47 @@ def test_given_cash_currency_mismatch_refused(client, api_key, zz45):
 
     resp = _funded(client, api_key, "buy", source_account_name=usd, platform_id=plat, cash_currency="USD")
     assert resp.status_code == 201, resp.text
+
+
+# ---------------------------------------------------------------------------
+# Task 3: cache-only ECB rate for a date (MOVE-04, D-09)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def no_vendor(monkeypatch):
+    """Any vendor call during the test is a failure: the route is cache-only."""
+    from backend import fx
+
+    def boom(*a, **k):
+        raise AssertionError("GET /fx/rate must not reach the FX vendor")
+
+    monkeypatch.setattr(fx, "fetch_frankfurter_rate", boom)
+    monkeypatch.setattr(fx, "fetch_frankfurter_range", boom)
+    monkeypatch.setitem(fx.FX_ADAPTERS, "frankfurter", boom)
+
+
+def _rate(client, api_key, **params):
+    return client.get("/fx/rate", params=params, headers={"MONAI_API_KEY": api_key})
+
+
+def test_fx_rate_route_cached_weekend(client, api_key, zz45, no_vendor):
+    zz45.rate("1996-03-01", "16250.5")  # Friday
+    resp = _rate(client, api_key, currency="USD", on=_ISO_DAY)  # Saturday
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert (body["currency"], body["on"], body["rate_date"]) == ("USD", _ISO_DAY, "1996-03-01")
+    assert Decimal(body["rate"]) == Decimal("16250.5") and isinstance(body["rate"], str)
+
+
+def test_fx_rate_route_missing_is_null(client, api_key, zz45, no_vendor):
+    zz45.rate("1996-03-01")
+    resp = _rate(client, api_key, currency="USD", on="1996-03-20")
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"currency": "USD", "on": "1996-03-20", "rate": None, "rate_date": None}
+
+
+def test_fx_rate_route_bad_input(client, api_key, zz45, no_vendor):
+    assert _rate(client, api_key, currency="USD", on="1996-13-01").status_code == 422
+    assert client.get("/fx/rate", params={"currency": "USD", "on": _ISO_DAY}).status_code == 401
+    resp = _rate(client, api_key, currency="IDR", on=_ISO_DAY)
+    assert resp.status_code == 200 and Decimal(resp.json()["rate"]) == 1
