@@ -434,7 +434,8 @@ MARKER = "ZZEval"
 ACCOUNT = "ZZEval Wallet"
 USD_ACCOUNT = "ZZEval USD Wallet"
 USD_CAT = "ZZEval USD Spend"
-EVAL_ACCOUNTS = [ACCOUNT, USD_ACCOUNT]
+IDR_BANK = "ZZEval IDR Bank"
+EVAL_ACCOUNTS = [ACCOUNT, USD_ACCOUNT, IDR_BANK]
 # Phase 45: a Saturday USD row with only the Friday rate cached, so the flow view converts it
 # from the cache (7-day window) and the eval never reaches the network for it. Made-up values.
 USD_ROW_DATE = datetime.date(1996, 3, 2)
@@ -665,6 +666,10 @@ def _seed() -> None:
             ),
             {"name": USD_ACCOUNT},
         ).scalar()
+        c.execute(
+            sa_text("INSERT INTO accounts (name, type, currency) VALUES (:name, 'liquid', 'IDR')"),
+            {"name": IDR_BANK},
+        )
         usd_cat_id = c.execute(
             sa_text(
                 "INSERT INTO categories (name, parent_id, kind, is_system) "
@@ -1105,6 +1110,52 @@ def _answer_repeats_fx_note(text: str, trace: list) -> bool:
     return rate.replace(",", "") in flat and year in text and mon.lower() in low and re.search(rf"\b{day}\b", text) is not None
 
 
+def _stored_row(step: dict) -> dict | None:
+    """The first row's `after` of the proposal a propose_* step created, read back from
+    the DB by its id (what would be confirmed), or None."""
+    from sqlalchemy import text as sa_text
+    from backend.db import engine
+
+    pid = (step.get("result") or {}).get("proposal_id")
+    if not pid:
+        return None
+    with engine.connect() as c:
+        payload = c.execute(
+            sa_text("SELECT payload FROM proposals WHERE id = CAST(:i AS uuid)"), {"i": pid}
+        ).scalar()
+    rows = (payload or {}).get("rows") or []
+    return rows[0].get("after") if rows else None
+
+
+def _args_usd_write(trace, payload):
+    """Case 23: one propose_add_transaction, no currency argument, 12.5 magnitude, stored in USD."""
+    steps = _steps_for(trace, ["propose_add_transaction"])
+    if len(steps) != 1:
+        return False
+    args = steps[0].get("args") or {}
+    try:
+        if "currency" in args or abs(float(args.get("amount"))) != 12.5:
+            return False
+    except (TypeError, ValueError):
+        return False
+    return (_stored_row(steps[0]) or {}).get("currency") == "USD"
+
+
+def _args_cross_transfer(trace, payload):
+    """Case 24: one propose_add_transfer, amount 100 and to_amount 1631000, legs USD then IDR."""
+    steps = _steps_for(trace, ["propose_add_transfer"])
+    if len(steps) != 1:
+        return False
+    args = steps[0].get("args") or {}
+    try:
+        if abs(float(args.get("amount"))) != 100.0 or abs(float(args.get("to_amount"))) != 1631000.0:
+            return False
+    except (TypeError, ValueError):
+        return False
+    after = _stored_row(steps[0]) or {}
+    return ((after.get("leg_a") or {}).get("currency"), (after.get("leg_b") or {}).get("currency")) == ("USD", "IDR")
+
+
 def _answer_has_parent_name(text: str) -> bool:
     return PARENT.lower() in text.lower()
 
@@ -1431,6 +1482,20 @@ CASES: list[dict] = [
         "tools": ["account_balances"],
         "args_desc": "account_balances called; answer carries the note's rate and date",
         "answer": _answer_repeats_fx_note, "with_trace": True, "needs_number": True, "no_writes": True,
+    },
+    {
+        "id": 23, "question": "Add a ZZEval USD coffee of 12.5 to my ZZEval USD Wallet account.",
+        "tools": ["propose_add_transaction"], "args": _args_usd_write,
+        "args_desc": "one proposal, no currency argument, amount 12.5, stored after.currency == USD",
+        # The number parser drops figures under 100 (day numbers), so a 12.50 USD amount is checked by text.
+        "answer": lambda text: "usd" in text.lower() and "12.5" in text, "needs_number": False,
+    },
+    {
+        "id": 24,
+        "question": "Move 100 USD from my ZZEval USD Wallet to my ZZEval IDR Bank; the bank received 1631000 rupiah.",
+        "tools": ["propose_add_transfer"], "args": _args_cross_transfer,
+        "args_desc": "one proposal, amount 100, to_amount 1631000, stored legs USD then IDR",
+        "answer": lambda text: "usd" in text.lower(), "needs_number": True,
     },
 ]
 
