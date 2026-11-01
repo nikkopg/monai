@@ -317,7 +317,11 @@ export default function InboxCard({
       // The UI only sends names from the server's own list (or null), so the sent value is what is stored.
       onRows(
         id,
-        rows.map((row, k) => (k === i ? { ...row, after: { ...row.after, category: value } } : row))
+        rows.map((row, k) => {
+          if (k !== i) return row;
+          const { category_suggested: _drop, ...rest } = row; // the server drops it too
+          return { ...rest, after: { ...row.after, category: value } };
+        })
       );
       announce(`Row ${i + 1} category set to ${value ?? "Uncategorized"}.`);
     });
@@ -549,11 +553,16 @@ export default function InboxCard({
                       <td className="inbox-c-account" style={{ ...cell, color: tone }}>{text(a.account)}</td>
                       <td className="inbox-c-category" style={{ ...cell, color: text(a.category) ? tone : c.muted3 }}>
                         {live ? (
+                          <>
                           <select
                             style={{ ...input, padding: "4px 8px", width: "auto", color: "inherit", ...gated(blocked) }}
                             aria-label={`Category for row ${i + 1}: ${text(a.merchant) || "no merchant"}`}
                             aria-disabled={blocked}
-                            aria-describedby={blockedDescribedBy}
+                            aria-describedby={
+                              [row.category_suggested === true ? `inbox-sugg-${id}-${i}` : undefined, blockedDescribedBy]
+                                .filter(Boolean)
+                                .join(" ") || undefined
+                            }
                             value={text(a.category)}
                             onChange={(e) => void setCategory(i, e.target.value || null)}
                           >
@@ -562,6 +571,16 @@ export default function InboxCard({
                               <option key={n} value={n}>{n}</option>
                             ))}
                           </select>
+                          {row.category_suggested === true && (
+                            <span
+                              id={`inbox-sugg-${id}-${i}`}
+                              style={{ ...neutralChip, marginLeft: 8 }}
+                              title="Picked from past transactions at this merchant. Approving keeps it."
+                            >
+                              Suggested
+                            </span>
+                          )}
+                          </>
                         ) : (
                           text(a.category) || "Uncategorized"
                         )}
