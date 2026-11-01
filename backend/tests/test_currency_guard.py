@@ -416,8 +416,69 @@ def test_balances_stale_rate_labelled(flow_seed, monkeypatch):
     assert usd["fx_rate"] == float(RATE_MON)
     assert usd["fx_as_of"] == "1995-06-12"
     assert usd["fx_stale"] is True
-    assert usd["fx_note"] == "stale, rate of 1995-06-12"
-    assert tools.TOOLS["net_worth"]().get("fx_note") == "stale, rate of 1995-06-12"
+    assert usd["fx_note"] == _rate_note(RATE_MON, "12 Jun 1995", stale=True)
+    assert tools.TOOLS["account_balances"]()["fx_note"] == usd["fx_note"]
+    assert tools.TOOLS["net_worth"]().get("fx_note") == usd["fx_note"]
+
+
+def _rate_note(rate: Decimal, day: str, stale: bool = False) -> str:
+    """The D-15 string, built from fixture constants: whole IDR, 'd Mon yyyy'."""
+    return f"USD converted at 1 USD = {rate:,.0f} IDR (rate of {day})" + (", stale" if stale else "")
+
+
+def test_balances_live_rate_note(flow_seed, monkeypatch):
+    """D-15: a live rate is named too, with no ', stale', at the live as-of date."""
+    spot = Decimal("16200")
+    _pin(monkeypatch, date(1995, 6, 15))
+    _stub_fx(monkeypatch, live=spot, ranges={})
+    r = tools.TOOLS["account_balances"]()
+    usd, idr = _row(r["rows"], "ZZ43 usd"), _row(r["rows"], "ZZ43 idr")
+    assert usd["fx_note"] == _rate_note(spot, "15 Jun 1995")
+    assert idr["fx_note"] is None
+    assert r["fx_note"] == usd["fx_note"]
+    assert tools.TOOLS["net_worth"]()["fx_note"] == usd["fx_note"]
+
+
+def test_balances_rate_7_days_old_used(flow_seed, monkeypatch):
+    """Edge DISP-03 boundary: a rate exactly 7 days old is used and says so; at 8 days it is left out."""
+    _stub_fx(monkeypatch, live=None, ranges={})
+    _pin(monkeypatch, D_MON + timedelta(days=7))
+    r = tools.TOOLS["account_balances"]()
+    usd = _row(r["rows"], "ZZ43 usd")
+    assert usd["current_balance"] == pytest.approx(float(USD_NATIVE * RATE_MON))
+    assert usd["fx_note"] == _rate_note(RATE_MON, "12 Jun 1995", stale=True)
+    _pin(monkeypatch, D_MON + timedelta(days=8))
+    r = tools.TOOLS["account_balances"]()
+    assert _row(r["rows"], "ZZ43 usd")["current_balance"] is None
+    assert _row(r["rows"], "ZZ43 usd")["fx_note"] is None  # no rate used, none named
+    assert r["fx_note"] is None
+    nw = tools.TOOLS["net_worth"]()
+    assert [x["name"] for x in nw["fx_excluded"] if x["name"].startswith("ZZ43")] == ["ZZ43 usd"]
+    assert "7 days" in nw["notice"]
+    assert nw["fx_note"] is None
+
+
+def test_balances_idr_only_no_note(flow_env, monkeypatch):
+    """D-15: nothing converted, nothing said. An IDR account never carries a note."""
+    _pin(monkeypatch, date(1995, 6, 15))
+    s = SessionLocal()
+    try:
+        s.execute(text("INSERT INTO accounts (name, type, currency) VALUES ('ZZ43 idr only', 'liquid', 'IDR')"))
+        s.commit()
+    finally:
+        s.close()
+    r = tools.TOOLS["account_balances"]()
+    assert _row(r["rows"], "ZZ43 idr only")["fx_note"] is None
+    assert not [x for x in r["rows"] if x["currency"] == "USD" and x["fx_note"]]
+
+
+def test_net_worth_route_returns_note(flow_seed, monkeypatch, authed):
+    """GET /net-worth carries the same string the Cashflow notice shows."""
+    _pin(monkeypatch, date(1995, 6, 15))
+    _stub_fx(monkeypatch, live=Decimal("16200"), ranges={})
+    r = authed.get("/net-worth")
+    assert r.status_code == 200
+    assert r.json()["fx_note"] == _rate_note(Decimal("16200"), "15 Jun 1995")
 
 
 def test_balances_excluded_beyond_7_days(flow_env, monkeypatch):
