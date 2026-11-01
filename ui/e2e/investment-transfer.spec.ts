@@ -139,6 +139,12 @@ test.describe("Deposit across currencies (45-05, D-05 D-07 D-10)", () => {
     await page.getByLabel("From account").selectOption({ label: "ZZ45 Bank" });
     await page.getByLabel("Amount credited (USD)", { exact: true }).fill("100");
     await page.getByLabel("From account").selectOption({ label: "ZZ45 Wallet" });
+    // Back across: the second field starts empty again and Submit needs it.
+    await page.getByLabel("From account").selectOption({ label: "ZZ45 Bank" });
+    await expect(page.getByLabel("Amount credited (USD)", { exact: true })).toHaveValue("");
+    await page.getByLabel("Amount", { exact: true }).fill("1631000");
+    await expect(page.getByRole("button", { name: "Deposit cash", exact: true }).last()).toBeDisabled();
+    await page.getByLabel("From account").selectOption({ label: "ZZ45 Wallet" });
     await expect(page.getByLabel("Currency", { exact: true })).toHaveText("USD");
     await expect(page.getByLabel(/Amount credited/)).toHaveCount(0);
     await page.getByLabel("Amount", { exact: true }).fill("12.5");
@@ -150,11 +156,6 @@ test.describe("Deposit across currencies (45-05, D-05 D-07 D-10)", () => {
     expect(bodies[0]).not.toHaveProperty("event_amount");
     expect(bodies[0]).not.toHaveProperty("event_currency");
     expect(bodies[0]).not.toHaveProperty("currency");
-
-    // Back across: the second field starts empty again and Submit needs it.
-    await page.getByLabel("From account").selectOption({ label: "ZZ45 Bank" });
-    await expect(page.getByLabel("Amount credited (USD)", { exact: true })).toHaveValue("");
-    await expect(page.getByRole("button", { name: "Deposit cash", exact: true }).last()).toBeDisabled();
   });
 
   test("422 is shown verbatim", async ({ page }) => {

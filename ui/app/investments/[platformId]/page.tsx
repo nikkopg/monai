@@ -24,6 +24,7 @@ import type { PlatformOption } from "../page";
 type PlatformDetailHolding = {
   id: number;
   ticker: string;
+  currency?: string | null; // absent means IDR
   asset_type: string | null;
   quantity: number;
   avg_cost: number;
@@ -602,6 +603,7 @@ export default function PlatformDetailPage() {
             <DepositCashModal
               platformId={Number(platformId)}
               platformName={detail.platform_name}
+              cashCurrency={detail.holdings.find((h) => h.ticker === "CASH")?.currency ?? null}
               onClose={() => setShowDeposit(false)}
               onSaved={() => load({ silent: true })}
             />

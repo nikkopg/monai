@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { card, input, btn, label, tokens } from "../styles";
 import { extractDetail, fmtPlain } from "../lib/api";
+import { fmtAmount } from "../lib/money";
 
 // ---------------------------------------------------------------------------
 // DepositCashModal — liquid->investment cash deposit (XFER-02, D-03/D-04/D-07).
@@ -17,6 +18,11 @@ import { extractDetail, fmtPlain } from "../lib/api";
 // calls onSaved() (parent refetches platform detail) then onClose(). No
 // ConfirmDialog step — the neutral-ink preview line is the write-safety
 // mechanism (D-07).
+//
+// Phase 45: the source account decides the cash currency (read-only chip, no
+// currency field, no `currency` in the body). When the platform's CASH holding
+// is in another currency, the owner types the credited amount too; it is never
+// computed from the first amount or from a rate (MOVE-02, D-05, D-07).
 // ---------------------------------------------------------------------------
 
 type Account = {
@@ -29,6 +35,7 @@ type Account = {
 type Props = {
   platformId: number;
   platformName: string;
+  cashCurrency?: string | null; // the platform's CASH holding currency; null = same as the source
   onClose: () => void;
   onSaved: () => void;
 };
@@ -36,6 +43,7 @@ type Props = {
 export default function DepositCashModal({
   platformId,
   platformName,
+  cashCurrency,
   onClose,
   onSaved,
 }: Props) {
@@ -43,7 +51,7 @@ export default function DepositCashModal({
   const [accountsLoaded, setAccountsLoaded] = useState(false);
   const [fromAccount, setFromAccount] = useState("");
   const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState("IDR");
+  const [eventAmount, setEventAmount] = useState("");
   const [date, setDate] = useState("");
   const [notes, setNotes] = useState("");
 
@@ -75,9 +83,36 @@ export default function DepositCashModal({
     };
   }, []);
 
+  const srcCcy = liquidAccounts.find((a) => a.name === fromAccount)?.currency ?? "IDR";
+  const cross = !!cashCurrency && cashCurrency !== srcCcy;
+  // The second value is dropped when the row hides, so a stale credited amount never rides along.
+  useEffect(() => {
+    if (!cross) setEventAmount("");
+  }, [cross]);
+
   const parsedAmount = parseFloat(amount || "0");
+  const parsedEvent = parseFloat(eventAmount || "0");
   const canSubmit =
-    !saving && liquidAccounts.length > 0 && !!fromAccount && parsedAmount > 0;
+    !saving &&
+    liquidAccounts.length > 0 &&
+    !!fromAccount &&
+    parsedAmount > 0 &&
+    (!cross || parsedEvent > 0);
+  const chipStyle: React.CSSProperties = {
+    border: input.border,
+    borderRadius: tokens.radius.sm,
+    padding: "0 16px",
+    display: "flex",
+    alignItems: "center",
+    background: tokens.color.sidebar,
+    fontSize: 14,
+    fontWeight: 600,
+    color: tokens.color.muted3,
+    flexShrink: 0,
+  };
+  // IDR keeps the modal's historical "Rp n" wording; USD uses the shared formatter.
+  const fmtSide = (n: number, ccy: string) =>
+    ccy === "USD" ? fmtAmount(n, "USD") : `Rp ${fmtPlain(n)}`;
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -94,7 +129,9 @@ export default function DepositCashModal({
         from_account: fromAccount,
         platform_id: platformId,
         amount: parseFloat(amount),
-        currency: currency || "IDR",
+        ...(cross
+          ? { event_amount: parseFloat(eventAmount), event_currency: cashCurrency }
+          : {}),
         date: date || undefined,
         notes: notes || undefined,
       };
@@ -177,34 +214,42 @@ export default function DepositCashModal({
               <label style={label} htmlFor="deposit-cash-amount">
                 Amount
               </label>
-              <input
-                id="deposit-cash-amount"
-                style={input}
-                type="number"
-                step="any"
-                required
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-              />
+              <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
+                <input
+                  id="deposit-cash-amount"
+                  style={{ ...input, flex: 1, minWidth: 0 }}
+                  type="number"
+                  step="any"
+                  required
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                />
+                <span aria-label="Currency" style={chipStyle}>
+                  {srcCcy}
+                </span>
+              </div>
             </div>
-            <div>
-              <label style={label} htmlFor="deposit-cash-currency">
-                Currency
-              </label>
-              {/* CR-03: a free-text currency posts verbatim into the CASH
-                  sentinel Holding.currency; a typo (Rp, IDRR) makes fx.get_rate
-                  return None and the deposit silently drops out of net worth.
-                  The app is single-currency IDR — a constrained <select>
-                  removes the failure mode entirely. */}
-              <select
-                id="deposit-cash-currency"
-                style={input}
-                value={currency}
-                onChange={(e) => setCurrency(e.target.value)}
-              >
-                <option value="IDR">IDR</option>
-              </select>
-            </div>
+            {cross && (
+              <div>
+                <label style={label} htmlFor="deposit-event-amount">
+                  Amount credited ({cashCurrency})
+                </label>
+                <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
+                  <input
+                    id="deposit-event-amount"
+                    style={{ ...input, flex: 1, minWidth: 0 }}
+                    type="number"
+                    step="any"
+                    required
+                    value={eventAmount}
+                    onChange={(e) => setEventAmount(e.target.value)}
+                  />
+                  <span aria-label="Credited currency" style={chipStyle}>
+                    {cashCurrency}
+                  </span>
+                </div>
+              </div>
+            )}
             <div>
               <label style={label} htmlFor="deposit-cash-date">
                 Date
@@ -230,9 +275,11 @@ export default function DepositCashModal({
             </div>
           </div>
 
-          {fromAccount && parsedAmount > 0 && (
+          {fromAccount && parsedAmount > 0 && (!cross || parsedEvent > 0) && (
             <p style={{ fontSize: 13, color: tokens.color.text, margin: "0 0 10px" }}>
-              Moves Rp {fmtPlain(parsedAmount)} from {fromAccount} into {platformName}.
+              {cross
+                ? `Moves ${fmtSide(parsedAmount, srcCcy)} from ${fromAccount}, crediting ${fmtSide(parsedEvent, cashCurrency!)} to ${platformName}.`
+                : `Moves ${fmtSide(parsedAmount, srcCcy)} from ${fromAccount} into ${platformName}.`}
             </p>
           )}
 
