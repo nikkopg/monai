@@ -376,6 +376,38 @@ def test_batch_one_bad_row_refuses_everything(db_session, wallets, bad):
     assert _count(db_session) == n
 
 
+def test_propose_rows_into_usd_account_land_in_usd(db_session, wallets, track):
+    usd = wallets(currency="USD")
+    r = mcp_writes.propose_transactions([_row(usd.name, amount=-12.5)])
+    track.append(r["proposal_id"])
+    assert _db_row(db_session, r["proposal_id"]).payload["rows"][0]["after"]["currency"] == "USD"
+    from backend.models import Proposal
+    p = db_session.get(Proposal, uuid.UUID(r["proposal_id"]))
+    _confirm(p, _db_row(db_session, p.id).code)
+    db_session.rollback()
+    cur = db_session.execute(text("SELECT currency FROM transactions WHERE account_id = :a"), {"a": usd.id}).scalars().all()
+    assert cur == ["USD"]
+
+
+def test_propose_empty_batch_and_missing_amount_refused(db_session, wallets):
+    usd = wallets(currency="USD")
+    n = _count(db_session)
+    with pytest.raises(ToolError):
+        mcp_writes.propose_transactions([])
+    with pytest.raises(ToolError, match="amount must be a non-zero number with at most 2 decimals"):
+        mcp_writes.propose_transactions([TxnRow(account=usd.name, date="2026-01-10", amount="")])
+    assert _count(db_session) == n
+
+
+def test_propose_rows_keep_submission_order(db_session, wallets, track):
+    usd = wallets(currency="USD")
+    amts = [-3, -1, -2]
+    r = mcp_writes.propose_transactions([_row(usd.name, amount=a, merchant=f"M{i}") for i, a in enumerate(amts)])
+    track.append(r["proposal_id"])
+    rows = [x["after"] for x in _db_row(db_session, r["proposal_id"]).payload["rows"]]
+    assert [Decimal(a["amount"]) for a in rows] == amts and {a["currency"] for a in rows} == {"USD"}
+
+
 def test_propose_duplicate_is_flagged_not_blocked(db_session, wallets, track):
     w = wallets()
     _ledger(db_session, w.id, D, -12500)
