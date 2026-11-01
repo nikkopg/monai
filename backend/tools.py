@@ -1177,6 +1177,22 @@ CURRENT_THREAD_ID: contextvars.ContextVar[uuid.UUID | None] = contextvars.Contex
 )
 
 
+def _account_currency_for(name: str) -> str:
+    """The account's currency, looked up in the database (a missing account reads as IDR)."""
+    from backend.writes import currency_of_account
+
+    with get_session_sync() as db:
+        return currency_of_account(db, name)
+
+
+def _holding_currency_for(ticker: str, platform_id: int) -> str | None:
+    """The existing (ticker, platform) position's currency, or None when there is none."""
+    from backend.writes import currency_of_holding
+
+    with get_session_sync() as db:
+        return currency_of_holding(db, ticker, platform_id)
+
+
 def _make_proposal(
     operation: str,
     payload: dict,
@@ -1288,12 +1304,13 @@ def propose_add_transaction(
     category: str | None = None,
     merchant: str | None = None,
     notes: str | None = None,
-    currency: str = "IDR",
     is_transfer: bool = False,
 ) -> dict:
     """Propose adding a new transaction. Returns a proposal for user confirmation.
     Does NOT add any data — user must approve. amount is signed (negative=expense, positive=income).
+    The row's currency is the account's; there is no currency argument.
     """
+    currency = _account_currency_for(account)
     after = {
         "date": date,
         "amount": str(Decimal(str(amount))),
