@@ -30,7 +30,7 @@ data without your say-so.
 - **Architecture**: Correctness-by-construction — the LLM selects/chains parameterized tools; it never emits SQL
 - **Safety**: All agent writes require explicit user confirmation before applying; validated; audit-logged
 - **Deployment**: Self-hosted via Docker Compose; single-user; local-first / privacy-respecting
-- **Schema**: New `holdings` and `portfolio_events` tables + any column additions need a migration story (no Alembic today)
+- **Schema**: Every schema change ships as an Alembic migration (`alembic/versions/`, 001–020); `entrypoint.sh` runs `alembic upgrade head` on container start
 - **Currency**: IDR is the base and reporting currency. From v1.7, liquid accounts may be IDR or USD, and every total converts to IDR before adding up. Investments may span instruments and currencies.
 <!-- GSD:project-end -->
 
@@ -158,11 +158,11 @@ data without your say-so.
 | HTTP / API | `backend/main.py` | Endpoints, dependency injection, error mapping (`ValueError`→422, generic→500), CORS |
 | Schemas (DTO) | `backend/schemas.py` | Pydantic request/response models (`*Create`, `*Out`, `*Request`, `*Response`) |
 | AI query | `backend/query.py` | LLM routes question → `{tool, args}` JSON; executes + formats |
-| Tools (domain) | `backend/tools.py` | 9 hand-written, parameterized SQL aggregations; period resolution; answer formatting |
+| Tools (domain) | `backend/tools.py` | 34 parameterized tools in `TOOLS` (18 reads, snapshotted as `READ_TOOL_NAMES`, then 16 confirm-before-write tools); period resolution; answer formatting |
 | Persistence | `backend/db.py`, `backend/models.py` | SQLAlchemy engine/session, ORM models, schema + `date_helpers` view bootstrap |
 | Import | `backend/importer.py` | Wallet CSV parse, currency validation, bulk insert |
 | Config | `backend/config.py` | `DATABASE_URL`; multi-provider LLM setup via `Settings` |
-| Frontend | `ui/app/page.tsx`, `ui/app/layout.tsx` | Single-page React client: ask box, entry form, recent list |
+| Frontend | `ui/app/{cashflow,records,investments,chat,inbox,settings}/`, `ui/app/layout.tsx` | Multi-page Next.js App Router client; `/` redirects to `/cashflow`; `/api/*` proxied to the backend |
 ## The Tool Router (key architectural decision)
 ## Data Flow
 ## Key Abstractions
