@@ -970,17 +970,21 @@ async def read_receipt(images: list[bytes], *, kind: str, account_currency: str,
     except ValueError:
         return refuse("The receipt date could not be read.", text)
     assumptions = []
-    if r.currency is None or not r.currency.strip():
+    raw = (r.currency or "").strip()
+    cur = normalise_currency(raw)
+    if raw == "$" or (not raw and account_currency != "IDR"):
+        meta["currency_unclear"] = True
+        return refuse(
+            "Currency unclear: the receipt shows '$' (or no currency), which could be any dollar; nothing was proposed.",
+            text,
+        )
+    if not raw:
         assumptions.append("Currency not printed; assumed IDR.")
         cur = "IDR"
-    else:
-        raw = r.currency.strip()
-        cur = normalise_currency(raw) or raw.upper()
     if cur != account_currency:
-        shown = cur if re.fullmatch(r"[A-Z]{3}", cur) else "another currency"
-        return refuse(f"The receipt is in {shown}, not {account_currency}; nothing can be proposed.", text)
+        return refuse(f"The receipt is in {cur or 'another currency'}, not {account_currency}; nothing can be proposed.", text)
     printed = [r.total] + [str(i.get("amount", "")) for i in r.items]
-    sep = infer_decimal_sep_with_evidence(printed)[0]
+    sep = infer_decimal_sep_with_evidence(printed, default=_sep_prior(account_currency))[0]
     try:
         amount = -abs(parse_amount(r.total, sep))
     except ValueError:
