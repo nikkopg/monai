@@ -49,43 +49,52 @@ _PERIOD_HELP = (
     + '. Or pass period="custom" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive).'
 )
 
+# Phase 45 (D-15): the money reads carry a deterministic fx_note; every one says to repeat it.
+_FX_HELP = " If the result has fx_note, repeat it in your answer."
+
 # Hand-authored, external-LLM-facing descriptions (D-05). Reuses each
 # callable's docstring prose as a base where it already reads well.
 MCP_DESCRIPTIONS: dict[str, str] = {
-    "spending_total": "Total money spent (expenses only, transfers excluded) over a period. " + _PERIOD_HELP,
-    "income_total": "Total money received (income only, transfers excluded) over a period. " + _PERIOD_HELP,
-    "net_total": "Net cash flow (income minus expenses, transfers excluded) over a period. " + _PERIOD_HELP,
+    "spending_total": "Total money spent (expenses only, transfers excluded) over a period. " + _PERIOD_HELP + _FX_HELP,
+    "income_total": "Total money received (income only, transfers excluded) over a period. " + _PERIOD_HELP + _FX_HELP,
+    "net_total": "Net cash flow (income minus expenses, transfers excluded) over a period. " + _PERIOD_HELP + _FX_HELP,
     "spending_by_category": (
         "Top spending categories (expenses only) over a period, rolled up to top-level "
         "category groups — each group's total includes all its descendant subcategories; "
         "per-subcategory breakdown under 'children'. Transfers and system categories "
         "excluded. " + _PERIOD_HELP
+        + _FX_HELP
     ),
     "spending_in_category": (
         "Total spent in one category INCLUDING all of its descendant subcategories — a "
         "parent/group name sums its entire subtree (case-insensitive name match). "
         + _PERIOD_HELP
+        + _FX_HELP
     ),
     "spending_before_after_purchase": (
         "Compare category spending before vs. after the earliest 'buy' event for a given ticker in "
         "portfolio_events, using equal-length before/after windows. Returns a structured error if no "
         "buy event exists for the ticker, or if the purchase date is today/future (no 'after' window yet)."
+        + _FX_HELP
     ),
     "transaction_count": (
         "Count transactions over a period. kind: all | expense | income. " + _PERIOD_HELP
     ),
     "largest_transactions": (
         "Largest individual transactions by magnitude over a period. kind: expense | income. " + _PERIOD_HELP
+        + _FX_HELP
     ),
-    "average_daily_spending": "Average spending per day over a period. " + _PERIOD_HELP,
+    "average_daily_spending": "Average spending per day over a period. " + _PERIOD_HELP + _FX_HELP,
     "monthly_trend": (
         "Month-over-month income/expense/net for the last N months (months clamped to a minimum of 6; "
         "a rolling window, not a calendar-year bound). Transfers excluded."
+        + _FX_HELP
     ),
     "account_balances": (
         "Per-account current balance (all-time) plus period_net (scoped to an already-resolved "
         "[period_start, period_end) window). Transfers excluded from both sums. Accounts with no "
         "transactions appear with 0/0."
+        + _FX_HELP
     ),
     "list_categories": (
         "The full category tree: top-level groups with nested children (id, name, kind, "
@@ -96,6 +105,7 @@ MCP_DESCRIPTIONS: dict[str, str] = {
         "income); returns ids, dates, amounts, categories, merchants, and account ids. Rows are ordered "
         "most-recent-first. A category or group name goes in category, not merchant (merchant is "
         "only a payee name). " + _PERIOD_HELP
+        + _FX_HELP
     ),
     "find_platforms": "Search/filter investment platforms by name substring; returns ids, names, and kinds.",
     "find_accounts": "Search/filter accounts by name substring; returns ids, names, types, and currencies.",
@@ -103,6 +113,7 @@ MCP_DESCRIPTIONS: dict[str, str] = {
         "Single trustworthy net worth = liquid accounts + investment platforms, each "
         "counted exactly once. Returns total, liquid_total, investment_total, "
         "liquid_accounts, investment_groups, accounts_covered, accounts_total."
+        + _FX_HELP
     ),
     "recurring_charges": (
         "Likely recurring expense charges (subscriptions, bills, rent) detected from past "
@@ -112,6 +123,7 @@ MCP_DESCRIPTIONS: dict[str, str] = {
         "high/medium/low confidence label and up to 12 evidence rows. Transfers, investment accounts, "
         "investment-linked rows and system categories are excluded. Takes no period: only months "
         "(lookback, 3-60, default 24) and limit (1-50, default 20). Results are detected, not confirmed."
+        + _FX_HELP
     ),
     "compare_periods": (
         "Two periods side by side: spending, income and net totals plus top-level category spending, "
@@ -123,6 +135,7 @@ MCP_DESCRIPTIONS: dict[str, str] = {
         "period_a and period_b each take a named period or \"custom\"; custom dates go in "
         "a_start_date/a_end_date and b_start_date/b_end_date (YYYY-MM-DD, end inclusive). Named periods: "
         + ", ".join(p for p in PERIODS if p not in ("custom", "all_time")) + "."
+        + _FX_HELP
     ),
     "propose_transactions": (
         "Propose transactions for the owner to approve; nothing is written until approved. "
