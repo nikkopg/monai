@@ -47,7 +47,7 @@ import {
   type HeldCard,
   type ProposalRow,
 } from "../lib/inbox";
-import { btn, btnGhost, card as cardStyle, dangerBtn, tokens } from "../styles";
+import { btn, btnGhost, card as cardStyle, dangerBtn, input, tokens } from "../styles";
 
 type Busy = null | "approve" | "reject" | number;
 
@@ -62,6 +62,7 @@ type Props = {
   onSettle: (id: string, phase: CardPhase) => void;
   onRows: (id: string, rows: ProposalRow[]) => void;
   announce: (msg: string) => void;
+  categories: string[];
 };
 
 const c = tokens.color;
@@ -162,6 +163,7 @@ export default function InboxCard({
   onSettle,
   onRows,
   announce,
+  categories,
 }: Props) {
   const p = card.proposal;
   const id = p.id;
@@ -300,6 +302,24 @@ export default function InboxCard({
           }`
         );
       }
+    });
+  }
+
+  async function setCategory(i: number, value: string | null) {
+    if (blocked) return;
+    await act(i, async () => {
+      const r = await fetch(`/api/proposals/${id}/rows/${i}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...INBOX_SURFACE_HEADER },
+        body: JSON.stringify({ category: value }),
+      });
+      if (!r.ok) return fail(r);
+      // The UI only sends names from the server's own list (or null), so the sent value is what is stored.
+      onRows(
+        id,
+        rows.map((row, k) => (k === i ? { ...row, after: { ...row.after, category: value } } : row))
+      );
+      announce(`Row ${i + 1} category set to ${value ?? "Uncategorized"}.`);
     });
   }
 
@@ -528,7 +548,23 @@ export default function InboxCard({
                       </td>
                       <td className="inbox-c-account" style={{ ...cell, color: tone }}>{text(a.account)}</td>
                       <td className="inbox-c-category" style={{ ...cell, color: text(a.category) ? tone : c.muted3 }}>
-                        {text(a.category) || "Uncategorized"}
+                        {live ? (
+                          <select
+                            style={{ ...input, padding: "4px 8px", width: "auto", color: "inherit", ...gated(blocked) }}
+                            aria-label={`Category for row ${i + 1}: ${text(a.merchant) || "no merchant"}`}
+                            aria-disabled={blocked}
+                            aria-describedby={blockedDescribedBy}
+                            value={text(a.category)}
+                            onChange={(e) => void setCategory(i, e.target.value || null)}
+                          >
+                            <option value="">Uncategorized</option>
+                            {[...categories, ...(text(a.category) && !categories.includes(text(a.category)) ? [text(a.category)] : [])].map((n) => (
+                              <option key={n} value={n}>{n}</option>
+                            ))}
+                          </select>
+                        ) : (
+                          text(a.category) || "Uncategorized"
+                        )}
                       </td>
                       <td
                         className="inbox-c-amount"

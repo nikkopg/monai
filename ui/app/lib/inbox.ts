@@ -28,6 +28,8 @@ export type ProposalRow = {
   target_balance?: string;
   duplicates?: DuplicateFlag[];
   skip?: boolean;
+  /** Upload rows whose category came from the owner's merchant history; the owner's edit clears it. */
+  category_suggested?: boolean;
 };
 
 /** payload.attachment on a channel "upload" proposal (backend/mcp_writes.py); built by code, never by the model. */

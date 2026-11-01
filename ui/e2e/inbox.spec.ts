@@ -1219,6 +1219,8 @@ test.describe("keyboard", () => {
     await openInbox(page);
     const card = byId(page, ids.c);
     const copy = card.getByRole("button", { name: "Copy confirm code" });
+    const cat1 = card.getByRole("combobox", { name: /^Category for row 1:/ });
+    const cat2 = card.getByRole("combobox", { name: /^Category for row 2:/ });
     const skip1 = card.getByRole("button", { name: /^Skip row 1:/ });
     const skip2 = card.getByRole("button", { name: /^Skip row 2:/ });
     const approve = approveBtn(card);
@@ -1226,7 +1228,7 @@ test.describe("keyboard", () => {
 
     await copy.focus();
     await expect(copy).toBeFocused();
-    for (const next of [skip1, skip2, approve, reject]) {
+    for (const next of [cat1, skip1, cat2, skip2, approve, reject]) {
       await page.keyboard.press("Tab");
       await expect(next).toBeFocused();
       if (next === skip1) {
@@ -1236,7 +1238,7 @@ test.describe("keyboard", () => {
         expect(await css(next, "outline-offset")).toBe("2px");
       }
     }
-    for (const prev of [approve, skip2, skip1]) {
+    for (const prev of [approve, skip2, cat2, skip1]) {
       await page.keyboard.press("Shift+Tab");
       await expect(prev).toBeFocused();
     }
@@ -1246,6 +1248,7 @@ test.describe("keyboard", () => {
     const include1 = card.getByRole("button", { name: /^Include row 1:/ });
     await expect(include1).toBeFocused();
 
+    await page.keyboard.press("Tab"); // Category row 2
     await page.keyboard.press("Tab"); // Skip row 2
     await page.keyboard.press("Tab"); // Approve
     await expect(approve).toBeFocused();

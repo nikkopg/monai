@@ -83,7 +83,7 @@ from backend.auth import optional_approver, require_api_key, require_approver_ke
 from backend.mcp_server import build_mcp
 from backend.db import get_session, get_session_sync
 from backend.importer import import_csv_text
-from backend.mcp_writes import duplicate_flags
+from backend.mcp_writes import _load_refs, duplicate_flags
 from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, Proposal, Transaction
 from backend.net_worth_history import monthly_net_worth_series
 from backend.portfolio import portfolio_summary as compose_portfolio_summary
@@ -1928,10 +1928,12 @@ def skip_proposal_row(
     req: RowSkipRequest,
     db: Session = Depends(get_session),
 ):
-    """Mark a pending transaction-batch row skipped (or not). Approver key only.
+    """Skip a pending transaction-batch row and/or set its category. Approver key only.
 
-    Owner-only: MCP cannot skip. Phase 33 Inbox calls this through the proxy
-    allowlist. Skips are not carried across a replace (D-16).
+    Owner-only: MCP cannot skip or edit (the route stays behind require_approver_key).
+    Phase 33 Inbox calls this through the proxy allowlist. Skips are not carried
+    across a replace (D-16). A category must be an existing one (any case, stored
+    canonical); null or blank clears it. Editing drops the row's category_suggested.
     """
     proposal = db.get(Proposal, proposal_id, with_for_update=True)
     if proposal is None:
@@ -1942,7 +1944,22 @@ def skip_proposal_row(
     rows = proposal.payload.get("rows", [])
     if not 0 <= index < len(rows):
         raise HTTPException(status_code=422, detail="Row index out of range")
-    rows[index]["skip"] = req.skip
+    if req.skip is None and "category" not in req.model_fields_set:
+        raise HTTPException(status_code=422, detail="Send skip or category")
+    if req.skip is not None:
+        rows[index]["skip"] = req.skip
+    if "category" in req.model_fields_set:
+        after = rows[index].get("after")
+        if not isinstance(after, dict):
+            raise HTTPException(status_code=422, detail="Row has no editable fields")
+        name = (req.category or "").strip()
+        if name:
+            _, cats = _load_refs(db)
+            if name.casefold() not in cats:
+                raise HTTPException(status_code=422, detail="Unknown category")
+            name = cats[name.casefold()]
+        after["category"] = name or None
+        rows[index].pop("category_suggested", None)  # row level, beside skip; never in `after` (AuditLog)
     flag_modified(proposal, "payload")
     db.commit()
     return proposal
