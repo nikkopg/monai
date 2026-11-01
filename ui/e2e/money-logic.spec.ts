@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { fmtAmount, fmtAmountSigned, rateHover, sumIdr } from "../app/lib/money";
+import { fmtAmount, fmtAmountSigned, fmtRateCompare, impliedRate, rateHover, sumIdr } from "../app/lib/money";
 
 // Browserless: pure formatter checks (no page, no server). All values synthetic.
 
@@ -61,5 +61,25 @@ test.describe("sumIdr", () => {
     expect(sumIdr([{ amount: -100, currency: "IDR", amount_idr: -90 }])).toEqual({ total: -90, unconverted: 0 });
     expect(sumIdr([])).toEqual({ total: 0, unconverted: 0 });
     expect(sumIdr([noRate, usd, idr].reverse())).toEqual(sumIdr([noRate, usd, idr]));
+  });
+});
+
+test.describe("implied rate (display only)", () => {
+  test("impliedRate is IDR over USD or null", () => {
+    expect(impliedRate(1631000, 100)).toBe(16310);
+    expect(impliedRate(-1631000, -100)).toBe(16310);
+    for (const [i, u] of [[0, 100], [1631000, 0], [NaN, 100], [1631000, Infinity], [null, 100]] as const) {
+      expect(impliedRate(i as number, u as number), `impliedRate(${i}, ${u})`).toBeNull();
+    }
+  });
+
+  test("fmtRateCompare writes the three UI-SPEC strings", () => {
+    expect(fmtRateCompare(16310, 16250, "2026-10-30", "ok")).toBe(
+      "Implied 1 USD = 16,310 IDR · ECB 16,250 (rate of 30 Oct 2026)"
+    );
+    expect(fmtRateCompare(16310, null, null, "none")).toBe("Implied 1 USD = 16,310 IDR · ECB rate unavailable");
+    expect(fmtRateCompare(16310, null, null, "loading")).toBe("Implied 1 USD = 16,310 IDR · checking ECB rate…");
+    expect(fmtRateCompare(16310, 16250.6, "2026-10-30", "ok")).toContain("ECB 16,251 ");
+    expect(fmtRateCompare(16310, null, null, "ok")).toBe("Implied 1 USD = 16,310 IDR · ECB rate unavailable");
   });
 });
