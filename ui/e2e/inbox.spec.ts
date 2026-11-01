@@ -458,6 +458,43 @@ test.describe("card rows", () => {
     await expect(card).not.toContainText("1,235");
   });
 
+  test("USD rows carry their currency, in submission order", async ({ page }) => {
+    await mockInbox(page, {
+      list: [
+        proposal({
+          payload: {
+            operation: "add_transaction",
+            rows: [
+              txRow({ after: { amount: "-12.50", currency: "USD" } }),
+              txRow({ after: { amount: "-50000" } }),
+            ],
+          },
+        }),
+      ],
+    });
+    await openInbox(page);
+    const card = art(page, "Add 2 transactions to Account A");
+    await expect(card.locator(".inbox-row")).toContainText(["-12.50 USD", "-50,000"]);
+    await expect(card.getByRole("cell", { name: "-50,000", exact: true })).toBeVisible();
+  });
+
+  test("a cross-currency deposit card names what it credits, with no rate line", async ({ page }) => {
+    const dep = investmentTransferProposal();
+    const after = dep.payload.rows[0].after as {
+      cash_leg: Record<string, unknown>;
+      event: Record<string, unknown>;
+    };
+    Object.assign(after.cash_leg, { account: "Account IDR", amount: "-1631000", currency: "IDR", date: null });
+    Object.assign(after.event, { quantity: "100", platform_id: 7, currency: "USD" });
+    await mockInbox(page, { list: [dep] });
+    await openInbox(page);
+    const card = art(page, "Move cash to investments");
+    await expect(
+      card.getByText("Move 1,631,000 IDR from Account IDR to platform #7, crediting 100.00 USD on the approval date")
+    ).toBeVisible();
+    await expect(card).not.toContainText("Implied");
+  });
+
   test("an unknown row shape falls back to key: value lines", async ({ page }) => {
     await mockInbox(page, {
       list: [
