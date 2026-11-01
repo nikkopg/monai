@@ -437,7 +437,7 @@
     "name": "propose_transactions"
   },
   {
-    "description": "Propose one transfer between two existing liquid accounts in the same currency (two ledger rows); nothing is written until approved. amount is a positive magnitude: the source is debited and the destination credited. date is YYYY-MM-DD, not in the future. replaces=<proposal_id> fixes a pending one. Ask the owner for the 6-character code shown in monai, then call confirm_proposal. Never guess a code.",
+    "description": "Propose one transfer between two existing liquid accounts (two ledger rows); nothing is written until approved. amount is a positive magnitude in the source account's currency: the source is debited and the destination credited. When the two accounts use different currencies pass to_amount, the positive amount the destination received in its own currency; each leg's currency comes from its account. date is YYYY-MM-DD, not in the future. replaces=<proposal_id> fixes a pending one. Ask the owner for the 6-character code shown in monai, then call confirm_proposal. Never guess a code.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -484,6 +484,23 @@
         },
         "to_account": {
           "type": "string"
+        },
+        "to_amount": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "required": [
