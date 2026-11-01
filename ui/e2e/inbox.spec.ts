@@ -1537,3 +1537,49 @@ test.describe("row category", () => {
     expect(patches[1]).toEqual({ index: 1, body: { category: null } });
   });
 });
+
+test.describe("suggested category", () => {
+  const suggested = () =>
+    proposal({
+      payload: {
+        operation: "add_transaction",
+        rows: [
+          { ...txRow({ after: { merchant: "ZZ Shop", category: "ZZ Food" } }), category_suggested: true },
+          txRow({ after: { merchant: "ZZ Plain" } }),
+        ],
+      },
+    });
+
+  test("suggested category: marker until the owner changes it", async ({ page }) => {
+    const inbox = await mockInbox(page, { list: [suggested()] });
+    const patches = await mockCategoryEdit(page, inbox);
+    await openInbox(page);
+    const card = byId(page, ids.a);
+    const sel1 = card.getByRole("combobox", { name: /^Category for row 1:/ });
+    const chip = card.getByText("Suggested", { exact: true });
+
+    await expect(chip).toHaveCount(1);
+    await expect(card.locator(".inbox-row").nth(0).getByText("Suggested", { exact: true })).toBeVisible();
+    await expect(card.locator(".inbox-row").nth(1).getByText("Suggested", { exact: true })).toHaveCount(0);
+    await expect(sel1).toHaveValue("ZZ Food");
+    await expect(sel1).toHaveAccessibleDescription(/Suggested/);
+
+    await sel1.selectOption({ label: "ZZ Snacks" });
+    expect(patches).toEqual([{ index: 0, body: { category: "ZZ Snacks" } }]);
+    await expect(chip).toHaveCount(0);
+  });
+
+  test("suggested category: approving keeps it without an edit", async ({ page }) => {
+    const inbox = await mockInbox(page, { list: [suggested()] });
+    const patches = await mockCategoryEdit(page, inbox);
+    await openInbox(page);
+    const card = byId(page, ids.a);
+    await expect(card.getByText("Suggested", { exact: true })).toHaveCount(1);
+
+    await approveBtn(card).click();
+    await expect(statusOf(page, ids.a)).toBeFocused();
+    expect(inbox.sent("POST", "/approve")).toHaveLength(1);
+    expect(patches).toHaveLength(0);
+    await expect(card.getByText("Suggested", { exact: true })).toHaveCount(0);
+  });
+});
