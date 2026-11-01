@@ -709,3 +709,67 @@ test.describe("Records USD rows (Phase 44 D-13, D-14)", () => {
     await expect(pair).toContainText("≈ 414,375");
   });
 });
+
+test.describe("Records cross-currency pair (Phase 45 D-09)", () => {
+  const accts = [
+    { id: 1, name: "ZZ45 Wallet", currency: "USD" },
+    { id: 2, name: "ZZ45 Bank", currency: "IDR" },
+  ];
+  // Synthetic pair on 1996-03-02; the USD leg carries the rate the backend stored.
+  const pair = (usd: Partial<FixtureTx>, usdOut = true): FixtureTx[] => {
+    const usdLeg: FixtureTx = {
+      id: 601, date: "1996-03-02T10:00:00Z", amount: usdOut ? -100 : 100, currency: "USD",
+      category: "Transfer", merchant: null, account_id: 1, notes: null,
+      is_transfer: true, transfer_pair_id: 888,
+      amount_idr: usdOut ? -1625000 : 1625000, fx_rate: 16250, fx_rate_date: "1996-03-01",
+      ...usd,
+    };
+    const idrLeg: FixtureTx = {
+      id: 602, date: "1996-03-02T10:00:00Z", amount: usdOut ? 1631000 : -1631000, category: "Transfer",
+      merchant: null, account_id: 2, notes: null, is_transfer: true, transfer_pair_id: 888,
+    };
+    return [usdLeg, idrLeg];
+  };
+  async function open(page: Page, rows: FixtureTx[]) {
+    const fx: string[] = [];
+    page.on("request", (r) => {
+      if (r.url().includes("/api/fx/rate")) fx.push(r.url());
+    });
+    await mockRecords(page, rows, accts);
+    await page.goto("/records");
+    return fx;
+  }
+
+  test("cross-currency pair shows both amounts and the rate", async ({ page }) => {
+    const fx = await open(page, pair({}));
+    const received = page.getByText("received 1,631,000", { exact: true });
+    await expect(received).toHaveCount(1);
+    await expect(received.locator("xpath=..")).toContainText("100.00 USD");
+    await expect(received.locator("xpath=..")).not.toContainText("≈");
+    await expect(
+      page.getByText("1996-03-02 · Implied 1 USD = 16,310 IDR · ECB 16,250 (rate of 1 Mar 1996)", {
+        exact: true,
+      })
+    ).toHaveCount(1);
+    expect(fx).toEqual([]);
+  });
+
+  test("cross-currency pair without a rate", async ({ page }) => {
+    await open(page, pair({ fx_rate: null, fx_rate_date: null, amount_idr: null }));
+    await expect(
+      page.getByText("1996-03-02 · Implied 1 USD = 16,310 IDR · ECB rate unavailable", { exact: true })
+    ).toHaveCount(1);
+  });
+
+  test("the USD side can be the incoming leg", async ({ page }) => {
+    await open(page, pair({}, false));
+    const received = page.getByText("received 100.00 USD", { exact: true });
+    await expect(received).toHaveCount(1);
+    await expect(received.locator("xpath=..")).toContainText("1,631,000");
+    await expect(
+      page.getByText("1996-03-02 · Implied 1 USD = 16,310 IDR · ECB 16,250 (rate of 1 Mar 1996)", {
+        exact: true,
+      })
+    ).toHaveCount(1);
+  });
+});
