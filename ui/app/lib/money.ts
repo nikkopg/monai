@@ -14,6 +14,7 @@ const usdSigned = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 2,
 });
 const rateFmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+const wholeFmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 // A missing amount must look missing, never a believable 0.
 const missing = (v: unknown): v is null | undefined =>
@@ -38,6 +39,33 @@ export function rateHover(
 ): string | undefined {
   if (missing(rate) || !isoDate) return undefined;
   return `1 USD = ${rateFmt.format(rate)} IDR · rate of ${fmtRowDate(isoDate)}`;
+}
+
+/**
+ * The rate two typed amounts imply: IDR leg over USD leg (D-09). Display only,
+ * never stored or sent (MOVE-04). Signs are ignored; null unless both are finite and non-zero.
+ */
+export function impliedRate(idrAmount: number | null | undefined, usdAmount: number | null | undefined): number | null {
+  if (missing(idrAmount) || missing(usdAmount) || idrAmount === 0 || usdAmount === 0) return null;
+  return Math.abs(idrAmount) / Math.abs(usdAmount);
+}
+
+/**
+ * "Implied 1 USD = 16,310 IDR · ECB 16,250 (rate of 30 Oct 2026)": the implied rate
+ * next to the ECB rate of the day. Both rounded to whole IDR. Display only (MOVE-04).
+ */
+export function fmtRateCompare(
+  implied: number,
+  ecb: number | null | undefined,
+  ecbDate: string | null | undefined,
+  state: "ok" | "none" | "loading"
+): string {
+  const head = `Implied 1 USD = ${wholeFmt.format(implied)} IDR · `;
+  if (state === "loading") return `${head}checking ECB rate…`;
+  if (state === "ok" && !missing(ecb) && ecbDate) {
+    return `${head}ECB ${wholeFmt.format(ecb)} (rate of ${fmtRowDate(ecbDate)})`;
+  }
+  return `${head}ECB rate unavailable`;
 }
 
 /**
