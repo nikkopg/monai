@@ -478,8 +478,12 @@ def apply_edit_account(db: Session, acc_id: int, after: dict, before: dict | Non
         acc.type = after["type"]
     if new_currency is not None:
         acc.currency = new_currency
+    # A blank currency means "unchanged", so it stays out of the audit.
+    audit_after = {k: v for k, v in after.items() if k != "currency"}
+    if new_currency is not None:
+        audit_after["currency"] = new_currency
     db.add(AuditLog(entity="account", entity_id=acc_id, operation="edit",
-                    before=before, after=after if new_currency is None else {**after, "currency": new_currency}))
+                    before=before, after=audit_after))
     return acc
 
 

@@ -533,7 +533,7 @@ def test_adjust_usd_account_native_delta(client, api_key, db_session):
 # ---------------------------------------------------------------------------
 
 def test_put_blank_currency_leaves_currency_unchanged(client, api_key, db_session):
-    from backend.models import Account
+    from backend.models import Account, AuditLog
 
     acc_id = _make_account(db_session, _unique_name("ZZ44 blankccy"), "USD")
     try:
@@ -541,6 +541,9 @@ def test_put_blank_currency_leaves_currency_unchanged(client, api_key, db_sessio
         assert resp.status_code == 200, resp.text
         db_session.expire_all()
         assert db_session.get(Account, acc_id).currency == "USD"
+        # The audit must not claim a currency was set when nothing changed.
+        audit = db_session.query(AuditLog).filter_by(entity="account", entity_id=acc_id, operation="edit").one()
+        assert "currency" not in audit.after
     finally:
         _cleanup(db_session, account_ids=[acc_id])
 
