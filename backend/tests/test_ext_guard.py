@@ -11,7 +11,7 @@ from backend.tests.test_mcp import _mcp_session, _tools_list
 from backend.tests.test_ext_session import Env, env  # noqa: F401  (env is a fixture)
 
 ROOT = Path(__file__).resolve().parents[2]
-SNAPSHOT_COMMIT = "9e9c952"  # Phase 45 base: snapshots move only in reviewed regeneration commits
+SNAPSHOT_COMMIT = "9d9f13d"  # Phase 45 base: snapshots move only in reviewed regeneration commits
 SNAPSHOTS = ["backend/tests/agent_tool_surface.json", "backend/tests/mcp_tool_surface.json",
              "backend/tests/attachment_tool_surface.json"]
 PINNED_QUESTIONS = ["what is in this file?", "total debits?", "and last month?", "import this file"]
