@@ -160,7 +160,6 @@ def test_propose_add_transaction_creates_proposal(db_session):
         amount=-75000,
         account="BCA",
         category="Food",
-        currency="IDR",
     )
     assert "proposal_id" in result
     assert "proposal_token" in result

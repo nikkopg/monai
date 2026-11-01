@@ -1174,3 +1174,71 @@ def test_confirm_add_transaction_without_currency_uses_account_currency(client, 
         assert cur == ["USD"]
     finally:
         _usd_account_cleanup(db_session, name, pid)
+
+
+# ---------------------------------------------------------------------------
+# Phase 45 (ENTRY-02, MOVE-01..03 in chat): the model has no currency parameter;
+# every currency in a proposal comes from the account or holding in the database.
+# ---------------------------------------------------------------------------
+
+import inspect  # noqa: E402
+
+from backend.tests.test_cross_currency_moves import (  # noqa: E402,F401  (zz45 is a fixture)
+    _ISO_DAY, _events, _holding, _post, _seed_event, zz45,
+)
+
+
+def _proposal_count(db) -> int:
+    db.rollback()
+    return db.execute(text("SELECT COUNT(*) FROM proposals")).scalar()
+
+
+def _track(zz45, result: dict) -> dict:
+    zz45.proposal_ids.append(uuid.UUID(result["proposal_id"]))
+    return result
+
+
+def _confirm(client, api_key, result: dict):
+    return _post(client, api_key, f"/proposals/{result['proposal_id']}/confirm", {"token": result["proposal_token"]})
+
+
+def test_propose_add_transaction_has_no_currency_parameter():
+    from backend.tools import TOOLS
+    assert "currency" not in inspect.signature(TOOLS["propose_add_transaction"]).parameters
+    with pytest.raises(TypeError):
+        TOOLS["propose_add_transaction"](date=_ISO_DAY, amount=-1, account="x", currency="IDR")
+
+
+def test_propose_add_transaction_usd_account(client, api_key, zz45):
+    from backend.tools import propose_add_transaction
+    usd = zz45.account("usd", "USD")
+    result = _track(zz45, propose_add_transaction(date=_ISO_DAY, amount=-12.5, account=usd))
+    assert f"Add transaction: -12.5 USD on {_ISO_DAY}" == result["summary"]
+    assert result["after"]["currency"] == "USD"  # looked up from the account (Task 1: option-a)
+    assert zz45.tx_rows(usd) == []  # a producer writes nothing
+    assert _confirm(client, api_key, result).status_code == 200
+    (row,) = zz45.tx_rows(usd)
+    assert row.currency == "USD" and row.amount == Decimal("-12.5")
+
+
+def test_propose_add_transaction_missing_account_is_idr(client, api_key, zz45):
+    from backend.models import Account
+    from backend.tools import propose_add_transaction
+    name = f"ZZ45 ghost-{uuid.uuid4().hex[:6]}"
+    result = _track(zz45, propose_add_transaction(date=_ISO_DAY, amount=-10, account=name))
+    assert "IDR" in result["summary"] and result["after"]["currency"] == "IDR"
+    assert _confirm(client, api_key, result).status_code == 200
+    zz45.db.expire_all()
+    assert zz45.db.query(Account).filter(Account.name == name).one().currency == "IDR"
+
+
+def test_legacy_add_transaction_payload_currency(client, api_key, zz45):
+    usd = zz45.account("usd", "USD")
+    pid, token = _add_txn_proposal(zz45.db, usd, currency="IDR")
+    zz45.proposal_ids.append(uuid.UUID(pid))
+    assert _post(client, api_key, f"/proposals/{pid}/confirm", {"token": token}).status_code == 422
+    assert zz45.tx_rows(usd) == []
+    pid, token = _add_txn_proposal(zz45.db, usd, currency="USD")
+    zz45.proposal_ids.append(uuid.UUID(pid))
+    assert _post(client, api_key, f"/proposals/{pid}/confirm", {"token": token}).status_code == 200
+    assert [r.currency for r in zz45.tx_rows(usd)] == ["USD"]
