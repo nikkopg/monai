@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 
 from backend import attachments as att
-from backend.attachments import SEP_ASSUMPTION, DMY_ASSUMPTION, parse_csv_attachment
+from backend.attachments import SEP_ASSUMPTION, SEP_ASSUMPTION_DOT, DMY_ASSUMPTION, parse_csv_attachment
 from backend.tests import doc_fixtures as fx
 
 
@@ -158,9 +158,11 @@ def test_generic_usd_csv_uses_dot_prior():
     assert p.status == "ok"
     assert [Decimal(r["amount"]) for r in p.rows] == [Decimal("-1250"), Decimal("20000")]
     assert p.meta["separator"] == {"sep": ".", "evidence": "none"}
-    assert all(SEP_ASSUMPTION in r["assumptions"] for r in p.rows)
+    # The note says what the parser did: it must not describe the IDR reading on a USD file.
+    assert all(SEP_ASSUMPTION_DOT in r["assumptions"] and SEP_ASSUMPTION not in r["assumptions"] for r in p.rows)
     q = parse(AMBIGUOUS_CSV, cur="IDR")
     assert [Decimal(r["amount"]) for r in q.rows] == [Decimal("-1.25"), Decimal("20")]
+    assert all(SEP_ASSUMPTION in r["assumptions"] and SEP_ASSUMPTION_DOT not in r["assumptions"] for r in q.rows)
 
 
 def test_normalise_currency_tokens():

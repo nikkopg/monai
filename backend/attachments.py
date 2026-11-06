@@ -48,6 +48,7 @@ RAW_RETENTION_DAYS = 7
 MAX_ROWS = 500
 MAX_TEXT_CHARS = 500_000
 SEP_ASSUMPTION = 'Amounts read with "." as the thousands separator and "," as decimals.'
+SEP_ASSUMPTION_DOT = 'Amounts read with "," as the thousands separator and "." as decimals.'
 DMY_ASSUMPTION = "Dates read day first."
 ALLOWED_TYPES_TEXT = "Allowed types: CSV, PDF, PNG, JPEG, WebP"
 
@@ -397,7 +398,8 @@ def parse_csv_attachment(data: bytes, *, account_name: str, account_currency: st
         order, date_ev = infer_date_order([cell(r, col["date"]) for _, r in items])
     except ValueError:
         return refuse("Dates in this file can't be read in one order.")
-    assumptions = ([SEP_ASSUMPTION] if sep_ev == "none" else []) + ([DMY_ASSUMPTION] if date_ev == "none" else [])
+    sep_note = SEP_ASSUMPTION_DOT if sep == "." else SEP_ASSUMPTION
+    assumptions = ([sep_note] if sep_ev == "none" else []) + ([DMY_ASSUMPTION] if date_ev == "none" else [])
     meta.update(separator={"sep": sep, "evidence": sep_ev}, date_order={"order": order, "evidence": date_ev},
                 assumptions=assumptions)
 
