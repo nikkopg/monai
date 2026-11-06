@@ -1245,12 +1245,25 @@ CURRENT_THREAD_ID: contextvars.ContextVar[uuid.UUID | None] = contextvars.Contex
 )
 
 
-def _account_currency_for(name: str) -> str:
-    """The account's currency, looked up in the database (a missing account reads as IDR)."""
-    from backend.writes import currency_of_account
+def _account_ref(name: str) -> tuple[str, str] | None:
+    """(stored name, currency) of the account called `name`: exact first, then ignoring case.
 
+    None when nothing matches or several do, so a model's "bitget" can't skip the USD
+    guards here and then become a phantom IDR account at confirm.
+    """
+    from sqlalchemy import func
+
+    from backend.models import Account
+
+    wanted = (name or "").strip()
     with get_session_sync() as db:
-        return currency_of_account(db, name)
+        hits = db.query(Account).filter(Account.name == wanted).all() or (
+            db.query(Account).filter(func.lower(Account.name) == wanted.lower()).all())
+        return (hits[0].name, hits[0].currency) if len(hits) == 1 else None
+
+
+def _unknown_account(tool: str, name: str) -> dict:
+    return {"tool": tool, "error": f"No single account is called '{name}'; call find_accounts for its exact name"}
 
 
 def _holding_currency_for(ticker: str, platform_id: int) -> str | None:
@@ -1378,7 +1391,10 @@ def propose_add_transaction(
     Does NOT add any data — user must approve. amount is signed (negative=expense, positive=income).
     The row's currency is the account's; there is no currency argument.
     """
-    currency = _account_currency_for(account)
+    ref = _account_ref(account)
+    if ref is None:
+        return _unknown_account("propose_add_transaction", account)
+    account, currency = ref
     after = {
         "date": date,
         "amount": str(Decimal(str(amount))),
@@ -1800,8 +1816,10 @@ def propose_add_transfer(
     accounts leave it out. Returns a proposal for user confirmation.
     Does NOT move any money — user must approve. (XFER-01)
     """
-    ccy_a = _account_currency_for(from_account)
-    ccy_b = _account_currency_for(to_account)
+    ref_a, ref_b = _account_ref(from_account), _account_ref(to_account)
+    if ref_a is None or ref_b is None:
+        return _unknown_account("propose_add_transfer", from_account if ref_a is None else to_account)
+    (from_account, ccy_a), (to_account, ccy_b) = ref_a, ref_b
     if ccy_a != ccy_b and to_amount is None:
         return {"tool": "propose_add_transfer", "error": (
             f"Transfers between {ccy_a} and {ccy_b} accounts need both amounts; "
@@ -1860,7 +1878,10 @@ def propose_add_investment_transfer(
     leave it out to use the platform's existing cash). Returns a proposal for
     user confirmation — never moves money directly.
     """
-    cash_ccy = _account_currency_for(from_account)
+    ref = _account_ref(from_account)
+    if ref is None:
+        return _unknown_account("propose_add_investment_transfer", from_account)
+    from_account, cash_ccy = ref
     ev_ccy = (event_currency or "").strip().upper() or _holding_currency_for("CASH", platform_id) or cash_ccy
     if ev_ccy != cash_ccy and event_amount is None:
         return {"tool": "propose_add_investment_transfer", "error": (
@@ -1907,10 +1928,14 @@ def _funded_after(
     source_account_name: str, platform_id: int, ticker: str, quantity: float, price: float,
     cash_amount: float, event_currency: str | None, date: str | None, notes: str | None,
     asset_type: str | None,
-) -> dict:
+) -> dict | None:
     """Shared `after` of a funded buy/sell: the cash currency is the account's and the event
-    currency is explicit, else the existing position's, else the cash currency (D-02, D-08)."""
-    cash_ccy = _account_currency_for(source_account_name)
+    currency is explicit, else the existing position's, else the cash currency (D-02, D-08).
+    None when the account can't be resolved."""
+    ref = _account_ref(source_account_name)
+    if ref is None:
+        return None
+    source_account_name, cash_ccy = ref
     return {
         "source_account_name": source_account_name,
         "cash_currency": cash_ccy,
@@ -1950,6 +1975,8 @@ def propose_add_funded_buy(
     """
     after = _funded_after(source_account_name, platform_id, ticker, quantity, price,
                           cash_amount, event_currency, date, notes, asset_type)
+    if after is None:
+        return _unknown_account("propose_add_funded_buy", source_account_name)
     payload = {"operation": "add_funded_buy", "rows": [{"before": None, "after": after}]}
     proposal_id, proposal_token = _make_proposal("add_funded_buy", payload)
     return {
@@ -1985,6 +2012,8 @@ def propose_add_funded_sell(
     """
     after = _funded_after(source_account_name, platform_id, ticker, quantity, price,
                           cash_amount, event_currency, date, notes, asset_type)
+    if after is None:
+        return _unknown_account("propose_add_funded_sell", source_account_name)
     payload = {"operation": "add_funded_sell", "rows": [{"before": None, "after": after}]}
     proposal_id, proposal_token = _make_proposal("add_funded_sell", payload)
     return {

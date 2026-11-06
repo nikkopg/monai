@@ -455,3 +455,15 @@ def test_fx_rate_route_bad_input(client, api_key, zz45, no_vendor):
     assert client.get("/fx/rate", params={"currency": "USD", "on": _ISO_DAY}).status_code == 401
     resp = _rate(client, api_key, currency="IDR", on=_ISO_DAY)
     assert resp.status_code == 200 and Decimal(resp.json()["rate"]) == 1
+
+
+@pytest.mark.parametrize("path", ["/portfolio-events/funded-buy", "/portfolio-events/funded-sell"])
+def test_funded_event_currency_must_be_supported(client, api_key, zz45, path):
+    """An unsupported event currency is refused before any write; it could never be priced (Phase 45 WR-01)."""
+    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    r = _post(client, api_key, path, {
+        "source_account_name": usd, "platform_id": plat, "ticker": "ZZ45E", "quantity": "1", "price": "1",
+        "cash_amount": "1", "event_currency": "EUR", "date": "1996-03-01",
+    })
+    assert r.status_code == 422
+    assert zz45.tx_rows(usd) == []

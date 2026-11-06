@@ -409,8 +409,9 @@ def _funded_event_currency(db: Session, after: dict) -> str:
 
     Checked before the cash leg is written, so a position mismatch leaves nothing behind.
     """
+    explicit = after.get("event_currency")
     ev_ccy = (
-        after.get("event_currency")
+        (_account_currency(explicit) if explicit else None)
         or currency_of_holding(db, after["ticker"], after["platform_id"])
         or currency_of_account(db, after["source_account_name"])
     )

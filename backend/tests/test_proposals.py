@@ -1221,17 +1221,6 @@ def test_propose_add_transaction_usd_account(client, api_key, zz45):
     assert row.currency == "USD" and row.amount == Decimal("-12.5")
 
 
-def test_propose_add_transaction_missing_account_is_idr(client, api_key, zz45):
-    from backend.models import Account
-    from backend.tools import propose_add_transaction
-    name = f"ZZ45 ghost-{uuid.uuid4().hex[:6]}"
-    result = _track(zz45, propose_add_transaction(date=_ISO_DAY, amount=-10, account=name))
-    assert "IDR" in result["summary"] and result["after"]["currency"] == "IDR"
-    assert _confirm(client, api_key, result).status_code == 200
-    zz45.db.expire_all()
-    assert zz45.db.query(Account).filter(Account.name == name).one().currency == "IDR"
-
-
 def test_legacy_add_transaction_payload_currency(client, api_key, zz45):
     usd = zz45.account("usd", "USD")
     pid, token = _add_txn_proposal(zz45.db, usd, currency="IDR")
@@ -1359,3 +1348,49 @@ def test_propose_funded_sell_into_usd_account(client, api_key, zz45):
     assert _confirm(client, api_key, result).status_code == 200
     (leg,) = zz45.tx_rows(usd)
     assert (leg.amount, leg.currency) == (Decimal("60.0"), "USD")
+
+
+def test_chat_producers_resolve_a_miscased_account(client, api_key, zz45):
+    """A mis-cased name still finds the USD account, so no guard is skipped (Phase 45 CR-01)."""
+    from backend.tools import (propose_add_funded_buy, propose_add_investment_transfer,
+                               propose_add_transaction, propose_add_transfer)
+    usd, idr, plat = zz45.account("usd", "USD"), zz45.account("idr"), zz45.platform()
+    before = _proposal_count(zz45.db)
+
+    # The USD guard fires: this reads as USD->IDR, not IDR->IDR.
+    refused = propose_add_transfer(usd.lower(), idr, 10, date=_ISO_DAY)
+    assert "both amounts" in refused["error"]
+    assert _proposal_count(zz45.db) == before
+
+    row = _track(zz45, propose_add_transaction(_ISO_DAY, -12.5, f" {usd.lower()} "))
+    assert (row["after"]["account"], row["after"]["currency"]) == (usd, "USD")
+
+    transfer = _track(zz45, propose_add_transfer(usd.lower(), idr.upper(), 10, date=_ISO_DAY, to_amount=163100))
+    legs = transfer["after"]
+    assert (legs["leg_a"]["account"], legs["leg_a"]["currency"]) == (usd, "USD")
+    assert (legs["leg_b"]["account"], legs["leg_b"]["currency"]) == (idr, "IDR")
+
+    deposit = _track(zz45, propose_add_investment_transfer(usd.lower(), plat, 5, date=_ISO_DAY))
+    assert (deposit["after"]["cash_leg"]["account"], deposit["after"]["cash_leg"]["currency"]) == (usd, "USD")
+
+    funded = _track(zz45, propose_add_funded_buy(
+        source_account_name=usd.lower(), platform_id=plat, ticker="ZZ45T", quantity=1, price=6, cash_amount=6,
+        date=_ISO_DAY))
+    assert (funded["after"]["source_account_name"], funded["after"]["cash_currency"]) == (usd, "USD")
+
+
+@pytest.mark.parametrize("call", [
+    lambda t, plat: t.propose_add_transaction(_ISO_DAY, -1, "ZZ45 nosuch"),
+    lambda t, plat: t.propose_add_transfer("ZZ45 nosuch", "ZZ45 nosuch2", 1, date=_ISO_DAY),
+    lambda t, plat: t.propose_add_investment_transfer("ZZ45 nosuch", plat, 1, date=_ISO_DAY),
+    lambda t, plat: t.propose_add_funded_buy("ZZ45 nosuch", plat, "ZZ45T", 1, 1, 1, date=_ISO_DAY),
+    lambda t, plat: t.propose_add_funded_sell("ZZ45 nosuch", plat, "ZZ45T", 1, 1, 1, date=_ISO_DAY),
+])
+def test_chat_producers_refuse_an_unknown_account(client, api_key, zz45, call):
+    """An unknown name never becomes a phantom IDR account (Phase 45 CR-01)."""
+    from backend import tools
+    plat = zz45.platform()
+    before = _proposal_count(zz45.db)
+    result = call(tools, plat)
+    assert "find_accounts" in result["error"]
+    assert _proposal_count(zz45.db) == before

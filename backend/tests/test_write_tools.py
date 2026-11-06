@@ -153,12 +153,15 @@ def test_propose_creates_row(db_session):
 def test_propose_add_transaction_creates_proposal(db_session):
     """propose_add_transaction returns proposal with required fields."""
     from backend.tools import propose_add_transaction
-    from backend.models import Proposal
+    from backend.models import Account, Proposal
 
+    account = Account(name=f"ZZ45 tools-{uuid.uuid4().hex[:6]}", type="liquid", currency="IDR")
+    db_session.add(account)
+    db_session.commit()
     result = propose_add_transaction(
         date="2024-03-01",
         amount=-75000,
-        account="BCA",
+        account=account.name,
         category="Food",
     )
     assert "proposal_id" in result
@@ -170,7 +173,8 @@ def test_propose_add_transaction_creates_proposal(db_session):
     p = db_session.get(Proposal, UUID(result["proposal_id"]))
     if p:
         db_session.delete(p)
-        db_session.commit()
+    db_session.delete(account)
+    db_session.commit()
 
 
 def test_propose_delete_transaction_creates_proposal(db_session):
