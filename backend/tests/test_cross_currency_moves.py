@@ -301,8 +301,8 @@ def test_deposit_idr_into_usd_cash_needs_event_amount(client, api_key, zz45):
     new_event = _events(zz45, plat)[-1]
     assert (new_event.ticker, new_event.currency) == ("CASH", "USD")
     assert new_event.quantity == Decimal("100.00") and new_event.price == Decimal("1")
-    # A deposit is a ledger event, not a recompute input (Phase 14): the position's credit is the event sum.
-    assert sum(e.quantity for e in _events(zz45, plat)) == Decimal("150.00")
+    zz45.db.expire_all()
+    assert _holding(zz45, plat, "CASH").quantity == Decimal("150.00")
 
 
 def test_deposit_event_currency_order(client, api_key, zz45):
@@ -467,3 +467,21 @@ def test_funded_event_currency_must_be_supported(client, api_key, zz45, path):
     })
     assert r.status_code == 422
     assert zz45.tx_rows(usd) == []
+
+
+def test_deposit_raises_cash_quantity_and_delete_reverses_it(client, api_key, zz45):
+    """A deposit's money reaches the live investment total, and its cost basis is that date's rate."""
+    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    zz45.rate(_ISO_DAY)
+    for amount in (100, 50):
+        assert _deposit(client, api_key, from_account=usd, platform_id=plat, amount=amount,
+                        date=_ISO_DAY).status_code == 201
+    zz45.db.expire_all()
+    cash = _holding(zz45, plat, "CASH")
+    assert cash.quantity == Decimal("150.00")
+    assert cash.currency == "USD" and cash.avg_cost > 1  # IDR per USD, so no phantom gain on the first read
+
+    first = _events(zz45, plat)[0]
+    assert client.delete(f"/portfolio-events/{first.id}", headers={"MONAI_API_KEY": api_key}).status_code == 200
+    zz45.db.expire_all()
+    assert _holding(zz45, plat, "CASH").quantity == Decimal("50.00")

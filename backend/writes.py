@@ -885,7 +885,6 @@ def apply_delete_portfolio_event(db: Session, event_id: int, before: dict | None
     """
     ev = _load_editable_event(db, event_id, _DELETABLE_EVENT_TYPES)
     ticker, platform_id, tx_id = ev.ticker, ev.platform_id, ev.transaction_id
-    is_deposit = ev.event_type == "deposit"
     deleted_tx_id = None
     if tx_id is not None:
         tx = db.get(Transaction, tx_id)
@@ -897,11 +896,7 @@ def apply_delete_portfolio_event(db: Session, event_id: int, before: dict | None
     db.add(AuditLog(entity="portfolio_event", entity_id=event_id, operation="delete",
                     before=before, after=None))
     db.flush()  # LOAD-BEARING: autoflush=False, recompute's SELECT must not see the deleted rows
-    # deposits never feed recompute (portfolio.py folds buy/sell/dividend only), so
-    # recomputing could only clobber a manually set CASH holding
-    # (recompute-clobbers-eventless-holdings)
-    if not is_deposit:
-        recompute_holding_from_events(db, ticker, platform_id)
+    recompute_holding_from_events(db, ticker, platform_id)
     return deleted_tx_id
 
 

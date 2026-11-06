@@ -1097,11 +1097,7 @@ def test_gff_delete_deposit_event(client, api_key, db_session):
         assert r.status_code == 201, r.text
         ev_id, tx_id = r.json()["portfolio_event_id"], r.json()["transaction_id"]
 
-        # simulate a manually set CASH quantity (a deposit never feeds recompute)
-        h = _o3y_holding(db_session, "CASH", plat_id)
-        assert h is not None
-        h.quantity = Decimal("250000")
-        db_session.commit()
+        assert _o3y_holding(db_session, "CASH", plat_id).quantity == Decimal("250000")
 
         # edit stays buy/sell/dividend only
         assert client.put(f"/portfolio-events/{ev_id}", json={"quantity": 1}, headers=hdr).status_code == 422
@@ -1116,7 +1112,7 @@ def test_gff_delete_deposit_event(client, api_key, db_session):
             AuditLog.entity == "portfolio_event", AuditLog.entity_id == ev_id, AuditLog.operation == "delete"
         ).count() == 1
         assert db_session.get(Transaction, tx_id) is not None  # unlinked cash leg untouched
-        assert _o3y_holding(db_session, "CASH", plat_id).quantity == Decimal("250000")
+        assert _o3y_holding(db_session, "CASH", plat_id).quantity == Decimal("0")  # the deposit is reversed
     finally:
         db_session.rollback()
         _cleanup_o3y_audit(db_session, [ev_id] if ev_id else [], [])

@@ -44,7 +44,7 @@ def recompute_holding_from_events(db: Session, ticker: str, platform_id: int) ->
     Position identity is (ticker, platform_id) (Quick 260711-rb2) — the same
     asset can exist on multiple platforms as independent positions. Scans
     `portfolio_events` for (ticker, platform_id) in (date, id) order, deriving
-    running quantity + average cost. Buys add cost+qty; sells realize
+    running quantity + average cost. Buys and deposits add cost+qty; sells realize
     `(price − avg_cost) × qty` and reduce total_cost by `avg_cost × qty`
     (leaving avg_cost unchanged, D-02); dividends fold into realized only.
 
@@ -105,7 +105,7 @@ def recompute_holding_from_events(db: Session, ticker: str, platform_id: int) ->
         native_amount = ev.price * ev.quantity
         idr_amount = native_amount * rate
 
-        if ev.event_type == "buy":
+        if ev.event_type in ("buy", "deposit"):  # a CASH deposit adds quantity at its date's rate
             total_cost += idr_amount
             qty += ev.quantity
         elif ev.event_type == "sell":
@@ -482,7 +482,7 @@ def _realized_for_position(db: Session, ticker: str, platform_id: int) -> dict:
             return {"realized_pnl": None, "dividend_total": None}
         idr_amount = ev.price * ev.quantity * rate
 
-        if ev.event_type == "buy":
+        if ev.event_type in ("buy", "deposit"):  # a CASH deposit adds quantity at its date's rate
             total_cost += idr_amount
             qty += ev.quantity
         elif ev.event_type == "sell":
