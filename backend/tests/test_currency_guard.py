@@ -525,6 +525,64 @@ def test_balances_rate_7_days_old_used(flow_seed, monkeypatch):
     assert nw["fx_note"] is None
 
 
+def _seed_platform_position(ticker: str, asset_type: str, qty: str = "40") -> None:
+    s = SessionLocal()
+    try:
+        pid = s.execute(text("INSERT INTO platforms (name) VALUES ('ZZ43 plat') RETURNING id")).scalar()
+        s.execute(text(
+            "INSERT INTO holdings (ticker, platform_id, quantity, avg_cost, currency, asset_type) "
+            "VALUES (:t, :p, :q, 1, 'USD', :a)"), {"t": ticker, "p": pid, "q": qty, "a": asset_type})
+        s.commit()
+    finally:
+        s.close()
+
+
+@pytest.fixture()
+def platform_position(flow_env):
+    """Removes ZZ43 positions before flow_env's cleanup drops their platform."""
+    yield _seed_platform_position
+    s = SessionLocal()
+    try:
+        s.execute(text("DELETE FROM holdings WHERE platform_id IN (SELECT id FROM platforms WHERE name = 'ZZ43 plat')"))
+        s.commit()
+    finally:
+        s.close()
+
+
+def test_net_worth_names_rate_for_usd_cash_only_on_a_platform(platform_position, monkeypatch):
+    """DISP-03: USD cash converted on a platform states its rate even with no USD liquid account."""
+    spot = Decimal("16200")
+    _pin(monkeypatch, date(1995, 6, 15))
+    _stub_fx(monkeypatch, live=spot, ranges={})
+    monkeypatch.setattr(fx, "get_rate", lambda *a: spot)
+    before = tools.TOOLS["net_worth"]()["investment_total"]
+    platform_position("CASH", "cash")
+    nw = tools.TOOLS["net_worth"]()
+    assert nw["investment_total"] - before == pytest.approx(float(Decimal("40") * spot))
+    assert nw["fx_note"] == _rate_note(spot, "15 Jun 1995")
+
+
+def test_net_worth_says_when_usd_cash_has_no_rate(platform_position, monkeypatch):
+    """FXR-04: USD cash with no rate is left out of the total visibly, with no rate named."""
+    _pin(monkeypatch, date(1995, 6, 15))
+    _stub_fx(monkeypatch, live=None, ranges={})
+    monkeypatch.setattr(fx, "get_rate", lambda *a: None)
+    platform_position("CASH", "cash")
+    nw = tools.TOOLS["net_worth"]()
+    assert nw["fx_note"] is None
+    assert "USD cash" in nw["notice"] and "left out" in nw["notice"]
+
+
+def test_net_worth_names_no_rate_for_other_usd_positions(platform_position, monkeypatch):
+    """Non-cash positions are priced in IDR directly: no rate was used, so none is named."""
+    _pin(monkeypatch, date(1995, 6, 15))
+    _stub_fx(monkeypatch, live=Decimal("16200"), ranges={})
+    platform_position("ZZ43T", "crypto")
+    nw = tools.TOOLS["net_worth"]()
+    assert nw["fx_note"] is None
+    assert "USD cash" not in (nw["notice"] or "")
+
+
 def test_balances_idr_only_no_note(flow_env, monkeypatch):
     """D-15: nothing converted, nothing said. An IDR account never carries a note."""
     _pin(monkeypatch, date(1995, 6, 15))

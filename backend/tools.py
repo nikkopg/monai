@@ -714,6 +714,20 @@ def net_worth(db=None) -> dict:
         pf = portfolio_summary(db)
         investment_total = float(pf["total_value"])
 
+        # Only cash converts at a rate: other positions are priced in IDR directly, so none is named.
+        usd_cash = [h for g in pf["groups"] for h in g["holdings"]
+                    if h["asset_type"] == "cash" and h["currency"] == "USD" and h["quantity"]]
+        unpriced = sum(h["current_value"] is None for h in usd_cash)
+        if unpriced:
+            left_out = f"{unpriced} USD cash position(s) left out of the total: no USD->IDR rate"
+            notice = f"{notice}; {left_out}" if notice else left_out
+        if fx_note is None and len(usd_cash) > unpriced:
+            try:
+                rate, as_of, stale = fx.spot_stale_ok("USD", db)
+                fx_note = _rate_note(rate, as_of, stale)
+            except fx.FxUnavailable:
+                pass  # no rate to name; never guess one
+
         return {
             "tool": "net_worth",
             "currency": fx.BASE,
