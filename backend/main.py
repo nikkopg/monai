@@ -1099,13 +1099,15 @@ def net_worth_endpoint(db: Session = Depends(get_session)):
 def networth_history_endpoint(months: int = 72, db: Session = Depends(get_session)):
     """Composed monthly net-worth series (NWH-02) — keyed read, computes on read.
 
-    Nothing is persisted (D-03): every call re-composes Phase 20's liquid
-    series and Phase 21's investment series fresh from one session. Every
-    row carries both a liquid and an investment sub-object, honest or not, so
-    Phase 23's split view can draw either half alone (SC4/NWH-06). `months`
-    outside 1-600 raises ValueError in monthly_net_worth_series, which maps to
-    422 here, never a raw 500. A sparse honest_months list is the correct
-    honest answer on today's data (D-05), not a defect.
+    Nothing is persisted (D-03): every call re-composes the liquid series
+    (a plain per-account sum of each month's records) and the investment
+    series (carried forward from its last known month) fresh from one
+    session. Every row carries both a liquid and an investment sub-object,
+    honest or not, so Phase 23's split view can draw either half alone
+    (SC4/NWH-06). `months` outside 1-600 raises ValueError in
+    monthly_net_worth_series, which maps to 422 here, never a raw 500. A row
+    is blank only before the first record or investment value, or when an FX
+    rate is missing.
     """
     try:
         result = monthly_net_worth_series(months=months, db=db)

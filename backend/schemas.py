@@ -395,10 +395,10 @@ class ValueHistoryResponse(BaseModel):
 class NetWorthHistoryLiquidOut(BaseModel):
     """One month's liquid half of the composed net-worth series (NWH-02).
 
-    Nulls here mean the liquid half could not be verified for that month —
-    no interpolation, no carry-forward (D-06). `valuation_basis` of
-    "ledger_plus_corrections" marks pre-anchor months (23.1 D-05); it is
-    None for both a gapped month and the post-anchor D-07 basis."""
+    Each point is the plain per-account sum of that month's records. Nulls
+    here mean the month is before the first liquid record or a needed FX rate
+    is missing; a liquid gap is never carried forward. `valuation_basis` is
+    "ledger_plus_corrections" for every non-gap month."""
 
     total: MoneyDecimal | None
     by_account: dict[str, MoneyDecimal] | None
@@ -410,8 +410,10 @@ class NetWorthHistoryLiquidOut(BaseModel):
 class NetWorthHistoryInvestmentOut(BaseModel):
     """One month's investment half of the composed net-worth series (NWH-02).
 
-    Nulls here mean the investment half could not be verified for that month —
-    no interpolation, no carry-forward (D-06)."""
+    A month with no usable value carries the previous known month (total,
+    positions, `as_of_date` and `valuation_basis` included), so `as_of_date`
+    can be earlier than the month. Nulls mean no value is known yet at or
+    before that month."""
 
     total: MoneyDecimal | None
     by_position: dict[str, MoneyDecimal] | None
@@ -424,7 +426,7 @@ class NetWorthHistoryInvestmentOut(BaseModel):
 class NetWorthHistoryRowOut(BaseModel):
     """One composed month of GET /cashflow/networth-history (NWH-02).
 
-    total is non-null only when both halves are independently honest (D-04).
+    total is non-null whenever both halves have a value for the month.
     liquid and investment are always present, honest or not, so Phase 23's
     split view can draw either half alone (SC4/NWH-06)."""
 
@@ -442,7 +444,8 @@ class NetWorthHistoryResponse(BaseModel):
 
     `liquid_drift_estimate` is the anchor-day residual (23.1 D-06): the sum
     of each anchored liquid account's positive residual, an upper bound on
-    how far pre-anchor liquid balances may be overstated. It is null when no
+    how far the months before an anchor may be overstated by recovered
+    corrections. It is null when no
     live liquid account has an anchor."""
 
     rows: list[NetWorthHistoryRowOut]
