@@ -14,12 +14,13 @@ import type { PlatformOption } from "./page";
 // position recompute happens server-side (05-RESEARCH Pattern 2). On success
 // calls onSaved() (parent refetches the summary) then onClose().
 //
-// XFER-03 extension: an optional "Funding account" <select> (modal-owned
-// GET /api/accounts fetch, client-filtered to type === "liquid" — never free
-// text, RESEARCH Pitfall 2) routes Buy/Sell submits to
-// /api/portfolio-events/funded-buy|sell instead, carrying a cash_amount that
-// defaults to quantity x price until manually edited (D-06). Dividend has no
-// funded schema — a funding selection is ignored for it (unfunded path).
+// XFER-03 extension: a required "Investment liquid account" <select>
+// (modal-owned GET /api/accounts fetch, client-filtered to type === "liquid" —
+// never free text, RESEARCH Pitfall 2) routes every Buy/Sell submit to
+// /api/portfolio-events/funded-buy|sell, carrying a cash_amount that defaults
+// to quantity x price until manually edited (D-06). Submit stays disabled until
+// an account is chosen (quick 261107-nq6). Dividend has no funded schema: it
+// drops the account and is the only thing POSTed to /api/portfolio-events.
 //
 // Edit mode (editEvent prop): prefilled from an existing event; submit PUTs
 // /api/portfolio-events/{id}. A linked (funded) event shows its Cash amount
@@ -51,7 +52,12 @@ type Props = {
   defaultPlatformId?: number;
   editEvent?: EditableEvent;
   // Existing positions, to tell a held ticker (currency fixed) from a new one.
-  positions?: { ticker: string; platformId: number; currency: string }[];
+  positions?: {
+    ticker: string;
+    platformId: number;
+    currency: string;
+    quantity: number;
+  }[];
 };
 
 const chipStyle: React.CSSProperties = {
@@ -134,9 +140,10 @@ export default function HoldingModal({
   const isDividend = eventType === "dividend";
 
   // Funding selector (XFER-03) — modal-owned GET /api/accounts fetch,
-  // client-filtered to liquid. A funding account is only meaningful for
-  // Buy/Sell; Dividend has no funded schema, so it's ignored there.
+  // client-filtered to liquid. Required for Buy/Sell; Dividend has no funded
+  // schema, so the account is dropped there.
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accountsLoaded, setAccountsLoaded] = useState(false);
   const [fundingAccount, setFundingAccount] = useState("");
   const [cashAmount, setCashAmount] = useState(
     editEvent?.cash_amount != null ? String(editEvent.cash_amount) : ""
@@ -171,9 +178,12 @@ export default function HoldingModal({
         const r = await fetch("/api/accounts");
         if (!r.ok) throw new Error("fetch failed");
         const data: Account[] = await r.json();
-        if (!cancelled) setAccounts(data);
+        if (!cancelled) {
+          setAccounts(data);
+          setAccountsLoaded(true);
+        }
       } catch {
-        // leave accounts empty; the funding select just shows "none"
+        // leave accounts empty; the select offers only "Choose an account"
       }
     })();
     return () => {
@@ -395,9 +405,17 @@ export default function HoldingModal({
                   onEventTypeChange(e.target.value as "buy" | "sell" | "dividend")
                 }
               >
-                <option value="buy">Buy</option>
-                <option value="sell">Sell</option>
-                <option value="dividend" disabled={linked}>
+                {/* An unfunded event cannot change type (backend 422). */}
+                <option value="buy" disabled={isEdit && !linked && editEvent.event_type !== "buy"}>
+                  Buy
+                </option>
+                <option value="sell" disabled={isEdit && !linked && editEvent.event_type !== "sell"}>
+                  Sell
+                </option>
+                <option
+                  value="dividend"
+                  disabled={linked || (isEdit && editEvent.event_type !== "dividend")}
+                >
                   Dividend
                 </option>
               </select>
@@ -413,6 +431,11 @@ export default function HoldingModal({
                 value={quantity}
                 onChange={(e) => setQuantity(e.target.value)}
               />
+              {!isEdit && eventType === "sell" && held && (
+                <p style={{ ...label, fontSize: 11, marginTop: 4, color: tokens.color.muted3 }}>
+                  Held: {held.quantity}
+                </p>
+              )}
             </div>
             <div>
               <label style={label} htmlFor="holding-price">
@@ -463,14 +486,17 @@ export default function HoldingModal({
             </div>
             {!isEdit && (
             <div>
-              <label style={label}>Funding account</label>
+              <label style={label}>Investment liquid account</label>
               <select
                 style={input}
                 value={fundingAccount}
+                required={!isDividend}
                 disabled={isDividend}
                 onChange={(e) => setFundingAccount(e.target.value)}
               >
-                <option value="">— none (unfunded) —</option>
+                <option value="" disabled>
+                  Choose an account
+                </option>
                 {liquidAccounts.map((a) => (
                   <option key={a.id} value={a.name}>
                     {a.name}
@@ -480,6 +506,12 @@ export default function HoldingModal({
               {isDividend && (
                 <p style={{ ...label, fontSize: 11, marginTop: 4, color: tokens.color.muted3 }}>
                   Dividends aren&apos;t funded from an account.
+                </p>
+              )}
+              {!isDividend && accountsLoaded && liquidAccounts.length === 0 && (
+                <p style={{ ...label, fontSize: 11, marginTop: 4, color: tokens.color.muted3 }}>
+                  Add a liquid account in Settings, or use Add holding directly for a
+                  position you already hold.
                 </p>
               )}
             </div>
@@ -552,6 +584,7 @@ export default function HoldingModal({
                 platforms.length === 0 ||
                 !(parseFloat(quantity) > 0) ||
                 !(parseFloat(price) > 0) ||
+                (!isEdit && !isDividend && fundingAccount === "") ||
                 (isFunded && !(parseFloat(cashAmount) > 0))
               }
             >

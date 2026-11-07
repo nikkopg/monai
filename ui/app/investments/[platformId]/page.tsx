@@ -39,6 +39,8 @@ type PlatformDetail = {
   kind: string | null;
   subtotal: number;
   holdings: PlatformDetailHolding[];
+  // Realized P&L of positions closed on this platform (absent in old mocks).
+  closed_realized_pnl?: number;
 };
 
 type PortfolioEvent = {
@@ -203,7 +205,8 @@ export default function PlatformDetailPage() {
 
   // Platform-wide totals — sum of each holding's own realized/unrealized.
   const totalRealized =
-    detail?.holdings.reduce((a, h) => a + h.realized_pnl, 0) ?? 0;
+    (detail?.holdings.reduce((a, h) => a + h.realized_pnl, 0) ?? 0) +
+    (detail?.closed_realized_pnl ?? 0);
   const totalUnrealized =
     detail?.holdings.reduce((a, h) => a + (h.unrealized_pnl ?? 0), 0) ?? 0;
 
@@ -602,6 +605,7 @@ export default function PlatformDetailPage() {
                 ticker: h.ticker,
                 platformId: Number(platformId),
                 currency: h.currency ?? "IDR",
+                quantity: h.quantity,
               }))}
               editEvent={{
                 ...editingEvent,
@@ -626,6 +630,7 @@ export default function PlatformDetailPage() {
                 ticker: h.ticker,
                 platformId: Number(platformId),
                 currency: h.currency ?? "IDR",
+                quantity: h.quantity,
               }))}
               onClose={() => setShowLogEvent(false)}
               onSaved={() => load({ silent: true })}

@@ -806,7 +806,7 @@ export default function InvestmentsPage() {
               );
             })}
 
-            <ClosedPositions rows={closed} />
+            <ClosedPositions rows={closed} load={load} />
 
             <PlatformManager platforms={platforms} onChanged={load} />
           </>
@@ -823,6 +823,7 @@ export default function InvestmentsPage() {
                   ticker: h.ticker,
                   platformId: g.platform_id as number,
                   currency: h.currency ?? "IDR",
+                  quantity: h.quantity,
                 }))
           )}
           onClose={() => setShowEvent(false)}
