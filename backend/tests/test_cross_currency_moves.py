@@ -485,3 +485,29 @@ def test_deposit_raises_cash_quantity_and_delete_reverses_it(client, api_key, zz
     assert client.delete(f"/portfolio-events/{first.id}", headers={"MONAI_API_KEY": api_key}).status_code == 200
     zz45.db.expire_all()
     assert _holding(zz45, plat, "CASH").quantity == Decimal("50.00")
+
+
+def test_no_rate_refuses_the_position_write_and_saves_nothing(client, api_key, zz45, monkeypatch):
+    """With no rate the quantity can't be rebuilt: refuse, or the money leaves liquid and reaches nothing."""
+    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    zz45.rate(_ISO_DAY)
+    for amount in (100, 50):
+        assert _deposit(client, api_key, from_account=usd, platform_id=plat, amount=amount,
+                        date=_ISO_DAY).status_code == 201
+    zz45.db.expire_all()
+    events = [e.id for e in _events(zz45, plat)]
+    legs = "SELECT count(*) FROM transactions t JOIN accounts a ON a.id = t.account_id WHERE a.name = :n"
+    assert zz45.db.execute(text(legs), {"n": usd}).scalar() == 2
+    zz45.db.rollback()
+
+    monkeypatch.setattr("backend.fx.get_rate", lambda *a, **k: None)
+    refused = _deposit(client, api_key, from_account=usd, platform_id=plat, amount=25, date=_ISO_DAY)
+    assert refused.status_code == 422 and "rate" in refused.json()["detail"]
+    # The other deposit still needs a rate once this one is gone.
+    deleted = client.delete(f"/portfolio-events/{events[0]}", headers={"MONAI_API_KEY": api_key})
+    assert deleted.status_code == 422 and "rate" in deleted.json()["detail"]
+
+    zz45.db.expire_all()
+    assert [e.id for e in _events(zz45, plat)] == events
+    assert zz45.db.execute(text(legs), {"n": usd}).scalar() == 2
+    assert _holding(zz45, plat, "CASH").quantity == Decimal("150.00")

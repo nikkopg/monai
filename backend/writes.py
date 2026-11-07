@@ -713,6 +713,16 @@ def _check_position_target(db: Session, ticker: str, platform_id: int, currency:
     return currency
 
 
+def _recompute_or_refuse(db: Session, ticker: str, platform_id: int) -> None:
+    """Rebuild a position, refusing the write when a rate is missing (ValueError -> 422).
+
+    recompute leaves the holding untouched without a rate, so saving anyway would
+    move cash while the position's quantity stayed wrong.
+    """
+    if recompute_holding_from_events(db, ticker, platform_id)["quantity"] is None:
+        raise ValueError(f"No FX rate to IDR for one of {ticker}'s event dates; nothing was saved. Try again later")
+
+
 def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
     """Insert a buy/sell/dividend event, then recompute the position (D-01/INV-07).
 
@@ -758,7 +768,7 @@ def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
     db.add(AuditLog(entity="portfolio_event", entity_id=ev.id, operation="add",
                     before=None, after=after))
     # D-01: position derives from the ledger — recompute after every event.
-    recompute_holding_from_events(db, after["ticker"], after["platform_id"])
+    _recompute_or_refuse(db, after["ticker"], after["platform_id"])
     # Set-when-provided: a later event with asset_type omitted must NOT clobber
     # an existing asset_type assignment back to null (matches the None-means-keep
     # convention in apply_edit_holding above). platform_id is now identity — it's
@@ -856,9 +866,9 @@ def apply_edit_portfolio_event(
     db.add(AuditLog(entity="portfolio_event", entity_id=ev.id, operation="edit",
                     before=before, after=_portfolio_event_snapshot(ev)))
     db.flush()  # LOAD-BEARING: autoflush=False, recompute's SELECT must see the edited rows
-    recompute_holding_from_events(db, ev.ticker, ev.platform_id)
+    _recompute_or_refuse(db, ev.ticker, ev.platform_id)
     if new_ticker != old_ticker:
-        recompute_holding_from_events(db, old_ticker, ev.platform_id)
+        _recompute_or_refuse(db, old_ticker, ev.platform_id)
         db.flush()
         new_h = db.query(Holding).filter(
             Holding.ticker == new_ticker, Holding.platform_id == ev.platform_id
@@ -896,7 +906,7 @@ def apply_delete_portfolio_event(db: Session, event_id: int, before: dict | None
     db.add(AuditLog(entity="portfolio_event", entity_id=event_id, operation="delete",
                     before=before, after=None))
     db.flush()  # LOAD-BEARING: autoflush=False, recompute's SELECT must not see the deleted rows
-    recompute_holding_from_events(db, ticker, platform_id)
+    _recompute_or_refuse(db, ticker, platform_id)
     return deleted_tx_id
 
 
