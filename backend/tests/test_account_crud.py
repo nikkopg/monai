@@ -274,6 +274,90 @@ def _account_count(db, name: str) -> int:
     return int(db.execute(text("SELECT COUNT(*) FROM accounts WHERE name = :n"), {"n": name}).scalar() or 0)
 
 
+def _make_sourced_event(db, source_account_id: int) -> tuple[int, int]:
+    from backend.models import PortfolioEvent, Platform
+    platform = Platform(name=_unique_name("ZZ platform"))
+    db.add(platform)
+    db.flush()
+    ev = PortfolioEvent(
+        date=datetime.date(1995, 3, 1), ticker="ZZTEST", event_type="sell", quantity=1, price=100,
+        platform_id=platform.id, source_account_id=source_account_id,
+    )
+    db.add(ev)
+    db.commit()
+    return ev.id, platform.id
+
+
+def _cleanup_sourced_event(db, event_id: int, platform_id: int) -> None:
+    db.rollback()
+    db.execute(text("DELETE FROM portfolio_events WHERE id = :i"), {"i": event_id})
+    db.execute(text("DELETE FROM holdings WHERE platform_id = :p"), {"p": platform_id})
+    db.execute(text("DELETE FROM platforms WHERE id = :p"), {"p": platform_id})
+    db.commit()
+
+
+def test_post_duplicate_name_is_422(client, api_key, db_session):
+    name = _unique_name("ZZ dup")
+    acc_id = _make_account(db_session, name)
+    try:
+        resp = client.post("/accounts", json={"name": name, "type": "liquid"}, headers={"MONAI_API_KEY": api_key})
+        assert resp.status_code == 422, resp.text
+        assert "already exists" in resp.text
+    finally:
+        _cleanup(db_session, account_ids=[acc_id])
+
+
+def test_put_duplicate_name_is_422_and_own_name_is_fine(client, api_key, db_session):
+    name_a, name_b = _unique_name("ZZ dup a"), _unique_name("ZZ dup b")
+    a, b = _make_account(db_session, name_a), _make_account(db_session, name_b)
+    try:
+        resp = client.put(f"/accounts/{b}", json={"name": name_a}, headers={"MONAI_API_KEY": api_key})
+        assert resp.status_code == 422, resp.text
+        assert "already exists" in resp.text
+        resp = client.put(f"/accounts/{b}", json={"name": name_b}, headers={"MONAI_API_KEY": api_key})
+        assert resp.status_code == 200, resp.text
+    finally:
+        _cleanup(db_session, account_ids=[a, b])
+
+
+def test_delete_empty_account_clears_event_links_and_keeps_the_event(client, api_key, db_session):
+    from backend.models import Account, AuditLog
+    acc_id = _make_account(db_session, _unique_name("ZZ linked"))
+    event_id, platform_id = _make_sourced_event(db_session, acc_id)
+    try:
+        resp = client.delete(f"/accounts/{acc_id}", headers={"MONAI_API_KEY": api_key})
+        assert resp.status_code == 200, resp.text
+        db_session.expire_all()
+        assert db_session.get(Account, acc_id) is None
+        source = db_session.execute(
+            text("SELECT source_account_id FROM portfolio_events WHERE id = :i"), {"i": event_id}
+        ).one()[0]
+        assert source is None
+        audit = db_session.query(AuditLog).filter_by(entity="account", entity_id=acc_id, operation="delete").one()
+        assert audit.after["event_links_moved_or_cleared"] == 1
+    finally:
+        _cleanup_sourced_event(db_session, event_id, platform_id)
+        _cleanup(db_session, account_ids=[acc_id])
+
+
+def test_delete_with_reassign_moves_event_links(client, api_key, db_session):
+    src = _make_account(db_session, _unique_name("ZZ src"))
+    dst = _make_account(db_session, _unique_name("ZZ dst"))
+    tx_id = _make_transaction(db_session, src)
+    event_id, platform_id = _make_sourced_event(db_session, src)
+    try:
+        resp = client.delete(f"/accounts/{src}?reassign_to={dst}", headers={"MONAI_API_KEY": api_key})
+        assert resp.status_code == 200, resp.text
+        db_session.expire_all()
+        source = db_session.execute(
+            text("SELECT source_account_id FROM portfolio_events WHERE id = :i"), {"i": event_id}
+        ).one()[0]
+        assert source == dst
+    finally:
+        _cleanup_sourced_event(db_session, event_id, platform_id)
+        _cleanup(db_session, tx_ids=[tx_id], account_ids=[src, dst])
+
+
 def test_post_account_usd_created(client, api_key, db_session):
     from backend.models import AuditLog
 

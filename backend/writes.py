@@ -462,9 +462,17 @@ def _account_currency(value) -> str:
     return currency
 
 
+def _refuse_taken_account_name(db: Session, name: str, acc_id: int | None = None) -> None:
+    """A name another account holds -> ValueError (422), not the unique index's 500."""
+    taken = db.query(Account).filter(Account.name == name, Account.id != acc_id).first()
+    if taken is not None:
+        raise ValueError(f"An account named '{name}' already exists")
+
+
 def apply_add_account(db: Session, after: dict) -> Account:
     """Insert a new account (currency IDR or USD; blank -> IDR)."""
     currency = _account_currency(after.get("currency"))
+    _refuse_taken_account_name(db, after["name"])
     acc = Account(
         name=after["name"],
         type=after.get("type"),
@@ -491,6 +499,7 @@ def apply_edit_account(db: Session, acc_id: int, after: dict, before: dict | Non
         if n:
             raise ValueError(f"Account '{acc.name}' has {n} record(s); its currency can't change")
     if after.get("name") is not None:
+        _refuse_taken_account_name(db, after["name"], acc_id)
         acc.name = after["name"]
     if after.get("type") is not None:
         acc.type = after["type"]
@@ -515,6 +524,11 @@ def apply_delete_account(db: Session, acc_id: int, before: dict | None, reassign
     audited in one place rather than as an un-audited inline bulk update in
     the calling endpoint (WARNING 1 fix). Returns the reassignment count
     (0 when reassign_to is None, i.e. a plain audited delete).
+
+    Portfolio events pointing at the account as their funding source follow the
+    reassignment. Without one the account has no transactions left, so those
+    links lead to no cash and are cleared; either way the foreign key can't
+    block the delete with a 500.
     """
     reassigned_count = 0
     audit_after: dict | None = None
@@ -534,6 +548,13 @@ def apply_delete_account(db: Session, acc_id: int, before: dict | None, reassign
         )
         reassigned_count = result.rowcount
         audit_after = {"reassign_to": reassign_to, "reassigned_count": reassigned_count}
+
+    event_links = db.execute(
+        text("UPDATE portfolio_events SET source_account_id = :reassign_to WHERE source_account_id = :acc_id"),
+        {"reassign_to": reassign_to, "acc_id": acc_id},
+    ).rowcount
+    if event_links:
+        audit_after = {**(audit_after or {}), "event_links_moved_or_cleared": event_links}
 
     acc = db.get(Account, acc_id)
     if acc is not None:
