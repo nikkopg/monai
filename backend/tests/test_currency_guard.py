@@ -70,8 +70,6 @@ ALLOW = {
         "per-account native ledger and adjustment sums, converted per account per month afterwards (D-14)",
     ("reconstruction.py", "FROM net_worth_corrections"):
         "archival corrections are IDR-only",
-    ("net_worth_history.py", "SUM(market_value)"):
-        "portfolio snapshot values are already IDR",
     ("investment_reconstruction.py", "FROM net_worth_corrections"):
         "archival corrections are IDR-only",
 }
@@ -987,19 +985,6 @@ def test_history_drift_estimate_skips_usd(history_env):
     assert reconstruction.liquid_drift_estimate() == before
 
 
-def test_history_parity_skips_excluded_balance(monkeypatch):
-    from backend import net_worth_history
-
-    rows = [
-        {"type": "liquid", "current_balance": 100.0},
-        {"type": "liquid", "current_balance": None},
-        {"type": "investment", "current_balance": 5.0},
-    ]
-    monkeypatch.setattr(tools, "account_balances", lambda: {"rows": rows})
-    row = {"liquid": {"total": Decimal("100.00")}, "investment": {"valuation_basis": "replay"}}
-    assert net_worth_history._parity_verdict(None, row) is None
-
-
 # --- plain per-account sum (quick 261107-mfr) -------------------------------
 
 @pytest.fixture()
@@ -1149,3 +1134,185 @@ def test_trend_correction_label_without_live_account_never_enters_liquid(plain_e
 
 def test_trend_gap_reasons_are_pre_ledger_and_fx_only():
     assert reconstruction.GAP_REASONS == ("pre_ledger", "fx_unavailable")
+
+
+# --- composition: investment carry-forward, FX path (quick 261107-mfr) -------
+
+from backend import net_worth_history  # noqa: E402
+
+
+def _liq_row(month: str, total: str | None = "10.00") -> dict:
+    ok = total is not None
+    return {"month": month, "liquid_by_account": {"x": Decimal(total)} if ok else None,
+            "liquid_total": Decimal(total) if ok else None,
+            "valuation_basis": "ledger_plus_corrections" if ok else None,
+            "honest": ok, "gap_reason": None if ok else "fx_unavailable"}
+
+
+def _inv_row(month: str, total: str | None = None, as_of: str | None = None, basis: str = "snapshot") -> dict:
+    ok = total is not None
+    return {"month": month, "investment_by_position": {"T": Decimal(total)} if ok else None,
+            "investment_total": Decimal(total) if ok else None,
+            "valuation_basis": basis if ok else None, "as_of_date": as_of if ok else None,
+            "honest": ok, "gap_reason": None if ok else "no_snapshot"}
+
+
+def _stub_halves(monkeypatch, liquid_rows=None, investment_rows=None) -> list[int]:
+    """Replace either half with fixed rows (the last `months` of them). Returns the
+    list the investment stub appends each requested `months` to."""
+    asked: list[int] = []
+    if liquid_rows is not None:
+        monkeypatch.setattr(
+            net_worth_history, "monthly_liquid_series",
+            lambda months, *, conn: {"rows": liquid_rows[-months:]})
+    if investment_rows is not None:
+        def _inv(months, *, db):
+            asked.append(months)
+            return {"rows": investment_rows[-months:]}
+        monkeypatch.setattr(net_worth_history, "monthly_investment_series", _inv)
+    return asked
+
+
+_M5 = ["1995-01", "1995-02", "1995-03", "1995-04", "1995-05"]
+
+
+def _carry_inputs():
+    liquid = [_liq_row(m) for m in _M5]
+    investment = [
+        _inv_row("1995-01"),
+        _inv_row("1995-02", "100.00", "1995-02-27"),
+        _inv_row("1995-03"),
+        _inv_row("1995-04"),
+        _inv_row("1995-05", "200.00", "1995-05-30"),
+    ]
+    return liquid, investment
+
+
+def test_trend_investment_gap_carries_the_previous_known_month(monkeypatch):
+    liquid, investment = _carry_inputs()
+    _stub_halves(monkeypatch, liquid, investment)
+    rows = {r["month"]: r for r in net_worth_history.monthly_net_worth_series(months=5)["rows"]}
+    for month in ("1995-03", "1995-04"):  # two consecutive gaps both carry from 1995-02
+        inv = rows[month]["investment"]
+        assert (inv["total"], inv["as_of_date"], inv["valuation_basis"]) == (Decimal("100.00"), "1995-02-27", "snapshot")
+        assert inv["by_position"] == {"T": Decimal("100.00")}
+        assert (inv["honest"], inv["gap_reason"]) == (True, None)
+        assert (rows[month]["honest"], rows[month]["total"], rows[month]["gap_reason"]) == (True, Decimal("110.00"), None)
+    assert rows["1995-05"]["total"] == Decimal("210.00")
+
+
+def test_trend_months_before_the_first_investment_value_stay_gapped(monkeypatch):
+    liquid, investment = _carry_inputs()
+    _stub_halves(monkeypatch, liquid, investment)
+    first = {r["month"]: r for r in net_worth_history.monthly_net_worth_series(months=5)["rows"]}["1995-01"]
+    assert (first["honest"], first["total"], first["gap_reason"]) == (False, None, "investment_half_gapped")
+    assert first["investment"]["gap_reason"] == "no_snapshot"
+    assert first["liquid"]["total"] == Decimal("10.00") and first["liquid"]["honest"] is True
+
+
+def test_trend_carry_does_not_depend_on_the_window(monkeypatch):
+    liquid, investment = _carry_inputs()
+    asked = _stub_halves(monkeypatch, liquid, investment)
+    short = net_worth_history.monthly_net_worth_series(months=2)["rows"]
+    assert asked == [2, 600]  # the window opens on a gap, so one wider re-read seeds the carry
+    full = {r["month"]: r for r in net_worth_history.monthly_net_worth_series(months=5)["rows"]}
+    assert [r["month"] for r in short] == ["1995-04", "1995-05"]
+    assert short[0] == full["1995-04"]
+    assert short[0]["investment"]["total"] == Decimal("100.00")
+
+
+def test_trend_usable_window_makes_one_investment_read(monkeypatch):
+    liquid, investment = _carry_inputs()
+    asked = _stub_halves(monkeypatch, liquid, investment)
+    net_worth_history.monthly_net_worth_series(months=1)
+    assert asked == [1]
+
+
+def test_trend_total_survives_a_broken_live_balance_read(monkeypatch):
+    liquid, investment = _carry_inputs()
+    _stub_halves(monkeypatch, liquid, investment)
+
+    def boom():
+        raise RuntimeError("no live read may gate the series")
+
+    monkeypatch.setattr(tools, "account_balances", boom)
+    newest = net_worth_history.monthly_net_worth_series(months=5)["rows"][-1]
+    assert (newest["honest"], newest["total"], newest["gap_reason"]) == (True, Decimal("210.00"), None)
+    assert len(net_worth_history.COMPOSED_GAP_REASONS) == 3
+
+
+def _recording_range(monkeypatch) -> list[tuple]:
+    calls: list[tuple] = []
+    inner = fx.FX_RANGE_ADAPTERS["frankfurter"]
+
+    def _rec(base, quote, start, end):
+        calls.append((start, end))
+        return inner(base, quote, start, end)
+
+    monkeypatch.setitem(fx.FX_RANGE_ADAPTERS, "frankfurter", _rec)
+    return calls
+
+
+def test_trend_usd_without_adjustment_uses_month_end_rate_from_one_range_fetch(monkeypatch):
+    _stub_fx(monkeypatch, live=None, ranges={date(1995, 4, 28): Decimal("15900"), date(1995, 5, 31): Decimal("15950")})
+    calls = _recording_range(monkeypatch)
+    _clean()
+    try:
+        s = SessionLocal()
+        try:
+            acc = _hist_account(s, "ZZ43 trend usd", "USD")
+            _hist_tx(s, acc, date(1995, 4, 10), "100.00", "USD")
+            _hist_tx(s, acc, date(1995, 5, 10), "10.00", "USD")
+            _hist_tx(s, acc, date(1995, 6, 10), "-110.00", "USD")
+            s.commit()
+        finally:
+            s.close()
+        for _ in range(2):  # the second read is served from the rate cache
+            _trend_by_account("ZZ43 trend usd", {"1995-04": "1590000.00", "1995-05": "1754500.00", "1995-06": "0.00"})
+        assert calls == [(date(1995, 4, 23), date(1995, 5, 31))]
+    finally:
+        _clean()
+
+
+def test_trend_newest_usd_month_converts_at_spot(monkeypatch):
+    _stub_fx(monkeypatch, live=Decimal("16200"), ranges={})
+    _clean()
+    try:
+        s = SessionLocal()
+        try:
+            acc = _hist_account(s, "ZZ43 trend usd", "USD")
+            _hist_tx(s, acc, date.today().replace(day=1), "100.00", "USD")
+            s.commit()
+        finally:
+            s.close()
+        newest = reconstruction.monthly_liquid_series(months=_hist_months())["rows"][-1]
+        assert newest["honest"] is True, newest
+        assert newest["liquid_by_account"]["ZZ43 trend usd"] == Decimal("1620000.00")
+    finally:
+        _clean()
+
+
+def test_trend_no_rate_gaps_the_liquid_half_and_never_carries(plain_env, monkeypatch):
+    s = SessionLocal()
+    try:
+        idr = _hist_account(s, "ZZ43 trend a", "IDR")
+        usd = _hist_account(s, "ZZ43 trend usd", "USD")
+        _hist_tx(s, idr, date(1995, 4, 10), "10.00", "IDR")
+        _hist_tx(s, usd, date(1995, 6, 10), "100.00", "USD")
+        s.commit()
+    finally:
+        s.close()
+    rows = {r["month"]: r for r in reconstruction.monthly_liquid_series(months=_hist_months())["rows"]}
+    assert rows["1995-05"]["honest"] is True  # only IDR is held, no rate needed
+    assert rows["1995-05"]["liquid_by_account"]["ZZ43 trend a"] == Decimal("10.00")
+    for month in ("1995-06", "1995-07", "1995-12"):
+        r = rows[month]
+        assert (r["honest"], r["gap_reason"], r["liquid_by_account"]) == (False, "fx_unavailable", None), month
+
+    # composed with a usable investment half: only the liquid half is gapped
+    months = sorted(rows)
+    _stub_halves(monkeypatch, None, [_inv_row(m, "5.00", "1995-01-31") for m in months])
+    composed = {r["month"]: r for r in net_worth_history.monthly_net_worth_series(months=len(months))["rows"]}
+    jun = composed["1995-06"]
+    assert (jun["honest"], jun["total"], jun["gap_reason"]) == (False, None, "liquid_half_gapped")
+    assert jun["liquid"]["total"] is None and jun["investment"]["total"] == Decimal("5.00")
