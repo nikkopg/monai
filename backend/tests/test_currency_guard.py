@@ -562,6 +562,17 @@ def test_net_worth_names_rate_for_usd_cash_only_on_a_platform(platform_position,
     assert nw["fx_note"] == _rate_note(spot, "15 Jun 1995")
 
 
+def test_net_worth_values_usd_cash_on_the_date_its_note_names(platform_position, monkeypatch):
+    """T-45-22: the pinned Jakarta date differs from the process date, so both lookups must use the former."""
+    spot, asked = Decimal("16200"), []
+    _pin(monkeypatch, date(1995, 6, 15))
+    _stub_fx(monkeypatch, live=spot, ranges={})
+    monkeypatch.setattr(fx, "get_rate", lambda *a: asked.append(a[2]) or spot)
+    platform_position("CASH", "cash")
+    assert tools.TOOLS["net_worth"]()["fx_note"] == _rate_note(spot, "15 Jun 1995")
+    assert set(asked) == {date(1995, 6, 15)}
+
+
 def test_net_worth_says_when_usd_cash_has_no_rate(platform_position, monkeypatch):
     """FXR-04: USD cash with no rate is left out of the total visibly, with no rate named."""
     _pin(monkeypatch, date(1995, 6, 15))

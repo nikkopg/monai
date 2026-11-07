@@ -469,6 +469,19 @@ def test_funded_event_currency_must_be_supported(client, api_key, zz45, path):
     assert zz45.tx_rows(usd) == []
 
 
+def test_funded_buy_blank_event_currency_falls_through_to_the_account(client, api_key, zz45):
+    """Spaces are no currency: they must not read as IDR on a USD account's new position."""
+    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    zz45.rate(_ISO_DAY)
+    r = _post(client, api_key, "/portfolio-events/funded-buy", {
+        "source_account_name": usd, "platform_id": plat, "ticker": "ZZ45E", "quantity": "1", "price": "1",
+        "cash_amount": "1", "event_currency": "   ", "date": _ISO_DAY,
+    })
+    assert r.status_code == 201, r.text
+    zz45.db.expire_all()
+    assert _holding(zz45, plat, "ZZ45E").currency == "USD"
+
+
 def test_deposit_raises_cash_quantity_and_delete_reverses_it(client, api_key, zz45):
     """A deposit's money reaches the live investment total, and its cost basis is that date's rate."""
     usd, plat = zz45.account("usd", "USD"), zz45.platform()

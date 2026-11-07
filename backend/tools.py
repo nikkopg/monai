@@ -1834,6 +1834,8 @@ def propose_add_transfer(
     if ref_a is None or ref_b is None:
         return _unknown_account("propose_add_transfer", from_account if ref_a is None else to_account)
     (from_account, ccy_a), (to_account, ccy_b) = ref_a, ref_b
+    if from_account == to_account:
+        return {"tool": "propose_add_transfer", "error": "from_account and to_account must be different accounts"}
     if ccy_a != ccy_b and to_amount is None:
         return {"tool": "propose_add_transfer", "error": (
             f"Transfers between {ccy_a} and {ccy_b} accounts need both amounts; "

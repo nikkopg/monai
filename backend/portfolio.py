@@ -201,7 +201,7 @@ def portfolio_summary(db: Session) -> dict:
     """
     holdings = db.query(Holding).order_by(Holding.ticker).all()
     platforms = {p.id: p for p in db.query(Platform).all()}
-    today = date.today()
+    today = fx._jakarta_today()  # the date fx.spot_stale_ok names in net_worth's rate note
 
     # Realized P&L is a ledger byproduct — recompute is read-only here (we do
     # NOT persist; the summary is a pure read composing existing state).

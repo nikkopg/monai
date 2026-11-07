@@ -1379,6 +1379,16 @@ def test_chat_producers_resolve_a_miscased_account(client, api_key, zz45):
     assert (funded["after"]["source_account_name"], funded["after"]["cash_currency"]) == (usd, "USD")
 
 
+def test_chat_transfer_refuses_one_account_spelled_two_ways(client, api_key, zz45):
+    """Two spellings resolve to one account; the pair would move nothing (the MCP producer refuses this too)."""
+    from backend import tools
+    name = zz45.account("usd", "USD")
+    before = _proposal_count(zz45.db)
+    result = tools.TOOLS["propose_add_transfer"](from_account=name, to_account=name.lower(), amount=10)
+    assert "different accounts" in result["error"]
+    assert _proposal_count(zz45.db) == before
+
+
 @pytest.mark.parametrize("call", [
     lambda t, plat: t.propose_add_transaction(_ISO_DAY, -1, "ZZ45 nosuch"),
     lambda t, plat: t.propose_add_transfer("ZZ45 nosuch", "ZZ45 nosuch2", 1, date=_ISO_DAY),
