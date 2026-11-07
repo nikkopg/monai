@@ -3,7 +3,7 @@ import { test, expect, type Page } from "@playwright/test";
 // ---------------------------------------------------------------------------
 // Phase 18 Plan 03 — RED e2e spec for funded buy/sell (XFER-03, D-05/D-06/D-07).
 //
-// Route-mocked per platform-detail.spec.ts / investment-transfer.spec.ts
+// Route-mocked per platform-detail.spec.ts
 // convention — no live backend. Locks the 18-UI-SPEC.md Surface 3 copy +
 // endpoint contract that 18-03 (HoldingModal.tsx funding selector + the
 // platform-detail "+ Log event" trigger) must implement to turn these tests

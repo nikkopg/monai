@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // Shared API helpers (WR-12). Previously copy-pasted across AccountManager,
-// AdjustBalanceModal, DepositCashModal, and HoldingModal — the copies drifted
+// AdjustBalanceModal and HoldingModal — the copies drifted
 // (HoldingModal's inline variant rendered Pydantic 422 arrays as
 // "[object Object]", WR-02). This is the single canonical version.
 // ---------------------------------------------------------------------------

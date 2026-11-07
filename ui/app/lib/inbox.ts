@@ -110,7 +110,6 @@ const FIXED_LABEL: Record<string, string> = {
   add_holding: "Add holding",
   edit_holding: "Edit holding",
   delete_holding: "Delete holding",
-  add_investment_transfer: "Move cash to investments",
   add_funded_buy: "Record funded buy",
   add_funded_sell: "Record funded sell",
   add_balance_adjustment: "Adjust balance",

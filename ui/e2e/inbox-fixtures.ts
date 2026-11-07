@@ -195,40 +195,6 @@ export const balanceAdjustmentProposal = (o: Partial<InboxProposal> = {}) =>
     ...o,
   });
 
-export const investmentTransferProposal = (o: Partial<InboxProposal> = {}) =>
-  chatTx({
-    id: ids.e,
-    operation: "add_investment_transfer",
-    payload: {
-      operation: "add_investment_transfer",
-      rows: [
-        {
-          before: null,
-          after: {
-            cash_leg: {
-              account: "Account A",
-              amount: "-500000.0",
-              currency: "IDR",
-              date: "2026-10-07",
-              notes: "Setoran contoh",
-            },
-            event: {
-              ticker: "CASH",
-              event_type: "deposit",
-              quantity: "500000.0",
-              price: "1",
-              platform_id: 2,
-              currency: "IDR",
-              date: "2026-10-07",
-              asset_type: "cash",
-            },
-          },
-        },
-      ],
-    },
-    ...o,
-  });
-
 // ---------------------------------------------------------------------------
 // Controller
 // ---------------------------------------------------------------------------

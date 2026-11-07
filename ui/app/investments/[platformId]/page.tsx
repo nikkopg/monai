@@ -4,8 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
-import { tokens, card, btn, btnDark } from "../../styles";
-import DepositCashModal from "../DepositCashModal";
+import { tokens, card, btnDark } from "../../styles";
 import HoldingModal from "../HoldingModal";
 import { extractDetail } from "../../lib/api";
 import RowMenu from "../../components/RowMenu";
@@ -126,7 +125,6 @@ export default function PlatformDetailPage() {
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("pnl");
-  const [showDeposit, setShowDeposit] = useState(false);
   const [showLogEvent, setShowLogEvent] = useState(false);
   const [editingEvent, setEditingEvent] = useState<PortfolioEvent | null>(null);
   // Per-invocation sequence token (CR-01): one flag per request, never one
@@ -290,13 +288,6 @@ export default function PlatformDetailPage() {
                 )}
               </h1>
             </div>
-            <button
-              type="button"
-              style={btn}
-              onClick={() => setShowDeposit(true)}
-            >
-              Deposit cash
-            </button>
           </div>
 
           <div
@@ -599,15 +590,6 @@ export default function PlatformDetailPage() {
             )}
           </div>
 
-          {showDeposit && (
-            <DepositCashModal
-              platformId={Number(platformId)}
-              platformName={detail.platform_name}
-              cashCurrency={detail.holdings.find((h) => h.ticker === "CASH")?.currency ?? null}
-              onClose={() => setShowDeposit(false)}
-              onSaved={() => load({ silent: true })}
-            />
-          )}
           {editingEvent && (
             <HoldingModal
               platforms={

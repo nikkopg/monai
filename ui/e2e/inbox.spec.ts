@@ -16,7 +16,6 @@ import {
   chatTx,
   editProposal,
   ids,
-  investmentTransferProposal,
   iso,
   mockInbox,
   proposal,
@@ -321,17 +320,10 @@ test.describe("card rows", () => {
   test("undated transfer lines say the approval date, not a dash (IN-05)", async ({ page }) => {
     const xfer = transferProposal();
     (xfer.payload.rows[0].after as { leg_a: Record<string, unknown> }).leg_a.date = null;
-    const invest = investmentTransferProposal();
-    (invest.payload.rows[0].after as { cash_leg: Record<string, unknown> }).cash_leg.date = null;
-    await mockInbox(page, { list: [xfer, invest] });
+    await mockInbox(page, { list: [xfer] });
     await openInbox(page);
     await expect(
       art(page, "Add 1 transfer").getByText("Transfer 50,000 from Account A to Account B on the approval date")
-    ).toBeVisible();
-    await expect(
-      art(page, "Move cash to investments").getByText(
-        "Move 500,000 IDR from Account A to platform #2 on the approval date"
-      )
     ).toBeVisible();
   });
 
@@ -431,33 +423,6 @@ test.describe("card rows", () => {
     await expect(card).not.toContainText("+5,000,000");
   });
 
-  test("investment transfer line with notes, never an object dump", async ({ page }) => {
-    await mockInbox(page, { list: [investmentTransferProposal()] });
-    await openInbox(page);
-    const card = art(page, "Move cash to investments");
-    await expect(
-      card.getByText("Move 500,000 IDR from Account A to platform #2 on 7 Oct 2026")
-    ).toBeVisible();
-    await expect(card.getByText("Setoran contoh")).toBeVisible();
-    await expect(card.getByRole("button", { name: /^Skip/ })).toHaveCount(0);
-    await expect(
-      card.getByRole("button", { name: "Approve: Move cash to investments" })
-    ).toBeVisible();
-    await expect(card).not.toContainText("[object Object]");
-  });
-
-  test("a non-IDR investment transfer keeps its decimals (WR-08)", async ({ page }) => {
-    const usd = investmentTransferProposal();
-    const after = usd.payload.rows[0].after as { cash_leg: Record<string, unknown> };
-    after.cash_leg.amount = "-1234.56";
-    after.cash_leg.currency = "USD";
-    await mockInbox(page, { list: [usd] });
-    await openInbox(page);
-    const card = art(page, "Move cash to investments");
-    await expect(card.getByText("Move 1,234.56 USD from Account A")).toBeVisible();
-    await expect(card).not.toContainText("1,235");
-  });
-
   test("USD rows carry their currency, in submission order", async ({ page }) => {
     await mockInbox(page, {
       list: [
@@ -476,23 +441,6 @@ test.describe("card rows", () => {
     const card = art(page, "Add 2 transactions to Account A");
     await expect(card.locator(".inbox-row")).toContainText(["-12.50 USD", "-50,000"]);
     await expect(card.getByRole("cell", { name: "-50,000", exact: true })).toBeVisible();
-  });
-
-  test("a cross-currency deposit card names what it credits, with no rate line", async ({ page }) => {
-    const dep = investmentTransferProposal();
-    const after = dep.payload.rows[0].after as {
-      cash_leg: Record<string, unknown>;
-      event: Record<string, unknown>;
-    };
-    Object.assign(after.cash_leg, { account: "Account IDR", amount: "-1631000", currency: "IDR", date: null });
-    Object.assign(after.event, { quantity: "100", platform_id: 7, currency: "USD" });
-    await mockInbox(page, { list: [dep] });
-    await openInbox(page);
-    const card = art(page, "Move cash to investments");
-    await expect(
-      card.getByText("Move 1,631,000 IDR from Account IDR to platform #7, crediting 100.00 USD on the approval date")
-    ).toBeVisible();
-    await expect(card).not.toContainText("Implied");
   });
 
   test("an unknown row shape falls back to key: value lines", async ({ page }) => {

@@ -22,7 +22,6 @@ import {
   cardTitle,
   duplicateChipText,
   fmtAbsolute,
-  fmtMoney,
   fmtRowDate,
   fmtSigned,
   hhmm,
@@ -68,8 +67,6 @@ type Props = {
 
 const c = tokens.color;
 const text = (v: unknown): string => (v === null || v === undefined ? "" : String(v));
-// No date means the backend stamps the day it applies the proposal (IN-05).
-const onDate = (v: unknown): string => (v ? fmtRowDate(v) : "the approval date");
 
 const smallBtn: React.CSSProperties = {
   ...btnGhost,
@@ -397,9 +394,6 @@ export default function InboxCard({
   const transfer = rows[0]?.after as
     | { leg_a?: Record<string, unknown>; leg_b?: Record<string, unknown> }
     | undefined;
-  const investTransfer = rows[0]?.after as
-    | { cash_leg?: Record<string, unknown>; event?: Record<string, unknown> }
-    | undefined;
   const flagsOf = (r: ProposalRow | undefined) => r?.duplicates ?? [];
 
   return (
@@ -667,24 +661,6 @@ export default function InboxCard({
           <div style={{ fontSize: 14, color: c.ink }}>
             Set account #{text(rows[0]?.account_id)} balance to {fmtAbsolute(rows[0]?.target_balance)}
           </div>
-        ) : op === "add_investment_transfer" ? (
-          <>
-            <div style={{ fontSize: 14, color: c.ink }}>
-              Move {fmtMoney(investTransfer?.cash_leg?.amount, investTransfer?.cash_leg?.currency)}{" "}
-              {text(investTransfer?.cash_leg?.currency)} from{" "}
-              {text(investTransfer?.cash_leg?.account)} to platform #{text(investTransfer?.event?.platform_id)}
-              {text(investTransfer?.event?.currency) !== "" &&
-                text(investTransfer?.event?.currency) !== (text(investTransfer?.cash_leg?.currency) || "IDR") &&
-                `, crediting ${fmtMoney(investTransfer?.event?.quantity, investTransfer?.event?.currency)} ${text(investTransfer?.event?.currency)}`}{" "}
-              on{" "}
-              {onDate(investTransfer?.cash_leg?.date)}
-            </div>
-            {text(investTransfer?.cash_leg?.notes) !== "" && (
-              <div style={{ fontSize: 12, color: c.muted3, marginTop: 4 }}>
-                {text(investTransfer?.cash_leg?.notes)}
-              </div>
-            )}
-          </>
         ) : (
           <ProposalDiff
             rows={rows.map(({ duplicates: _d, skip: _s, ...diffRow }) => diffRow)}
