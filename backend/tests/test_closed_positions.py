@@ -632,3 +632,161 @@ def test_trend_partial_snapshot_flips_gap(db):
         assert after[_mkey(4)] == Decimal("2000")  # now an honest but understated month
     finally:
         db.rollback()
+
+
+# ---------------------------------------------------------------------------
+# Task 3: required liquid account, and Add holding positions can trade
+# ---------------------------------------------------------------------------
+
+
+def _investment_account(db) -> str:
+    from backend.models import Account
+
+    name = f"zznq6-inv-{uuid.uuid4().hex[:6]}"
+    db.add(Account(name=name, type="investment", currency="IDR"))
+    db.commit()
+    return name
+
+
+def _add_holding(client, plat, tk, qty=100, avg=50):
+    r = client.post("/holdings", json={
+        "ticker": tk, "quantity": qty, "avg_cost": avg, "platform_id": plat, "currency": "IDR"})
+    assert r.status_code == 201, r.text
+
+
+def test_post_portfolio_events_refuses_trades(authed, db):
+    plat, tk = _platform(db), f"{T}R1"
+    for kind in ("buy", "sell"):
+        r = authed.post("/portfolio-events", json={
+            "ticker": tk, "event_type": kind, "quantity": 1, "price": 10,
+            "platform_id": plat, "currency": "IDR", "date": "2024-03-01"})
+        assert r.status_code == 422 and "funded-buy" in r.text and "funded-sell" in r.text, r.text
+    assert _events(db, tk) == [] and _holding(db, tk, plat) is None
+    ok = authed.post("/portfolio-events", json={
+        "ticker": tk, "event_type": "dividend", "quantity": 1, "price": 10,
+        "platform_id": plat, "currency": "IDR", "date": "2024-03-01"})
+    assert ok.status_code == 201, ok.text
+    bad = authed.post("/portfolio-events", json={
+        "ticker": tk, "event_type": "gift", "quantity": 1, "price": 10,
+        "platform_id": plat, "currency": "IDR", "date": "2024-03-01"})
+    assert bad.status_code == 422
+
+
+def test_funded_refuses_non_liquid(authed, db):
+    from backend.models import Account, Transaction
+
+    plat, tk = _platform(db), f"{T}R2"
+    inv, ghost = _investment_account(db), f"zznq6-ghost-{uuid.uuid4().hex[:6]}"
+    for name in (ghost, inv):
+        for kind in ("buy", "sell"):
+            r = _funded(authed, kind, name, plat, tk, 1, 10, 10, "2024-03-01")
+            assert r.status_code == 422, (name, kind, r.text)
+    db.rollback()
+    assert db.query(Account).filter(Account.name == ghost).count() == 0
+    assert db.query(Transaction).join(Account, Transaction.account_id == Account.id).filter(Account.name == inv).count() == 0
+    assert _events(db, tk) == [] and _holding(db, tk, plat) is None
+
+
+def _proposal_count(db, tk) -> int:
+    db.rollback()
+    return db.execute(text("SELECT count(*) FROM proposals WHERE payload::text LIKE :p"), {"p": f"%{tk}%"}).scalar()
+
+
+def test_propose_funded_refuses_non_liquid(db):
+    from backend.tools import propose_add_funded_buy, propose_add_funded_sell
+
+    plat, tk = _platform(db), f"{T}R3"
+    inv, ghost, liquid = _investment_account(db), f"zznq6-ghost-{uuid.uuid4().hex[:6]}", _account(db)
+    for fn in (propose_add_funded_buy, propose_add_funded_sell):
+        for name in (inv, ghost):
+            out = fn(name, plat, tk, 1, 10, 10, date="2024-03-01")
+            assert "find_accounts" in out["error"], out
+    assert _proposal_count(db, tk) == 0
+    ok = propose_add_funded_buy(liquid.upper(), plat, tk, 1, 10, 10, date="2024-03-01")  # another case still resolves
+    assert "proposal_id" in ok and ok["after"]["source_account_name"] == liquid
+
+
+def test_confirm_refuses_stale_non_liquid(authed, db):
+    from backend.tools import _make_proposal
+
+    plat, tk, inv = _platform(db), f"{T}R4", _investment_account(db)
+    after = {"source_account_name": inv, "cash_currency": "IDR", "cash_amount": 10, "ticker": tk, "quantity": 1,
+             "price": 10, "platform_id": plat, "event_currency": "IDR", "date": "2024-03-01",
+             "notes": None, "asset_type": None}
+    pid, token = _make_proposal("add_funded_buy", {"operation": "add_funded_buy", "rows": [{"before": None, "after": after}]})
+    r = authed.post(f"/proposals/{pid}/confirm", json={"token": token})
+    assert r.status_code == 422, r.text
+    assert _events(db, tk) == []
+
+
+def test_unfunded_event_keeps_its_type(authed, db):
+    acc, plat, tk = _account(db), _platform(db), f"{T}R5"
+    ev = _prim_event(db, plat, tk, "buy", 10, 100, "2024-03-01")
+    r = authed.put(f"/portfolio-events/{ev.id}", json={"event_type": "sell"})
+    assert r.status_code == 422, r.text
+    assert authed.put(f"/portfolio-events/{ev.id}", json={"quantity": 6}).status_code == 200
+    funded_tk = f"{T}R6"
+    buy = _funded(authed, "buy", acc, plat, funded_tk, 10, 100, 1000, "2024-03-01").json()
+    assert authed.put(f"/portfolio-events/{buy['portfolio_event_id']}", json={"event_type": "sell"}).status_code == 200
+
+
+def test_add_holding_then_sell(authed, db):
+    acc, plat, tk = _account(db), _platform(db), f"{T}S1"
+    base = _total(db)
+    _add_holding(authed, plat, tk)
+    assert _events(db, tk) == []
+    assert _funded(authed, "sell", acc, plat, tk, 40, 80, 3200, "2024-03-05").status_code == 201
+    h = _holding(db, tk, plat)
+    assert h.quantity == Decimal("60")
+    evs = sorted(_events(db, tk), key=lambda e: e.id)
+    assert [(e.event_type, e.quantity, e.price, e.date.isoformat()) for e in evs] == [
+        ("buy", Decimal("100"), Decimal("50"), "2024-03-05"), ("sell", Decimal("40"), Decimal("80"), "2024-03-05")]
+    assert abs((_total(db) - base) - Decimal("1200")) <= TOL
+    src = db.execute(text("SELECT count(*) FROM audit_log WHERE entity = 'portfolio_event' AND operation = 'add' "
+                          "AND after->>'source' = 'opening_lot_from_holding' AND after->>'ticker' = :t"), {"t": tk}).scalar()
+    assert src == 1
+    r = _funded(authed, "sell", acc, plat, tk, 60, 80, 4800, "2024-03-06")
+    assert r.status_code == 201 and r.json()["closed_position_id"] is not None
+    assert abs((_total(db) - base) - Decimal("3000")) <= TOL
+
+
+def test_add_holding_then_buy_sums(authed, db):
+    acc, plat, tk = _account(db), _platform(db), f"{T}S2"
+    _add_holding(authed, plat, tk)
+    assert _funded(authed, "buy", acc, plat, tk, 20, 60, 1200, "2024-03-05").status_code == 201
+    h = _holding(db, tk, plat)
+    assert h.quantity == Decimal("120") and h.avg_cost == Decimal("6200") / Decimal("120")
+
+
+def test_add_holding_row_only_until_first_trade(authed, db):
+    from backend.tools import propose_add_holding
+
+    plat, tk, tk2 = _platform(db), f"{T}S3", f"{T}S4"
+    _add_holding(authed, plat, tk)
+    res = propose_add_holding(tk2, 5, 10, platform_id=plat)
+    assert authed.post(f"/proposals/{res['proposal_id']}/confirm", json={"token": res["proposal_token"]}).status_code == 200
+    assert _events(db, tk) == [] and _events(db, tk2) == []
+    h = _holding(db, tk, plat)
+    assert authed.delete(f"/holdings/{h.id}").status_code == 200
+    assert _holding(db, tk, plat) is None
+
+
+def test_negative_eventless_holding_refused(authed, db):
+    from backend.models import Holding
+
+    acc, plat, tk = _account(db), _platform(db), f"{T}S5"
+    db.add(Holding(ticker=tk, quantity=Decimal("-5"), avg_cost=Decimal("10"), currency="IDR", platform_id=plat))
+    db.commit()
+    r = _funded(authed, "buy", acc, plat, tk, 1, 10, 10, "2024-03-01")
+    assert r.status_code == 422 and "migration 012" not in r.text
+    assert _events(db, tk) == []
+
+
+def test_dividend_stays_unfunded(authed, db):
+    plat, tk = _platform(db), f"{T}S6"
+    base = _total(db)
+    r = authed.post("/portfolio-events", json={
+        "ticker": tk, "event_type": "dividend", "quantity": 1, "price": 30,
+        "platform_id": plat, "currency": "IDR", "date": "2024-03-01"})
+    assert r.status_code == 201, r.text
+    assert abs((_total(db) - base) - Decimal("30")) <= TOL

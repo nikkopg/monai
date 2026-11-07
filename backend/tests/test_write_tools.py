@@ -1411,7 +1411,7 @@ def test_apply_add_portfolio_event_currency_mismatch_422_at_api(client, api_key,
     try:
         r1 = client.post(
             "/portfolio-events",
-            json={"ticker": ticker, "event_type": "buy", "quantity": "10",
+            json={"ticker": ticker, "event_type": "dividend", "quantity": "10",
                   "price": "100", "date": "2024-01-10", "platform_id": plat_id,
                   "currency": "USD"},
             headers=hdr,
@@ -1420,7 +1420,7 @@ def test_apply_add_portfolio_event_currency_mismatch_422_at_api(client, api_key,
 
         r2 = client.post(
             "/portfolio-events",
-            json={"ticker": ticker, "event_type": "buy", "quantity": "5",
+            json={"ticker": ticker, "event_type": "dividend", "quantity": "5",
                   "price": "110", "date": "2024-01-11", "platform_id": plat_id,
                   "currency": "IDR"},
             headers=hdr,

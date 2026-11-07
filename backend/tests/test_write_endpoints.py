@@ -866,14 +866,19 @@ def _cleanup_o3y_audit(db, event_ids, tx_ids) -> None:
 
 
 def _o3y_buy(client, api_key, plat_id, ticker, qty, price=100, day="2024-03-12") -> int:
-    r = client.post(
-        "/portfolio-events",
-        json={"ticker": ticker, "event_type": "buy", "quantity": qty, "price": price,
-              "date": day, "platform_id": plat_id, "currency": "IDR"},
-        headers={"MONAI_API_KEY": api_key},
-    )
-    assert r.status_code == 201, r.text
-    return r.json()["id"]
+    """Seed a buy through the primitive on its own committed session: POST /portfolio-events no longer takes trades."""
+    from backend.db import SessionLocal
+    from backend.writes import apply_add_portfolio_event
+
+    s = SessionLocal()
+    try:
+        ev = apply_add_portfolio_event(s, {
+            "ticker": ticker, "event_type": "buy", "quantity": qty, "price": price,
+            "date": day, "platform_id": plat_id, "currency": "IDR"})
+        s.commit()
+        return ev.id
+    finally:
+        s.close()
 
 
 def _o3y_holding(db, ticker, plat_id):

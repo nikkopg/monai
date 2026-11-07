@@ -906,13 +906,12 @@ def test_funded_buy_on_backed_position_sums_not_replaces(db_session):
         _cleanup_ticker(db_session, t)
 
 
-def test_guard_blocks_buy_on_eventless_nonzero_holding(db_session):
-    """Defense-in-depth: a buy on a NON-ZERO holding that has NO backing events
-    must be refused (loud ValueError), never silently overwrite the opening
-    balance. This is the class the clobber bug belonged to."""
-    import pytest
+def test_buy_on_eventless_nonzero_holding_sums_with_an_opening_lot(db_session):
+    """A buy on a NON-ZERO holding that has NO backing events must SUM with the
+    existing row, never overwrite it (the clobber bug class). The current row is
+    authoritative, so it becomes an opening lot dated the new event's date."""
     from decimal import Decimal
-    from backend.models import Holding
+    from backend.models import Holding, PortfolioEvent
     from backend.writes import apply_add_portfolio_event
 
     plat = _make_platform(db_session, "TestPortfolioPlatform")
@@ -925,17 +924,15 @@ def test_guard_blocks_buy_on_eventless_nonzero_holding(db_session):
         ))
         db_session.commit()
 
-        with pytest.raises(ValueError, match="no backing portfolio_events"):
-            apply_add_portfolio_event(db_session, {
-                "date": "2026-09-01", "ticker": t, "event_type": "buy",
-                "quantity": 100, "price": 5000, "platform_id": plat, "currency": "IDR",
-            })
-        db_session.rollback()
+        apply_add_portfolio_event(db_session, {
+            "date": "2026-09-01", "ticker": t, "event_type": "buy",
+            "quantity": 100, "price": 5000, "platform_id": plat, "currency": "IDR",
+        })
+        db_session.commit()
 
-        # Unchanged — the opening balance was NOT clobbered.
-        h = db_session.query(Holding).filter(
-            Holding.ticker == t, Holding.platform_id == plat
-        ).one()
-        assert h.quantity == Decimal("500")
+        h = db_session.query(Holding).filter(Holding.ticker == t, Holding.platform_id == plat).one()
+        assert h.quantity == Decimal("600")  # summed, not overwritten
+        evs = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == t).order_by(PortfolioEvent.id).all()
+        assert [(e.event_type, e.quantity) for e in evs] == [("buy", Decimal("500")), ("buy", Decimal("100"))]
     finally:
         _cleanup_ticker(db_session, t)
