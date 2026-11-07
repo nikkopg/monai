@@ -73,6 +73,30 @@ def cap_for_llm(raw, cap: int = CAP_CHARS) -> str | None:
     return str(out)
 
 
+def _recurring_line(g: dict, base: str) -> str:
+    """One readable line per recurring group, built here so the model copies it, not recomputes it."""
+    cur = g.get("currency", base)
+    typical = f"{g['typical_amount']:,.0f}" if cur == "IDR" else f"{g['typical_amount']:,.2f}"
+    parts = [f"{g['cadence']}", f"{g['est_monthly']:,.0f} {base} a month", f"typically {typical} {cur}",
+             f"{g['confidence']} confidence", g["status"], f"last {g['last_date']}"]
+    if g.get("next_expected"):
+        parts.append(f"overdue since {g['next_expected']}" if g.get("overdue")
+                     else f"next expected {g['next_expected']}")
+    return f"{g['label']}: " + ", ".join(parts)
+
+
+def recurring_for_llm(raw):
+    """The LLM-only view of recurring_charges: a line per group, no evidence rows.
+
+    12 evidence rows per group made 20 groups overflow the cap, which trimmed the list to a few
+    before the model ever answered. The raw result (SSE trace, chips, MCP) keeps the full groups.
+    """
+    if not isinstance(raw, dict) or not raw.get("groups"):
+        return raw
+    base = raw.get("currency", "IDR")
+    return {**raw, "groups": [_recurring_line(g, base) for g in raw["groups"]]}
+
+
 def tools_for_turn(
     question: str, prior: list[dict] | None = None, *, attachment_thread: bool = False
 ) -> frozenset[str]:

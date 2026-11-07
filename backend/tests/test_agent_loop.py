@@ -952,3 +952,78 @@ async def test_whole_amounts_reach_the_model_plain(monkeypatch):
     assert not re.search(r"\d\.0(?!\d)", second)
     step = _of_type(_payloads(lines), "tool_result")[0]["step"]["result"]
     assert step["total"] == 1500000
+
+
+# ── POL-01: the model reads one line per recurring group ─────────────────────
+
+
+def _zz_groups(n: int) -> list[dict]:
+    out = []
+    for i in range(n):
+        usd = i == 1
+        g = {
+            "label": f"ZZ Sub {i:02d}", "key_type": "text", "category": "ZZ Bills",
+            "cadence": ("weekly", "monthly", "quarterly", "yearly")[i % 4], "median_interval_days": 30.0,
+            "currency": "USD" if usd else "IDR",
+            "typical_amount": 9.99 if usd else 100000.0 + i * 1000, "amount_min": 1.0, "amount_max": 2.0,
+            "typical_amount_idr": 160000.0 if usd else 100000.0 + i * 1000,
+            "est_monthly": 1234567.0 - i * 10000, "occurrences": 12, "first_date": "1996-01-01",
+            "last_date": "1996-12-01", "status": "lapsed" if i == 2 else "active",
+            "confidence": ("high", "medium", "low")[i % 3],
+            "evidence": [{"id": j, "date": "1996-01-01", "amount": 100000.0, "account_id": 1} for j in range(12)],
+        }
+        if g["status"] == "active":
+            g["next_expected"] = "1997-01-01"
+            g["overdue"] = i == 3
+        out.append(g)
+    return out
+
+
+def _zz_recurring(n: int = 20) -> dict:
+    return {"tool": "recurring_charges", "currency": "IDR", "months": 24, "total_detected": n,
+            "groups": _zz_groups(n), "note": "Likely recurring.", "fx_note": "ZZ rate note"}
+
+
+def test_recurring_for_llm_one_line_per_group_under_the_cap():
+    import copy
+
+    from backend.agent_loop import CAP_CHARS, recurring_for_llm
+
+    raw = _zz_recurring()
+    before = copy.deepcopy(raw)
+    view = recurring_for_llm(raw)
+    assert raw == before
+    assert len(str(view)) < CAP_CHARS
+    assert len(view["groups"]) == 20 and all(isinstance(g, str) for g in view["groups"])
+    assert "evidence" not in str(view)
+    for k in ("tool", "currency", "months", "total_detected", "note", "fx_note"):
+        assert view[k] == raw[k]
+    first = view["groups"][0]
+    assert "ZZ Sub 00" in first and "weekly" in first and "1,234,567" in first and "high confidence" in first
+    assert "1,234,567.00" not in first and "next expected 1997-01-01" in first
+    assert "9.99 USD" in view["groups"][1] and "IDR a month" in view["groups"][1]
+    assert "lapsed" in view["groups"][2] and "next expected" not in view["groups"][2]
+    assert "overdue since 1997-01-01" in view["groups"][3]
+
+
+def test_recurring_for_llm_passes_a_refusal_through():
+    from backend.agent_loop import recurring_for_llm
+
+    err = {"tool": "recurring_charges", "error": "no rate"}
+    assert recurring_for_llm(err) is err
+
+
+async def test_recurring_groups_all_reach_the_model_but_sse_keeps_evidence(monkeypatch):
+    raw = _zz_recurring()
+
+    def recurring_charges(months: int = 24, limit: int = 20) -> dict:
+        """Synthetic read."""
+        return raw
+
+    llm = StubLLM(mode="script", script=[[("recurring_charges", {})]])
+    _install_stub_workflow(monkeypatch, llm, extra_tools={"recurring_charges": recurring_charges})
+    lines = await _collect(q.agent_stream("ZZ recurring"))
+    second = "".join(llm.seen[1])
+    assert all(f"ZZ Sub {i:02d}" in second for i in range(20)) and "truncated" not in second
+    result = _of_type(_payloads(lines), "tool_result")[0]["step"]["result"]
+    assert len(result["groups"]) == 20 and len(result["groups"][0]["evidence"]) == 12
