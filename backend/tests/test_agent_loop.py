@@ -11,6 +11,7 @@ import asyncio
 import datetime
 import json
 import logging
+import re
 import threading
 import time
 import uuid
@@ -893,3 +894,61 @@ async def test_read_attachment_takes_no_turn_lock_but_the_proposer_does():
         assert again.raw_output["duplicate_of_earlier_call"] is True
     finally:
         q.TURN.reset(tok)
+
+
+# ── POL-02: whole numbers reach the model without a trailing .0 ──────────────
+
+
+def test_plain_numbers_only_unfloats_whole_floats():
+    from backend.tools import _plain_numbers
+
+    got = _plain_numbers({"a": 1500000.0, "b": 12.5, "c": [2.0, ("ZZ Food", 2500.0)], "d": "3.0",
+                          "e": True, "f": None, "g": float("inf"), "h": 7})
+    assert got["a"] == 1500000 and type(got["a"]) is int
+    assert got["b"] == 12.5 and type(got["b"]) is float
+    assert type(got["c"][0]) is int and got["c"][1] == ("ZZ Food", 2500) and type(got["c"][1]) is tuple
+    assert type(got["c"][1][1]) is int
+    assert got["d"] == "3.0" and got["e"] is True and got["f"] is None and got["g"] == float("inf")
+    nan = _plain_numbers(float("nan"))
+    assert nan != nan
+
+
+def test_plain_tool_normalises_args_and_result_and_keeps_signature():
+    import inspect
+
+    from backend.tools import _plain_tool
+
+    def probe(amount: float = 0, *, note: str = "") -> dict:
+        """Synthetic doc."""
+        return {"amount_seen": amount, "type": type(amount).__name__, "out": amount * 1.0}
+
+    wrapped = _plain_tool(probe)
+    assert wrapped.__name__ == "probe" and wrapped.__doc__ == "Synthetic doc."
+    assert inspect.signature(wrapped) == inspect.signature(probe)
+    got = wrapped(amount=-25000.0)
+    assert got["type"] == "int" and got["out"] == -25000 and type(got["out"]) is int
+    assert wrapped(12.5)["out"] == 12.5
+
+
+def test_every_registry_tool_is_wrapped_and_counts_hold():
+    from backend.tools import READ_TOOL_NAMES
+
+    assert len(TOOLS) == 34 and len(READ_TOOL_NAMES) == 18
+    assert all(hasattr(fn, "__wrapped__") for fn in TOOLS.values())
+
+
+async def test_whole_amounts_reach_the_model_plain(monkeypatch):
+    from backend.tools import _plain_tool
+
+    def spending_total(period: str = "this_month") -> dict:
+        """Synthetic read."""
+        return {"tool": "spending_total", "total": 1500000.0, "pair": ("ZZ Food", 2500.0), "share": 12.5}
+
+    llm = StubLLM(mode="script", script=[[("spending_total", {})]])
+    _install_stub_workflow(monkeypatch, llm, extra_tools={"spending_total": _plain_tool(spending_total)})
+    lines = await _collect(q.agent_stream("ZZ plain read"))
+    second = "".join(llm.seen[1])
+    assert "'total': 1500000," in second and "('ZZ Food', 2500)" in second and "12.5" in second
+    assert not re.search(r"\d\.0(?!\d)", second)
+    step = _of_type(_payloads(lines), "tool_result")[0]["step"]["result"]
+    assert step["total"] == 1500000

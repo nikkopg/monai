@@ -19,6 +19,7 @@ main.py applies the write atomically when the user approves.
 
 import contextvars
 import datetime
+import functools
 import re
 import secrets
 import statistics
@@ -2071,6 +2072,31 @@ def propose_add_balance_adjustment(account_id: int, target_balance: float) -> di
     }
 
 
+def _plain_numbers(x):
+    """Whole-valued floats become ints, recursively; everything else is returned as it is.
+
+    The model reads str(result), so 1500000.0 would print with its .0 and get copied into
+    the answer. bool, str, None, inf and nan are untouched.
+    """
+    if isinstance(x, float):
+        return int(x) if x.is_integer() else x
+    if isinstance(x, dict):
+        return {k: _plain_numbers(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return type(x)(_plain_numbers(v) for v in x)
+    return x
+
+
+def _plain_tool(fn):
+    """Registry wrapper: plain numbers in (proposal summaries echo the model's own args) and out."""
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        return _plain_numbers(fn(*_plain_numbers(args), **_plain_numbers(kwargs)))
+
+    return wrapper
+
+
 # Extend the TOOLS registry with write tools (proposal-producers)
 TOOLS.update({
     "propose_add_transaction": propose_add_transaction,
@@ -2090,3 +2116,7 @@ TOOLS.update({
     "propose_add_funded_sell": propose_add_funded_sell,
     "propose_add_balance_adjustment": propose_add_balance_adjustment,
 })
+
+# Chat (_llm_tool) and MCP (build_mcp) both read TOOLS[name]: wrap every entry once, in place,
+# so READ_TOOL_NAMES and importers keep the same dict. Direct calls to the functions are unchanged.
+TOOLS.update({n: _plain_tool(f) for n, f in TOOLS.items()})

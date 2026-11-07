@@ -329,3 +329,16 @@ def test_mcp_requires_key(client, api_key):
         }
         r = client.post("/mcp", json=init_payload, headers=_MCP_HEADERS, follow_redirects=True)
         assert r.status_code == 401
+
+
+def test_mcp_whole_amount_has_no_trailing_decimal(client, api_key):
+    """POL-02: a whole-valued total is an int through the registry and over MCP."""
+    args = {"period": "custom", "start_date": "1996-01-01", "end_date": "1996-01-31"}
+    direct = TOOLS["spending_total"](**args)["total"]
+    assert not (isinstance(direct, float) and direct.is_integer())
+    with client:
+        session_headers = _mcp_session(client, api_key)
+        res = _tools_call(client, session_headers, "spending_total", args)
+        assert res["isError"] is False
+        total = res["structuredContent"]["total"]
+        assert not (isinstance(total, float) and total.is_integer())

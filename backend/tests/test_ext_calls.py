@@ -384,7 +384,8 @@ async def test_deny_sends_nothing(th, conn):
     task = _start(turn, conn, th, "send", {"text": "ZZx"})
     cid = await _answer(turn, th, False)
     assert await asyncio.wait_for(task, 1) == {"tool": "ext__zz-synth__send", "external": True,
-                                              "error": "denied by owner"}
+                                              "error": ec.OWNER_DECLINED}
+    assert "owner" in ec.OWNER_DECLINED and "declined" in ec.OWNER_DECLINED
     assert srv.CALLS == [] and _row(cid).approval == "denied"
 
 
@@ -478,7 +479,7 @@ async def test_taint_a_denial_keeps_it(th, conn):
     turn = FakeTurn(touched=True)
     task = _start(turn, conn, th, args={"text": "ZZone"})
     await _answer(turn, th, False)
-    assert (await asyncio.wait_for(task, 1))["error"] == "denied by owner"
+    assert (await asyncio.wait_for(task, 1))["error"] == ec.OWNER_DECLINED
     assert turn.ledger_touched is True
     task = _start(turn, conn, th, args={"text": "ZZtwo"})
     await _until(lambda: len(turn.of("approval_required")) == 2)

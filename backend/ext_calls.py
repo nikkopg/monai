@@ -246,6 +246,10 @@ def wake_all(ids) -> None:
 
 # ── the wrapper every external tool goes through ───────────────────────────
 
+OWNER_DECLINED = ("The owner (the person you are talking to) declined this call when asked to approve it, "
+                  "so it was not sent. Say the owner declined it; the server did not refuse it.")
+
+
 def _error(name: str, message: str) -> dict:
     return {"tool": name, "external": True, "error": message}
 
@@ -351,7 +355,7 @@ async def _approve_and_send(turn, conn, tool: str, args: dict, name: str, thread
     turn.emit({"type": "ext_call", "call_id": str(call_id), "approval": row["approval"],
                "decided_via": row["decided_via"]})
     if row["approval"] == "denied":
-        return _error(name, "denied by owner")
+        return _error(name, OWNER_DECLINED)
     if row["approval"] != "approved":
         return _error(name, "approval expired")
     if row["decided_via"] == "user":
