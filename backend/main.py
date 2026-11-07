@@ -27,6 +27,8 @@ Endpoints:
     PUT  /portfolio-events/{id}  edit a buy/sell/dividend event + its cash leg (requires API key)
     DELETE /portfolio-events/{id}  delete an event + its cash leg (requires API key)
     GET  /closed-positions      realized P&L records of positions sold to zero, newest close first (requires API key)
+    PUT  /closed-positions/{id}  correct a record's realized P&L or close date, audited (requires API key)
+    DELETE /closed-positions/{id}  delete a record; its P&L leaves the total, cash is untouched (requires API key)
     POST /import                multipart CSV upload (Wallet export)
     POST /threads/{id}/attachments  upload one CSV, PDF or image to a chat, parsed once in code; creates the thread if new (requires API key)
     GET  /attachments/locality  {local, destination}: where an attached file would be sent (requires API key)
@@ -98,6 +100,9 @@ from backend.writes import (
     apply_add_category,
     apply_add_funded_buy,
     apply_add_funded_sell,
+    apply_delete_closed_position,
+    apply_edit_closed_position,
+    _closed_snapshot,
     apply_add_holding,
     apply_add_platform,
     apply_add_portfolio_event,
@@ -137,6 +142,7 @@ from backend.schemas import (
     CategoryRenameRequest,
     CategoryUpdate,
     ClosedPositionOut,
+    ClosedPositionUpdate,
     ConfirmRequest,
     RowSkipRequest,
     FundedBuyCreate,
@@ -556,9 +562,12 @@ def platform_detail(platform_id: int, db: Session = Depends(get_session)):
     db.commit()
     summary = compose_portfolio_summary(db)
     group = next((g for g in summary["groups"] if g["platform_id"] == platform_id), None)
-    return group or {
+    # Closed positions leave the holdings list but keep their P&L in this platform's Realized stat.
+    closed_realized = db.query(func.coalesce(func.sum(ClosedPosition.realized_pnl), 0)).filter(
+        ClosedPosition.platform_id == platform_id).scalar()
+    return {**group, "closed_realized_pnl": closed_realized} if group else {
         "platform_id": platform_id, "platform_name": platform.name,
-        "kind": platform.kind, "subtotal": 0, "holdings": [],
+        "kind": platform.kind, "subtotal": 0, "holdings": [], "closed_realized_pnl": closed_realized,
     }
 
 
@@ -623,11 +632,11 @@ def update_portfolio_event(event_id: int, payload: PortfolioEventUpdate, db: Ses
     except ValueError as e:
         db.rollback()
         raise HTTPException(status_code=422, detail=str(e))
+    out = PortfolioEventOut.model_validate(ev)  # before the commit: a sell edit may have closed, and deleted, the event
     db.commit()
-    db.refresh(ev)
     from backend.query import reset_engine
     reset_engine()
-    return ev
+    return out
 
 
 @app.delete("/portfolio-events/{event_id}", dependencies=[Depends(require_api_key)])
@@ -730,6 +739,47 @@ def list_closed_positions(db: Session = Depends(get_session)):
         )
         for c, name in rows
     ]
+
+
+def _closed_out(db: Session, rec: ClosedPosition) -> ClosedPositionOut:
+    plat = db.get(Platform, rec.platform_id) if rec.platform_id is not None else None
+    return ClosedPositionOut(
+        id=rec.id, ticker=rec.ticker, platform_id=rec.platform_id,
+        platform_name=plat.name if plat is not None else None,
+        realized_pnl=rec.realized_pnl, close_date=rec.close_date,
+    )
+
+
+@app.put("/closed-positions/{closed_id}", response_model=ClosedPositionOut, dependencies=[Depends(require_api_key)])
+def update_closed_position(closed_id: int, payload: ClosedPositionUpdate, db: Session = Depends(get_session)):
+    """Correct a closed record's realized P&L or close date. Audited."""
+    rec = db.get(ClosedPosition, closed_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"Closed position {closed_id} not found")
+    before = _closed_snapshot(rec)
+    try:
+        apply_edit_closed_position(db, closed_id, payload.model_dump(mode="json", exclude_none=True), before)
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
+    out = _closed_out(db, rec)
+    db.commit()
+    return out
+
+
+@app.delete("/closed-positions/{closed_id}", dependencies=[Depends(require_api_key)])
+def delete_closed_position(closed_id: int, db: Session = Depends(get_session)):
+    """Delete a closed record; its realized P&L leaves the total. No cash transaction is touched. Audited."""
+    rec = db.get(ClosedPosition, closed_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"Closed position {closed_id} not found")
+    try:
+        apply_delete_closed_position(db, closed_id, _closed_snapshot(rec))
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    return {"status": "deleted", "id": closed_id}
 
 
 @app.post("/holdings", response_model=HoldingOut, status_code=201, dependencies=[Depends(require_api_key)])

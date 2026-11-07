@@ -454,6 +454,7 @@ def apply_add_funded_sell(db: Session, after: dict) -> dict:
     })
     ev.source_account_id = tx.account_id
     ev.transaction_id = tx.id  # both rows flushed by their primitives
+    _refuse_oversell(db, ev)
     # A sell that leaves exactly zero closes the position; ev is deleted then.
     closed = close_position_if_flat(db, after["ticker"], after["platform_id"])
     return {"transaction": tx, "portfolio_event": ev, "closed_position": closed}
@@ -639,6 +640,10 @@ def apply_delete_platform(db: Session, platform_id: int, before: dict | None, re
             text("UPDATE portfolio_events SET platform_id = :reassign_to WHERE platform_id = :pid"),
             {"reassign_to": reassign_to, "pid": platform_id},
         )
+        db.execute(
+            text("UPDATE closed_positions SET platform_id = :reassign_to WHERE platform_id = :pid"),
+            {"reassign_to": reassign_to, "pid": platform_id},
+        )
         audit_after = {"reassign_to": reassign_to, "reassigned_count": reassigned_count}
 
     plat = db.get(Platform, platform_id)
@@ -664,9 +669,11 @@ def _check_position_target(db: Session, ticker: str, platform_id: int, currency:
     holding's currency raises ValueError (422 at the API boundary); an omitted
     currency defaults to the holding's (or "IDR" for a brand-new position).
     """
+    # Row lock so a concurrent close cannot delete the holding under a buy (F-9).
+    # ponytail: edit and delete paths do not take this lock; add it there if a real race appears.
     existing_holding = db.query(Holding).filter(
         Holding.ticker == ticker, Holding.platform_id == platform_id
-    ).one_or_none()
+    ).with_for_update().one_or_none()
 
     if existing_holding is not None and existing_holding.quantity != 0:
         prior_events = db.query(PortfolioEvent).filter(
@@ -704,6 +711,64 @@ def _recompute_or_refuse(db: Session, ticker: str, platform_id: int) -> dict:
     return result
 
 
+def _running_quantities(events) -> list[Decimal]:
+    """Running quantity after each event, in the order given: buy and deposit add, sell subtracts,
+    dividend leaves it unchanged."""
+    qty, out = Decimal("0"), []
+    for ev in events:
+        if ev.event_type in ("buy", "deposit"):
+            qty += ev.quantity
+        elif ev.event_type == "sell":
+            qty -= ev.quantity
+        out.append(qty)
+    return out
+
+
+def _fmt_qty(q: Decimal) -> str:
+    return format(q.normalize(), "f")
+
+
+def _refuse_oversell(db: Session, ev: PortfolioEvent) -> None:
+    """Refuse a sell that would leave the ledger below zero at or after it (Q2, ValueError -> 422).
+
+    Judged on stored precision, in (date, id) order, so a sell dated before the first buy
+    is refused too. Runs in the caller's transaction, so nothing persists on a refusal.
+    """
+    db.flush()
+    db.refresh(ev)
+    events = db.query(PortfolioEvent).filter(
+        PortfolioEvent.ticker == ev.ticker, PortfolioEvent.platform_id == ev.platform_id
+    ).order_by(PortfolioEvent.date, PortfolioEvent.id).all()
+    running = _running_quantities(events)
+    i = next(n for n, e in enumerate(events) if e.id == ev.id)
+    if any(q < 0 for q in running[i:]):
+        held = running[i - 1] if i else Decimal("0")
+        raise ValueError(
+            f"Sell of {_fmt_qty(ev.quantity)} {ev.ticker} exceeds the {_fmt_qty(held)} held at that "
+            "point in the ledger; nothing was saved"
+        )
+
+
+def close_blocker(holding: Holding, events) -> str | None:
+    """Why a flat position must NOT be closed, or None when it may be (Q1, Q2, Q7).
+
+    cash: CASH rows are left alone. no_sell: nothing was sold, so there is nothing to realize.
+    ledger_not_zero: the events do not sum to zero. negative_running_quantity: the ledger went
+    below zero at some point, so a wrong number would be frozen. Shared with the hand-run
+    script so the live rule and the script's rule cannot drift.
+    """
+    if holding.asset_type == "cash" or holding.ticker == "CASH":
+        return "cash"
+    if not any(e.event_type == "sell" for e in events):
+        return "no_sell"
+    running = _running_quantities(events)
+    if any(q < 0 for q in running):
+        return "negative_running_quantity"
+    if not running or running[-1] != 0:
+        return "ledger_not_zero"
+    return None
+
+
 def close_position_if_flat(db: Session, ticker: str, platform_id: int) -> ClosedPosition | None:
     """Close a position whose ledger quantity is exactly zero. Does NOT commit.
 
@@ -711,7 +776,7 @@ def close_position_if_flat(db: Session, ticker: str, platform_id: int) -> Closed
     date = the latest sell), then deletes the holding and ALL its events with plain
     db.delete. It never touches a Transaction: the sell's cash leg already sits in
     the liquid balance, so the record can never be a cash row. Dust (a non-zero
-    stored quantity) and positions with no sell stay open. Audited row by row, with
+    stored quantity) and any position close_blocker names stay open. Audited row by row, with
     strings only in the JSON (no Decimal).
     """
     db.flush()
@@ -726,12 +791,12 @@ def close_position_if_flat(db: Session, ticker: str, platform_id: int) -> Closed
     events = db.query(PortfolioEvent).filter(
         PortfolioEvent.ticker == ticker, PortfolioEvent.platform_id == platform_id
     ).order_by(PortfolioEvent.date, PortfolioEvent.id).all()
-    sells = [e for e in events if e.event_type == "sell"]
-    if not sells:
+    if close_blocker(holding, events) is not None:
         return None
     rec = ClosedPosition(
         ticker=ticker, platform_id=platform_id,
-        realized_pnl=result["realized_pnl"], close_date=max(e.date for e in sells),
+        realized_pnl=result["realized_pnl"],
+        close_date=max(e.date for e in events if e.event_type == "sell"),
     )
     db.add(rec)
     db.flush()
@@ -753,6 +818,38 @@ def close_position_if_flat(db: Session, ticker: str, platform_id: int) -> Closed
     db.delete(holding)
     db.flush()
     return rec
+
+
+def _closed_snapshot(rec: ClosedPosition) -> dict:
+    """Audit snapshot of a closed record — strings only (no Decimal in AuditLog JSON)."""
+    return {
+        "id": rec.id, "ticker": rec.ticker, "platform_id": rec.platform_id,
+        "realized_pnl": str(rec.realized_pnl), "close_date": rec.close_date.isoformat(),
+    }
+
+
+def apply_edit_closed_position(db: Session, closed_id: int, after: dict, before: dict | None) -> ClosedPosition:
+    """Correct a closed record's realized P&L and/or close date (ticker and platform are fixed). Audited, no commit."""
+    rec = db.get(ClosedPosition, closed_id)
+    if rec is None:
+        raise ValueError(f"closed position {closed_id} not found")
+    if after.get("realized_pnl") is not None:
+        rec.realized_pnl = Decimal(str(after["realized_pnl"]))  # LOAD-BEARING: str() before Decimal()
+    if after.get("close_date"):
+        rec.close_date = date.fromisoformat(after["close_date"])
+    db.add(AuditLog(entity="closed_position", entity_id=rec.id, operation="edit",
+                    before=before, after=_closed_snapshot(rec)))
+    db.flush()
+    return rec
+
+
+def apply_delete_closed_position(db: Session, closed_id: int, before: dict | None) -> None:
+    """Delete a closed record; its realized P&L leaves the total. Cash transactions are untouched. Audited, no commit."""
+    rec = db.get(ClosedPosition, closed_id)
+    if rec is None:
+        raise ValueError(f"closed position {closed_id} not found")
+    db.delete(rec)
+    db.add(AuditLog(entity="closed_position", entity_id=closed_id, operation="delete", before=before, after=None))
 
 
 def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
@@ -859,7 +956,9 @@ def apply_edit_portfolio_event(
     None/absent fields in `after` keep the current value. A funded event
     (transaction_id set) must stay buy or sell; its cash leg takes the new
     date and a signed amount (buy negative, sell positive; magnitude from
-    `cash_amount`, else the leg's current magnitude). Does NOT commit.
+    `cash_amount`, else the leg's current magnitude). An edit that leaves the event
+    a sell and the position at exactly zero closes it (the event is then deleted,
+    its cash leg kept); editing a buy never does. Does NOT commit.
     """
     ev = _load_editable_event(db, event_id)
     old_ticker = ev.ticker
@@ -910,6 +1009,8 @@ def apply_edit_portfolio_event(
         ).one_or_none()
         if new_h is not None and new_h.asset_type is None and old_h is not None:
             new_h.asset_type = old_h.asset_type
+    if new_type == "sell":  # Q1: only a sell write closes; the old-ticker side of a rename never does
+        close_position_if_flat(db, ev.ticker, ev.platform_id)
     return ev
 
 

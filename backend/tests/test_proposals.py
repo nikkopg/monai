@@ -894,6 +894,11 @@ def test_confirm_funded_sell_writes_both_sides(client, api_key, db_session):
     plat_id = _make_platform_local(db_session, "zz14test-FundedSellPlatform")
     _cleanup_ticker(db_session, ticker)
     try:
+        from backend.writes import apply_add_portfolio_event
+        apply_add_portfolio_event(db_session, {  # a larger buy first: a sell beyond the held quantity is refused
+            "ticker": ticker, "event_type": "buy", "quantity": 20, "price": 100000,
+            "platform_id": plat_id, "currency": "IDR", "date": "2024-03-01"})
+        db_session.commit()
         from backend.tools import propose_add_funded_sell  # RED: not implemented until Plan 14-02
 
         result = propose_add_funded_sell(
@@ -914,7 +919,8 @@ def test_confirm_funded_sell_writes_both_sides(client, api_key, db_session):
         assert tx.amount == Decimal("1000000")
         assert tx.is_transfer is True
 
-        ev = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
+        ev = db_session.query(PortfolioEvent).filter(
+            PortfolioEvent.ticker == ticker, PortfolioEvent.event_type == "sell").one()
         assert ev.event_type == "sell"
         assert ev.source_account_id == acc_id
     finally:

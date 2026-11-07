@@ -762,6 +762,7 @@ def net_worth(db=None) -> dict:
             "total": liquid_total + investment_total,
             "liquid_total": liquid_total,
             "investment_total": investment_total,
+            "total_realized_pnl": float(pf["total_realized_pnl"]),
             "liquid_accounts": liquid_rows,
             "investment_groups": pf["groups"],
             "accounts_covered": len(liquid_rows) + len(investment_rows),

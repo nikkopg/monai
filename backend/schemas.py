@@ -372,6 +372,13 @@ class ClosedPositionOut(BaseModel):
     close_date: date
 
 
+class ClosedPositionUpdate(BaseModel):
+    """Body for PUT /closed-positions/{id}: None keeps the value. No sign constraint, a loss is negative."""
+
+    realized_pnl: MoneyDecimal | None = None
+    close_date: date | None = None
+
+
 class PortfolioSummary(BaseModel):
     """Composed GET /investments/summary payload (D-05, INV-06).
 
