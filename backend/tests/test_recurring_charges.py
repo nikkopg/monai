@@ -341,7 +341,10 @@ def test_exclusion_structural(seeded):
 
 
 def test_limit_and_months_clamped(seeded):
+    import inspect
+
     from backend.tools import recurring_charges
+    assert inspect.signature(recurring_charges).parameters["limit"].default == 50  # POL-01: every group by default
     assert recurring_charges(months=0)["months"] == 3
     assert recurring_charges(months=999)["months"] == 60
     assert len(recurring_charges(limit=0)["groups"]) <= 1

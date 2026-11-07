@@ -124,7 +124,7 @@ MCP_DESCRIPTIONS: dict[str, str] = {
         "means that date has passed), a "
         "high/medium/low confidence label and up to 12 evidence rows. Transfers, investment accounts, "
         "investment-linked rows and system categories are excluded. Takes no period: only months "
-        "(lookback, 3-60, default 24) and limit (1-50, default 20). Results are detected, not confirmed."
+        "(lookback, 3-60, default 24) and limit (1-50, default 50). Results are detected, not confirmed."
         + _FX_HELP
     ),
     "compare_periods": (

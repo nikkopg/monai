@@ -1188,16 +1188,16 @@ _RECURRING_SQL = (
 )
 
 
-def recurring_charges(months: int = 24, limit: int = 20) -> dict:
+def recurring_charges(months: int = 24, limit: int = 50) -> dict:
     """Detect likely recurring expenses (subscriptions, bills, rent). Use for "what
     are my recurring charges / subscriptions / bills" or "what do I pay every month".
-    Takes NO period: only months (lookback, 3-60, default 24) and limit (1-50).
+    Takes NO period: only months (lookback, 3-60, default 24) and limit (1-50, default 50).
     Expenses only; transfers, investment accounts, investment-linked rows and system
     categories (including Uncategorized) are excluded. Results are LIKELY recurring,
     detected from past transactions, not confirmed.
     Each entry in groups is a ready line: its cadence (weekly/monthly/quarterly/yearly),
-    monthly cost, typical amount, confidence (high/medium/low), status (active/lapsed)
-    and dates. List every group with all of those, using the line's figures as written;
+    monthly cost ("a month"), typical amount if it differs, confidence (high/medium/low),
+    status (active/lapsed) and dates. List every group with all of those, using the line's figures as written;
     total_detected says how many exist, so say so if it is more than the lines listed.
     A line saying overdue means the expected date has passed: say overdue, not upcoming.
     Never call them confirmed subscriptions.

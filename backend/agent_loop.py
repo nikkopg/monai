@@ -77,7 +77,9 @@ def _recurring_line(g: dict, base: str) -> str:
     """One readable line per recurring group, built here so the model copies it, not recomputes it."""
     cur = g.get("currency", base)
     typical = f"{g['typical_amount']:,.0f}" if cur == "IDR" else f"{g['typical_amount']:,.2f}"
-    parts = [f"{g['cadence']}", f"{g['est_monthly']:,.0f} {base} a month", f"typically {typical} {cur}",
+    # A monthly charge in the base currency costs its typical amount: one figure, or the model keeps only the typical.
+    same = g["cadence"] == "monthly" and cur == base
+    parts = [f"{g['cadence']}", f"{g['est_monthly']:,.0f} {base} a month", *([] if same else [f"typically {typical} {cur}"]),
              f"{g['confidence']} confidence", g["status"], f"last {g['last_date']}"]
     if g.get("next_expected"):
         parts.append(f"overdue since {g['next_expected']}" if g.get("overdue")

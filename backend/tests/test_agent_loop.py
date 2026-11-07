@@ -1006,6 +1006,27 @@ def test_recurring_for_llm_one_line_per_group_under_the_cap():
     assert "overdue since 1997-01-01" in view["groups"][3]
 
 
+def test_recurring_line_gives_a_monthly_idr_charge_one_figure():
+    """POL-01: its typical amount equals its monthly cost, and with both the model kept only the typical."""
+    from backend.agent_loop import recurring_for_llm
+
+    group = {"label": "ZZ Sub", "cadence": "monthly", "est_monthly": 50000.0, "typical_amount": 50000.0,
+             "currency": "IDR", "confidence": "low", "status": "active", "last_date": "1996-03-01"}
+    raw = {"tool": "recurring_charges", "currency": "IDR", "groups": [group, {**group, "currency": "USD", "typical_amount": 3.0}]}
+    idr, usd = recurring_for_llm(raw)["groups"]
+    assert "50,000 IDR a month" in idr and "typically" not in idr
+    assert "50,000 IDR a month" in usd and "typically 3.00 USD" in usd
+
+
+def test_recurring_for_llm_fits_the_default_limit_under_the_cap():
+    from backend.agent_loop import CAP_CHARS, recurring_for_llm
+
+    raw = _zz_recurring()
+    raw["groups"] = (raw["groups"] * 3)[:50]
+    view = recurring_for_llm(raw)
+    assert len(view["groups"]) == 50 and len(str(view)) < CAP_CHARS
+
+
 def test_recurring_for_llm_passes_a_refusal_through():
     from backend.agent_loop import recurring_for_llm
 
