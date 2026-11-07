@@ -105,18 +105,18 @@ function today1Y(): NwRow[] {
   return [
     ...BOTH_GAPPED_MONTHS.map((m) =>
       nwRow(m, {
-        liquid: { gap_reason: "no_opening_anchor" },
+        liquid: { gap_reason: "fx_unavailable" },
         investment: { gap_reason: "no_investment_tracking_before_launch" },
         gap: "both_halves_gapped",
       })
     ),
     nwRow("2026-07", {
-      liquid: { gap_reason: "no_opening_anchor" },
+      liquid: { gap_reason: "fx_unavailable" },
       investment: { total: 41234567.49, honest: true, as_of_date: "2026-07-31" },
       gap: "liquid_half_gapped",
     }),
     nwRow("2026-08", {
-      liquid: { gap_reason: "no_opening_anchor" },
+      liquid: { gap_reason: "fx_unavailable" },
       investment: { total: 45678901.23, honest: true, as_of_date: "2026-08-29" },
       gap: "liquid_half_gapped",
     }),
@@ -135,7 +135,7 @@ function allGapped1Y(): NwRow[] {
   return [
     ...base.slice(0, 11),
     nwRow("2026-09", {
-      liquid: { gap_reason: "no_opening_anchor" },
+      liquid: { gap_reason: "fx_unavailable" },
       investment: { gap_reason: "no_snapshot_for_month" },
       gap: "both_halves_gapped",
     }),
@@ -146,7 +146,7 @@ function allGapped1Y(): NwRow[] {
 function threeYear(): NwRow[] {
   const extra = monthRange(2023, 10, 24).map((m) =>
     nwRow(m, {
-      liquid: { gap_reason: "no_opening_anchor" },
+      liquid: { gap_reason: "fx_unavailable" },
       investment: { gap_reason: "no_investment_tracking_before_launch" },
       gap: "both_halves_gapped",
     })
@@ -170,8 +170,7 @@ function allRange(): NwRow[] {
 // table, synthetic values). 2025-10..2026-05 carry an at-cost ("deposits")
 // investment basis with values well under the 2026-06 pinned step so the seam
 // stays the only jump; 2026-07 onward are honest snapshot months. Liquid
-// stays "ledger_plus_corrections" throughout except the newest live-anchored
-// row.
+// is "ledger_plus_corrections" for every non-gap month.
 const ARCHIVAL_EARLY_MONTHS = [
   "2025-10", "2025-11", "2025-12",
   "2026-01", "2026-02", "2026-03", "2026-04", "2026-05",
@@ -465,7 +464,7 @@ test.describe("net worth trend card", () => {
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await expect(tooltip).toBeVisible();
     await expect(tooltip).toContainText(
-      "No data — liquid accounts have no opening balance anchor for these months"
+      "No data — the historical FX rate could not be verified for these months"
     );
   });
 

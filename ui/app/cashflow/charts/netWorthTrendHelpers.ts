@@ -22,9 +22,8 @@ export type LiquidHalf = {
   by_account: Record<string, number> | null;
   honest: boolean;
   gap_reason: string | null;
-  // 23.1: absent from Phase 22/23 payloads and fixtures, so treat undefined
-  // like null. "ledger_plus_corrections" before the account's own adjustment
-  // anchor; null on/after (today's existing live-anchored behavior).
+  // Absent from Phase 22/23 payloads and fixtures, so treat undefined like
+  // null. "ledger_plus_corrections" for every non-gap month; null for a gap.
   valuation_basis?: string | null;
 };
 
@@ -72,8 +71,6 @@ export const RANGE_MONTHS: Record<Range, number> = { "1Y": 12, "3Y": 36, All: 60
 // from 23-UI-SPEC.md's Gap Reason Map.
 export const REASON_SENTENCES: Record<string, string> = {
   pre_ledger: "before the ledger existed for these accounts",
-  no_opening_anchor: "liquid accounts have no opening balance anchor for these months",
-  no_closing_anchor: "liquid accounts have no closing balance anchor for these months",
   no_investment_tracking_before_launch: "investment tracking hadn't started yet",
   synthetic_opening_only:
     "only a synthetic opening balance exists for the investment side, not a verified one",
@@ -84,7 +81,6 @@ export const REASON_SENTENCES: Record<string, string> = {
     "the replayed position quantity went negative, which can't be honest",
   no_snapshot_for_month: "no daily portfolio snapshot exists for this month",
   snapshot_missing_position: "the snapshot is missing a position that should be held",
-  parity_mismatch: "the liquid and investment totals didn't reconcile for this month",
 };
 
 // --- Formatters ------------------------------------------------------------
@@ -119,14 +115,11 @@ export function reasonSentence(code: string | null): string {
 }
 
 // D-06: engine-level codes, liquid first then investment (never the composed
-// both_halves_gapped code, which says nothing useful to a user). Falls back to
-// the composed gap_reason only when both halves are individually honest but
-// the row still isn't (Phase 22 D-08 soft gap, e.g. parity_mismatch).
+// both_halves_gapped code, which says nothing useful to a user).
 export function rowGapCodes(row: NetWorthRow): string[] {
   const codes: string[] = [];
   if (row.liquid.gap_reason) codes.push(row.liquid.gap_reason);
   if (row.investment.gap_reason) codes.push(row.investment.gap_reason);
-  if (codes.length === 0 && row.gap_reason) codes.push(row.gap_reason);
   return codes;
 }
 
@@ -145,8 +138,9 @@ export function visibleRows(rows: NetWorthRow[], range: Range): NetWorthRow[] {
 
 // --- Plot points -----------------------------------------------------------
 
-// D-05/D-11: each series is gated on its own honest flag. No carry-forward, no
-// interpolation, and a dishonest half with a non-null total still plots null.
+// D-05/D-11: each series is gated on its own honest flag. The backend carries
+// the investment half forward, so this layer adds no carry and no
+// interpolation; a dishonest half with a non-null total still plots null.
 export function toPlotPoints(rows: NetWorthRow[]): PlotPoint[] {
   return rows.map((row) => {
     const atCost = row.investment.valuation_basis === "deposits";
@@ -164,7 +158,7 @@ export function toPlotPoints(rows: NetWorthRow[]): PlotPoint[] {
   });
 }
 
-// --- Basis seam / anchor months (23.1 D-01/D-02) ----------------------------
+// --- Basis seam (23.1 D-01/D-02) ----------------------------
 
 // WR-05: the month right after the LAST row matching `isOldBasis` (rows are
 // contiguous months), whether or not that month is honest. Keying off "first
