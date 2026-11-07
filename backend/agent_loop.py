@@ -96,7 +96,9 @@ def recurring_for_llm(raw):
     if not isinstance(raw, dict) or not raw.get("groups"):
         return raw
     base = raw.get("currency", "IDR")
-    return {**raw, "groups": [_recurring_line(g, base) for g in raw["groups"]]}
+    # In the result, beside the lines: live, the model still summarized lapsed groups under the docstring alone.
+    rule = f"Write out all {len(raw['groups'])} lines, lapsed ones too, each with its monthly cost. Never summarize a group."
+    return {**raw, "groups": [_recurring_line(g, base) for g in raw["groups"]], "answer_rule": rule}
 
 
 def tools_for_turn(

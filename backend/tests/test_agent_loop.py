@@ -996,6 +996,7 @@ def test_recurring_for_llm_one_line_per_group_under_the_cap():
     assert len(str(view)) < CAP_CHARS
     assert len(view["groups"]) == 20 and all(isinstance(g, str) for g in view["groups"])
     assert "evidence" not in str(view)
+    assert "all 20 lines" in view["answer_rule"] and "answer_rule" not in raw
     for k in ("tool", "currency", "months", "total_detected", "note", "fx_note"):
         assert view[k] == raw[k]
     first = view["groups"][0]
