@@ -85,8 +85,8 @@ async function mockAccounts(page: Page) {
   });
 }
 
-// GET (Buy & Sell tab load) returns an empty event list; POST (the unfunded
-// escape hatch submit) is captured via `onPost`.
+// GET (Buy & Sell tab load) returns an empty event list; POST (the
+// dividend-only /api/portfolio-events submit) is captured via `onPost`.
 async function mockPortfolioEvents(
   page: Page,
   onPost?: (body: Record<string, unknown>) => void
@@ -140,7 +140,7 @@ async function openFundedModal(page: Page) {
 }
 
 function fundingSelect(page: Page) {
-  return page.locator('label:text-is("Funding account") + select');
+  return page.locator('label:text-is("Investment liquid account") + select');
 }
 function cashAmountInput(page: Page, ccy = "IDR") {
   return page.getByLabel(`Cash amount (${ccy})`, { exact: true });
@@ -266,26 +266,19 @@ test.describe("funded buy/sell (XFER-03)", () => {
     });
   });
 
-  test("Test D: leaving Funding account on none still POSTs the unfunded /api/portfolio-events path", async ({
+  test("Test D: Buy and Sell cannot be submitted without an Investment liquid account", async ({
     page,
   }) => {
     await mockPlatformDetail(page);
     await mockPlatformsList(page);
     await mockAccounts(page);
 
-    let unfundedCaptured: Record<string, unknown> | null = null;
-    await mockPortfolioEvents(page, (body) => (unfundedCaptured = body));
-
-    let fundedBuyCalled = false;
+    let portfolioEventsPosted = false;
+    await mockPortfolioEvents(page, () => (portfolioEventsPosted = true));
+    let fundedCaptured: Record<string, unknown> | null = null;
+    await mockFundedBuy(page, (body) => (fundedCaptured = body));
     let fundedSellCalled = false;
-    await page.route("**/api/portfolio-events/funded-buy", async (route) => {
-      fundedBuyCalled = true;
-      await route.fulfill({ status: 201, contentType: "application/json", body: "{}" });
-    });
-    await page.route("**/api/portfolio-events/funded-sell", async (route) => {
-      fundedSellCalled = true;
-      await route.fulfill({ status: 201, contentType: "application/json", body: "{}" });
-    });
+    await mockFundedSell(page, () => (fundedSellCalled = true));
 
     await openFundedModal(page);
 
@@ -294,17 +287,62 @@ test.describe("funded buy/sell (XFER-03)", () => {
     await quantityInput(page).fill("2");
     await priceInput(page).fill("30000");
 
-    await page.getByRole("button", { name: "Log event", exact: true }).click();
-
-    await expect.poll(() => unfundedCaptured !== null).toBeTruthy();
-    expect(unfundedCaptured).toMatchObject({
-      ticker: "ETH",
-      quantity: 2,
-      price: 30000,
-      platform_id: 5,
-    });
-    expect(fundedBuyCalled).toBe(false);
+    // No account chosen: the submit button is disabled for Buy and for Sell.
+    const submit = page.locator('form button[type="submit"]');
+    await expect(submit).toBeDisabled();
+    await eventTypeSelect(page).selectOption({ label: "Sell" });
+    await expect(submit).toBeDisabled();
+    await eventTypeSelect(page).selectOption({ label: "Buy" });
+    expect(portfolioEventsPosted).toBe(false);
+    expect(fundedCaptured).toBeNull();
     expect(fundedSellCalled).toBe(false);
+
+    // Choosing an account enables it and posts to the funded route only.
+    await fundingSelect(page).selectOption({ label: "BCA" });
+    await expect(submit).toBeEnabled();
+    await submit.click();
+    await expect.poll(() => fundedCaptured !== null).toBeTruthy();
+    expect(fundedCaptured).toMatchObject({ source_account_name: "BCA", ticker: "ETH" });
+    expect(portfolioEventsPosted).toBe(false);
+  });
+
+  test("Sell on a held ticker shows the exact quantity held", async ({ page }) => {
+    await mockPlatformDetail(page, [heldFixture("ZZ45X", "IDR")]);
+    await mockPlatformsList(page);
+    await mockAccounts(page);
+    await mockPortfolioEvents(page);
+
+    await openFundedModal(page);
+
+    await eventTypeSelect(page).selectOption({ label: "Sell" });
+    await page.getByPlaceholder("BBCA").fill("ZZ45X");
+    await expect(page.getByText("Held: 3", { exact: true })).toBeVisible();
+    // A buy, or a ticker that is not held, shows no hint.
+    await eventTypeSelect(page).selectOption({ label: "Buy" });
+    await expect(page.getByText(/^Held:/)).toHaveCount(0);
+  });
+
+  test("with no liquid accounts the form points to Settings or Add holding", async ({
+    page,
+  }) => {
+    await mockPlatformDetail(page);
+    await mockPlatformsList(page);
+    await page.route("**/api/accounts", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([{ id: 3, name: "Bibit", type: "investment", currency: "IDR" }]),
+      });
+    });
+    await mockPortfolioEvents(page);
+
+    await openFundedModal(page);
+
+    await expect(
+      page.getByText(/add a liquid account in Settings, or use Add holding directly/i)
+    ).toBeVisible();
+    await eventTypeSelect(page).selectOption({ label: "Dividend" });
+    await expect(page.getByText(/add a liquid account in Settings/i)).toHaveCount(0);
   });
 
   test("Test E: keeps the modal open and shows the standard error copy on a funded-buy 422", async ({

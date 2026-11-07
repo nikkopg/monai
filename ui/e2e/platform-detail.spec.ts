@@ -152,6 +152,17 @@ test.describe("PnL tab (D-05, Component 11)", () => {
   });
 });
 
+test.describe("Realized stat includes closed positions (quick 261107-nq6)", () => {
+  test("adds closed_realized_pnl to the platform Realized total", async ({ page }) => {
+    const body = { ...platformDetailFixture(), closed_realized_pnl: 50000 };
+    await mockPlatformDetail(page, { body });
+    await mockPortfolioEvents(page);
+    await page.goto("/investments/1");
+    // 200,000 open holding + 50,000 closed record.
+    await expect(page.getByText(fmtSigned(250000)).first()).toBeVisible();
+  });
+});
+
 test.describe("Buy & Sell tab (D-05, Component 12)", () => {
   test("clicking Buy & Sell switches to the event table with the locked headers and colored Title-cased Side", async ({
     page,
