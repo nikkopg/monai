@@ -16,9 +16,10 @@ followed by db.flush(), never a session-persist call, and the caller
 always runs db_session.rollback() in a finally block -- the session is
 NEVER persisted with a commit call.
 
-Parity is verified per D-11 (22-CONTEXT.md), not ROADMAP SC2's literal
-wording: half by half against like-typed sources, never the composed total
-against a second live net_worth()/portfolio_summary() call.
+The newest bucket's halves are checked against like-typed sources (D-11,
+22-CONTEXT.md), half by half, never the composed total against a second
+live net_worth()/portfolio_summary() call. Those checks are read-only audits
+here; they no longer gate the series.
 """
 
 from datetime import date, timedelta
@@ -172,9 +173,10 @@ def test_every_row_carries_both_halves(db_session):
 
 def test_combined_total_requires_both_halves_honest(db_session):
     """D-04/D-06. `honest` iff both halves honest; `total` is a Decimal sum
-    when honest, `None` otherwise -- never a partial sum, never zero,
-    never carried forward. `honest_months` mirrors the honest rows in
-    order."""
+    when honest, `None` otherwise -- never a partial sum, never zero. The
+    investment half arrives already carried forward from its last known
+    month; a liquid gap is never carried. `honest_months` mirrors the honest
+    rows in order."""
     from backend.net_worth_history import monthly_net_worth_series
 
     result = monthly_net_worth_series(months=72, db=db_session)
@@ -225,7 +227,7 @@ def test_d05_spot_values_reproduce_preview(db_session):
     back-dated anchor round landing before these months would move the
     engine's own honest total without moving this independently-derived
     oracle, making this test fail loudly -- the intended signal to
-    re-derive the regime, never a signal to weaken this test."""
+    re-derive the oracle, never a signal to weaken this test."""
     from backend.net_worth_history import monthly_net_worth_series
 
     conn = db_session.connection()
@@ -312,7 +314,7 @@ def test_d05_spot_values_reproduce_preview(db_session):
 
     newest = result["rows"][-1]
     assert newest["honest"] is True, newest
-    assert newest["liquid"]["valuation_basis"] is None, newest
+    assert newest["liquid"]["valuation_basis"] == "ledger_plus_corrections", newest
     assert newest["investment"]["valuation_basis"] == "snapshot", newest
     assert newest["total"] == newest["liquid"]["total"] + newest["investment"]["total"], newest
 
@@ -324,7 +326,8 @@ def test_archival_months_compose_honestly_and_pre_ledger_months_gap(db_session):
     start: the very first bucket (pre-ledger) still gaps both halves
     honestly, and every archival month from the ledger start up to (not
     including) the month containing the independently-derived liquid anchor
-    composes an honest total on a ledger_plus_corrections/deposits basis."""
+    composes an honest total on a ledger_plus_corrections/deposits basis,
+    unless a needed FX rate is unobtainable (the one remaining liquid gap)."""
     from backend.net_worth_history import monthly_net_worth_series
 
     conn = db_session.connection()
@@ -362,13 +365,8 @@ def test_archival_months_compose_honestly_and_pre_ledger_months_gap(db_session):
             "GROUP BY a.name"
         )
     ).all()
-    liquid_names = [
-        r[0] for r in conn.execute(text("SELECT name FROM accounts WHERE type = 'liquid'")).all()
-    ]
     anchor_by_account = dict(anchor_rows)
-    assert all(name in anchor_by_account for name in liquid_names), (
-        "expected every live liquid account to carry a full anchor on today's data"
-    )
+    assert anchor_by_account, "no liquid Adjustment rows -- the archival range below is undefined"
     liquid_anchor = max(anchor_by_account.values())
 
     snapshot_floor = conn.execute(text("SELECT MIN(snapshot_date) FROM portfolio_value_history")).scalar()
@@ -379,6 +377,8 @@ def test_archival_months_compose_honestly_and_pre_ledger_months_gap(db_session):
         row_month_end = row_end_excl - timedelta(days=1)
         if row_month_end >= liquid_anchor:
             break
+        if row["liquid"]["gap_reason"] == "fx_unavailable":
+            continue
         assert row["honest"] is True, row
         assert row["liquid"]["valuation_basis"] == "ledger_plus_corrections", row
         if snapshot_floor is not None and row_month_end < snapshot_floor:
@@ -405,7 +405,7 @@ def test_months_bound_rejects_out_of_range(db_session):
 
 
 # ---------------------------------------------------------------------------
-# Task 2: D-11 parity tests and the D-08 forced-mismatch proof
+# Task 2: D-11 like-for-like audits of the newest bucket
 # ---------------------------------------------------------------------------
 
 
@@ -484,8 +484,10 @@ def test_newest_bucket_investment_half_matches_its_own_snapshot(db_session):
 
     # Independent mis-selection check -- closes the blind spot the sum
     # comparison above cannot, by construction.
-    month_start = date.fromisoformat(f"{newest['month']}-01")
-    end_excl = _end_excl_for_month(newest["month"])
+    # The snapshot's own month: a carried newest row keeps an earlier as_of_date.
+    as_of_month = investment["as_of_date"].strftime("%Y-%m")
+    month_start = date.fromisoformat(f"{as_of_month}-01")
+    end_excl = _end_excl_for_month(as_of_month)
     max_snapshot_in_window = conn.execute(
         text(
             "SELECT MAX(snapshot_date) FROM portfolio_value_history "
@@ -496,78 +498,6 @@ def test_newest_bucket_investment_half_matches_its_own_snapshot(db_session):
     assert investment["as_of_date"] == max_snapshot_in_window, (
         investment["as_of_date"], max_snapshot_in_window
     )
-
-
-def test_newest_bucket_is_not_parity_gapped_on_live_data(db_session):
-    """The standing regression pin. A failure here means either a real
-    disagreement or that D-11's like-for-like rule regressed to a
-    live-vs-snapshot comparison."""
-    from backend.net_worth_history import monthly_net_worth_series
-
-    result = monthly_net_worth_series(months=12, db=db_session)
-    newest = result["rows"][-1]
-    assert newest["gap_reason"] != "parity_mismatch", newest
-
-
-def test_forced_parity_mismatch_gaps_one_row_and_spares_the_rest(db_session, monkeypatch):
-    """SC2-d, the "does not silently proceed" proof and the only way to
-    exercise the D-08 soft-gap path. Forces the parity helper itself
-    (backend.net_worth_history._parity_verdict) to disagree unconditionally,
-    then proves exactly one row (the newest) is affected and every other row
-    is byte-identical to an unpatched call -- including both sub-objects on
-    the gapped row itself, since the parity verdict is a statement about the
-    combined number, not either half's own reconstruction."""
-    from backend.net_worth_history import monthly_net_worth_series
-
-    unpatched = monthly_net_worth_series(months=12, db=db_session)
-
-    monkeypatch.setattr(
-        "backend.net_worth_history._parity_verdict",
-        lambda db, row: "parity_mismatch",
-    )
-    patched = monthly_net_worth_series(months=12, db=db_session)
-
-    last = patched["rows"][-1]
-    unpatched_last = unpatched["rows"][-1]
-
-    assert last["honest"] is False, last
-    assert last["total"] is None, last
-    assert last["gap_reason"] == "parity_mismatch", last
-    assert last["month"] not in patched["honest_months"], patched["honest_months"]
-    assert patched["gap_summary"].get("parity_mismatch") == 1, patched["gap_summary"]
-
-    assert patched["rows"][:-1] == unpatched["rows"][:-1]
-
-    assert last["liquid"] == unpatched_last["liquid"], (last["liquid"], unpatched_last["liquid"])
-    assert last["investment"] == unpatched_last["investment"], (
-        last["investment"], unpatched_last["investment"]
-    )
-
-
-def test_parity_check_fails_closed_on_error(db_session, monkeypatch):
-    """T-22-07. Fault injected at exactly backend.tools.account_balances --
-    NOT a backend.net_worth_history attribute of the same name, which the
-    parity helper's lazy in-function import would make a silent no-op. An
-    exception inside the comparison must never yield an unverified total.
-    The baseline call before patching sanity-checks that the injection
-    actually fired: unpatched, the newest row is not parity-gapped; patched,
-    it must be."""
-    from backend.net_worth_history import monthly_net_worth_series
-
-    baseline = monthly_net_worth_series(months=12, db=db_session)
-    assert baseline["rows"][-1]["gap_reason"] != "parity_mismatch", baseline["rows"][-1]
-
-    def _raiser(*args, **kwargs):
-        raise RuntimeError("forced account_balances failure")
-
-    monkeypatch.setattr("backend.tools.account_balances", _raiser)
-
-    result = monthly_net_worth_series(months=12, db=db_session)
-    newest = result["rows"][-1]
-
-    assert newest["gap_reason"] == "parity_mismatch", newest
-    assert newest["honest"] is False, newest
-    assert newest["total"] is None, newest
 
 
 def test_liquid_only_gap_nulls_the_total_but_keeps_the_investment_half(db_session, monkeypatch):
@@ -610,7 +540,7 @@ def test_liquid_only_gap_nulls_the_total_but_keeps_the_investment_half(db_sessio
                 row["liquid_total"] = None
                 row["valuation_basis"] = None
                 row["honest"] = False
-                row["gap_reason"] = "no_closing_anchor"
+                row["gap_reason"] = "fx_unavailable"
         return result
 
     monkeypatch.setattr("backend.net_worth_history.monthly_liquid_series", _wrapper)
@@ -634,6 +564,39 @@ def test_liquid_only_gap_nulls_the_total_but_keeps_the_investment_half(db_sessio
         if month == target_month:
             continue
         assert row == unpatched_by_month[month], (month, row, unpatched_by_month[month])
+
+
+def test_investment_half_never_blanks_after_first_known_value(db_session):
+    """The investment half carries forward from its last known month: every
+    row after the first honest investment row is honest, and its as_of_date is
+    never later than its own month-end (a carried row keeps the earlier date)."""
+    from backend.net_worth_history import monthly_net_worth_series
+
+    rows = monthly_net_worth_series(months=_months_back_to_ledger_start(db_session), db=db_session)["rows"]
+    first = next(i for i, r in enumerate(rows) if r["investment"]["honest"])
+    later = rows[first + 1:]
+    assert later, "no row after the first honest investment row"
+    for row in later:
+        investment = row["investment"]
+        assert investment["honest"] is True and investment["total"] is not None, row
+        as_of = investment["as_of_date"]
+        if as_of is not None:
+            assert as_of < _end_excl_for_month(row["month"]), row
+
+
+def test_same_month_same_point_across_windows(db_session):
+    """A month reads the same whichever range asked for it: the chart fetches
+    12, 36 and 600 months and must not disagree about a shared month."""
+    from backend.net_worth_history import monthly_net_worth_series
+
+    short = {r["month"]: r for r in monthly_net_worth_series(months=12, db=db_session)["rows"]}
+    full = {
+        r["month"]: r
+        for r in monthly_net_worth_series(months=_months_back_to_ledger_start(db_session), db=db_session)["rows"]
+    }
+    assert short
+    for month, row in short.items():
+        assert row == full[month], month
 
 
 # ---------------------------------------------------------------------------
@@ -660,8 +623,7 @@ def test_net_worth_history_module_has_no_write_imports():
     backend/tests_live_audit/test_reconstruction.py:575-600. No write-module import, no
     write statement, no session-commit call. Positive half: module-level
     backend.* imports are limited to the two sibling engines + db module,
-    and the only lazy in-function backend.* import is the read-side parity
-    helper's own account_balances lookup."""
+    and there is no lazy in-function backend.* import at all."""
     import re
     from pathlib import Path
 
@@ -694,9 +656,7 @@ def test_net_worth_history_module_has_no_write_imports():
         assert line.strip() in allowed_module_level, f"unexpected module-level import at {lineno}: {line}"
 
     lazy_imports = _offending(r"^[ \t]+(from|import)[ \t]+backend\.")
-    allowed_lazy = {"from backend.tools import account_balances"}
-    for lineno, line in lazy_imports:
-        assert line.strip() in allowed_lazy, f"unexpected lazy import at {lineno}: {line}"
+    assert not lazy_imports, f"unexpected lazy import(s): {lazy_imports}"
 
 
 def test_endpoint_returns_both_halves_per_row(client):
