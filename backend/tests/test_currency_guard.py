@@ -170,6 +170,7 @@ def _clean() -> None:
         s.execute(text(
             "DELETE FROM transactions WHERE account_id IN (SELECT id FROM accounts WHERE name LIKE 'ZZ43 %')"))
         s.execute(text("DELETE FROM accounts WHERE name LIKE 'ZZ43 %'"))
+        s.execute(text("DELETE FROM net_worth_corrections WHERE orig_account LIKE 'ZZ43 %'"))
         s.execute(text("DELETE FROM categories WHERE name LIKE 'zz43-%'"))
         s.execute(text("DELETE FROM platforms WHERE name LIKE 'ZZ43 %'"))
         s.execute(text(
@@ -852,7 +853,10 @@ def test_dashboard_trend_counts_unconverted(recent_seed, authed):
     assert full["expense"] - partial["expense"] == pytest.approx(9.99 * float(SUB_RATES[1]), abs=0.05)
 
 
-# --- net-worth history (D-14, D-15, D-16, D-19) ----------------------------
+# --- net-worth history (D-14, D-15, D-16) -----------------------------------
+# Each month's liquid point is the plain per-account sum of that month's records
+# (recovered corrections count only before an account's first Adjustment). The
+# only gaps are before the first record (pre_ledger) and a missing FX rate.
 
 from backend import reconstruction  # noqa: E402
 from backend.db import engine  # noqa: E402
@@ -887,7 +891,7 @@ def _hist_rate(s, day: date, rate: str) -> None:
 
 @pytest.fixture()
 def history_env(monkeypatch):
-    """An anchored IDR and an anchored USD account; one range prefill point (1995-06-30)."""
+    """An IDR and a USD account, each with an Adjustment; one range prefill point (1995-06-30)."""
     _stub_fx(monkeypatch, live=None, ranges={date(1995, 6, 30): Decimal("16000.000000")})
     _clean()
     s = SessionLocal()
@@ -895,7 +899,7 @@ def history_env(monkeypatch):
         idr = _hist_account(s, "ZZ43 hist idr", "IDR")
         usd = _hist_account(s, "ZZ43 hist usd", "USD")
         _hist_tx(s, idr, date(1995, 4, 10), "1000000.00", "IDR")
-        _hist_tx(s, idr, date(1995, 12, 29), "1000.00", "IDR", anchor=True)  # regime cutoff covers 1995
+        _hist_tx(s, idr, date(1995, 12, 29), "1000.00", "IDR", anchor=True)
         _hist_tx(s, usd, date(1995, 4, 10), "100.00", "USD")
         _hist_tx(s, usd, date(1995, 4, 15), "10.00", "USD", anchor=True)
         _hist_rate(s, date(1995, 4, 28), "15900.000000")
@@ -952,19 +956,20 @@ def test_history_parity_newest_usd_matches_account_balances(history_env, monkeyp
     assert float(idr) == bal["current_balance"]
 
 
-def test_history_unanchored_usd_gaps_no_opening_anchor(history_env):
-    """D-19 (owner chose d19-recommended): a USD account with rows but no anchor gaps the month;
+def test_history_unanchored_usd_converts_at_month_end_rate(history_env):
+    """A USD account with rows but no Adjustment is converted like any other;
     with no rows yet it contributes exactly 0."""
     s = SessionLocal()
     try:
         acc = _hist_account(s, "ZZ43 hist usd2", "USD")
         _hist_tx(s, acc, date(1995, 8, 10), "50.00", "USD")
-        _hist_rate(s, date(1995, 8, 31), "16050.000000")  # the gate, not a missing rate, decides
+        _hist_rate(s, date(1995, 8, 31), "16050.000000")
         s.commit()
     finally:
         s.close()
     aug = _hist_row("1995-08")
-    assert (aug["honest"], aug["gap_reason"]) == (False, "no_opening_anchor")
+    assert aug["honest"] is True, aug
+    assert aug["liquid_by_account"]["ZZ43 hist usd2"] == Decimal("50.00") * Decimal("16050.000000")
     may = _hist_row("1995-05")
     assert may["honest"] is True
     assert may["liquid_by_account"]["ZZ43 hist usd2"] == Decimal("0.00")
@@ -993,3 +998,154 @@ def test_history_parity_skips_excluded_balance(monkeypatch):
     monkeypatch.setattr(tools, "account_balances", lambda: {"rows": rows})
     row = {"liquid": {"total": Decimal("100.00")}, "investment": {"valuation_basis": "replay"}}
     assert net_worth_history._parity_verdict(None, row) is None
+
+
+# --- plain per-account sum (quick 261107-mfr) -------------------------------
+
+@pytest.fixture()
+def plain_env(monkeypatch):
+    """No seeds, no rates, no network: the trend tests add their own ZZ43 accounts."""
+    _stub_fx(monkeypatch, live=None, ranges={})
+    _clean()
+    try:
+        yield
+    finally:
+        _clean()
+
+
+def _hist_correction(s, label: str, day: date, amount: str) -> None:
+    s.execute(text(
+        "INSERT INTO net_worth_corrections (source, orig_account, date, amount) "
+        "VALUES ('corrections_260620', :l, :d, :a)"),
+        {"l": label, "d": day, "a": amount})
+
+
+def _trend_by_account(name: str, months: dict[str, str]) -> None:
+    """Assert one named account's liquid value, month by month, from the series."""
+    rows = {r["month"]: r for r in reconstruction.monthly_liquid_series(months=_hist_months())["rows"]}
+    for month, want in months.items():
+        row = rows[month]
+        assert row["honest"] is True, (month, row)
+        assert row["liquid_by_account"][name] == Decimal(want), (month, row["liquid_by_account"][name])
+
+
+def test_trend_unadjusted_account_plots_every_month_through_endpoint(plain_env, authed):
+    s = SessionLocal()
+    try:
+        acc = _hist_account(s, "ZZ43 trend a", "IDR")
+        _hist_tx(s, acc, date(1995, 4, 10), "100.00", "IDR")
+        _hist_tx(s, acc, date(1995, 6, 10), "50.00", "IDR")
+        s.commit()
+    finally:
+        s.close()
+    body = authed.get("/cashflow/networth-history", params={"months": _hist_months()}).json()
+    by_month = {r["month"]: r["liquid"] for r in body["rows"]}
+    assert by_month["1995-03"]["gap_reason"] == "pre_ledger"
+    assert by_month["1995-03"]["honest"] is False
+    later = [m for m in sorted(by_month) if m >= "1995-04"]
+    assert later[-1] == body["rows"][-1]["month"]
+    for month in later:
+        liquid = by_month[month]
+        assert liquid["honest"] is True and liquid["gap_reason"] is None, (month, liquid)
+        assert liquid["valuation_basis"] == "ledger_plus_corrections"
+        want = 100.0 if month < "1995-06" else 150.0
+        assert liquid["by_account"]["ZZ43 trend a"] == pytest.approx(want), month
+
+
+def test_trend_month_without_records_equals_previous_month_per_account(plain_env):
+    s = SessionLocal()
+    try:
+        a = _hist_account(s, "ZZ43 trend a", "IDR")
+        b = _hist_account(s, "ZZ43 trend b", "IDR")
+        _hist_tx(s, a, date(1995, 4, 10), "100.00", "IDR")
+        _hist_tx(s, b, date(1995, 5, 10), "30.00", "IDR")
+        _hist_tx(s, a, date(1995, 6, 10), "20.00", "IDR")
+        s.commit()
+    finally:
+        s.close()
+    _trend_by_account("ZZ43 trend a", {"1995-04": "100.00", "1995-05": "100.00", "1995-06": "120.00", "1995-07": "120.00"})
+    _trend_by_account("ZZ43 trend b", {"1995-04": "0.00", "1995-05": "30.00", "1995-06": "30.00", "1995-07": "30.00"})
+
+
+def test_trend_adjustment_moves_its_month_and_later_only(plain_env):
+    s = SessionLocal()
+    try:
+        a = _hist_account(s, "ZZ43 trend a", "IDR")
+        _hist_tx(s, a, date(1995, 4, 10), "100.00", "IDR")
+        _hist_tx(s, a, date(1995, 6, 15), "40.00", "IDR", anchor=True)
+        s.commit()
+    finally:
+        s.close()
+    _trend_by_account("ZZ43 trend a", {"1995-04": "100.00", "1995-05": "100.00", "1995-06": "140.00", "1995-07": "140.00"})
+
+
+def test_trend_edit_then_delete_moves_that_month_and_later(plain_env):
+    s = SessionLocal()
+    try:
+        a = _hist_account(s, "ZZ43 trend a", "IDR")
+        _hist_tx(s, a, date(1995, 4, 10), "100.00", "IDR")
+        _hist_tx(s, a, date(1995, 6, 10), "50.00", "IDR")
+        s.commit()
+    finally:
+        s.close()
+    _trend_by_account("ZZ43 trend a", {"1995-05": "100.00", "1995-06": "150.00", "1995-07": "150.00"})
+    s = SessionLocal()
+    try:
+        s.execute(text("UPDATE transactions SET amount = 80 WHERE date::date = '1995-06-10' "
+                       "AND account_id = (SELECT id FROM accounts WHERE name = 'ZZ43 trend a')"))
+        s.commit()
+    finally:
+        s.close()
+    _trend_by_account("ZZ43 trend a", {"1995-05": "100.00", "1995-06": "180.00", "1995-07": "180.00"})
+    s = SessionLocal()
+    try:
+        s.execute(text("DELETE FROM transactions WHERE date::date = '1995-06-10' "
+                       "AND account_id = (SELECT id FROM accounts WHERE name = 'ZZ43 trend a')"))
+        s.commit()
+    finally:
+        s.close()
+    _trend_by_account("ZZ43 trend a", {"1995-05": "100.00", "1995-06": "100.00", "1995-07": "100.00"})
+
+
+def test_trend_corrections_stop_at_the_first_adjustment(plain_env):
+    s = SessionLocal()
+    try:
+        a = _hist_account(s, "ZZ43 trend a", "IDR")
+        _hist_tx(s, a, date(1995, 4, 10), "100.00", "IDR")
+        _hist_correction(s, "ZZ43 trend a", date(1995, 4, 12), "50.00")
+        _hist_tx(s, a, date(1995, 6, 15), "30.00", "IDR", anchor=True)
+        s.commit()
+    finally:
+        s.close()
+    _trend_by_account("ZZ43 trend a", {"1995-04": "150.00", "1995-05": "150.00", "1995-06": "130.00", "1995-07": "130.00"})
+
+
+def test_trend_correction_label_without_live_account_never_enters_liquid(plain_env):
+    s = SessionLocal()
+    try:
+        a = _hist_account(s, "ZZ43 trend a", "IDR")
+        _hist_tx(s, a, date(1995, 4, 10), "100.00", "IDR")
+        _hist_correction(s, "ZZ43 trend ghost", date(1995, 4, 12), "77.00")
+        s.commit()
+    finally:
+        s.close()
+
+    def ghost_never_listed():
+        rows = reconstruction.monthly_liquid_series(months=_hist_months())["rows"]
+        honest = [r for r in rows if r["honest"]]
+        assert honest
+        assert all("ZZ43 trend ghost" not in r["liquid_by_account"] for r in honest)
+
+    ghost_never_listed()
+    s = SessionLocal()
+    try:
+        _hist_tx(s, s.execute(text("SELECT id FROM accounts WHERE name = 'ZZ43 trend a'")).scalar(),
+                 date(1995, 6, 15), "1.00", "IDR", anchor=True)
+        s.commit()
+    finally:
+        s.close()
+    ghost_never_listed()
+
+
+def test_trend_gap_reasons_are_pre_ledger_and_fx_only():
+    assert reconstruction.GAP_REASONS == ("pre_ledger", "fx_unavailable")
