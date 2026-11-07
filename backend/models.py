@@ -538,6 +538,28 @@ class PortfolioEvent(Base):
     )
 
 
+class ClosedPosition(Base):
+    """Realized P&L record for a position sold to exactly zero (quick 261107-nq6).
+
+    Written by writes.close_position_if_flat, which then deletes the holding and
+    its events. Never a Transaction: the sell's cash leg stays as it was.
+    realized_pnl is IDR at trade-date rates, Numeric(28,8) like recompute's own.
+    """
+
+    __tablename__ = "closed_positions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticker: Mapped[str] = mapped_column(String(32), nullable=False)
+    platform_id: Mapped[int | None] = mapped_column(
+        ForeignKey("platforms.id", ondelete="SET NULL"), nullable=True
+    )
+    realized_pnl: Mapped[Decimal] = mapped_column(Numeric(28, 8), nullable=False)
+    close_date: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
+    )
+
+
 class AppSetting(Base):
     """Key-value settings store — DB overrides env-var defaults (Phase 3)."""
 

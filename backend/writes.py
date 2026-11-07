@@ -20,7 +20,9 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.importer import _get_or_create_account
-from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, PriceCache, Transaction
+from backend.models import (
+    Account, AuditLog, Category, ClosedPosition, Holding, Platform, PortfolioEvent, PriceCache, Transaction,
+)
 from backend.portfolio import recompute_holding_from_events
 
 # Mirrors migration 020's CHECK on accounts.currency; fx.py names only BASE.
@@ -426,7 +428,8 @@ def apply_add_funded_sell(db: Session, after: dict) -> dict:
     `recompute_holding_from_events`, D-06 — never hand-rolled here). Same
     is_transfer/category tagging, currency handling (cash in the account's
     currency, event currency per D-02), and no-live-FX contract (D-10) as the
-    buy side. Does NOT commit.
+    buy side. A sell that takes the ledger quantity to exactly zero also closes
+    the position (`close_position_if_flat`); the cash leg is kept. Does NOT commit.
     """
     ev_ccy = _funded_event_currency(db, after)
     cash_amount = abs(after["cash_amount"])  # sell CREDITS the destination; Decimal() happens inside apply_add_transaction
@@ -451,7 +454,9 @@ def apply_add_funded_sell(db: Session, after: dict) -> dict:
     })
     ev.source_account_id = tx.account_id
     ev.transaction_id = tx.id  # both rows flushed by their primitives
-    return {"transaction": tx, "portfolio_event": ev}
+    # A sell that leaves exactly zero closes the position; ev is deleted then.
+    closed = close_position_if_flat(db, after["ticker"], after["platform_id"])
+    return {"transaction": tx, "portfolio_event": ev, "closed_position": closed}
 
 
 def _account_currency(value) -> str:
@@ -686,14 +691,68 @@ def _check_position_target(db: Session, ticker: str, platform_id: int, currency:
     return currency
 
 
-def _recompute_or_refuse(db: Session, ticker: str, platform_id: int) -> None:
+def _recompute_or_refuse(db: Session, ticker: str, platform_id: int) -> dict:
     """Rebuild a position, refusing the write when a rate is missing (ValueError -> 422).
 
     recompute leaves the holding untouched without a rate, so saving anyway would
-    move cash while the position's quantity stayed wrong.
+    move cash while the position's quantity stayed wrong. Returns recompute's dict,
+    so a close can store the exact realized_pnl the summary already showed.
     """
-    if recompute_holding_from_events(db, ticker, platform_id)["quantity"] is None:
+    result = recompute_holding_from_events(db, ticker, platform_id)
+    if result["quantity"] is None:
         raise ValueError(f"No FX rate to IDR for one of {ticker}'s event dates; nothing was saved. Try again later")
+    return result
+
+
+def close_position_if_flat(db: Session, ticker: str, platform_id: int) -> ClosedPosition | None:
+    """Close a position whose ledger quantity is exactly zero. Does NOT commit.
+
+    Saves one ClosedPosition (realized P&L in IDR as recompute returned it, close
+    date = the latest sell), then deletes the holding and ALL its events with plain
+    db.delete. It never touches a Transaction: the sell's cash leg already sits in
+    the liquid balance, so the record can never be a cash row. Dust (a non-zero
+    stored quantity) and positions with no sell stay open. Audited row by row, with
+    strings only in the JSON (no Decimal).
+    """
+    db.flush()
+    result = _recompute_or_refuse(db, ticker, platform_id)
+    db.flush()
+    holding = db.query(Holding).filter(Holding.ticker == ticker, Holding.platform_id == platform_id).one_or_none()
+    if holding is None:
+        return None
+    db.refresh(holding)  # judge exactly-zero on the stored Numeric(28,8) value
+    if holding.quantity != 0:
+        return None
+    events = db.query(PortfolioEvent).filter(
+        PortfolioEvent.ticker == ticker, PortfolioEvent.platform_id == platform_id
+    ).order_by(PortfolioEvent.date, PortfolioEvent.id).all()
+    sells = [e for e in events if e.event_type == "sell"]
+    if not sells:
+        return None
+    rec = ClosedPosition(
+        ticker=ticker, platform_id=platform_id,
+        realized_pnl=result["realized_pnl"], close_date=max(e.date for e in sells),
+    )
+    db.add(rec)
+    db.flush()
+    db.refresh(rec)  # the stored (rounded) value is what the audit row quotes
+    db.add(AuditLog(entity="closed_position", entity_id=rec.id, operation="add", before=None, after={
+        "ticker": ticker, "platform_id": platform_id, "realized_pnl": str(rec.realized_pnl),
+        "close_date": rec.close_date.isoformat(), "event_ids": [e.id for e in events],
+        "holding_id": holding.id,
+    }))
+    for ev in events:
+        db.add(AuditLog(entity="portfolio_event", entity_id=ev.id, operation="delete",
+                        before=_portfolio_event_snapshot(ev), after={"closed_position_id": rec.id}))
+        db.delete(ev)
+    db.add(AuditLog(entity="holding", entity_id=holding.id, operation="delete", before={
+        "id": holding.id, "ticker": holding.ticker, "quantity": str(holding.quantity),
+        "avg_cost": str(holding.avg_cost), "platform_id": holding.platform_id,
+        "currency": holding.currency, "asset_type": holding.asset_type,
+    }, after={"closed_position_id": rec.id}))
+    db.delete(holding)
+    db.flush()
+    return rec
 
 
 def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:

@@ -26,6 +26,7 @@ Endpoints:
     POST /categories/merge      merge one category into another (requires API key)
     PUT  /portfolio-events/{id}  edit a buy/sell/dividend event + its cash leg (requires API key)
     DELETE /portfolio-events/{id}  delete an event + its cash leg (requires API key)
+    GET  /closed-positions      realized P&L records of positions sold to zero, newest close first (requires API key)
     POST /import                multipart CSV upload (Wallet export)
     POST /threads/{id}/attachments  upload one CSV, PDF or image to a chat, parsed once in code; creates the thread if new (requires API key)
     GET  /attachments/locality  {local, destination}: where an attached file would be sent (requires API key)
@@ -84,7 +85,9 @@ from backend.mcp_server import build_mcp
 from backend.db import get_session, get_session_sync
 from backend.importer import import_csv_text
 from backend.mcp_writes import _load_refs, duplicate_flags
-from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, Proposal, Transaction
+from backend.models import (
+    Account, AuditLog, Category, ClosedPosition, Holding, Platform, PortfolioEvent, Proposal, Transaction,
+)
 from backend.net_worth_history import monthly_net_worth_series
 from backend.portfolio import portfolio_summary as compose_portfolio_summary
 from backend.proposals import ALL_SKIPPED_MSG, expire_stale, transition
@@ -133,6 +136,7 @@ from backend.schemas import (
     CategoryNode,
     CategoryRenameRequest,
     CategoryUpdate,
+    ClosedPositionOut,
     ConfirmRequest,
     RowSkipRequest,
     FundedBuyCreate,
@@ -694,10 +698,38 @@ def create_funded_sell(payload: FundedSellCreate, db: Session = Depends(get_sess
         raise HTTPException(status_code=422, detail=str(e))
     db.commit()
     db.refresh(result["transaction"])
-    db.refresh(result["portfolio_event"])
+    closed = result["closed_position"]
+    if closed is None:  # a close deleted the event; there is nothing to refresh
+        db.refresh(result["portfolio_event"])
     from backend.query import reset_engine
     reset_engine()
-    return {"transaction_id": result["transaction"].id, "portfolio_event_id": result["portfolio_event"].id}
+    return {
+        "transaction_id": result["transaction"].id,
+        "portfolio_event_id": None if closed is not None else result["portfolio_event"].id,
+        "closed_position_id": closed.id if closed is not None else None,
+    }
+
+
+@app.get("/closed-positions", response_model=list[ClosedPositionOut], dependencies=[Depends(require_api_key)])
+def list_closed_positions(db: Session = Depends(get_session)):
+    """Realized P&L records of positions sold to zero, newest close first (quick 261107-nq6).
+
+    Keyed read for the Investments page. Not registered in backend/tools.py TOOLS:
+    chat sees only the total, through net_worth.
+    """
+    rows = (
+        db.query(ClosedPosition, Platform.name)
+        .outerjoin(Platform, Platform.id == ClosedPosition.platform_id)
+        .order_by(desc(ClosedPosition.close_date), desc(ClosedPosition.id))
+        .all()
+    )
+    return [
+        ClosedPositionOut(
+            id=c.id, ticker=c.ticker, platform_id=c.platform_id, platform_name=name,
+            realized_pnl=c.realized_pnl, close_date=c.close_date,
+        )
+        for c, name in rows
+    ]
 
 
 @app.post("/holdings", response_model=HoldingOut, status_code=201, dependencies=[Depends(require_api_key)])

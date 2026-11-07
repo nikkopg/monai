@@ -30,7 +30,7 @@ data without your say-so.
 - **Architecture**: Correctness-by-construction — the LLM selects/chains parameterized tools; it never emits SQL
 - **Safety**: All agent writes require explicit user confirmation before applying; validated; audit-logged
 - **Deployment**: Self-hosted via Docker Compose; single-user; local-first / privacy-respecting
-- **Schema**: Every schema change ships as an Alembic migration (`alembic/versions/`, 001–020); `backend/entrypoint.sh` runs `alembic upgrade head` on container start
+- **Schema**: Every schema change ships as an Alembic migration (`alembic/versions/`, 001–021); `backend/entrypoint.sh` runs `alembic upgrade head` on container start
 - **Currency**: IDR is the base and reporting currency. From v1.7, liquid accounts may be IDR or USD, and every total converts to IDR before adding up. Investments may span instruments and currencies.
 <!-- GSD:project-end -->
 

@@ -5,6 +5,7 @@ import Link from "next/link";
 
 import { tokens, card, btn, btnDark } from "../styles";
 import PlatformManager, { type Platform } from "./PlatformManager";
+import ClosedPositions, { type ClosedPosition } from "./ClosedPositions";
 import { extractDetail } from "../lib/api";
 import HoldingModal from "./HoldingModal";
 import HoldingOverrideModal from "./HoldingOverrideModal";
@@ -95,6 +96,7 @@ const muted = tokens.color.muted;
 export default function InvestmentsPage() {
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [closed, setClosed] = useState<ClosedPosition[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -122,6 +124,13 @@ export default function InvestmentsPage() {
       if (!pRes.ok || !sRes.ok) throw new Error("fetch failed");
       setPlatforms(await pRes.json());
       setSummary(await sRes.json());
+      // Best-effort: a failed closed list leaves it empty, never the page error.
+      try {
+        const cRes = await fetch("/api/closed-positions");
+        setClosed(cRes.ok ? await cRes.json() : []);
+      } catch {
+        setClosed([]);
+      }
     } catch {
       setError(
         "Couldn't load your portfolio — check the backend is running and reload the page."
@@ -796,6 +805,8 @@ export default function InvestmentsPage() {
                 </div>
               );
             })}
+
+            <ClosedPositions rows={closed} />
 
             <PlatformManager platforms={platforms} onChanged={load} />
           </>

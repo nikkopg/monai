@@ -361,6 +361,17 @@ class HoldingOut(BaseModel):
     coingecko_id: str | None
 
 
+class ClosedPositionOut(BaseModel):
+    """One closed-position record (quick 261107-nq6); platform_name is null once its platform is deleted."""
+
+    id: int
+    ticker: str
+    platform_id: int | None
+    platform_name: str | None
+    realized_pnl: MoneyDecimal
+    close_date: date
+
+
 class PortfolioSummary(BaseModel):
     """Composed GET /investments/summary payload (D-05, INV-06).
 

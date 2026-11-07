@@ -22,11 +22,12 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend import fx
 from backend.models import (
+    ClosedPosition,
     Holding,
     Platform,
     PortfolioEvent,
@@ -60,7 +61,8 @@ def recompute_holding_from_events(db: Session, ticker: str, platform_id: int) ->
 
     Upserts the `holdings` row keyed on (ticker, platform_id). If the
     resulting quantity is 0 the row is retained as a zero-qty row (D-04:
-    "drops off the active list" is a query-time filter, not a delete). Does
+    "drops off the active list" is a query-time filter, not a delete); closing
+    a flat position into a ClosedPosition lives in backend/writes.py. Does
     NOT commit — the caller owns the transaction boundary (mirrors writes.py).
 
     Returns: {ticker, quantity, avg_cost, realized_pnl, dividend_total}, all
@@ -183,7 +185,9 @@ def portfolio_summary(db: Session) -> dict:
     — the same ticker on two platforms must not double-count each other's
     realized P&L). Totals sum the non-null contributions; total_value /
     total_unrealized are null-safe. Zero-qty holdings are still returned
-    (D-04 filtering is a UI concern).
+    (D-04 filtering is a UI concern). total_realized_pnl is the closed records
+    plus the realized P&L derived from the events of positions still on the
+    books, so closing a position never moves it.
 
     CG-01: asset_type=='cash' is special-cased BEFORE the price_cache read —
     value = quantity × fx.get_rate(currency, "IDR", today, db), no
@@ -289,6 +293,11 @@ def portfolio_summary(db: Session) -> dict:
             # VZ-01 pie data contract: aggregate current IDR value by asset_type.
             atkey = h.asset_type
             asset_type_totals[atkey] = asset_type_totals.get(atkey, Decimal("0")) + current_value
+
+    # Closed positions keep what they earned: their records join the total.
+    total_realized += db.scalar(
+        select(func.coalesce(func.sum(ClosedPosition.realized_pnl), 0))
+    )
 
     # Stable order: real platforms first (by name), unassigned last.
     ordered = sorted(
