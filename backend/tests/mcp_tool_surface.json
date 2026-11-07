@@ -18,7 +18,7 @@
     "name": "account_balances"
   },
   {
-    "description": "Average spending per day over a period. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive). If the result has fx_note, repeat it in your answer.",
+    "description": "Average spending per day over a period. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, last_3_months, last_6_months, last_12_months, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive). If the result has fx_note, repeat it in your answer.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -40,7 +40,7 @@
     "name": "average_daily_spending"
   },
   {
-    "description": "Two periods side by side: spending, income and net totals plus top-level category spending, each with delta and percentage computed in code. The earlier period is the base and the later one current, whatever the argument order; pct is null when the base is zero. other_delta covers the categories not shown plus uncategorised and system rows. comparable=false flags unequal or in-progress periods, with per-day spending. all_time, open-ended custom ranges and overlapping periods are refused. period_a and period_b each take a named period or \"custom\"; custom dates go in a_start_date/a_end_date and b_start_date/b_end_date (YYYY-MM-DD, end inclusive). Named periods: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days. If the result has fx_note, repeat it in your answer.",
+    "description": "Two periods side by side: spending, income and net totals plus top-level category spending, each with delta and percentage computed in code. The earlier period is the base and the later one current, whatever the argument order; pct is null when the base is zero. other_delta covers the categories not shown plus uncategorised and system rows. comparable=false flags unequal or in-progress periods, with per-day spending. all_time, open-ended custom ranges and overlapping periods are refused. period_a and period_b each take a named period or \"custom\"; custom dates go in a_start_date/a_end_date and b_start_date/b_end_date (YYYY-MM-DD, end inclusive). Named periods: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, last_3_months, last_6_months, last_12_months. If the result has fx_note, repeat it in your answer.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -185,7 +185,7 @@
     "name": "find_platforms"
   },
   {
-    "description": "Search/filter individual transactions by merchant, category, period, and kind (all | expense | income); returns ids, dates, amounts, categories, merchants, and account ids. Rows are ordered most-recent-first. A category or group name goes in category, not merchant (merchant is only a payee name). period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive). If the result has fx_note, repeat it in your answer.",
+    "description": "Search/filter individual transactions by merchant, category, period, and kind (all | expense | income); returns ids, dates, amounts, categories, merchants, and account ids. Rows are ordered most-recent-first. A category or group name goes in category, not merchant (merchant is only a payee name). period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, last_3_months, last_6_months, last_12_months, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive). If the result has fx_note, repeat it in your answer.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -237,7 +237,7 @@
     "name": "find_transactions"
   },
   {
-    "description": "Total money received (income only, transfers excluded) over a period. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive). If the result has fx_note, repeat it in your answer.",
+    "description": "Total money received (income only, transfers excluded) over a period. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, last_3_months, last_6_months, last_12_months, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive). If the result has fx_note, repeat it in your answer.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -259,7 +259,7 @@
     "name": "income_total"
   },
   {
-    "description": "Largest individual transactions by magnitude over a period. kind: expense | income. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive). If the result has fx_note, repeat it in your answer.",
+    "description": "Largest individual transactions by magnitude over a period. kind: expense | income. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, last_3_months, last_6_months, last_12_months, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive). If the result has fx_note, repeat it in your answer.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -298,7 +298,7 @@
     "name": "list_categories"
   },
   {
-    "description": "Month-over-month income/expense/net for the last N months (months clamped to a minimum of 6; a rolling window, not a calendar-year bound). Transfers excluded. If the result has fx_note, repeat it in your answer.",
+    "description": "Month-over-month income/expense/net for the last N months (months clamped to a minimum of 6; a rolling window, not a calendar-year bound). Transfers excluded. Rows hold every full month of the window plus the current month so far, with zeros for an empty month; each row has top_categories (top 5 groups) and `window` names the months. If the result has fx_note, repeat it in your answer.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -312,7 +312,7 @@
     "name": "monthly_trend"
   },
   {
-    "description": "Net cash flow (income minus expenses, transfers excluded) over a period. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive). If the result has fx_note, repeat it in your answer.",
+    "description": "Net cash flow (income minus expenses, transfers excluded) over a period. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, last_3_months, last_6_months, last_12_months, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive). If the result has fx_note, repeat it in your answer.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -568,7 +568,7 @@
     "name": "spending_before_after_purchase"
   },
   {
-    "description": "Top spending categories (expenses only) over a period, rolled up to top-level category groups — each group's total includes all its descendant subcategories; per-subcategory breakdown under 'children'. Transfers and system categories excluded. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive). If the result has fx_note, repeat it in your answer.",
+    "description": "Top spending categories (expenses only) over a period, rolled up to top-level category groups — each group's total includes all its descendant subcategories; per-subcategory breakdown under 'children'. Transfers and system categories excluded. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, last_3_months, last_6_months, last_12_months, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive). If the result has fx_note, repeat it in your answer.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -594,7 +594,7 @@
     "name": "spending_by_category"
   },
   {
-    "description": "Total spent in one category INCLUDING all of its descendant subcategories — a parent/group name sums its entire subtree (case-insensitive name match). period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive). If the result has fx_note, repeat it in your answer.",
+    "description": "Total spent in one category INCLUDING all of its descendant subcategories — a parent/group name sums its entire subtree (case-insensitive name match). period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, last_3_months, last_6_months, last_12_months, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive). If the result has fx_note, repeat it in your answer.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -622,7 +622,7 @@
     "name": "spending_in_category"
   },
   {
-    "description": "Total money spent (expenses only, transfers excluded) over a period. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive). If the result has fx_note, repeat it in your answer.",
+    "description": "Total money spent (expenses only, transfers excluded) over a period. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, last_3_months, last_6_months, last_12_months, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive). If the result has fx_note, repeat it in your answer.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -644,7 +644,7 @@
     "name": "spending_total"
   },
   {
-    "description": "Count transactions over a period. kind: all | expense | income. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive).",
+    "description": "Count transactions over a period. kind: all | expense | income. period must be one of: this_week, last_week, this_month, last_month, this_year, last_year, last_30_days, last_90_days, last_3_months, last_6_months, last_12_months, all_time. Or pass period=\"custom\" with ISO start_date and end_date (YYYY-MM-DD, end_date inclusive).",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
