@@ -87,7 +87,9 @@ MCP_DESCRIPTIONS: dict[str, str] = {
     "average_daily_spending": "Average spending per day over a period. " + _PERIOD_HELP + _FX_HELP,
     "monthly_trend": (
         "Month-over-month income/expense/net for the last N months (months clamped to a minimum of 6; "
-        "a rolling window, not a calendar-year bound). Transfers excluded."
+        "a rolling window, not a calendar-year bound). Transfers excluded. Rows hold every full month of "
+        "the window plus the current month so far, with zeros for an empty month; each row has "
+        "top_categories (top 5 groups) and `window` names the months."
         + _FX_HELP
     ),
     "account_balances": (
