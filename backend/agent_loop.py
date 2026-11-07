@@ -11,6 +11,7 @@ the small default model picks from a shorter list more reliably.
 """
 
 import functools
+import json
 import re
 
 # D-04 list, finalised from the eval questions. Biased towards false positives:
@@ -84,7 +85,7 @@ def _recurring_line(g: dict, base: str) -> str:
     if g.get("next_expected"):
         parts.append(f"overdue since {g['next_expected']}" if g.get("overdue")
                      else f"next expected {g['next_expected']}")
-    return f"{g['label']}: " + ", ".join(parts)
+    return f"{json.dumps(g['label'], ensure_ascii=False)}: " + ", ".join(parts)  # quoted: the label is untrusted text
 
 
 def recurring_for_llm(raw):
