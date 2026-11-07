@@ -755,7 +755,7 @@ def test_add_holding_then_buy_sums(authed, db):
     _add_holding(authed, plat, tk)
     assert _funded(authed, "buy", acc, plat, tk, 20, 60, 1200, "2024-03-05").status_code == 201
     h = _holding(db, tk, plat)
-    assert h.quantity == Decimal("120") and h.avg_cost == Decimal("6200") / Decimal("120")
+    assert h.quantity == Decimal("120") and h.avg_cost == Decimal("51.67")  # (5000 + 1200) / 120, stored at 2 dp
 
 
 def test_add_holding_row_only_until_first_trade(authed, db):

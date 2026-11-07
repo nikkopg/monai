@@ -358,6 +358,21 @@ def currency_of_holding(db: Session, ticker: str, platform_id: int) -> str | Non
     return holding.currency if holding is not None else None
 
 
+def _require_liquid_account(db: Session, name: str) -> None:
+    """Refuse unless exactly this account exists and is liquid (OD-2, ValueError -> 422).
+
+    Runs first in both funded primitives, so a refusal precedes every write and
+    apply_add_transaction's auto-create of an unknown name can't be reached from a trade.
+    """
+    acct = db.query(Account).filter(Account.name == name).first()
+    if acct is None or acct.type != "liquid":
+        raise ValueError(f"No liquid account is called '{name}'; trades are funded from a liquid account. Nothing was saved")
+
+
+def _event_date(after: dict) -> date:
+    return date.fromisoformat(after["date"]) if after.get("date") else datetime.now(timezone.utc).date()
+
+
 def _funded_event_currency(db: Session, after: dict) -> str:
     """Event currency of a funded trade: explicit, else the holding's, else the cash account's (D-02).
 
@@ -369,7 +384,7 @@ def _funded_event_currency(db: Session, after: dict) -> str:
         or currency_of_holding(db, after["ticker"], after["platform_id"])
         or currency_of_account(db, after["source_account_name"])
     )
-    _check_position_target(db, after["ticker"], after["platform_id"], ev_ccy)
+    _check_position_target(db, after["ticker"], after["platform_id"], ev_ccy, _event_date(after))
     return ev_ccy
 
 
@@ -393,6 +408,7 @@ def apply_add_funded_buy(db: Session, after: dict) -> dict:
     historical, date-keyed rates itself when it needs an IDR valuation. Does
     NOT commit.
     """
+    _require_liquid_account(db, after["source_account_name"])
     ev_ccy = _funded_event_currency(db, after)
     cash_amount = -abs(after["cash_amount"])  # buy DEBITS the source; Decimal() happens inside apply_add_transaction
     tx = apply_add_transaction(db, {
@@ -431,6 +447,7 @@ def apply_add_funded_sell(db: Session, after: dict) -> dict:
     buy side. A sell that takes the ledger quantity to exactly zero also closes
     the position (`close_position_if_flat`); the cash leg is kept. Does NOT commit.
     """
+    _require_liquid_account(db, after["source_account_name"])
     ev_ccy = _funded_event_currency(db, after)
     cash_amount = abs(after["cash_amount"])  # sell CREDITS the destination; Decimal() happens inside apply_add_transaction
     tx = apply_add_transaction(db, {
@@ -654,16 +671,19 @@ def apply_delete_platform(db: Session, platform_id: int, before: dict | None, re
     return reassigned_count
 
 
-def _check_position_target(db: Session, ticker: str, platform_id: int, currency: str | None) -> str:
+def _check_position_target(db: Session, ticker: str, platform_id: int, currency: str | None, on: date) -> str:
     """Guards for putting an event on position (ticker, platform_id); returns the resolved currency.
 
-    GUARD (recompute-clobbers-holdings): recompute_holding_from_events rebuilds
+    OPENING LOT (recompute-clobbers-holdings): recompute_holding_from_events rebuilds
     a position purely from its (ticker, platform_id) event slice. A non-zero
-    LEGACY holding with ZERO backing events would therefore be silently
-    overwritten by just this new event, destroying the opening balance (live
-    loss in Phase 18 UAT #3). Refuse loudly instead — run migration 012
-    (opening-balance backfill) so the position has a backing event first, after
-    which a funded buy correctly SUMS. Once any event exists this never fires.
+    holding with ZERO backing events (Add holding creates exactly these) would
+    be silently overwritten by just this new event, destroying its quantity
+    (live loss in Phase 18 UAT #3). The current row is authoritative, so it is
+    written down first as one opening 'buy' lot from the row (quantity, avg_cost,
+    currency), dated `on` (the new event's date) and audited with
+    after.source = opening_lot_from_holding; the new event then SUMS with it.
+    Never dated from purchase_date: that gaps snapshot months. A negative
+    event-less row still refuses.
 
     T-07-02-CUR: one currency per position. A mismatch with the existing
     holding's currency raises ValueError (422 at the API boundary); an omitted
@@ -681,12 +701,22 @@ def _check_position_target(db: Session, ticker: str, platform_id: int, currency:
             PortfolioEvent.platform_id == platform_id,
         ).count()
         if prior_events == 0:
-            raise ValueError(
-                f"holding {ticker} on platform {platform_id} has "
-                f"{existing_holding.quantity} units but no backing portfolio_events — "
-                "recording an event now would overwrite that opening balance. Run the "
-                "opening-balance backfill (migration 012) first."
+            if existing_holding.quantity < 0:
+                raise ValueError(
+                    f"holding {ticker} on platform {platform_id} has a negative quantity "
+                    f"({existing_holding.quantity}) and no ledger events; correct it with Edit holding first"
+                )
+            lot = PortfolioEvent(
+                date=on, ticker=ticker, event_type="buy", quantity=existing_holding.quantity,
+                price=existing_holding.avg_cost, platform_id=platform_id, currency=existing_holding.currency,
             )
+            db.add(lot)
+            db.flush()  # lower id than the new event, so (date, id) replays the lot first
+            db.add(AuditLog(entity="portfolio_event", entity_id=lot.id, operation="add", before=None, after={
+                "source": "opening_lot_from_holding", "ticker": ticker, "event_type": "buy",
+                "quantity": str(lot.quantity), "price": str(lot.price), "platform_id": platform_id,
+                "currency": lot.currency, "date": on.isoformat(),
+            }))
 
     if currency is None:
         return existing_holding.currency if existing_holding is not None else "IDR"
@@ -880,11 +910,11 @@ def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
         raise ValueError(f"platform {after['platform_id']} not found")
 
     event_currency = _check_position_target(
-        db, after["ticker"], after["platform_id"], after.get("currency")
+        db, after["ticker"], after["platform_id"], after.get("currency"), _event_date(after)
     )
 
     ev = PortfolioEvent(
-        date=date.fromisoformat(after["date"]) if after.get("date") else datetime.now(timezone.utc).date(),
+        date=_event_date(after),
         ticker=after["ticker"],
         event_type=after["event_type"],
         quantity=Decimal(str(after["quantity"])),  # LOAD-BEARING: str() before Decimal() avoids float artifacts
@@ -969,8 +999,13 @@ def apply_edit_portfolio_event(
         raise ValueError("a funded event must stay a buy or sell (its cash leg is linked)")
     if after.get("cash_amount") is not None and not funded:
         raise ValueError("cash_amount can only be set on a funded event (no linked cash transaction)")
+    if not funded and new_type != ev.event_type:
+        raise ValueError("an unfunded event can't change type (a trade needs a liquid account); delete it and log a funded one")
     if new_ticker != old_ticker:
-        _check_position_target(db, new_ticker, ev.platform_id, ev.currency)
+        _check_position_target(
+            db, new_ticker, ev.platform_id, ev.currency,
+            date.fromisoformat(after["date"]) if after.get("date") else ev.date,
+        )
 
     ev.ticker = new_ticker
     ev.event_type = new_type

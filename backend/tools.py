@@ -1308,6 +1308,10 @@ def _unknown_account(tool: str, name: str) -> dict:
     return {"tool": tool, "error": f"No single account is called '{name}'; call find_accounts for its exact name"}
 
 
+def _no_liquid_account(tool: str, name: str) -> dict:
+    return {"tool": tool, "error": f"No single liquid account is called '{name}'; call find_accounts for its exact name"}
+
+
 def _holding_currency_for(ticker: str, platform_id: int) -> str | None:
     """The existing (ticker, platform) position's currency, or None when there is none."""
     from backend.writes import currency_of_holding
@@ -1915,6 +1919,11 @@ def _funded_after(
     if ref is None:
         return None
     source_account_name, cash_ccy = ref
+    from backend.models import Account
+
+    with get_session_sync() as db:  # a trade is funded from a liquid account only (OD-2)
+        if db.query(Account.type).filter(Account.name == source_account_name).scalar() != "liquid":
+            return None
     return {
         "source_account_name": source_account_name,
         "cash_currency": cash_ccy,
@@ -1955,7 +1964,7 @@ def propose_add_funded_buy(
     after = _funded_after(source_account_name, platform_id, ticker, quantity, price,
                           cash_amount, event_currency, date, notes, asset_type)
     if after is None:
-        return _unknown_account("propose_add_funded_buy", source_account_name)
+        return _no_liquid_account("propose_add_funded_buy", source_account_name)
     payload = {"operation": "add_funded_buy", "rows": [{"before": None, "after": after}]}
     proposal_id, proposal_token = _make_proposal("add_funded_buy", payload)
     return {
@@ -1992,7 +2001,7 @@ def propose_add_funded_sell(
     after = _funded_after(source_account_name, platform_id, ticker, quantity, price,
                           cash_amount, event_currency, date, notes, asset_type)
     if after is None:
-        return _unknown_account("propose_add_funded_sell", source_account_name)
+        return _no_liquid_account("propose_add_funded_sell", source_account_name)
     payload = {"operation": "add_funded_sell", "rows": [{"before": None, "after": after}]}
     proposal_id, proposal_token = _make_proposal("add_funded_sell", payload)
     return {

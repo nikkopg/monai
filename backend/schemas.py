@@ -194,7 +194,8 @@ class PlatformOut(BaseModel):
 
 
 class PortfolioEventCreate(BaseModel):
-    """Buy/sell/dividend event body (INV-07, D-01).
+    """Buy/sell/dividend event body (INV-07, D-01). POST /portfolio-events accepts
+    dividends only; buys and sells use the funded routes, which require a liquid account.
 
     event_type is a locked literal set — a value outside {buy,sell,dividend}
     (e.g. "gift") is rejected with a 422 at the schema boundary BEFORE the

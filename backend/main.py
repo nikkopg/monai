@@ -580,13 +580,19 @@ def platform_detail(platform_id: int, db: Session = Depends(get_session)):
 
 @app.post("/portfolio-events", response_model=PortfolioEventOut, status_code=201, dependencies=[Depends(require_api_key)])
 def create_portfolio_event(payload: PortfolioEventCreate, db: Session = Depends(get_session)):
-    """Log a buy/sell/dividend event (INV-07, D-01).
+    """Log a dividend (INV-07, D-01). Buys and sells need a liquid account: they go through
+    POST /portfolio-events/funded-buy and /funded-sell, so this route returns 422 for them.
 
     event_type is validated to the {buy,sell,dividend} literal set at the schema
-    boundary (422 on anything else) BEFORE apply_add_portfolio_event runs the
-    recompute. The helper inserts the event, audits it, then recomputes the
-    holding's qty/avg_cost from the full ledger.
+    boundary (422 on anything else). The helper inserts the event, audits it, then
+    recomputes the holding's qty/avg_cost from the full ledger.
     """
+    if payload.event_type != "dividend":
+        raise HTTPException(
+            status_code=422,
+            detail="Buys and sells name an Investment liquid account: use POST /portfolio-events/funded-buy "
+                   "or /portfolio-events/funded-sell. This route logs dividends only.",
+        )
     try:
         ev = apply_add_portfolio_event(db, payload.model_dump(mode="json"))
     except ValueError as e:
