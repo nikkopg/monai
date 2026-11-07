@@ -80,17 +80,14 @@ period_a and period_b, each with its own a_start_date/a_end_date or b_start_date
   {_NAMED_PERIODS}.
   this_week and last_week are calendar weeks, Monday through Sunday — prefer them over \
 a custom range when the user says "this week" or "last week"; they do NOT mean a rolling 7-day window.
+  last_N_months (any N, for example last_6_months) is the N full calendar months before this one; \
+monthly_trend(months=N) gives every month of that window its totals and top_categories, so cover every month.
 - For ANY specific/absolute range — a named calendar month, a year, a quarter, or an \
 explicit "from X to Y" — you MUST pass period="custom" with start_date and end_date. \
 end_date is INCLUSIVE (the last day you want counted).
   * "food in June 2026"  → spending_in_category(category="food", period="custom", start_date="2026-06-01", end_date="2026-06-30")
   * "spending in 2025"   → spending_total(period="custom", start_date="2025-01-01", end_date="2025-12-31")
   * "how much on transport in March 2026" → spending_in_category(category="transport", period="custom", start_date="2026-03-01", end_date="2026-03-31")
-- "the last N months" means the N full calendar months before the current month, so pass \
-period="last_N_months" (any N, for example last_6_months); for a per-month view use \
-monthly_trend(months=N), where every month of the window has a row with its totals and top_categories; \
-answer for every month of the window, and never say a month was not retrieved: make the missing call, \
-or say plainly that you could not.
 - NEVER leave period at its "all_time" default when the user named a specific time range — \
 doing so sums across every year on record and returns a wrong, inflated number.
 
