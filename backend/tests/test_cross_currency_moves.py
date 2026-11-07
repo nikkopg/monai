@@ -1,7 +1,7 @@
 """
 Phase 45 (MOVE-01..04): money moves between USD and IDR with BOTH amounts entered.
 
-Transfers, liquid->platform deposits and funded buys/sells reach the same
+Transfers and funded buys/sells reach the same
 primitives from REST, chat confirm and MCP confirm, so the two-amount rules are
 pinned here once. No FX rate is computed or stored: each leg keeps exactly the
 amount the owner typed.
@@ -251,7 +251,7 @@ def test_cross_currency_pair_leaves_cashflow_unchanged(client, api_key, zz45):
 
 
 # ---------------------------------------------------------------------------
-# Task 2: deposits and funded trades through a USD account (MOVE-02/03, D-02/05/07/08)
+# Task 2: funded trades through a USD account (MOVE-02/03, D-02/05/07/08)
 # ---------------------------------------------------------------------------
 
 def _seed_event(zz45, plat: int, ticker: str, event_type: str, qty, price, ccy: str) -> None:
@@ -277,82 +277,6 @@ def _events(zz45, plat: int) -> list:
     from backend.models import PortfolioEvent
     zz45.db.expire_all()
     return zz45.db.query(PortfolioEvent).filter(PortfolioEvent.platform_id == plat).order_by(PortfolioEvent.id).all()
-
-
-def _deposit(client, api_key, **body):
-    return _post(client, api_key, "/transactions/investment-transfer", {"date": _ISO_DAY, **body})
-
-
-def test_deposit_idr_into_usd_cash_needs_event_amount(client, api_key, zz45):
-    idr, plat = zz45.account("idr"), zz45.platform()
-    zz45.rate(_ISO_DAY)
-    _seed_event(zz45, plat, "CASH", "deposit", "50.00", 1, "USD")
-    base = {"from_account": idr, "platform_id": plat, "amount": 1631000}
-
-    resp = _deposit(client, api_key, **base)
-    assert resp.status_code == 422, resp.text
-    assert "IDR" in resp.json()["detail"] and "USD" in resp.json()["detail"]
-    assert zz45.tx_rows(idr) == [] and len(_events(zz45, plat)) == 1
-
-    resp = _deposit(client, api_key, **base, event_amount=100.00)
-    assert resp.status_code == 201, resp.text
-    (cash_leg,) = zz45.tx_rows(idr)
-    assert cash_leg.amount == Decimal("-1631000") and cash_leg.currency == "IDR"
-    new_event = _events(zz45, plat)[-1]
-    assert (new_event.ticker, new_event.currency) == ("CASH", "USD")
-    assert new_event.quantity == Decimal("100.00") and new_event.price == Decimal("1")
-    zz45.db.expire_all()
-    assert _holding(zz45, plat, "CASH").quantity == Decimal("150.00")
-
-
-def test_deposit_event_currency_order(client, api_key, zz45):
-    idr, usd = zz45.account("idr"), zz45.account("usd", "USD")
-    zz45.rate(_ISO_DAY)
-
-    # explicit event_currency on a brand-new platform
-    p1 = zz45.platform("p1")
-    resp = _deposit(client, api_key, from_account=idr, platform_id=p1, amount=1631000,
-                    event_amount=100, event_currency="USD")
-    assert resp.status_code == 201, resp.text
-    assert _holding(zz45, p1, "CASH").currency == "USD"
-
-    # nothing explicit, no holding: the source account's currency
-    p2 = zz45.platform("p2")
-    resp = _deposit(client, api_key, from_account=usd, platform_id=p2, amount=100)
-    assert resp.status_code == 201, resp.text
-    assert _holding(zz45, p2, "CASH").currency == "USD"
-
-    # an explicit currency that differs from an existing CASH holding is refused
-    p3 = zz45.platform("p3")
-    _seed_event(zz45, p3, "CASH", "deposit", 5000, 1, "IDR")
-    before = len(zz45.tx_rows(idr))
-    resp = _deposit(client, api_key, from_account=idr, platform_id=p3, amount=1000,
-                    event_amount=10, event_currency="USD")
-    assert resp.status_code == 422, resp.text
-    assert "one currency per position" in resp.json()["detail"]
-    assert len(zz45.tx_rows(idr)) == before and len(_events(zz45, p3)) == 1
-
-    # an explicit currency outside IDR/USD is refused
-    resp = _deposit(client, api_key, from_account=idr, platform_id=p3, amount=1000,
-                    event_amount=10, event_currency="EUR")
-    assert resp.status_code == 422, resp.text
-    assert len(zz45.tx_rows(idr)) == before
-
-
-def test_deposit_same_currency_event_amount(client, api_key, zz45):
-    """RESEARCH A2: a same-currency deposit moves one amount."""
-    idr, plat = zz45.account("idr"), zz45.platform()
-    _seed_event(zz45, plat, "CASH", "deposit", 5000, 1, "IDR")
-    base = {"from_account": idr, "platform_id": plat, "amount": 1000}
-
-    resp = _deposit(client, api_key, **base, event_amount=1000)
-    assert resp.status_code == 201, resp.text
-    assert sum(e.quantity for e in _events(zz45, plat)) == Decimal("6000")
-
-    before = len(zz45.tx_rows(idr))
-    resp = _deposit(client, api_key, **base, event_amount=900)
-    assert resp.status_code == 422, resp.text
-    assert len(zz45.tx_rows(idr)) == before and len(_events(zz45, plat)) == 2
 
 
 def _funded(client, api_key, kind, **body):
@@ -483,12 +407,11 @@ def test_funded_buy_blank_event_currency_falls_through_to_the_account(client, ap
 
 
 def test_deposit_raises_cash_quantity_and_delete_reverses_it(client, api_key, zz45):
-    """A deposit's money reaches the live investment total, and its cost basis is that date's rate."""
-    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    """A historical deposit event's money reaches the live investment total, at that date's rate."""
+    plat = zz45.platform()
     zz45.rate(_ISO_DAY)
     for amount in (100, 50):
-        assert _deposit(client, api_key, from_account=usd, platform_id=plat, amount=amount,
-                        date=_ISO_DAY).status_code == 201
+        _seed_event(zz45, plat, "CASH", "deposit", amount, 1, "USD")
     zz45.db.expire_all()
     cash = _holding(zz45, plat, "CASH")
     assert cash.quantity == Decimal("150.00")
@@ -505,16 +428,13 @@ def test_no_rate_refuses_the_position_write_and_saves_nothing(client, api_key, z
     usd, plat = zz45.account("usd", "USD"), zz45.platform()
     zz45.rate(_ISO_DAY)
     for amount in (100, 50):
-        assert _deposit(client, api_key, from_account=usd, platform_id=plat, amount=amount,
-                        date=_ISO_DAY).status_code == 201
+        _seed_event(zz45, plat, "CASH", "deposit", amount, 1, "USD")
     zz45.db.expire_all()
     events = [e.id for e in _events(zz45, plat)]
-    legs = "SELECT count(*) FROM transactions t JOIN accounts a ON a.id = t.account_id WHERE a.name = :n"
-    assert zz45.db.execute(text(legs), {"n": usd}).scalar() == 2
     zz45.db.rollback()
 
     monkeypatch.setattr("backend.fx.get_rate", lambda *a, **k: None)
-    refused = _deposit(client, api_key, from_account=usd, platform_id=plat, amount=25, date=_ISO_DAY)
+    refused = _funded(client, api_key, "buy", source_account_name=usd, platform_id=plat)
     assert refused.status_code == 422 and "rate" in refused.json()["detail"]
     # The other deposit still needs a rate once this one is gone.
     deleted = client.delete(f"/portfolio-events/{events[0]}", headers={"MONAI_API_KEY": api_key})
@@ -522,5 +442,5 @@ def test_no_rate_refuses_the_position_write_and_saves_nothing(client, api_key, z
 
     zz45.db.expire_all()
     assert [e.id for e in _events(zz45, plat)] == events
-    assert zz45.db.execute(text(legs), {"n": usd}).scalar() == 2
+    assert zz45.tx_rows(usd) == []
     assert _holding(zz45, plat, "CASH").quantity == Decimal("150.00")

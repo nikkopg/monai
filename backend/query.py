@@ -338,7 +338,7 @@ def _build_agent_workflow(names: frozenset[str], eff, *, extra_tools=(), extra_p
 
     llm = _get_llm()
 
-    # Tools come from the single TOOLS registry (18 read + 16 propose_*
+    # Tools come from the single TOOLS registry (18 read + 15 propose_*
     # writes); descriptions live in the functions' docstrings. A new
     # tool needs only a TOOLS entry — nothing here changes. Registry
     # order is kept so the tool-surface snapshot is stable.

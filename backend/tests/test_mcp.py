@@ -244,7 +244,7 @@ def test_mcp_surface_is_exact(client, api_key):
 
 
 def test_new_write_tools_registered_and_excluded(client, api_key):
-    """Phase 14 CHAT-09 SC 2 & 3: the 5 new propose_* names must be present
+    """Phase 14 CHAT-09 SC 2 & 3: the 4 new propose_* names must be present
     in TOOLS, ABSENT from READ_TOOL_NAMES, and ABSENT from the live MCP
     tools/list surface. Catches an accidental rename/removal the generic
     count/prefix checks (test_mcp_read_parity, test_mcp_surface_is_exact)
@@ -252,7 +252,6 @@ def test_new_write_tools_registered_and_excluded(client, api_key):
     TOOLS membership assertion fails today)."""
     new_tool_names = {
         "propose_add_transfer",
-        "propose_add_investment_transfer",
         "propose_add_funded_buy",
         "propose_add_funded_sell",
         "propose_add_balance_adjustment",

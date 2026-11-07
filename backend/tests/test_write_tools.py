@@ -1574,54 +1574,6 @@ def test_apply_add_transfer_pairs_both_legs(db_session):
         _cleanup_account(db_session, name_b)
 
 
-def test_apply_add_investment_transfer(db_session):
-    """apply_add_investment_transfer(db, cash_leg_after, event_after) debits a
-    liquid source account (is_transfer=true) and links a portfolio deposit
-    event to it via source_account_id (XFER-02/D-05) — never creates a
-    synthetic `accounts` row for the investment side. RED until Plan 13-04."""
-    from backend.models import Transaction, PortfolioEvent, Platform
-
-    name = "zz13test-InvestSource"
-    ticker = "ZZ13DEPOSIT"
-    acc_id = _make_account(db_session, name)
-    plat_id = _make_platform(db_session, "zz13test-InvestPlatform")
-    _cleanup_ticker(db_session, ticker)
-    try:
-        from backend.writes import apply_add_investment_transfer  # RED: not implemented until Plan 13-04
-
-        accounts_before = int(db_session.execute(text("SELECT COUNT(*) FROM accounts")).scalar() or 0)
-
-        cash_leg_after = {
-            "account": name, "amount": -500000, "currency": "IDR",
-            "is_transfer": True, "date": "2024-01-20",
-        }
-        event_after = {
-            "ticker": ticker, "event_type": "deposit", "quantity": 500000,
-            "price": 1, "date": "2024-01-20", "platform_id": plat_id, "currency": "IDR",
-        }
-
-        tx, ev = apply_add_investment_transfer(db_session, cash_leg_after, event_after)
-        db_session.commit()
-
-        db_session.expire_all()
-        tx_row = db_session.query(Transaction).filter(Transaction.account_id == acc_id).one()
-        assert tx_row.is_transfer is True
-
-        ev_row = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
-        assert ev_row.source_account_id == acc_id, "event must link back to the funding account (D-05)"
-
-        accounts_after = int(db_session.execute(text("SELECT COUNT(*) FROM accounts")).scalar() or 0)
-        assert accounts_after == accounts_before, "no synthetic accounts row for the investment side (D-05)"
-    finally:
-        db_session.rollback()
-        _cleanup_ticker(db_session, ticker)
-        _cleanup_account(db_session, name)
-        plat = db_session.get(Platform, plat_id)
-        if plat is not None:
-            db_session.delete(plat)
-            db_session.commit()
-
-
 def test_apply_add_funded_buy_one_commit_boundary(db_session):
     """apply_add_funded_buy(db, after) debits a liquid source account
     (is_transfer=true), records a 'buy' PortfolioEvent linked back via

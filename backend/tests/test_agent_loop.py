@@ -1,7 +1,7 @@
 """
 Phase 38 agent-loop tests; synthetic values; monai_test only.
 
-LOOP-01: tools_for_turn picks the 18 read tools, plus the 16 propose_* writes
+LOOP-01: tools_for_turn picks the 18 read tools, plus the 15 propose_* writes
 when the turn shows write intent (question verb, or sticky from the last
 complete pair). Wiring tests cover agent_stream's subset, the start_turn ->
 agent_stream seam and the out-of-subset warning.
@@ -114,7 +114,7 @@ def test_tools_for_turn_write_question_exposes_all(question):
 @pytest.mark.parametrize("question", READ_QUESTIONS)
 def test_tools_for_turn_read_question_exposes_reads_only(question):
     assert tools_for_turn(question) == READ_TOOL_NAMES
-    assert len(READ_TOOL_NAMES) == 18 and len(ALL) == 34
+    assert len(READ_TOOL_NAMES) == 18 and len(ALL) == 33
 
 
 def test_prior_none_judges_question_alone():
@@ -773,7 +773,7 @@ def test_no_attachment_thread_keeps_existing_results():
 def test_chat_only_tools_are_in_neither_registry():
     from backend.chat_tools import CHAT_ONLY_TOOLS
 
-    assert len(TOOLS) == 34 and len(READ_TOOL_NAMES) == 18
+    assert len(TOOLS) == 33 and len(READ_TOOL_NAMES) == 18
     assert not set(CHAT_ONLY_TOOLS) & set(TOOLS) and not set(CHAT_ONLY_TOOLS) & READ_TOOL_NAMES
 
 
@@ -933,7 +933,7 @@ def test_plain_tool_normalises_args_and_result_and_keeps_signature():
 def test_every_registry_tool_is_wrapped_and_counts_hold():
     from backend.tools import READ_TOOL_NAMES
 
-    assert len(TOOLS) == 34 and len(READ_TOOL_NAMES) == 18
+    assert len(TOOLS) == 33 and len(READ_TOOL_NAMES) == 18
     assert all(hasattr(fn, "__wrapped__") for fn in TOOLS.values())
 
 

@@ -268,61 +268,6 @@ def test_apply_add_transfer_cross_currency_refused(db_session):
         _cleanup_account(db_session, name_b)
 
 
-def test_post_investment_transfer(client, api_key, db_session):
-    """POST /transactions/investment-transfer -> 201, cash leg + linked
-    PortfolioEvent (ticker=='CASH', deposit sentinel, RESEARCH Q1) (XFER-02)."""
-    from backend.models import Transaction, PortfolioEvent, AuditLog, Holding
-
-    name = "zz14test-RestInvestSource"
-    ticker = "CASH"
-    acc_id = _make_account(db_session, name)
-    plat_id = _make_platform(db_session, "zz14test-RestInvestPlatform")
-    try:
-        resp = client.post(
-            "/transactions/investment-transfer",
-            json={
-                "from_account": name, "platform_id": plat_id, "amount": 500000,
-                "currency": "IDR", "date": "2024-03-11",
-            },
-            headers={"MONAI_API_KEY": api_key},
-        )
-        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
-
-        db_session.expire_all()
-        tx = db_session.query(Transaction).filter(Transaction.account_id == acc_id).one()
-        assert tx.is_transfer is True
-        assert tx.amount == Decimal("-500000")
-
-        ev = db_session.query(PortfolioEvent).filter(
-            PortfolioEvent.platform_id == plat_id, PortfolioEvent.ticker == ticker
-        ).one()
-        assert ev.source_account_id == acc_id
-        assert ev.event_type == "deposit"
-    finally:
-        db_session.rollback()
-        # CASH is a shared production sentinel ticker — scope cleanup to this
-        # test's own platform_id, never a global ticker purge.
-        eids = [e.id for e in db_session.query(PortfolioEvent).filter(
-            PortfolioEvent.platform_id == plat_id, PortfolioEvent.ticker == ticker
-        ).all()]
-        if eids:
-            db_session.query(AuditLog).filter(
-                AuditLog.entity == "portfolio_event", AuditLog.entity_id.in_(eids)
-            ).delete(synchronize_session=False)
-            db_session.query(PortfolioEvent).filter(PortfolioEvent.id.in_(eids)).delete(synchronize_session=False)
-        hids = [h.id for h in db_session.query(Holding).filter(
-            Holding.platform_id == plat_id, Holding.ticker == ticker
-        ).all()]
-        if hids:
-            db_session.query(AuditLog).filter(
-                AuditLog.entity == "holding", AuditLog.entity_id.in_(hids)
-            ).delete(synchronize_session=False)
-            db_session.query(Holding).filter(Holding.id.in_(hids)).delete(synchronize_session=False)
-        db_session.commit()
-        _cleanup_platform(db_session, plat_id)
-        _cleanup_account(db_session, name)
-
-
 def test_post_funded_buy(client, api_key, db_session):
     """POST /portfolio-events/funded-buy -> 201, cash leg debited + 'buy'
     event + holding recomputed (XFER-03)."""
@@ -1088,14 +1033,19 @@ def test_gff_delete_deposit_event(client, api_key, db_session):
     hdr = {"MONAI_API_KEY": api_key}
     ev_id = tx_id = None
     try:
-        r = client.post(
-            "/transactions/investment-transfer",
-            json={"from_account": name, "platform_id": plat_id, "amount": 250000,
-                  "currency": "IDR", "date": "2024-03-11"},
-            headers=hdr,
-        )
-        assert r.status_code == 201, r.text
-        ev_id, tx_id = r.json()["portfolio_event_id"], r.json()["transaction_id"]
+        # Seed the historical shape directly: an unlinked cash debit plus a CASH deposit event.
+        from backend.writes import apply_add_portfolio_event, apply_add_transaction
+        tx = apply_add_transaction(db_session, {
+            "account": name, "amount": "-250000", "currency": "IDR",
+            "date": "2024-03-11", "is_transfer": True,
+        })
+        ev = apply_add_portfolio_event(db_session, {
+            "ticker": "CASH", "event_type": "deposit", "quantity": "250000", "price": "1",
+            "platform_id": plat_id, "currency": "IDR", "date": "2024-03-11", "asset_type": "cash",
+        })
+        ev.source_account_id = tx.account_id
+        db_session.commit()
+        ev_id, tx_id = ev.id, tx.id
 
         assert _o3y_holding(db_session, "CASH", plat_id).quantity == Decimal("250000")
 

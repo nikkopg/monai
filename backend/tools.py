@@ -1252,7 +1252,7 @@ TOOLS = {
 }
 
 # Snapshot of the read-only tool names, captured BEFORE the write tools are
-# merged into TOOLS below. TOOLS itself becomes 34 entries (18 read + 16 propose_* write)
+# merged into TOOLS below. TOOLS itself becomes 33 entries (18 read + 15 propose_* write)
 # once this module finishes loading, so any read-only surface (e.g. the MCP
 # server, D-03/MCP-03) must key off this frozenset, never off TOOLS directly.
 READ_TOOL_NAMES: frozenset[str] = frozenset(TOOLS)
@@ -1902,71 +1902,6 @@ def propose_add_transfer(
     }
 
 
-def propose_add_investment_transfer(
-    from_account: str,
-    platform_id: int,
-    amount: float,
-    date: str | None = None,
-    notes: str | None = None,
-    event_amount: float | None = None,
-    event_currency: str | None = None,
-) -> dict:
-    """Propose moving cash from a liquid account into an investment
-    platform with no immediate buy (a plain funding deposit, recorded as a
-    CASH sentinel position). platform_id is an int — use find_platforms
-    first to resolve a platform name to its id. amount is an unsigned
-    magnitude in the from-account's currency; there is no currency argument.
-    event_amount is the amount the platform credits, required when its cash
-    currency differs from the account's (event_currency picks that currency;
-    leave it out to use the platform's existing cash). Returns a proposal for
-    user confirmation — never moves money directly.
-    """
-    ref = _account_ref(from_account)
-    if ref is None:
-        return _unknown_account("propose_add_investment_transfer", from_account)
-    from_account, cash_ccy = ref
-    ev_ccy = (event_currency or "").strip().upper() or _holding_currency_for("CASH", platform_id) or cash_ccy
-    if ev_ccy != cash_ccy and event_amount is None:
-        return {"tool": "propose_add_investment_transfer", "error": (
-            f"A deposit from a {cash_ccy} account into {ev_ccy} cash needs both amounts; "
-            "ask the owner for the amount the platform receives")}
-    if ev_ccy == cash_ccy and event_amount is not None and abs(event_amount) != abs(amount):
-        return {"tool": "propose_add_investment_transfer", "error": (
-            f"A deposit between {cash_ccy} amounts moves one amount; "
-            "record a fee as a separate expense")}
-    credited = abs(event_amount) if event_amount is not None else abs(amount)
-    cash_leg = {
-        "account": from_account,
-        "amount": str(Decimal(str(-abs(amount)))),
-        "currency": cash_ccy,
-        "date": date,
-        "notes": notes,
-    }
-    event = {
-        "ticker": "CASH",
-        "event_type": "deposit",
-        "quantity": str(Decimal(str(credited))),
-        "price": "1",
-        "platform_id": platform_id,
-        "currency": ev_ccy,
-        "date": date,
-        "asset_type": "cash",
-    }
-    after = {"cash_leg": cash_leg, "event": event}
-    if event_amount is not None:
-        after["event_amount"] = str(Decimal(str(abs(event_amount))))
-    payload = {"operation": "add_investment_transfer", "rows": [{"before": None, "after": after}]}
-    proposal_id, proposal_token = _make_proposal("add_investment_transfer", payload)
-    return {
-        "tool": "propose_add_investment_transfer",
-        "proposal_id": proposal_id,
-        "proposal_token": proposal_token,
-        "summary": f"Fund platform #{platform_id} with {credited} {ev_ccy} from {amount} {cash_ccy} in {from_account}",
-        "before": None,
-        "after": after,
-    }
-
-
 def _funded_after(
     source_account_name: str, platform_id: int, ticker: str, quantity: float, price: float,
     cash_amount: float, event_currency: str | None, date: str | None, notes: str | None,
@@ -2137,7 +2072,6 @@ TOOLS.update({
     "propose_edit_holding": propose_edit_holding,
     "propose_delete_holding": propose_delete_holding,
     "propose_add_transfer": propose_add_transfer,
-    "propose_add_investment_transfer": propose_add_investment_transfer,
     "propose_add_funded_buy": propose_add_funded_buy,
     "propose_add_funded_sell": propose_add_funded_sell,
     "propose_add_balance_adjustment": propose_add_balance_adjustment,

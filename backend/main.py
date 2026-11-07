@@ -96,7 +96,6 @@ from backend.writes import (
     apply_add_funded_buy,
     apply_add_funded_sell,
     apply_add_holding,
-    apply_add_investment_transfer,
     apply_add_platform,
     apply_add_portfolio_event,
     apply_add_transaction,
@@ -142,7 +141,6 @@ from backend.schemas import (
     HoldingCreate,
     HoldingOut,
     HoldingUpdate,
-    InvestmentTransferCreate,
     NetWorth,
     NetWorthHistoryResponse,
     PlatformCreate,
@@ -1313,41 +1311,6 @@ def create_transfer(payload: TransferCreate, db: Session = Depends(get_session))
     return {"leg_a_id": leg_a.id, "leg_b_id": leg_b.id, "transfer_pair_id": leg_a.transfer_pair_id}
 
 
-@app.post("/transactions/investment-transfer", status_code=201, dependencies=[Depends(require_api_key)])
-def create_investment_transfer(payload: InvestmentTransferCreate, db: Session = Depends(get_session)):
-    """Direct (non-agent) liquid->investment funding transfer (CHAT-09/XFER-02).
-
-    Cash leg debits the liquid source account; the investment side is a
-    'deposit' PortfolioEvent using the documented CASH sentinel (ticker=CASH,
-    asset_type=cash, price=1, quantity=event_amount when given, else amount —
-    matches the existing asset_type=='cash' 1:1 valuation convention). The event
-    currency is the explicit event_currency, else the existing CASH holding's,
-    else the source account's; a differing currency needs event_amount.
-    """
-    cash_leg = {
-        "account": payload.from_account, "amount": str(-abs(payload.amount)),
-        "currency": payload.currency, "date": payload.date, "notes": payload.notes,
-    }
-    event = {
-        "ticker": "CASH", "event_type": "deposit", "quantity": str(abs(payload.amount)),
-        "price": "1", "platform_id": payload.platform_id, "currency": payload.event_currency,
-        "date": payload.date, "asset_type": "cash",
-    }
-    try:
-        tx, ev = apply_add_investment_transfer(
-            db, cash_leg, event,
-            event_amount=None if payload.event_amount is None else str(payload.event_amount),
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-    db.commit()
-    db.refresh(tx)
-    db.refresh(ev)
-    from backend.query import reset_engine
-    reset_engine()
-    return {"transaction_id": tx.id, "portfolio_event_id": ev.id}
-
-
 @app.get("/categories", response_model=list[CategoryNode], dependencies=[Depends(require_api_key)])
 def list_categories(kind: str | None = None, db: Session = Depends(get_session)):
     """Category tree (keyed read, CAT-01): per-node tx_count is the node's
@@ -1869,7 +1832,7 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
             apply_delete_holding(db, row.get("id"), before)
 
         elif operation in (
-            "add_transfer", "add_investment_transfer", "add_funded_buy",
+            "add_transfer", "add_funded_buy",
             "add_funded_sell", "add_balance_adjustment",
         ):
             # Malformed/mismatched payload keys must surface as a clean 422,
@@ -1878,9 +1841,6 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
             try:
                 if operation == "add_transfer":
                     apply_add_transfer(db, after["leg_a"], after["leg_b"], to_amount=after.get("to_amount"))
-
-                elif operation == "add_investment_transfer":
-                    apply_add_investment_transfer(db, after["cash_leg"], after["event"], event_amount=after.get("event_amount"))
 
                 elif operation == "add_funded_buy":
                     apply_add_funded_buy(db, after)

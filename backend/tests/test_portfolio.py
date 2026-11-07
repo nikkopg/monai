@@ -603,7 +603,7 @@ def test_summary_realized_pnl_fx_converted_for_non_idr_position(db_session, monk
 
 def test_holding_dict_carries_currency(db_session):
     """45-05: every holding dict exposes the holding's own currency so the
-    deposit and funded-trade modals can tell a USD position from an IDR one."""
+    funded-trade modal can tell a USD position from an IDR one."""
     from decimal import Decimal
     from backend.models import Holding
     from backend import portfolio as portfolio_mod

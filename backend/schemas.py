@@ -279,25 +279,6 @@ class TransferCreate(BaseModel):
     notes: str | None = None
 
 
-class InvestmentTransferCreate(BaseModel):
-    """Body for POST /transactions/investment-transfer (XFER-02)."""
-
-    from_account: str
-    platform_id: int = Field(..., description="Required — no by-name resolution, mirrors account-id precedent")
-    amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude, in the source account's currency")
-    # Absent means the source account's currency; a given value must match it.
-    currency: str | None = None
-    event_amount: MoneyDecimal | None = Field(
-        None, gt=0,
-        description="Amount credited to the platform's cash, in the event currency; "
-        "required when that differs from the source account's currency",
-    )
-    # Absent: the existing CASH holding's currency, else the source account's (D-07).
-    event_currency: str | None = None
-    date: str | None = None
-    notes: str | None = None
-
-
 class FundedBuyCreate(BaseModel):
     """Body for POST /portfolio-events/funded-buy (XFER-03)."""
 

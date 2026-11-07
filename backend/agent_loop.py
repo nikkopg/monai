@@ -5,7 +5,7 @@ No LlamaIndex import at module level (query.py and main.py load at startup,
 llama stays lazy); later plans add the result cap and the tail reminder here.
 
 tools_for_turn decides, in code and with no extra LLM call, which tools a turn
-carries: the 18 reads always, the 16 propose_* writes only when the turn shows
+carries: the 18 reads always, the 15 propose_* writes only when the turn shows
 write intent (LOOP-01). A smaller tool block is cheaper on every iteration and
 the small default model picks from a shorter list more reliably.
 """

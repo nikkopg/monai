@@ -356,54 +356,6 @@ def currency_of_holding(db: Session, ticker: str, platform_id: int) -> str | Non
     return holding.currency if holding is not None else None
 
 
-def apply_add_investment_transfer(
-    db: Session, cash_leg_after: dict, event_after: dict, event_amount=None
-) -> tuple[Transaction, PortfolioEvent]:
-    """Insert a liquid->investment funding transfer (XFER-02/D-05, MOVE-02/D-07).
-
-    Composes `apply_add_transaction` for the cash leg on the liquid SOURCE
-    account (resolved by name; the layer forces is_transfer=True, mirroring
-    apply_add_transfer — T-13-07, not left to the caller's after-dict)
-    with `apply_add_portfolio_event` for a 'deposit' event on the target
-    platform. After the event flushes (its primitive already flushes to
-    populate `.id`), `event.source_account_id` is set directly to the cash
-    leg's `account_id` — the composition-then-mutate-in-place idiom (mirrors
-    apply_add_portfolio_event's own asset_type post-hoc set). Investment
-    money is NEVER turned into a synthetic `accounts` row (D-05) — it stays a
-    PortfolioEvent linked back to its funding account. No extra top-level
-    audit row — each primitive already writes its own (D-02). Does NOT
-    commit — caller owns the transaction boundary (D-01).
-
-    The cash leg debits its amount in the account's currency; the CASH event
-    credits `event_amount` in the event currency, resolved as: explicit
-    event currency (IDR/USD), else the existing (CASH, platform) holding's,
-    else the source account's. When the two currencies differ `event_amount`
-    is required; when they match it must equal the cash amount. No rate is
-    computed; every refusal happens before the first write.
-    """
-    cash_ccy = currency_of_account(db, cash_leg_after.get("account", "Unknown"))
-    explicit = (event_after.get("currency") or "").strip()
-    ev_ccy = _account_currency(explicit) if explicit else (
-        currency_of_holding(db, event_after["ticker"], event_after["platform_id"]) or cash_ccy
-    )
-    given = None if event_amount is None else _positive_amount(event_amount, "event_amount")
-    cash_mag = abs(Decimal(str(cash_leg_after["amount"])))
-    if ev_ccy != cash_ccy:
-        if given is None:
-            raise ValueError(f"A deposit from a {cash_ccy} account into {ev_ccy} cash needs both amounts")
-    elif given is not None and given != cash_mag:
-        raise ValueError(f"A deposit between {cash_ccy} amounts moves one amount; record a fee as a separate expense")
-    _check_position_target(db, event_after["ticker"], event_after["platform_id"], ev_ccy)  # refuse before any write
-    event_after = {
-        **event_after, "currency": ev_ccy,
-        "quantity": str(given if given is not None else cash_mag), "price": "1",
-    }
-    tx = apply_add_transaction(db, {**cash_leg_after, "is_transfer": True})
-    ev = apply_add_portfolio_event(db, event_after)
-    ev.source_account_id = tx.account_id
-    return tx, ev
-
-
 def _funded_event_currency(db: Session, after: dict) -> str:
     """Event currency of a funded trade: explicit, else the holding's, else the cash account's (D-02).
 
@@ -887,8 +839,8 @@ def apply_delete_portfolio_event(db: Session, event_id: int, before: dict | None
     Returns the deleted cash-leg transaction id, or None. A position left with
     no events becomes a zero-quantity holding row (D-04). Does NOT commit.
 
-    A deposit is deletable but not editable. One made by apply_add_investment_transfer
-    has no linked cash leg, so its source-account debit is left alone (delete it
+    A deposit is deletable but not editable. A historical deposit has no linked
+    cash leg, so any source-account debit is left alone (delete it
     separately via DELETE /transactions/{id} if it was also a mistake). A hand-linked
     leg that is transfer-paired is refused by apply_delete_transaction's pair guard
     (ValueError -> 422).
