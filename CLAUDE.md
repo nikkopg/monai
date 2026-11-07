@@ -158,7 +158,7 @@ data without your say-so.
 | HTTP / API | `backend/main.py` | Endpoints, dependency injection, error mapping (`ValueError`→422, generic→500), CORS |
 | Schemas (DTO) | `backend/schemas.py` | Pydantic request/response models (`*Create`, `*Out`, `*Request`, `*Response`) |
 | AI query | `backend/query.py` | LLM routes question → `{tool, args}` JSON; executes + formats |
-| Tools (domain) | `backend/tools.py` | 34 parameterized tools in `TOOLS` (18 reads, snapshotted as `READ_TOOL_NAMES`, then 16 confirm-before-write tools); period resolution; answer formatting |
+| Tools (domain) | `backend/tools.py` | 33 parameterized tools in `TOOLS` (18 reads, snapshotted as `READ_TOOL_NAMES`, then 15 confirm-before-write tools); period resolution; answer formatting |
 | Persistence | `backend/db.py`, `backend/models.py` | SQLAlchemy engine/session, ORM models, schema + `date_helpers` view bootstrap |
 | Import | `backend/importer.py` | Wallet CSV parse, currency validation, bulk insert |
 | Config | `backend/config.py` | `DATABASE_URL`; multi-provider LLM setup via `Settings` |
