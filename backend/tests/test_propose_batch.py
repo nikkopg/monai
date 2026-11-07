@@ -218,10 +218,11 @@ def hist(db, env):
     A, B, C = (SimpleNamespace(id=c.id, name=c.name) for c in cats)
     stem = "zzh" + "".join(chr(97 + int(ch, 16)) for ch in secrets.token_hex(3))
 
-    def add(merchant, c, day, *, transfer=False, category=None):
+    def add(merchant, c, day, *, transfer=False, category=None, account=None):
         db.execute(text("INSERT INTO transactions (date, amount, currency, account_id, is_transfer, merchant, "
-                        "category, category_id) VALUES (:d, -10000.00, 'IDR', :a, :t, :m, :c, :cid)"),
-                   {"d": day, "a": cash.id, "t": transfer, "m": merchant, "c": category or c.name, "cid": c.id})
+                        "category, category_id) VALUES (:d, -10000.00, :cur, :a, :t, :m, :c, :cid)"),
+                   {"d": day, "cur": account.currency if account else "IDR", "a": account.id if account else cash.id,
+                    "t": transfer, "m": merchant, "c": category or c.name, "cid": c.id})
         db.commit()
 
     yield SimpleNamespace(A=A, B=B, C=C, stem=stem, add=add)
@@ -251,6 +252,33 @@ def test_suggestion_is_the_mode_of_the_normalized_merchant(db, env, hist):
     assert row["after"]["category"] == hist.A.name
     assert row["category_suggested"] is True
     assert "category_suggested" not in row["after"]
+
+
+def test_suggestion_matches_within_the_rows_currency(db, env, hist):
+    """POL-05: a USD row never takes a category from IDR history, and an IDR row never from USD."""
+    _, _, aids = env
+    usd = Account(name=f"ZZ39 Usd {secrets.token_hex(3)}", type="liquid", currency="USD")
+    db.add(usd)
+    db.commit()
+
+    def usd_row():
+        att = _att(aids)
+        row = UploadRow(date=DAY, amount="-10.50", account=usd.name, merchant=f"{hist.stem} shop", raw_line="l")
+        res = propose_batch(db, [row], channel="upload", account=(usd.id, usd.name, "USD"), attachment=att,
+                            provenance={"source": "upload:csv", "attachment_id": att["id"], "sha256": SHA,
+                                        "filename": att["filename"], "invariant": "none"})
+        return _get(db, res).payload["rows"][0]
+
+    try:
+        hist.add(f"{hist.stem} shop", hist.A, DAY_A)
+        idr_only = usd_row()
+        assert idr_only["after"]["category"] is None and "category_suggested" not in idr_only
+        hist.add(f"{hist.stem} shop", hist.B, DAY_B, account=usd)
+        hist.add(f"{hist.stem} shop", hist.B, DAY_B, account=usd)  # most used overall, but in USD
+        assert usd_row()["after"]["category"] == hist.B.name
+        assert _suggest(db, env, hist)["after"]["category"] == hist.A.name
+    finally:
+        _cleanup_account(db, usd.name)
 
 
 def test_suggestion_tie_goes_to_the_most_recent(db, env, hist):

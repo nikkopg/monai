@@ -73,8 +73,8 @@ def _merchant_key(merchant: str | None) -> str:
     return re.sub(r"[\d#*/:._-]+$", "", " ".join(toks)).rstrip() or collapsed
 
 
-def _history_categories(db: Session) -> dict[str, str]:
-    """Normalized merchant key -> the owner's most-used category name for it.
+def _history_categories(db: Session, currency: str) -> dict[str, str]:
+    """Normalized merchant key -> the owner's most-used category name for it, in `currency` only.
 
     Most used wins, ties go to the most recent date, then the highest id. Transfers,
     balance adjustments and system categories (Transfer, Uncategorized) are ignored.
@@ -87,7 +87,7 @@ def _history_categories(db: Session) -> dict[str, str]:
         "SELECT t.merchant, c.name, COUNT(*), MAX(t.date), MAX(t.id) FROM transactions t "
         "JOIN categories c ON c.id = t.category_id "
         "WHERE NOT t.is_transfer AND t.merchant IS NOT NULL AND COALESCE(t.category, '') <> 'Adjustment' "
-        "AND NOT c.is_system GROUP BY t.merchant, c.name"))
+        "AND NOT c.is_system AND t.currency = :currency GROUP BY t.merchant, c.name"), {"currency": currency})
     best: dict[tuple[str, str], tuple] = {}
     for merchant, name, n, last, last_id in rows:
         key = (_merchant_key(merchant), name)
@@ -477,9 +477,10 @@ def propose_batch(
                            + "; ".join(errors[:20]) + more)
     if upload and any(o["after"]["category"] is None for o in out):
         # Fill from the owner's own history; row level (not in `after`, which goes to AuditLog).
-        history = _history_categories(db)
+        history = {c: _history_categories(db, c) for c in {o["after"]["currency"] for o in out}}
         for o in out:
-            suggested = history.get(_merchant_key(o["after"]["merchant"])) if o["after"]["category"] is None else None
+            suggested = (history[o["after"]["currency"]].get(_merchant_key(o["after"]["merchant"]))
+                         if o["after"]["category"] is None else None)
             if suggested:
                 o["after"]["category"] = suggested
                 o["category_suggested"] = True
