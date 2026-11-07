@@ -15,19 +15,17 @@ invariants (D-05) — additive restoration, transfer-pair closure, and anchor
 parity — are the real substance of this phase and are enforced by test in
 `backend/tests_live_audit/test_reconstruction.py`, never eyeballed.
 
-D-05 (Phase 23.1): the user relaxed Phase 20's conservative
-`no_opening_anchor` gate for every month strictly before the single liquid
-anchor date — the raw ledger plus recovered corrections for the LIVE liquid
-accounts is honest enough to show, on a "ledger_plus_corrections" basis. The
-"Investements" label is excluded from that regime because it is now the
-investment half's concern, not the liquid half's (D-01) — see
-`liquid_drift_estimate`'s Pitfall-1 guard in the test file. The known
-archival residual this regime leaves on the table is disclosed once via
-`liquid_drift_estimate()`, never smoothed into the monthly figures. The
-regime keys off the single `_regime_cutoff` date; a later back-dated anchor
-round (D-DEF-04) could create an intermediate window this rule does not
-describe — re-derive it before relying on multi-round anchors (research
-Pitfall 4).
+Each month's liquid point is the plain per-account sum of that month's
+records (the raw ledger plus recovered corrections for the LIVE liquid
+accounts), on a "ledger_plus_corrections" basis. No adjustment has to exist
+for a month to show a number; a month with no records equals the previous
+month by the cumulative sum. The "Investements" label is excluded because it
+is the investment half's concern, not the liquid half's (D-01) -- see
+`liquid_drift_estimate`'s Pitfall-1 guard in the test file. The two remaining
+gaps are a month before the first record (`pre_ledger`) and a month whose
+needed FX rate is unobtainable (`fx_unavailable`). The known archival residual
+the corrections leave on the table is disclosed once via
+`liquid_drift_estimate()`, never smoothed into the monthly figures.
 
 RECONCILING D-05.1 AGAINST THE D-03 GATE (read this before touching the
 recovered-component logic below):
@@ -52,9 +50,7 @@ from backend import fx
 from backend.db import engine
 
 _SOURCE = "corrections_260620"
-# fx_unavailable ranks after the anchoring reasons: a month is first judged on
-# whether its balance can be trusted, only then on whether a rate exists (D-15).
-GAP_REASONS = ("pre_ledger", "no_opening_anchor", "no_closing_anchor", "fx_unavailable")
+GAP_REASONS = ("pre_ledger", "fx_unavailable")
 
 _MONTH_SQL = (
     "SELECT to_char(m, 'YYYY-MM') AS month, "
@@ -93,11 +89,6 @@ _ADJUSTMENT_DATES_SQL = (
 _LIQUID_ACCOUNT_NAMES_SQL = "SELECT name FROM accounts WHERE type = 'liquid' ORDER BY name"
 
 _LIQUID_CURRENCY_SQL = "SELECT name, currency FROM accounts WHERE type = 'liquid'"
-
-_FIRST_TX_BY_ACCOUNT_SQL = (
-    "SELECT a.name, MIN(t.date)::date FROM transactions t "
-    "JOIN accounts a ON a.id = t.account_id WHERE a.type = 'liquid' GROUP BY a.name"
-)
 
 _EARLIEST_LIQUID_TX_SQL = (
     "SELECT MIN(t.date)::date FROM transactions t "
@@ -144,17 +135,6 @@ def _liquid_anchor(anchors: dict[str, date | None]) -> date | None:
     if not values or any(v is None for v in values):
         return None
     return max(values)
-
-
-def _regime_cutoff(anchors: dict[str, date | None]) -> date | None:
-    """Upper bound of the 23.1 "ledger_plus_corrections" regime: MAX over
-    the anchors that EXIST, or None when no liquid account has ever been
-    adjusted. Unlike `_liquid_anchor`, one unanchored newcomer (e.g. an
-    account created by `apply_add_account` or the importer) never turns
-    "no anchor" into "relaxed forever" -- that newcomer stays on the D-07
-    path and gaps with `no_opening_anchor`, exactly as before 23.1 (CR-01)."""
-    known = [d for d in anchors.values() if d is not None]
-    return max(known) if known else None
 
 
 def reconstructed_liquid_by_month(months: int = 72, *, conn=None) -> list[dict]:
@@ -238,72 +218,6 @@ def reconstructed_liquid_by_month(months: int = 72, *, conn=None) -> list[dict]:
 # renders it.
 
 
-def _adjustment_windows(conn) -> dict[str, list[tuple[date, date | None]]]:
-    """For each live liquid account name, the ordered Adjustment dates
-    a1..an become windows (a1, a2), (a2, a3), ..., (an, None) — the final
-    entry with a None upper bound is the still-open window. An account with
-    no adjustments maps to an empty list."""
-    names = [r[0] for r in conn.execute(text(_LIQUID_ACCOUNT_NAMES_SQL)).fetchall()]
-    dates_by_account: dict[str, list[date]] = {name: [] for name in names}
-    for name, adj_date in conn.execute(text(_ADJUSTMENT_DATES_SQL)).fetchall():
-        dates_by_account.setdefault(name, []).append(adj_date)
-
-    windows: dict[str, list[tuple[date, date | None]]] = {}
-    for name, dates in dates_by_account.items():
-        account_windows: list[tuple[date, date | None]] = []
-        for i, lo in enumerate(dates):
-            hi = dates[i + 1] if i + 1 < len(dates) else None
-            account_windows.append((lo, hi))
-        windows[name] = account_windows
-    return windows
-
-
-def _honesty(
-    month: str,
-    month_end: date,
-    windows: dict[str, list[tuple[date, date | None]]],
-    current_month: str,
-    earliest_liquid_tx: date | None,
-) -> tuple[bool, str | None]:
-    """D-07's per-adjustment-window honesty model, exactly as specified.
-
-    A window (lo, hi) contains month_end when lo < month_end <= hi for a
-    closed window, or lo < month_end for the open final window. The boundary
-    is deliberately half-open on the left: an adjustment dated exactly on
-    the month-end does not itself make that month honest.
-
-    Precedence is exactly pre_ledger, then no_opening_anchor, then
-    no_closing_anchor. Never emit free prose — the returned string is always
-    a member of GAP_REASONS; Phase 23 captions the gap from this enum.
-
-    Explicitly rejects the reverted single-anchor model: honesty is never
-    "the month is after the earliest adjustment anywhere on the liquid
-    side" — every liquid account's own window must independently contain
-    month_end.
-    """
-    if earliest_liquid_tx is None or month_end < earliest_liquid_tx:
-        return False, "pre_ledger"
-
-    for account_windows in windows.values():
-        opened = any(lo < month_end for lo, _hi in account_windows)
-        if not opened:
-            return False, "no_opening_anchor"
-
-    for account_windows in windows.values():
-        contained = False
-        for lo, hi in account_windows:
-            if hi is None:
-                if lo < month_end:
-                    contained = contained or (month == current_month)
-            else:
-                if lo < month_end <= hi:
-                    contained = True
-        if not contained:
-            return False, "no_closing_anchor"
-
-    return True, None
-
-
 def _needs_rate(by_account: dict, currency_by_name: dict) -> bool:
     return any(
         currency_by_name.get(name, fx.BASE) != fx.BASE and value != 0
@@ -328,24 +242,19 @@ def _to_idr_by_account(by_account: dict, currency_by_name: dict, rate: Decimal |
 
 
 def monthly_liquid_series(months: int = 72, *, conn=None) -> dict:
-    """The D-15 output shape: corrected monthly liquid series with per-month
-    honesty. When `honest` is False, `liquid_by_account`/`liquid_total` are
-    both None and `gap_reason` is one of GAP_REASONS — the engine refuses to
-    emit an unverified number (D-09). No interpolation, no carry-forward, no
-    confidence band; the residual is reported once in prose in the phase
-    summary and the months it covers stay gaps.
+    """The D-15 output shape: the monthly liquid series, each point the plain
+    per-account sum of that month's records. When `honest` is False,
+    `liquid_by_account`/`liquid_total` are both None and `gap_reason` is one of
+    GAP_REASONS (before the first liquid record, or no FX rate) -- the engine
+    refuses to emit an unverified number (D-09).
 
-    D-05 (Phase 23.1): every month on or after the ledger start whose
-    month-end is on or before the `_regime_cutoff` date (MAX over the
-    anchors that exist) is honest on a
-    "ledger_plus_corrections" basis — the raw `by_account` map restricted to
-    LIVE liquid account names (never `raw["total"]`, which still carries the
-    "Investements" label and would double-count it against the investment
-    half, research Pitfall 1). Months on or after the anchor keep today's
-    D-07 window rule unchanged; with no anchor anywhere there is no relaxed
-    regime at all. `valuation_basis` is None for both the
-    pre-ledger gap and the D-07 path; it is only ever
-    "ledger_plus_corrections" for the new pre-anchor regime.
+    A month with no records equals the previous month because each balance is
+    a cumulative sum. The map is restricted to LIVE liquid account names in
+    every month (never `raw["total"]`, which still carries the "Investements"
+    label and would double-count it against the investment half, research
+    Pitfall 1). Recovered corrections count only before an account's first
+    Adjustment (D-03, applied in `reconstructed_liquid_by_month`). A gap is
+    never carried over.
 
     Figures are IDR (Phase 43): each non-IDR account's native balance is
     converted on its own, past months at that month-end's rate (7-day
@@ -357,52 +266,19 @@ def monthly_liquid_series(months: int = 72, *, conn=None) -> dict:
     conn = conn or engine.connect()
     try:
         raw_rows = reconstructed_liquid_by_month(months=months, conn=conn)
-        windows = _adjustment_windows(conn)
         earliest_liquid_tx = conn.execute(text(_EARLIEST_LIQUID_TX_SQL)).scalar()
-        current_month = date.today().strftime("%Y-%m")
-        anchors = _anchor_dates(conn)
-        regime_cutoff = _regime_cutoff(anchors)
-        live_names = set(anchors.keys())
         currency_by_name = dict(conn.execute(text(_LIQUID_CURRENCY_SQL)).fetchall())
-        first_tx = dict(conn.execute(text(_FIRST_TX_BY_ACCOUNT_SQL)).fetchall())
 
-        # Pass 1: native arithmetic and honesty. planned entries are
+        # Pass 1: native arithmetic. planned entries are
         # (month, month_end, native by_account or None for a gap, basis, gap_reason).
         planned: list[tuple] = []
         for raw in raw_rows:
-            month = raw["month"]
             month_end = raw["end_excl"] - timedelta(days=1)
-
-            is_pre_ledger = earliest_liquid_tx is None or month_end < earliest_liquid_tx
-            # `<=`, not `<` (WR-04): a cutoff dated exactly on a month-end
-            # would otherwise fall to D-07, whose half-open `lo < month_end`
-            # rule gaps it as `no_opening_anchor` even though the D-03 gate
-            # has already closed and the balance is fully anchored.
-            pre_anchor = (
-                not is_pre_ledger and regime_cutoff is not None and month_end <= regime_cutoff
-            )
-
-            if pre_anchor:
-                # D-19 (owner chose the per-account gate): a non-IDR account with
-                # rows before this month must be anchored by this month-end, or the
-                # whole month gaps -- its raw ledger would otherwise show as a
-                # guessed balance. With no rows yet it is exactly 0 and the month
-                # is unaffected.
-                if any(
-                    currency_by_name.get(name, fx.BASE) != fx.BASE
-                    and first_tx.get(name) is not None
-                    and first_tx[name] < raw["end_excl"]
-                    and (anchors.get(name) is None or anchors[name] > month_end)
-                    for name in live_names
-                ):
-                    planned.append((month, month_end, None, None, "no_opening_anchor"))
-                    continue
-                by_account = {name: v for name, v in raw["by_account"].items() if name in live_names}
-                planned.append((month, month_end, by_account, "ledger_plus_corrections", None))
+            if earliest_liquid_tx is None or month_end < earliest_liquid_tx:
+                planned.append((raw["month"], month_end, None, None, "pre_ledger"))
                 continue
-
-            honest, gap_reason = _honesty(month, month_end, windows, current_month, earliest_liquid_tx)
-            planned.append((month, month_end, raw["by_account"] if honest else None, None, gap_reason))
+            by_account = {n: v for n, v in raw["by_account"].items() if n in currency_by_name}
+            planned.append((raw["month"], month_end, by_account, "ledger_plus_corrections", None))
 
         # Rates (D-14, D-24): past months use the month-end rate (7-day weekend
         # fallback) from fx's cache after at most one range fill; the newest
@@ -484,7 +360,7 @@ def liquid_drift_estimate(*, conn=None) -> Decimal | None:
 
     Per anchored live liquid account: the recovered corrections for that
     account dated up to its own anchor day (what the
-    "ledger_plus_corrections" regime adds on top of the live ledger) minus
+    "ledger_plus_corrections" basis adds on top of the live ledger) minus
     the Adjustment-category transactions on that account up to the same day
     (the statement truth that replaced them). A positive residual means that
     account's pre-anchor months are overstated. Only the POSITIVE residuals
@@ -500,14 +376,14 @@ def liquid_drift_estimate(*, conn=None) -> Decimal | None:
     once as a single headline figure, never spread across months (Phase 20's
     residual rule).
 
-    Returns None when `_regime_cutoff` returns None: with no anchor on any
-    live liquid account there is nothing to measure against.
+    Returns None when no live liquid account has an anchor: there is nothing
+    to measure against.
     """
     owns_conn = conn is None
     conn = conn or engine.connect()
     try:
         anchors = _anchor_dates(conn)
-        if _regime_cutoff(anchors) is None:
+        if not any(anchors.values()):
             return None
         currency_by_name = dict(conn.execute(text(_LIQUID_CURRENCY_SQL)).fetchall())
         bound = Decimal("0.00")
