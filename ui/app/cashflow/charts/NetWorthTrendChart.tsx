@@ -40,7 +40,7 @@ import {
 // 23-RESEARCH.md Pitfall 1's mouse-index workaround, which doesn't hold on
 // this installed version).
 //
-// Every Line below also sets `isAnimationActive={false}`. The automated
+// Every Line below sets `isAnimationActive={!hidden}`. The automated
 // browser pane reports `visibilityState: hidden` and never fires
 // requestAnimationFrame, so a rAF-gated line-draw animation would look blank
 // there (23-RESEARCH Pitfall 2) even though it renders fine on a real reload.
@@ -73,20 +73,22 @@ function Pills<T extends string>({
   options,
   value,
   onChange,
+  dark = false,
 }: {
   options: { value: T; label: string }[];
   value: T;
   onChange: (v: T) => void;
+  dark?: boolean;
 }) {
   return (
     <div
       style={{
         display: "flex",
-        gap: 6,
-        background: "#efece4",
-        border: `1px solid ${tokens.color.border2}`,
+        gap: dark ? 2 : 6,
+        background: dark ? "rgba(242,239,232,.08)" : "#efece4",
+        border: dark ? "none" : `1px solid ${tokens.color.border2}`,
         borderRadius: 999,
-        padding: 4,
+        padding: dark ? 3 : 4,
       }}
     >
       {options.map((opt) => {
@@ -100,12 +102,14 @@ function Pills<T extends string>({
             style={{
               border: "none",
               borderRadius: 999,
-              padding: "7px 15px",
-              fontSize: 13,
+              padding: dark ? "4px 10px" : "7px 15px",
+              fontSize: dark ? 12 : 13,
               fontWeight: active ? 600 : 500,
               cursor: "pointer",
-              color: active ? tokens.color.inkText : tokens.color.muted,
-              background: active ? tokens.color.ink : "transparent",
+              color: dark
+                ? active ? tokens.color.ink : tokens.color.inkTextMuted
+                : active ? tokens.color.inkText : tokens.color.muted,
+              background: active ? (dark ? tokens.color.inkText : tokens.color.ink) : "transparent",
               transition: "all .2s ease",
             }}
           >
@@ -155,7 +159,16 @@ function NetWorthTooltip({
   );
 }
 
-export default function NetWorthTrendChart() {
+// `hero` draws the chart inside the dark net worth card on Cashflow: `header`
+// (the label and total) sits left of the pills, the chart is shorter and the
+// lines use the on-ink colours. The default is the standalone light card.
+export default function NetWorthTrendChart({
+  hero = false,
+  header,
+}: {
+  hero?: boolean;
+  header?: React.ReactNode;
+}) {
   const [range, setRange] = useState<Range>("1Y");
   const [mode, setMode] = useState<Mode>("total");
   const [cache, setCache] = useState<Partial<Record<Range, { rows: NetWorthRow[] }>>>({});
@@ -188,21 +201,32 @@ export default function NetWorthTrendChart() {
   const hasTotalAtCost = points.some((p) => p.totalAtCost !== null);
   const hasInvestmentAtCost = points.some((p) => p.investmentAtCost !== null);
   const newestMonth = rows && rows.length > 0 ? rows[rows.length - 1].month : undefined;
+  const totalStroke = hero ? tokens.color.chipGreenText : tokens.color.ink;
+  const liquidStroke = hero ? tokens.color.chipGreenText : tokens.color.green;
+  const tickFill = hero ? tokens.color.inkTextMuted : tokens.color.muted2;
+  const chartHeight = hero ? 120 : 170;
+  // Lines draw in like the 6-month chart's, except in a hidden tab (the
+  // automated browser pane), where rAF never fires and they would stay blank.
+  const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
 
   return (
-    <section aria-label="Net worth trend" style={card}>
+    <section
+      aria-label="Net worth trend"
+      style={hero ? { display: "flex", flexDirection: "column", height: "100%" } : card}
+    >
       <div
         style={{
           display: "flex",
           justifyContent: "space-between",
-          alignItems: "center",
+          alignItems: hero ? "flex-start" : "center",
+          gap: 16,
           marginBottom: 6,
         }}
       >
-        <div style={{ fontSize: 14, fontWeight: 600 }}>Net worth trend</div>
-        <div style={{ display: "flex", gap: 10 }}>
-          <Pills options={RANGE_OPTIONS} value={range} onChange={setRange} />
-          <Pills options={MODE_OPTIONS} value={mode} onChange={setMode} />
+        {hero ? header : <div style={{ fontSize: 14, fontWeight: 600 }}>Net worth trend</div>}
+        <div style={{ display: "flex", gap: hero ? 8 : 10, flexShrink: 0 }}>
+          <Pills options={RANGE_OPTIONS} value={range} onChange={setRange} dark={hero} />
+          <Pills options={MODE_OPTIONS} value={mode} onChange={setMode} dark={hero} />
         </div>
       </div>
 
@@ -221,7 +245,7 @@ export default function NetWorthTrendChart() {
               style={{
                 width: 14,
                 height: 2,
-                background: tokens.color.green,
+                background: liquidStroke,
                 display: "inline-block",
               }}
             />
@@ -246,7 +270,7 @@ export default function NetWorthTrendChart() {
           style={{
             fontSize: 12,
             lineHeight: 1.5,
-            color: tokens.color.terracotta,
+            color: hero ? "#e6a99c" : tokens.color.terracotta,
             marginTop: 8,
           }}
         >
@@ -255,7 +279,7 @@ export default function NetWorthTrendChart() {
       ) : !rows ? (
         <div
           style={{
-            height: 170,
+            height: chartHeight,
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -267,19 +291,22 @@ export default function NetWorthTrendChart() {
         </div>
       ) : (
         <>
-          <div style={{ width: "100%", height: 170 }}>
+          <div style={{ width: "100%", height: chartHeight, marginTop: hero ? "auto" : 0 }}>
             <ResponsiveContainer>
               <LineChart data={points} margin={{ top: 8, right: 6, left: 6, bottom: 0 }}>
                 <XAxis
                   dataKey="month"
-                  tick={{ fill: tokens.color.muted2, fontSize: 11 }}
+                  tick={{ fill: tickFill, fontSize: 11 }}
                   axisLine={false}
                   tickLine={false}
+                  minTickGap={hero ? 24 : 5}
                 />
                 <YAxis
+                  hide={hero}
+                  domain={hero ? ["auto", "auto"] : undefined}
                   orientation="right"
                   tickFormatter={(v: number) => `${Math.round(v / 1_000_000)}M`}
-                  tick={{ fill: tokens.color.muted2, fontSize: 11 }}
+                  tick={{ fill: tickFill, fontSize: 11 }}
                   axisLine={false}
                   tickLine={false}
                   width={40}
@@ -295,25 +322,25 @@ export default function NetWorthTrendChart() {
                       type="monotone"
                       dataKey="totalMarket"
                       name="Net worth"
-                      stroke={tokens.color.ink}
+                      stroke={totalStroke}
                       strokeWidth={2.4}
-                      dot={{ r: 2.5, fill: tokens.color.ink, strokeWidth: 0 }}
+                      dot={{ r: hero ? 2 : 2.5, fill: totalStroke, strokeWidth: 0 }}
                       activeDot={{ r: 3.5 }}
                       connectNulls={false}
-                      isAnimationActive={false}
+                      isAnimationActive={!hidden}
                     />
                     {hasTotalAtCost && (
                       <Line
                         type="monotone"
                         dataKey="totalAtCost"
                         name="Net worth (at cost)"
-                        stroke={tokens.color.ink}
+                        stroke={totalStroke}
                         strokeWidth={2.4}
                         strokeDasharray="5 5"
-                        dot={{ r: 2.5, fill: tokens.color.ink, strokeWidth: 0 }}
+                        dot={{ r: hero ? 2 : 2.5, fill: totalStroke, strokeWidth: 0 }}
                         activeDot={{ r: 3.5 }}
                         connectNulls={false}
-                        isAnimationActive={false}
+                        isAnimationActive={!hidden}
                       />
                     )}
                   </>
@@ -323,12 +350,12 @@ export default function NetWorthTrendChart() {
                       type="monotone"
                       dataKey="liquidTotal"
                       name="Liquid"
-                      stroke={tokens.color.green}
+                      stroke={liquidStroke}
                       strokeWidth={2.4}
-                      dot={{ r: 2.5, fill: tokens.color.green, strokeWidth: 0 }}
+                      dot={{ r: hero ? 2 : 2.5, fill: liquidStroke, strokeWidth: 0 }}
                       activeDot={{ r: 3.5 }}
                       connectNulls={false}
-                      isAnimationActive={false}
+                      isAnimationActive={!hidden}
                     />
                     <Line
                       type="monotone"
@@ -336,10 +363,10 @@ export default function NetWorthTrendChart() {
                       name="Investment"
                       stroke={tokens.color.gold}
                       strokeWidth={2.4}
-                      dot={{ r: 2.5, fill: tokens.color.gold, strokeWidth: 0 }}
+                      dot={{ r: hero ? 2 : 2.5, fill: tokens.color.gold, strokeWidth: 0 }}
                       activeDot={{ r: 3.5 }}
                       connectNulls={false}
-                      isAnimationActive={false}
+                      isAnimationActive={!hidden}
                     />
                     {hasInvestmentAtCost && (
                       <Line
@@ -349,10 +376,10 @@ export default function NetWorthTrendChart() {
                         stroke={tokens.color.gold}
                         strokeWidth={2.4}
                         strokeDasharray="5 5"
-                        dot={{ r: 2.5, fill: tokens.color.gold, strokeWidth: 0 }}
+                        dot={{ r: hero ? 2 : 2.5, fill: tokens.color.gold, strokeWidth: 0 }}
                         activeDot={{ r: 3.5 }}
                         connectNulls={false}
-                        isAnimationActive={false}
+                        isAnimationActive={!hidden}
                       />
                     )}
                   </>
@@ -360,13 +387,13 @@ export default function NetWorthTrendChart() {
                 {showSeam && (
                   <ReferenceLine
                     x={seam}
-                    stroke={tokens.color.border2}
+                    stroke={hero ? "rgba(242,239,232,.18)" : tokens.color.border2}
                     strokeWidth={1}
                     label={{
                       value: "Market value →",
                       position: "insideTopRight",
                       fontSize: 11,
-                      fill: tokens.color.muted2,
+                      fill: tickFill,
                     }}
                   />
                 )}

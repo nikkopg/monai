@@ -189,14 +189,14 @@ export default function CashflowPage() {
   // ---------------------------------------------------------------------------
 
   return (
-    <div className="tab-in" style={{ padding: "40px 44px 60px" }}>
+    <div className="tab-in" style={{ padding: "28px 44px 44px" }}>
       {/* Header + period control */}
       <div
         style={{
           display: "flex",
           justifyContent: "space-between",
           alignItems: "flex-end",
-          marginBottom: 30,
+          marginBottom: 20,
         }}
       >
         <div>
@@ -206,7 +206,7 @@ export default function CashflowPage() {
               letterSpacing: ".12em",
               textTransform: "uppercase",
               color: tokens.color.muted2,
-              marginBottom: 6,
+              marginBottom: 4,
             }}
           >
             Overview
@@ -267,27 +267,22 @@ export default function CashflowPage() {
 
       {summary && !summaryError && (
         <>
-          {/* Hero: net worth + trend */}
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns:
-                "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
-              gap: 18,
-              marginBottom: 18,
-            }}
-          >
+          {/* Hero: net worth (with its trend) + 6-month trend. Columns in
+              globals.css (.cf-hero) so they can stack on narrow windows. */}
+          <div className="cf-hero" style={{ display: "grid", gap: 18, marginBottom: 18 }}>
             <div
               style={{
                 background: tokens.color.ink,
                 color: tokens.color.inkText,
                 borderRadius: 18,
-                padding: "26px 28px",
+                padding: "22px 28px 18px",
                 display: "flex",
                 flexDirection: "column",
-                justifyContent: "space-between",
               }}
             >
+              <NetWorthTrendChart
+                hero
+                header={
               <div>
                 <div
                   style={{
@@ -315,7 +310,22 @@ export default function CashflowPage() {
                     {fmtAmount(netWorthData?.total ?? 0, "IDR")}
                   </div>
                 )}
+                {netWorthData && !netWorthError && (
+                  <div
+                    style={{
+                      marginTop: 12,
+                      fontSize: 12,
+                      color: tokens.color.inkTextMuted,
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    Liquid {fmtAmount(netWorthData.liquid_total, "IDR")} ·
+                    Investment {fmtAmount(netWorthData.investment_total, "IDR")}
+                  </div>
+                )}
               </div>
+                }
+              />
             </div>
 
             <div
@@ -323,7 +333,11 @@ export default function CashflowPage() {
                 background: tokens.color.card,
                 border: `1px solid ${tokens.color.border}`,
                 borderRadius: 18,
-                padding: "22px 24px",
+                // Same bottom padding as the net worth card and the chart
+                // pinned to the bottom, so both cards' month labels line up.
+                padding: "22px 24px 18px",
+                display: "flex",
+                flexDirection: "column",
               }}
             >
               <div
@@ -335,7 +349,7 @@ export default function CashflowPage() {
                 }}
               >
                 <div style={{ fontSize: 14, fontWeight: 600 }}>
-                  6-month trend
+                  Cash flow, last 6 months
                 </div>
                 <div
                   style={{
@@ -354,8 +368,9 @@ export default function CashflowPage() {
                   >
                     <span
                       style={{
-                        width: 14,
-                        height: 2,
+                        width: 10,
+                        height: 10,
+                        borderRadius: 3,
                         background: tokens.color.green,
                         display: "inline-block",
                       }}
@@ -371,13 +386,32 @@ export default function CashflowPage() {
                   >
                     <span
                       style={{
-                        width: 14,
-                        height: 0,
-                        borderTop: `2px dashed ${tokens.color.terracotta}`,
+                        width: 10,
+                        height: 10,
+                        borderRadius: 3,
+                        background: tokens.color.terracotta,
                         display: "inline-block",
                       }}
                     />
                     Expenses
+                  </span>
+                  <span
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 6,
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        background: tokens.color.ink,
+                        display: "inline-block",
+                      }}
+                    />
+                    Net
                   </span>
                 </div>
               </div>
@@ -409,43 +443,6 @@ export default function CashflowPage() {
                 ))}
               </div>
             )}
-
-          {/* Net worth trend — NWH-01, Phase 23 D-01 */}
-          <NetWorthTrendChart />
-
-          {/* Split row — liquid vs investment (NW-02, D-08) */}
-          {netWorthData && !netWorthError && (
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns:
-                  "repeat(auto-fit, minmax(min(100%, 200px), 1fr))",
-                gap: 18,
-                marginBottom: 18,
-              }}
-            >
-              <div style={statCard}>
-                <div style={statLabel}>Liquid</div>
-                <div style={{ ...statValue, color: tokens.color.ink }}>
-                  {fmtAmount(netWorthData.liquid_total, "IDR")}
-                </div>
-                <div style={{ fontSize: 13, color: tokens.color.muted }}>
-                  {netWorthData.liquid_accounts.length} account
-                  {netWorthData.liquid_accounts.length === 1 ? "" : "s"}
-                </div>
-              </div>
-              <div style={statCard}>
-                <div style={statLabel}>Investment</div>
-                <div style={{ ...statValue, color: tokens.color.ink }}>
-                  {fmtAmount(netWorthData.investment_total, "IDR")}
-                </div>
-                <div style={{ fontSize: 13, color: tokens.color.muted }}>
-                  {netWorthData.investment_groups.length} platform
-                  {netWorthData.investment_groups.length === 1 ? "" : "s"}
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* Unconverted USD rows are left out of the IDR totals below (D-15) */}
           {(summary.unconverted_count ?? 0) > 0 && (
@@ -786,12 +783,12 @@ const statCard: React.CSSProperties = {
   background: tokens.color.card,
   border: `1px solid ${tokens.color.border}`,
   borderRadius: 16,
-  padding: "20px 22px",
+  padding: "16px 22px",
 };
 const statLabel: React.CSSProperties = {
   fontSize: 13,
   color: tokens.color.muted,
-  marginBottom: 8,
+  marginBottom: 6,
 };
 const statValue: React.CSSProperties = {
   fontSize: 28,
