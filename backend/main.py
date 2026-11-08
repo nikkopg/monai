@@ -564,7 +564,7 @@ def platform_detail(platform_id: int, db: Session = Depends(get_session)):
 
     refresh_all_prices(db, force=False)  # only stale tickers (D-09), same idiom as investments_summary
     db.commit()
-    summary = compose_portfolio_summary(db)
+    summary = compose_portfolio_summary(db, usd_view=True)
     group = next((g for g in summary["groups"] if g["platform_id"] == platform_id), None)
     # Closed positions leave the holdings list but keep their P&L in this platform's Realized stat.
     closed_realized = db.query(func.coalesce(func.sum(ClosedPosition.realized_pnl), 0)).filter(
@@ -884,7 +884,7 @@ def investments_summary(db: Session = Depends(get_session)):
 
     refresh_all_prices(db, force=False)  # only stale tickers (D-09)
     db.commit()
-    return compose_portfolio_summary(db)
+    return compose_portfolio_summary(db, usd_view=True)
 
 
 @app.get("/investments/history", response_model=ValueHistoryResponse, dependencies=[Depends(require_api_key)])

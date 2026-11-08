@@ -7,6 +7,7 @@ import { useParams } from "next/navigation";
 import { tokens, card, btnDark } from "../../styles";
 import HoldingModal from "../HoldingModal";
 import { extractDetail } from "../../lib/api";
+import { fmtAmount, rateHover } from "../../lib/money";
 import RowMenu from "../../components/RowMenu";
 import type { PlatformOption } from "../page";
 
@@ -31,6 +32,13 @@ type PlatformDetailHolding = {
   current_value: number | null;
   unrealized_pnl: number | null;
   realized_pnl: number;
+  // USD positions only (quick 261108-d2c); all null when no USD rate exists.
+  usd_avg_cost?: number | null;
+  usd_current_price?: number | null;
+  usd_current_value?: number | null;
+  usd_unrealized_pnl?: number | null;
+  usd_rate?: number | null;
+  usd_rate_date?: string | null;
 };
 
 type PlatformDetail = {
@@ -115,6 +123,16 @@ function sideColor(eventType: string): string {
 }
 
 const muted = tokens.color.muted;
+
+// USD figure on top, the IDR figure in small muted text underneath.
+const withIdr = (primary: string, idrText: string, title?: string) => (
+  <>
+    <span style={{ display: "block" }}>{primary}</span>
+    <span style={{ display: "block", fontSize: 11, color: muted }} title={title}>
+      {idrText}
+    </span>
+  </>
+);
 
 type Tab = "pnl" | "buysell";
 const TABS: { key: Tab; label: string }[] = [
@@ -467,7 +485,15 @@ export default function PlatformDetailPage() {
                           fontWeight: 600,
                         }}
                       >
-                        {h.current_value != null ? fmtPlain(h.current_value) : "—"}
+                        {h.usd_current_value != null
+                          ? withIdr(
+                              fmtAmount(h.usd_current_value, "USD"),
+                              `${fmtPlain(h.current_value ?? 0)} IDR`,
+                              rateHover(h.usd_rate, h.usd_rate_date)
+                            )
+                          : h.current_value != null
+                            ? fmtPlain(h.current_value)
+                            : "—"}
                       </span>
                       <span
                         style={{

@@ -173,7 +173,7 @@ def _latest_price(db: Session, ticker: str) -> PriceCache | None:
     ).first()
 
 
-def portfolio_summary(db: Session) -> dict:
+def portfolio_summary(db: Session, usd_view: bool = False) -> dict:
     """Compose the GET /investments/summary payload (D-05, INV-06).
 
     Reads every holding, joins the latest price_cache price per ticker (price
@@ -198,6 +198,11 @@ def portfolio_summary(db: Session) -> dict:
     false "stale" badge (INV-05). Gold (CG-02) takes no branch — it flows
     through the normal price_cache path exactly like crypto/stocks.
 
+    usd_view (quick 261108-d2c): only the two page routes set it. USD holdings
+    then also carry usd_rate, usd_rate_date, usd_avg_cost, usd_current_price,
+    usd_current_value and usd_unrealized_pnl (all None without a spot rate), so
+    the net_worth tool output, which calls this with the default, is unchanged.
+
     Returns a dict shaped for PortfolioSummary:
       {groups: [{platform_id, platform_name, kind, subtotal, holdings: [...]}],
        asset_type_groups: [{asset_type, total_value}],
@@ -206,6 +211,14 @@ def portfolio_summary(db: Session) -> dict:
     holdings = db.query(Holding).order_by(Holding.ticker).all()
     platforms = {p.id: p for p in db.query(Platform).all()}
     today = fx._jakarta_today()  # the date fx.spot_stale_ok names in net_worth's rate note
+
+    usd_rate = usd_rate_date = None
+    if usd_view and any(h.currency == "USD" for h in holdings):
+        try:
+            usd_rate, as_of, _stale = fx.spot_stale_ok("USD", db)
+            usd_rate_date = as_of.isoformat()
+        except fx.FxUnavailable:
+            pass  # never guess a rate: every usd_ field stays None
 
     # Realized P&L is a ledger byproduct — recompute is read-only here (we do
     # NOT persist; the summary is a pure read composing existing state).
@@ -268,26 +281,38 @@ def portfolio_summary(db: Session) -> dict:
                 "subtotal": Decimal("0"),
                 "holdings": [],
             }
-        groups[gkey]["holdings"].append(
-            {
-                "id": h.id,
-                "ticker": h.ticker,
-                "currency": h.currency,
-                "asset_type": h.asset_type,
-                "coingecko_id": h.coingecko_id,
-                "quantity": h.quantity,
-                "avg_cost": h.avg_cost,
-                "current_price": current_price,
-                "current_value": current_value,
-                "unrealized_pnl": u_pnl,
-                "realized_pnl": realized["realized_pnl"],
-                "price_source": price_source,
-                "price_fetched_at": price_fetched_at,
-                # Server-computed freshness (INV-05): the frontend renders this
-                # flag, never the TTL. A ticker with no price row is stale.
-                "is_stale": is_stale,
-            }
-        )
+        holding_row = {
+            "id": h.id,
+            "ticker": h.ticker,
+            "currency": h.currency,
+            "asset_type": h.asset_type,
+            "coingecko_id": h.coingecko_id,
+            "quantity": h.quantity,
+            "avg_cost": h.avg_cost,
+            "current_price": current_price,
+            "current_value": current_value,
+            "unrealized_pnl": u_pnl,
+            "realized_pnl": realized["realized_pnl"],
+            "price_source": price_source,
+            "price_fetched_at": price_fetched_at,
+            # Server-computed freshness (INV-05): the frontend renders this
+            # flag, never the TTL. A ticker with no price row is stale.
+            "is_stale": is_stale,
+        }
+        if usd_view and h.currency == "USD":
+            usd_price = current_price / usd_rate if None not in (current_price, usd_rate) else None
+            usd_cost = realized["native_avg_cost"] if usd_rate is not None else None
+            holding_row.update({
+                "usd_rate": usd_rate,
+                "usd_rate_date": usd_rate_date,
+                "usd_avg_cost": usd_cost,
+                "usd_current_price": usd_price,
+                "usd_current_value": current_value / usd_rate if None not in (current_value, usd_rate) else None,
+                "usd_unrealized_pnl": (
+                    (usd_price - usd_cost) * h.quantity if None not in (usd_price, usd_cost) else None
+                ),
+            })
+        groups[gkey]["holdings"].append(holding_row)
         if current_value is not None:
             groups[gkey]["subtotal"] += current_value
             # VZ-01 pie data contract: aggregate current IDR value by asset_type.
@@ -463,6 +488,10 @@ def _realized_for_position(db: Session, ticker: str, platform_id: int) -> dict:
     position's realized P&L would sum raw foreign magnitudes into an IDR total.
     On a rate gap the whole position returns None (never fabricate a number),
     matching recompute's None-propagation.
+
+    native_avg_cost (quick 261108-d2c): the same average-cost rule run on the
+    events' own native prices, or None unless every event is in the holding's
+    currency and the ledger quantity equals the holding's.
     """
     events = db.scalars(
         select(PortfolioEvent)
@@ -482,25 +511,40 @@ def _realized_for_position(db: Session, ticker: str, platform_id: int) -> dict:
     total_cost = Decimal("0")  # cost basis of the currently-open quantity, IDR
     realized_pnl = Decimal("0")
     dividend_total = Decimal("0")
+    native_cost = Decimal("0")  # same cost basis in the position's own currency
+    all_native = holding is not None  # every event in the holding's currency
 
     for ev in events:
         ev_currency = ev.currency or default_currency
         rate = fx.get_rate(ev_currency, "IDR", ev.date, db)
         if rate is None:
             # Vendor outage/gap — propagate None, never fabricate rate=1.0.
-            return {"realized_pnl": None, "dividend_total": None}
+            return {"realized_pnl": None, "dividend_total": None, "native_avg_cost": None}
         idr_amount = ev.price * ev.quantity * rate
+        if holding is not None and ev_currency != holding.currency:
+            all_native = False
 
         if ev.event_type in ("buy", "deposit"):  # a CASH deposit adds quantity at its date's rate
             total_cost += idr_amount
+            native_cost += ev.price * ev.quantity
             qty += ev.quantity
         elif ev.event_type == "sell":
             avg_cost = (total_cost / qty) if qty > 0 else Decimal("0")
             realized_pnl += (ev.price * rate - avg_cost) * ev.quantity
             total_cost -= avg_cost * ev.quantity
+            native_cost -= ((native_cost / qty) if qty > 0 else Decimal("0")) * ev.quantity
             qty -= ev.quantity
         elif ev.event_type == "dividend":
             realized_pnl += idr_amount
             dividend_total += idr_amount
 
-    return {"realized_pnl": realized_pnl, "dividend_total": dividend_total}
+    native_avg_cost = (
+        native_cost / qty
+        if events and all_native and qty > 0 and qty == holding.quantity
+        else None
+    )
+    return {
+        "realized_pnl": realized_pnl,
+        "dividend_total": dividend_total,
+        "native_avg_cost": native_avg_cost,
+    }
