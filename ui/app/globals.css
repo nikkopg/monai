@@ -52,6 +52,13 @@
    because CSS cannot import styles.ts: #2f6f4f green, #6f6857 muted3,
    #f0ece3 hairline. */
 
+/* Form controls don't inherit font-family by default; without this, buttons
+   and inputs fall back to the browser font instead of Hanken Grotesk (the
+   mockup's rule, never carried over). */
+input, select, button, textarea {
+  font-family: inherit;
+}
+
 :focus-visible {
   outline: 2px solid #2f6f4f;
   outline-offset: 2px;
