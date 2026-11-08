@@ -193,6 +193,26 @@ test.describe("Buy & Sell tab (D-05, Component 12)", () => {
   });
 });
 
+test.describe("Event price currency (quick 261108-bkz)", () => {
+  test("a USD event price shows its digits and currency; an IDR one reads as before", async ({ page }) => {
+    await mockPlatformDetail(page);
+    await page.route("**/api/portfolio-events*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          { id: 601, date: "2026-07-20T10:00:00Z", ticker: "ZZUSD", event_type: "buy", quantity: 5, price: 0.18982345, currency: "USD" },
+          { id: 602, date: "2026-06-15T10:00:00Z", ticker: "ZZIDR", event_type: "sell", quantity: 1, price: 3170.4 },
+        ]),
+      });
+    });
+    await page.goto("/investments/1");
+    await page.getByRole("button", { name: "Buy & Sell", exact: true }).click();
+    await expect(page.getByText("0.18982345 USD", { exact: true })).toBeVisible();
+    await expect(page.getByText(fmtPlain(3170.4), { exact: true })).toBeVisible();
+  });
+});
+
 test.describe("Platform detail states (Component 13)", () => {
   test("a 404 detail response shows 'Platform not found' with the back-link still present", async ({
     page,

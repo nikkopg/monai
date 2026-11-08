@@ -65,12 +65,12 @@ async function mockPlatformDetail(page: Page, holdings: unknown[] = []) {
   });
 }
 
-async function mockPlatformsList(page: Page) {
+async function mockPlatformsList(page: Page, list: unknown[] = platformsFixture()) {
   await page.route("**/api/platforms", async (route) => {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(platformsFixture()),
+      body: JSON.stringify(list),
     });
   });
 }
@@ -491,6 +491,35 @@ test.describe("funded buy/sell (XFER-03)", () => {
     await expect.poll(() => posted.length).toBe(1);
     expect(posted[0]).toMatchObject({ ticker: "ZZ45N", event_currency: "USD" });
     expect(posted[0]).not.toHaveProperty("cash_currency");
+  });
+
+  test("a new ticker on a USD platform starts in USD; a held IDR ticker keeps its chip", async ({ page }) => {
+    await mockPlatformDetail(page, [heldFixture("ZZ45I", "IDR")]);
+    await mockPlatformsList(page, [{ id: 5, name: "Bibit", kind: "mutual fund app", currency: "USD" }]);
+    await mockAccounts(page);
+    await mockPortfolioEvents(page);
+    const posted: Record<string, unknown>[] = [];
+    await mockFundedBuy(page, (body) => posted.push(body));
+
+    await openFundedModal(page);
+    await fundingSelect(page).selectOption({ label: "BCA" }); // an IDR account
+    await page.getByPlaceholder("BBCA").fill("ZZ45N");
+    const pos = page.getByLabel("Position currency");
+    expect(await pos.evaluate((el) => el.tagName)).toBe("SELECT");
+    await expect(pos).toHaveValue("USD"); // the platform's, not the account's
+    await expect(priceInput(page, "USD")).toBeVisible();
+
+    await pos.selectOption("IDR");
+    await quantityInput(page).fill("1");
+    await priceInput(page, "IDR").fill("100");
+    await page.getByRole("button", { name: "Log funded Buy", exact: true }).click();
+    await expect.poll(() => posted.length).toBe(1);
+    expect(posted[0]).toMatchObject({ ticker: "ZZ45N", event_currency: "IDR" });
+
+    // A ticker already held on the platform keeps its own currency.
+    await page.getByPlaceholder("BBCA").fill("ZZ45I");
+    expect(await page.getByLabel("Position currency").evaluate((el) => el.tagName)).toBe("SPAN");
+    await expect(page.getByLabel("Position currency")).toHaveText("IDR");
   });
 
   test("no auto-fill across currencies", async ({ page }) => {
