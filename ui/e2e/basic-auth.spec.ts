@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { NextRequest } from "next/server";
 import { GET } from "../app/api/[...proxy]/route";
 import { POST as loginPost } from "../app/auth/login/route";
+import { POST as logoutPost } from "../app/auth/logout/route";
 import { middleware } from "../middleware";
 import { checkBasic, safeNext, signSession, verifySession, SESSION_COOKIE } from "../app/lib/basicAuth";
 import { UI_PASSWORD } from "../playwright.config";
@@ -250,6 +251,28 @@ test.describe("login route", () => {
   });
 });
 
+test.describe("logout route", () => {
+  const out = (headers: Record<string, string>) => logoutPost(new NextRequest("http://localhost/auth/logout", { method: "POST", headers }));
+  test("same-origin clears the cookie and goes to /login", async () => {
+    const r = await out({ origin: "http://localhost", host: "localhost" });
+    expect(r.status).toBe(303);
+    expect(r.headers.get("location")).toBe("/login");
+    const sc = r.headers.get("set-cookie")!;
+    expect(sc).toContain(`${SESSION_COOKIE}=;`);
+    expect(sc).toContain("Max-Age=0");
+    expect(sc).toContain("HttpOnly");
+    expect(sc.toLowerCase()).toContain("samesite=strict");
+    expect(sc).toContain("Path=/");
+  });
+  test("foreign or missing origin is 403 without touching the cookie", async () => {
+    for (const h of [{ origin: "http://evil.example", host: "localhost" }, { host: "localhost" }] as Record<string, string>[]) {
+      const r = await out(h);
+      expect(r.status).toBe(403);
+      expect(r.headers.get("set-cookie")).toBeNull();
+    }
+  });
+});
+
 // Node fetch, not the `request`/`page` fixtures: those answer the challenge from
 // the config credentials and would pass for the wrong reason. Never request /api
 // with credentials here: the dev proxy defaults to the live backend on 8001.
@@ -288,6 +311,9 @@ test.describe("server", () => {
     const fetchBypass = (path: string) => fetch(new URL(path, baseURL), { headers: BYPASS, redirect: "manual" });
     toLogin(await fetchBypass("/"));
     expect((await fetchBypass("/api/accounts")).status).toBe(401);
+  });
+  test("GET /auth/logout is 405", async ({ baseURL }) => {
+    expect((await get(baseURL, "/auth/logout", basic("monai", UI_PASSWORD))).status).toBe(405);
   });
   // Sign in over HTTP like a browser would, then use the cookie. Pages only:
   // the dev proxy defaults to the live backend, so never /api with a valid cookie.
