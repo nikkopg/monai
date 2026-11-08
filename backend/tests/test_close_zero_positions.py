@@ -24,6 +24,7 @@ from sqlalchemy.orm import sessionmaker
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REV_020 = "c4f2a8e61d93"
 REV_021 = "e3b7a91c5d42"
+REV_022 = "b8d4e2f09a17"
 TOL = Decimal("0.00000001")
 FLOOR = date(2026, 2, 7)
 SCRATCH_PREFIX = "monai_test_closezero"
@@ -263,7 +264,7 @@ def test_022_keeps_every_value():
         mp.setattr("logging.config.fileConfig", lambda *a, **k: None)
         try:
             cfg, command = _cfg(s.url)
-            command.upgrade(cfg, "head")
+            command.upgrade(cfg, REV_022)
         finally:
             mp.undo()
         after = _dump(s.engine)
@@ -282,6 +283,60 @@ def test_022_keeps_every_value():
 
 def test_022_alters_types_only():
     path = next((REPO_ROOT / "alembic" / "versions").glob("022_*.py"))
+    for node in ast.walk(ast.parse(path.read_text())):
+        assert not isinstance(node, ast.Raise)
+        if isinstance(node, ast.Attribute):
+            assert node.attr not in ("environ", "getenv", "execute")
+        if isinstance(node, ast.Import):
+            assert not any(a.name.split(".")[0] == "backend" for a in node.names)
+        if isinstance(node, ast.ImportFrom):
+            assert (node.module or "").split(".")[0] != "backend"
+
+
+def test_023_keeps_every_value():
+    with _Scratch("r023", REV_022) as s:
+        _seed(s.engine)
+        before = _dump(s.engine)
+        mp = pytest.MonkeyPatch()
+        mp.setattr("logging.config.fileConfig", lambda *a, **k: None)
+        try:
+            cfg, command = _cfg(s.url)
+            command.upgrade(cfg, "head")
+        finally:
+            mp.undo()
+        after = _dump(s.engine)
+        assert before["portfolio_events"]
+        for t in before:
+            if t not in ("alembic_version", "portfolio_events"):
+                assert after[t] == before[t], t
+        stripped = sorted(
+            json.dumps({k: v for k, v in json.loads(r).items() if k not in ("fee", "fee_kind")}, sort_keys=True)
+            for r in after["portfolio_events"]
+        )
+        assert stripped == sorted(json.dumps(json.loads(r), sort_keys=True) for r in before["portfolio_events"])
+        assert all(json.loads(r)["fee"] is None and json.loads(r)["fee_kind"] is None for r in after["portfolio_events"])
+        with s.engine.connect() as c:
+            assert c.execute(text("SELECT count(*) FROM pg_constraint WHERE conname = 'ck_portfolio_events_fee'")).scalar() == 1
+
+
+def test_023_check_allows_only_a_complete_fee():
+    with _Scratch("r023c", "head") as s:
+        _seed(s.engine)
+        def insert(fee, kind):
+            with s.engine.begin() as c:
+                c.execute(text(
+                    "INSERT INTO portfolio_events (date, ticker, event_type, quantity, price, platform_id, fee, fee_kind) "
+                    "SELECT '2026-01-01', 'ZZCZX', 'buy', 1, 1, id, :f, :k FROM platforms LIMIT 1"), {"f": fee, "k": kind})
+        insert(None, None)
+        insert("0.5", "coin")
+        insert("2", "cash")
+        for bad in (("0.5", None), (None, "coin"), ("0", "coin"), ("-1", "cash"), ("1", "zz")):
+            with pytest.raises(Exception, match="ck_portfolio_events_fee"):
+                insert(*bad)
+
+
+def test_023_adds_columns_only():
+    path = next((REPO_ROOT / "alembic" / "versions").glob("023_*.py"))
     for node in ast.walk(ast.parse(path.read_text())):
         assert not isinstance(node, ast.Raise)
         if isinstance(node, ast.Attribute):
