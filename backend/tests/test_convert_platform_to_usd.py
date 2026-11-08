@@ -498,7 +498,7 @@ def test_new_trades_on_a_converted_ticker(seeded):
 
     def buy(account, **extra):
         return {"source_account_name": account, "ticker": "ZZCUB", "quantity": "1", "price": "0.123456789012",
-                "cash_amount": Decimal("0.12"), "platform_id": P, "date": "2026-06-01", **extra}
+                "cash_amount": 0.12, "platform_id": P, "date": "2026-06-01", **extra}
 
     db = _session(eng)
     try:
@@ -509,13 +509,13 @@ def test_new_trades_on_a_converted_ticker(seeded):
             stored = c.execute(text("SELECT price FROM portfolio_events WHERE id=:i"), {"i": r["portfolio_event"].id}).scalar()
         assert stored == Decimal("0.123456789012")
 
-        r = apply_add_funded_buy(db, buy("zzcu-idr", cash_amount=Decimal("2000")))  # two amounts
+        r = apply_add_funded_buy(db, buy("zzcu-idr", cash_amount=2000))  # two amounts
         assert r["portfolio_event"].currency == "USD"
         assert r["transaction"].currency == "IDR" and r["transaction"].amount == Decimal("-2000")
         db.commit()
 
         with pytest.raises(ValueError, match="does not match holding currency"):
-            apply_add_funded_buy(db, buy("zzcu-idr", event_currency="IDR", cash_amount=Decimal("100")))
+            apply_add_funded_buy(db, buy("zzcu-idr", event_currency="IDR", cash_amount=100))
     finally:
         db.rollback()
         db.close()
