@@ -23,7 +23,7 @@ import AllocationPieChart, { type AllocationSlice } from "./AllocationPieChart";
 // PlatformManager). Only presentation changed.
 // ---------------------------------------------------------------------------
 
-export type PlatformOption = { id: number; name: string };
+export type PlatformOption = { id: number; name: string; currency?: string };
 
 export type HoldingRow = {
   id: number;
@@ -174,6 +174,7 @@ export default function InvestmentsPage() {
   const platformOptions: PlatformOption[] = platforms.map((p) => ({
     id: p.id,
     name: p.name,
+    currency: p.currency,
   }));
 
   // Active holdings only (D-04: zero-qty drops off the active list).

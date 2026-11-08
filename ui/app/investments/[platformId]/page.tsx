@@ -52,12 +52,18 @@ type PortfolioEvent = {
   price: number;
   transaction_id: number | null;
   cash_amount: number | null;
+  currency?: string | null; // absent means IDR
 };
 
 const EDITABLE_SIDES = ["buy", "sell", "dividend"];
 
 const fmtPlain = (n: number) =>
   new Intl.NumberFormat("en-US").format(Math.round(n));
+// A USD unit price can be a fraction of a cent: keep its digits (up to 12).
+const fmtEventPrice = (e: { price: number; currency?: string | null }) =>
+  e.currency === "USD"
+    ? `${new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 12 }).format(e.price)} USD`
+    : fmtPlain(e.price);
 const fmtSigned = (n: number) =>
   new Intl.NumberFormat("en-US", { signDisplay: "always" }).format(
     Math.round(n)
@@ -184,9 +190,9 @@ export default function PlatformDetailPage() {
     try {
       const pRes = await fetch(`/api/platforms`);
       if (pRes.ok) {
-        const p: { id: number; name: string }[] = await pRes.json();
+        const p: { id: number; name: string; currency?: string }[] = await pRes.json();
         if (!isStale()) {
-          setPlatformOptions(p.map((pl) => ({ id: pl.id, name: pl.name })));
+          setPlatformOptions(p.map((pl) => ({ id: pl.id, name: pl.name, currency: pl.currency })));
         }
       }
     } catch {
@@ -567,7 +573,7 @@ export default function PlatformDetailPage() {
                         fontVariantNumeric: "tabular-nums",
                       }}
                     >
-                      {fmtPlain(e.price)}
+                      {fmtEventPrice(e)}
                     </span>
                     <span
                       style={{

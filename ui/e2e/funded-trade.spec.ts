@@ -503,6 +503,11 @@ test.describe("funded buy/sell (XFER-03)", () => {
 
     await openFundedModal(page);
     await fundingSelect(page).selectOption({ label: "BCA" }); // an IDR account
+    // A ticker already held on the platform keeps its own currency.
+    await page.getByPlaceholder("BBCA").fill("ZZ45I");
+    expect(await page.getByLabel("Position currency").evaluate((el) => el.tagName)).toBe("SPAN");
+    await expect(page.getByLabel("Position currency")).toHaveText("IDR");
+
     await page.getByPlaceholder("BBCA").fill("ZZ45N");
     const pos = page.getByLabel("Position currency");
     expect(await pos.evaluate((el) => el.tagName)).toBe("SELECT");
@@ -515,11 +520,6 @@ test.describe("funded buy/sell (XFER-03)", () => {
     await page.getByRole("button", { name: "Log funded Buy", exact: true }).click();
     await expect.poll(() => posted.length).toBe(1);
     expect(posted[0]).toMatchObject({ ticker: "ZZ45N", event_currency: "IDR" });
-
-    // A ticker already held on the platform keeps its own currency.
-    await page.getByPlaceholder("BBCA").fill("ZZ45I");
-    expect(await page.getByLabel("Position currency").evaluate((el) => el.tagName)).toBe("SPAN");
-    await expect(page.getByLabel("Position currency")).toHaveText("IDR");
   });
 
   test("no auto-fill across currencies", async ({ page }) => {

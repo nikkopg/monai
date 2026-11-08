@@ -166,7 +166,14 @@ export default function HoldingModal({
   );
   // null = follow the funding account until the owner picks one.
   const [positionCurrency, setPositionCurrency] = useState<string | null>(null);
-  const eventCcy = held?.currency ?? positionCurrency ?? fundingCcy;
+  // A NEW ticker starts in the platform's currency (the funding account's when the
+  // platform carries none); the owner's pick wins. One value feeds the select, the
+  // labels and the POST. Edit mode keeps the stored event's own currency rules.
+  const platformCcy = isEdit
+    ? undefined
+    : platforms.find((p) => String(p.id) === platformId)?.currency;
+  const newCcy = positionCurrency ?? platformCcy ?? fundingCcy;
+  const eventCcy = held?.currency ?? newCcy;
   // shortcut: edit mode has no stored cash currency in the events payload, so it
   // labels the cash side by the position currency only when that is IDR.
   const cashCcy = isEdit ? (eventCcy === "IDR" ? "IDR" : null) : fundingCcy;
@@ -269,7 +276,7 @@ export default function HoldingModal({
           cash_amount: parseFloat(cashAmount),
           // cash_currency is omitted: the backend takes it from the account.
           // event_currency only for a new position; a held one keeps its own.
-          ...(held ? {} : { event_currency: positionCurrency ?? fundingCcy }),
+          ...(held ? {} : { event_currency: newCcy }),
           date: toLocalDateOnly(date),
           asset_type: assetType,
         };
@@ -466,7 +473,7 @@ export default function HoldingModal({
                     <select
                       aria-label="Position currency"
                       style={{ ...input, width: 96, flexShrink: 0 }}
-                      value={positionCurrency ?? fundingCcy}
+                      value={newCcy}
                       onChange={(e) => setPositionCurrency(e.target.value)}
                     >
                       <option value="IDR">IDR</option>
