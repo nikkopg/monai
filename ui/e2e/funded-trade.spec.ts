@@ -285,7 +285,9 @@ test.describe("funded buy/sell (XFER-03)", () => {
     await expect(fundingSelect(page)).toHaveValue("");
     await page.getByPlaceholder("BBCA").fill("ETH");
     await quantityInput(page).fill("2");
-    await priceInput(page).fill("30000");
+    // No account yet, so the price names no currency (it used to claim IDR).
+    await expect(priceInput(page)).toHaveCount(0);
+    await page.getByLabel("Price per unit", { exact: true }).fill("30000");
 
     // No account chosen: the submit button is disabled for Buy and for Sell.
     const submit = page.locator('form button[type="submit"]');

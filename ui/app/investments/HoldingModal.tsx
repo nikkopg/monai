@@ -441,9 +441,9 @@ export default function HoldingModal({
               <label style={label} htmlFor="holding-price">
                 {isDividend
                   ? "Dividend amount (IDR)"
-                  : isFunded
+                  : isFunded || isEdit
                   ? `Price per unit (${eventCcy})`
-                  : "Price per unit (IDR)"}
+                  : "Price per unit"}
               </label>
               <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
                 <input
