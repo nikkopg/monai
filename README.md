@@ -22,9 +22,10 @@ Two rules hold everywhere:
 - **Files in chat.** Attach a CSV, a PDF bank statement or a photo of a receipt, then ask about it. Its rows are suggested as one batch for you to approve. Text inside a file can't make the assistant change anything.
 - **Skills.** Put instruction files (`SKILL.md`) in the `skills/` folder and switch them on in Settings. The assistant reads them when they're relevant. Nothing in a skill is ever run.
 - **Outside tools.** Connect other AI tool servers in Settings. You approve each call, with its exact inputs, before it runs. Their answers are marked "external, unverified", and they can't touch your data.
-- **Cashflow.** Your net worth, spending by category, income against expenses, monthly trends and account balances. The net-worth chart shows months with missing data as gaps instead of guessing.
-- **Records.** Every transaction, grouped by day, with filters and bulk edits. Add an expense, income or transfer from one form.
-- **Investments.** Holdings across platforms with live prices, profit and loss, USD to IDR conversion, cash and gold, and allocation charts. You can buy or sell using money from one of your accounts.
+- **Accounts in rupiah or dollars.** Each account is IDR or USD. Dollar amounts show as dollars with their rupiah value and rate, and every total converts to rupiah at the right day's rate. If a rate is missing, monai says so instead of giving a total.
+- **Cashflow.** Your net worth, spending by category, income against expenses, monthly trends and account balances. Each month on the net-worth chart is the sum of your records, so editing a record moves the chart.
+- **Records.** Every transaction, grouped by day, with filters and bulk edits. Add an expense, income or transfer from one form, including transfers between a rupiah and a dollar account.
+- **Investments.** Holdings across platforms with live prices, profit and loss, gold, and allocation charts. Each buy or sell names the account the money comes from or goes to, and can include the trading fee. Selling everything closes the position and keeps its profit or loss as a record. Each platform has a default currency, and dollar positions show in dollars with rupiah underneath.
 - **Inbox.** Every change waiting for your approval, whether it came from chat or from Claude, with likely duplicates flagged.
 - **Use it from Claude.** Claude Desktop and other AI apps can read your data. They can also suggest changes, but those wait for your approval in monai.
 - **Import.** Load CSV exports from the Wallet app by BudgetBakers.
@@ -67,6 +68,12 @@ Point Claude Desktop (through `mcp-remote`) or Claude Code at `http://127.0.0.1:
 ## Updating
 
 Pull the latest code and run `docker compose up -d --build` again. Database updates apply automatically on start.
+
+**Optional data updates.** Some changes to existing data are scripts you run yourself, never on start. Each one previews what it would change and changes nothing until you add `--apply`. Run them from the repo root with `POSTGRES_PASSWORD` exported:
+
+- `python -m backend.close_zero_positions` turns positions already at zero into closed records with their profit or loss.
+- `python -m backend.convert_platform_to_usd --platform-id N` moves one platform's rupiah positions to dollars, at each trade's own rate.
+- `python -m backend.backfill_coin_fees --platform-id N --ticker T` adds a percentage fee to past buys whose fee came out of the coin. Use `--rate` and `--rounding` to match your exchange.
 
 **Changing the database password on an existing install.** `POSTGRES_PASSWORD` only takes effect on a new database. To change it on one you already have, back it up first:
 
