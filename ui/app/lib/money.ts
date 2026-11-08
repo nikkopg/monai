@@ -13,6 +13,7 @@ const usdSigned = new Intl.NumberFormat("en-US", {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 });
+const usdPrice = new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 12 });
 const rateFmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 const wholeFmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
@@ -30,6 +31,12 @@ export function fmtAmount(v: number | null | undefined, ccy?: string | null): st
 export function fmtAmountSigned(v: number | null | undefined, ccy?: string | null): string {
   if (missing(v)) return "—";
   return ccy === "USD" ? `${usdSigned.format(v)} USD` : plainSigned.format(Math.round(v));
+}
+
+/** A USD unit price keeping its digits (2 to 12 dp): "0.18982345 USD", "0.024074644 USD" with sig 8. */
+export function fmtUsdPrice(v: number | null | undefined, sig?: number): string {
+  if (missing(v)) return "—";
+  return `${usdPrice.format(sig ? Number(v.toPrecision(sig)) : v)} USD`;
 }
 
 /** Native tooltip text for a converted row; undefined (no title) when rate or date is missing. */

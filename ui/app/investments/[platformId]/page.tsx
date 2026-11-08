@@ -7,7 +7,7 @@ import { useParams } from "next/navigation";
 import { tokens, card, btnDark } from "../../styles";
 import HoldingModal from "../HoldingModal";
 import { extractDetail } from "../../lib/api";
-import { fmtAmount, rateHover } from "../../lib/money";
+import { fmtAmount, fmtAmountSigned, fmtUsdPrice, rateHover } from "../../lib/money";
 import RowMenu from "../../components/RowMenu";
 import type { PlatformOption } from "../page";
 
@@ -69,9 +69,7 @@ const fmtPlain = (n: number) =>
   new Intl.NumberFormat("en-US").format(Math.round(n));
 // A USD unit price can be a fraction of a cent: keep its digits (up to 12).
 const fmtEventPrice = (e: { price: number; currency?: string | null }) =>
-  e.currency === "USD"
-    ? `${new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 12 }).format(e.price)} USD`
-    : fmtPlain(e.price);
+  e.currency === "USD" ? fmtUsdPrice(e.price) : fmtPlain(e.price);
 const fmtSigned = (n: number) =>
   new Intl.NumberFormat("en-US", { signDisplay: "always" }).format(
     Math.round(n)
@@ -445,7 +443,14 @@ export default function PlatformDetailPage() {
                         >
                           {h.ticker.slice(0, 4)}
                         </span>
-                        <span style={{ fontWeight: 500 }}>{h.ticker}</span>
+                        <span style={{ minWidth: 0 }}>
+                          <span style={{ fontWeight: 500, display: "block" }}>{h.ticker}</span>
+                          {h.currency === "USD" && h.usd_rate == null && (
+                            <span style={{ display: "block", fontSize: 11, color: muted }}>
+                              No USD rate, shown in IDR
+                            </span>
+                          )}
+                        </span>
                       </span>
                       <span
                         style={{
@@ -465,7 +470,9 @@ export default function PlatformDetailPage() {
                           color: tokens.color.muted3,
                         }}
                       >
-                        {fmtPlain(h.avg_cost)}
+                        {h.usd_avg_cost != null
+                          ? withIdr(fmtUsdPrice(h.usd_avg_cost, 8), `${fmtPlain(h.avg_cost)} IDR`)
+                          : fmtPlain(h.avg_cost)}
                       </span>
                       <span
                         style={{
@@ -475,7 +482,15 @@ export default function PlatformDetailPage() {
                           color: tokens.color.muted3,
                         }}
                       >
-                        {h.current_price != null ? fmtPlain(h.current_price) : "—"}
+                        {h.usd_current_price != null
+                          ? withIdr(
+                              fmtUsdPrice(h.usd_current_price, 8),
+                              `${fmtPlain(h.current_price ?? 0)} IDR`,
+                              rateHover(h.usd_rate, h.usd_rate_date)
+                            )
+                          : h.current_price != null
+                            ? fmtPlain(h.current_price)
+                            : "—"}
                       </span>
                       <span
                         style={{
@@ -518,9 +533,14 @@ export default function PlatformDetailPage() {
                               : muted,
                         }}
                       >
-                        {h.unrealized_pnl != null
-                          ? fmtSigned(h.unrealized_pnl)
-                          : "—"}
+                        {h.usd_unrealized_pnl != null
+                          ? withIdr(
+                              fmtAmountSigned(h.usd_unrealized_pnl, "USD"),
+                              `${fmtSigned(h.unrealized_pnl ?? 0)} IDR`
+                            )
+                          : h.unrealized_pnl != null
+                            ? fmtSigned(h.unrealized_pnl)
+                            : "—"}
                       </span>
                     </div>
                   ))}
