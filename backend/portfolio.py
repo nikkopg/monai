@@ -13,6 +13,10 @@ and leaves `avg_cost` UNCHANGED. This is expressed by reducing the running
 smaller pool — 05-RESEARCH.md Pitfall 4 / Anti-Patterns). Dividends fold into
 realized return only; they never touch qty/avg_cost.
 
+A trade fee (quick 261108-gdf) is part of the same rule: a buy's cost and a sell's
+proceeds are `price x stored quantity` plus/minus the fee value, and a coin fee is
+already inside the stored quantity (net on a buy, sold + fee on a sell).
+
 Composed reads (portfolio_summary) live here too so the API layer stays a thin
 router: it reads holdings + the latest price_cache row per ticker and hands
 them to these pure calculators.
@@ -39,6 +43,21 @@ from backend.prices import is_stale as _price_is_stale
 logger = logging.getLogger(__name__)
 
 
+def fee_value(ev: PortfolioEvent) -> Decimal:
+    """The event's fee in the position's currency: fee x price for a coin fee, the fee itself for cash."""
+    if ev.fee is None:
+        return Decimal("0")
+    return ev.fee * ev.price if ev.fee_kind == "coin" else ev.fee
+
+
+def filled_quantity(ev: PortfolioEvent) -> Decimal:
+    """The quantity the exchange reported: the stored quantity with a coin fee added back on a buy
+    and taken off on a sell (the stored quantity is the real movement)."""
+    if ev.fee is None or ev.fee_kind != "coin":
+        return ev.quantity
+    return ev.quantity + ev.fee if ev.event_type == "buy" else ev.quantity - ev.fee
+
+
 def recompute_holding_from_events(db: Session, ticker: str, platform_id: int) -> dict:
     """D-01/D-02: rebuild a position's state from its event ledger.
 
@@ -47,7 +66,9 @@ def recompute_holding_from_events(db: Session, ticker: str, platform_id: int) ->
     `portfolio_events` for (ticker, platform_id) in (date, id) order, deriving
     running quantity + average cost. Buys and deposits add cost+qty; sells realize
     `(price − avg_cost) × qty` and reduce total_cost by `avg_cost × qty`
-    (leaving avg_cost unchanged, D-02); dividends fold into realized only.
+    (leaving avg_cost unchanged, D-02); dividends fold into realized only. A trade
+    fee adds its value to a buy's cost and subtracts it from a sell's proceeds
+    (events without a fee run exactly the expressions above).
 
     FX-03/FX-04: each event's native price×quantity is converted to IDR via
     `fx.get_rate(ev.currency or holding.currency, "IDR", ev.date, db)` at the
@@ -109,10 +130,14 @@ def recompute_holding_from_events(db: Session, ticker: str, platform_id: int) ->
 
         if ev.event_type in ("buy", "deposit"):  # a CASH deposit adds quantity at its date's rate
             total_cost += idr_amount
+            if ev.fee is not None:
+                total_cost += fee_value(ev) * rate
             qty += ev.quantity
         elif ev.event_type == "sell":
             avg_cost = (total_cost / qty) if qty > 0 else Decimal("0")
             realized_pnl += (ev.price * rate - avg_cost) * ev.quantity
+            if ev.fee is not None:
+                realized_pnl -= fee_value(ev) * rate
             # avg_cost UNCHANGED by a sell (D-02): reduce the pool proportionally
             # rather than re-deriving avg_cost from a smaller basis.
             total_cost -= avg_cost * ev.quantity
@@ -491,7 +516,8 @@ def _realized_for_position(db: Session, ticker: str, platform_id: int) -> dict:
 
     native_avg_cost (quick 261108-d2c): the same average-cost rule run on the
     events' own native prices, or None unless every event is in the holding's
-    currency and the ledger quantity equals the holding's.
+    currency and the ledger quantity equals the holding's. A trade fee enters it
+    the same way as the IDR cost (fee value added to a buy, no rate).
     """
     events = db.scalars(
         select(PortfolioEvent)
@@ -527,10 +553,15 @@ def _realized_for_position(db: Session, ticker: str, platform_id: int) -> dict:
         if ev.event_type in ("buy", "deposit"):  # a CASH deposit adds quantity at its date's rate
             total_cost += idr_amount
             native_cost += ev.price * ev.quantity
+            if ev.fee is not None:
+                total_cost += fee_value(ev) * rate
+                native_cost += fee_value(ev)
             qty += ev.quantity
         elif ev.event_type == "sell":
             avg_cost = (total_cost / qty) if qty > 0 else Decimal("0")
             realized_pnl += (ev.price * rate - avg_cost) * ev.quantity
+            if ev.fee is not None:
+                realized_pnl -= fee_value(ev) * rate
             total_cost -= avg_cost * ev.quantity
             native_cost -= ((native_cost / qty) if qty > 0 else Decimal("0")) * ev.quantity
             qty -= ev.quantity

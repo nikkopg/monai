@@ -232,7 +232,8 @@ def test_audit_carries_the_fee_as_a_string_and_fee_less_snapshots_are_unchanged(
         AuditLog.entity == "portfolio_event", AuditLog.entity_id == with_fee.id).one()
     assert row.after["fee"] == "0.002" and row.after["fee_kind"] == "coin"
     snap = _portfolio_event_snapshot(with_fee)
-    assert snap["fee"] == "0.002" and snap["fee_kind"] == "coin" and snap["quantity"] == "1.998"
+    assert isinstance(snap["fee"], str) and Decimal(snap["fee"]) == Decimal("0.002") and snap["fee_kind"] == "coin"
+    assert Decimal(snap["quantity"]) == Decimal("1.998")
     assert "fee" not in _portfolio_event_snapshot(plain) and "fee_kind" not in _portfolio_event_snapshot(plain)
 
 

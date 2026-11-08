@@ -91,6 +91,7 @@ from backend.models import (
     Account, AuditLog, Category, ClosedPosition, Holding, Platform, PortfolioEvent, Proposal, Transaction,
 )
 from backend.net_worth_history import monthly_net_worth_series
+from backend.portfolio import filled_quantity
 from backend.portfolio import portfolio_summary as compose_portfolio_summary
 from backend.proposals import ALL_SKIPPED_MSG, expire_stale, transition
 from backend.portfolio import value_history_series
@@ -625,6 +626,7 @@ def list_portfolio_events(platform_id: int, db: Session = Depends(get_session)):
     for ev, amount in rows:
         item = PortfolioEventOut.model_validate(ev)
         item.cash_amount = abs(amount) if amount is not None else None
+        item.filled_quantity = filled_quantity(ev)
         out.append(item)
     return out
 
@@ -687,6 +689,7 @@ def create_funded_buy(payload: FundedBuyCreate, db: Session = Depends(get_sessio
         "cash_amount": float(payload.cash_amount), "cash_currency": payload.cash_currency,
         "event_currency": payload.event_currency, "date": payload.date,
         "notes": payload.notes, "asset_type": payload.asset_type,
+        "fee": float(payload.fee) if payload.fee else None, "fee_kind": payload.fee_kind,
     }
     try:
         result = apply_add_funded_buy(db, after)
@@ -710,6 +713,7 @@ def create_funded_sell(payload: FundedSellCreate, db: Session = Depends(get_sess
         "cash_amount": float(payload.cash_amount), "cash_currency": payload.cash_currency,
         "event_currency": payload.event_currency, "date": payload.date,
         "notes": payload.notes, "asset_type": payload.asset_type,
+        "fee": float(payload.fee) if payload.fee else None, "fee_kind": payload.fee_kind,
     }
     try:
         result = apply_add_funded_sell(db, after)

@@ -23,7 +23,7 @@ from backend.importer import _get_or_create_account
 from backend.models import (
     Account, AuditLog, Category, ClosedPosition, Holding, Platform, PortfolioEvent, PriceCache, Transaction,
 )
-from backend.portfolio import recompute_holding_from_events
+from backend.portfolio import filled_quantity, recompute_holding_from_events
 
 # Mirrors migration 020's CHECK on accounts.currency; fx.py names only BASE.
 ACCOUNT_CURRENCIES = ("IDR", "USD")
@@ -388,6 +388,54 @@ def _funded_event_currency(db: Session, after: dict) -> str:
     return ev_ccy
 
 
+_FEE_KINDS = ("coin", "cash")
+_EIGHT = Decimal("1e-8")
+
+
+def _trade_fee(after: dict) -> tuple[Decimal | None, str | None]:
+    """The (fee, fee_kind) of a trade, normalized: absent or 0 is (None, None).
+
+    A non-finite or negative fee, or a positive fee whose kind is not coin or cash, is a
+    ValueError (422 at the API). The one place REST, chat confirm and edits share.
+    """
+    raw = after.get("fee")
+    if raw is None:
+        return None, None
+    try:
+        fee = Decimal(str(raw))
+    except InvalidOperation:
+        raise ValueError("fee must be a number; nothing was saved")
+    if not fee.is_finite() or fee < 0:
+        raise ValueError("fee must be zero or a positive amount; nothing was saved")
+    fee = fee.quantize(_EIGHT, rounding=ROUND_HALF_UP)
+    if fee == 0:
+        return None, None
+    kind = (after.get("fee_kind") or "").strip().lower()
+    if kind not in _FEE_KINDS:
+        raise ValueError("fee_kind must be 'coin' or 'cash' when a fee is given; nothing was saved")
+    return fee, kind
+
+
+def _stored_quantity(event_type: str, filled, fee: Decimal | None, kind: str | None) -> Decimal:
+    """The real position movement for a filled quantity: a coin fee comes off a buy and goes on top of a sell."""
+    filled = Decimal(str(filled))
+    if fee is None or kind != "coin":
+        return filled
+    stored = (filled - fee if event_type == "buy" else filled + fee).quantize(_EIGHT)
+    if stored <= 0:
+        raise ValueError("A coin fee must be smaller than the quantity bought; nothing was saved")
+    return stored
+
+
+def _fee_fields(event_type: str, after: dict) -> dict:
+    """Quantity/fee/fee_kind overrides for apply_add_portfolio_event (strings: AuditLog is JSON); {} without a fee."""
+    fee, kind = _trade_fee(after)
+    if fee is None:
+        return {}
+    stored = _stored_quantity(event_type, after["quantity"], fee, kind)
+    return {"quantity": _fmt_qty(stored), "fee": _fmt_qty(fee), "fee_kind": kind}
+
+
 def apply_add_funded_buy(db: Session, after: dict) -> dict:
     """Insert a funded 'buy' — cash leg + portfolio event, one commit boundary (XFER-03).
 
@@ -405,10 +453,13 @@ def apply_add_funded_buy(db: Session, after: dict) -> dict:
     this function never hand-rolls a holding update. The two amounts are
     stored as entered, never cross-checked against each other, and no live FX
     rate is ever called here (D-10); `recompute_holding_from_events` resolves
-    historical, date-keyed rates itself when it needs an IDR valuation. Does
-    NOT commit.
+    historical, date-keyed rates itself when it needs an IDR valuation. An optional
+    fee/fee_kind (quick 261108-gdf): `quantity` is the filled amount; a coin fee is
+    stored net (quantity - fee), a cash fee leaves it as entered, and the cash leg
+    is never derived from the fee. Does NOT commit.
     """
     _require_liquid_account(db, after["source_account_name"])
+    fee_fields = _fee_fields("buy", after)  # refuses before any write
     ev_ccy = _funded_event_currency(db, after)
     cash_amount = -abs(after["cash_amount"])  # buy DEBITS the source; Decimal() happens inside apply_add_transaction
     tx = apply_add_transaction(db, {
@@ -429,6 +480,7 @@ def apply_add_funded_buy(db: Session, after: dict) -> dict:
         "currency": ev_ccy,
         "date": after.get("date"),
         "asset_type": after.get("asset_type"),
+        **fee_fields,
     })
     ev.source_account_id = tx.account_id
     ev.transaction_id = tx.id  # both rows flushed by their primitives
@@ -445,9 +497,11 @@ def apply_add_funded_sell(db: Session, after: dict) -> dict:
     is_transfer/category tagging, currency handling (cash in the account's
     currency, event currency per D-02), and no-live-FX contract (D-10) as the
     buy side. A sell that takes the ledger quantity to exactly zero also closes
-    the position (`close_position_if_flat`); the cash leg is kept. Does NOT commit.
+    the position (`close_position_if_flat`); the cash leg is kept. A coin fee is stored on
+    top of the quantity sold, so the stored quantity is what really left. Does NOT commit.
     """
     _require_liquid_account(db, after["source_account_name"])
+    fee_fields = _fee_fields("sell", after)  # refuses before any write
     ev_ccy = _funded_event_currency(db, after)
     cash_amount = abs(after["cash_amount"])  # sell CREDITS the destination; Decimal() happens inside apply_add_transaction
     tx = apply_add_transaction(db, {
@@ -468,6 +522,7 @@ def apply_add_funded_sell(db: Session, after: dict) -> dict:
         "currency": ev_ccy,
         "date": after.get("date"),
         "asset_type": after.get("asset_type"),
+        **fee_fields,
     })
     ev.source_account_id = tx.account_id
     ev.transaction_id = tx.id  # both rows flushed by their primitives
@@ -929,6 +984,8 @@ def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
         price=Decimal(str(after["price"])),
         platform_id=after["platform_id"],
         currency=event_currency,
+        fee=Decimal(str(after["fee"])) if after.get("fee") is not None else None,
+        fee_kind=after.get("fee_kind") if after.get("fee") is not None else None,
     )
     db.add(ev)
     db.flush()  # LOAD-BEARING: populates ev.id before the AuditLog row below
@@ -958,7 +1015,7 @@ _DELETABLE_EVENT_TYPES = _EDITABLE_EVENT_TYPES + ("deposit",)  # a deposit is de
 
 def _portfolio_event_snapshot(ev: PortfolioEvent) -> dict:
     """Audit snapshot of a portfolio event — strings only (AuditLog JSON-serializes, no Decimal)."""
-    return {
+    snap = {
         "id": ev.id,
         "date": ev.date.isoformat() if ev.date else None,
         "ticker": ev.ticker,
@@ -970,6 +1027,9 @@ def _portfolio_event_snapshot(ev: PortfolioEvent) -> dict:
         "source_account_id": ev.source_account_id,
         "transaction_id": ev.transaction_id,
     }
+    if ev.fee is not None:  # fee-less snapshots stay byte-identical
+        snap.update(fee=str(ev.fee), fee_kind=ev.fee_kind)
+    return snap
 
 
 def _load_editable_event(
@@ -994,7 +1054,10 @@ def apply_edit_portfolio_event(
     None/absent fields in `after` keep the current value. A funded event
     (transaction_id set) must stay buy or sell; its cash leg takes the new
     date and a signed amount (buy negative, sell positive; magnitude from
-    `cash_amount`, else the leg's current magnitude). An edit that leaves the event
+    `cash_amount`, else the leg's current magnitude). The PUT `quantity` is the
+    FILLED quantity; the stored quantity is re-derived from it and the (new or
+    current) fee, so a fee is never applied twice, and the fee never writes the
+    cash leg. An edit that leaves the event
     a sell and the position at exactly zero closes it (the event is then deleted,
     its cash leg kept); editing a buy never does. Does NOT commit.
     """
@@ -1007,6 +1070,15 @@ def apply_edit_portfolio_event(
         raise ValueError("a funded event must stay a buy or sell (its cash leg is linked)")
     if after.get("cash_amount") is not None and not funded:
         raise ValueError("cash_amount can only be set on a funded event (no linked cash transaction)")
+    if ("fee" in after or "fee_kind" in after) and not funded:
+        raise ValueError("fee can only be set on a funded event (no linked cash transaction)")
+    filled_now = filled_quantity(ev)  # before the type or quantity move
+    new_filled = after["quantity"] if after.get("quantity") is not None else filled_now
+    fee, fee_kind = _trade_fee({
+        "fee": after["fee"] if "fee" in after else ev.fee,
+        "fee_kind": after.get("fee_kind") or ev.fee_kind,
+    })
+    new_quantity = _stored_quantity(new_type, new_filled, fee, fee_kind)
     if not funded and new_type != ev.event_type:
         raise ValueError("an unfunded event can't change type (a trade needs a liquid account); delete it and log a funded one")
     if new_ticker != old_ticker:
@@ -1019,8 +1091,8 @@ def apply_edit_portfolio_event(
     ev.event_type = new_type
     if after.get("date"):
         ev.date = date.fromisoformat(after["date"])
-    if after.get("quantity") is not None:
-        ev.quantity = Decimal(str(after["quantity"]))  # LOAD-BEARING: str() before Decimal()
+    ev.quantity = new_quantity  # LOAD-BEARING: _stored_quantity does str() before Decimal()
+    ev.fee, ev.fee_kind = fee, fee_kind
     if after.get("price") is not None:
         ev.price = Decimal(str(after["price"]))
 

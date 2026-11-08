@@ -237,6 +237,11 @@ class PortfolioEventOut(BaseModel):
     transaction_id: int | None = None
     cash_amount: MoneyDecimal | None = None
     currency: str | None = None
+    # Migration 023: the fee, and the filled quantity (stored quantity with a coin
+    # fee added back on a buy / taken off on a sell), filled only by GET /portfolio-events.
+    fee: MoneyDecimal | None = None
+    fee_kind: str | None = None
+    filled_quantity: MoneyDecimal | None = None
 
 
 class PortfolioEventUpdate(BaseModel):
@@ -245,7 +250,9 @@ class PortfolioEventUpdate(BaseModel):
     Same validation as PortfolioEventCreate; platform_id and currency are not
     editable. cash_amount is the new magnitude of the linked cash leg (the
     server applies the sign from the event type) and is only valid on a
-    funded event.
+    funded event. quantity is the FILLED quantity (as on create): the server
+    re-derives the stored quantity from it and the fee, so a fee never applies
+    twice. fee/fee_kind are likewise funded-only.
     """
 
     ticker: str | None = Field(None, min_length=1)
@@ -255,6 +262,13 @@ class PortfolioEventUpdate(BaseModel):
     date: _date | None = None
     cash_amount: MoneyDecimal | None = Field(
         None, gt=0, description="New magnitude of the linked cash leg; funded events only"
+    )
+    fee: MoneyDecimal | None = Field(
+        None, ge=0,
+        description="New trade fee (0 clears it); funded events only. Units of the asset for 'coin', the position's currency for 'cash'",
+    )
+    fee_kind: Literal["coin", "cash"] | None = Field(
+        None, description="Required with a fee above 0 unless the event already has one"
     )
 
 
@@ -290,7 +304,7 @@ class FundedBuyCreate(BaseModel):
     source_account_name: str
     platform_id: int = Field(..., description="Required — position identity is (ticker, platform_id)")
     ticker: str
-    quantity: MoneyDecimal = Field(..., gt=0, description="Units; must be positive")
+    quantity: MoneyDecimal = Field(..., gt=0, description="Units filled; must be positive")
     price: MoneyDecimal = Field(..., gt=0, description="Price per unit in the event's native currency")
     cash_amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude; the primitive always debits")
     cash_currency: str | None = None  # absent: the account's currency; a different value is refused
@@ -298,6 +312,13 @@ class FundedBuyCreate(BaseModel):
     date: str | None = None
     notes: str | None = None
     asset_type: str | None = None
+    fee: MoneyDecimal | None = Field(
+        None, ge=0,
+        description="Optional trade fee: units of the asset for kind 'coin', the position's currency for 'cash'",
+    )
+    fee_kind: Literal["coin", "cash"] | None = Field(
+        None, description="Required with a fee above 0; a cash fee is already inside cash_amount on a buy"
+    )
 
 
 class FundedSellCreate(BaseModel):
@@ -306,7 +327,7 @@ class FundedSellCreate(BaseModel):
     source_account_name: str
     platform_id: int = Field(..., description="Required — position identity is (ticker, platform_id)")
     ticker: str
-    quantity: MoneyDecimal = Field(..., gt=0, description="Units; must be positive")
+    quantity: MoneyDecimal = Field(..., gt=0, description="Units filled; must be positive")
     price: MoneyDecimal = Field(..., gt=0, description="Price per unit in the event's native currency")
     cash_amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude; the primitive always credits")
     cash_currency: str | None = None  # absent: the account's currency; a different value is refused
@@ -314,6 +335,13 @@ class FundedSellCreate(BaseModel):
     date: str | None = None
     notes: str | None = None
     asset_type: str | None = None
+    fee: MoneyDecimal | None = Field(
+        None, ge=0,
+        description="Optional trade fee: units of the asset for kind 'coin', the position's currency for 'cash'",
+    )
+    fee_kind: Literal["coin", "cash"] | None = Field(
+        None, description="Required with a fee above 0; on a sell the cash_amount is net of a cash fee"
+    )
 
 
 class BalanceAdjustmentCreate(BaseModel):

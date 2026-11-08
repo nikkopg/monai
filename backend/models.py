@@ -538,6 +538,11 @@ class PortfolioEvent(Base):
         ForeignKey("transactions.id", ondelete="SET NULL"),
         nullable=True, unique=True, index=True,
     )
+    # Migration 023 (CHECK ck_portfolio_events_fee lives in the DB only, like
+    # platforms.currency): a trade fee, in coin units for 'coin', in the
+    # position's currency for 'cash'. Both null when the event has none.
+    fee: Mapped[Decimal | None] = mapped_column(Numeric(28, 8), nullable=True)
+    fee_kind: Mapped[str | None] = mapped_column(String(8), nullable=True)
 
 
 class ClosedPosition(Base):
