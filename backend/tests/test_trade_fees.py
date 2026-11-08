@@ -311,7 +311,7 @@ def _propose(zz45, fn, account, plat, **kw):
     from backend import tools
     res = getattr(tools, fn)(account, plat, "ZZ45T", kw.pop("quantity", 2), kw.pop("price", 100),
                              kw.pop("cash_amount", 200), date=_ISO_DAY, **kw)
-    zz45.proposal_ids.append(int(res["proposal_id"]))
+    zz45.proposal_ids.append(res["proposal_id"])
     return res
 
 

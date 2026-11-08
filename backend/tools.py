@@ -1910,11 +1910,12 @@ def propose_add_transfer(
 def _funded_after(
     source_account_name: str, platform_id: int, ticker: str, quantity: float, price: float,
     cash_amount: float, event_currency: str | None, date: str | None, notes: str | None,
-    asset_type: str | None,
+    asset_type: str | None, fee: float | None = None, fee_kind: str | None = None,
 ) -> dict | None:
     """Shared `after` of a funded buy/sell: the cash currency is the account's and the event
     currency is explicit, else the existing position's, else the cash currency (D-02, D-08).
-    None when the account can't be resolved."""
+    fee/fee_kind pass through unvalidated: writes._trade_fee is the one place that refuses a
+    bad pair, at confirm. None when the account can't be resolved."""
     ref = _account_ref(source_account_name)
     if ref is None:
         return None
@@ -1937,7 +1938,17 @@ def _funded_after(
         "date": date,
         "notes": notes,
         "asset_type": asset_type,
+        "fee": abs(float(fee)) if fee else None,
+        "fee_kind": (fee_kind or "").strip().lower() or None,
     }
+
+
+def _fee_note(after: dict) -> str:
+    """Summary suffix naming the fee, or '' without one."""
+    if not after["fee"]:
+        return ""
+    unit = "coin" if after["fee_kind"] == "coin" else after["event_currency"]
+    return f", fee {after['fee']:g} {unit} ({after['fee_kind']})"
 
 
 def propose_add_funded_buy(
@@ -1951,6 +1962,8 @@ def propose_add_funded_buy(
     date: str | None = None,
     notes: str | None = None,
     asset_type: str | None = None,
+    fee: float | None = None,
+    fee_kind: str | None = None,
 ) -> dict:
     """Propose a funded buy: debits source_account_name and records a
     'buy' portfolio event. cash_amount, quantity, and price must be
@@ -1958,11 +1971,16 @@ def propose_add_funded_buy(
     cash_amount is in the source account's currency (there is no cash
     currency argument); price is in event_currency, which defaults to the
     existing position's currency. platform_id is an int — use find_platforms
-    first to resolve a platform name to its id. Returns a proposal for user
-    confirmation — never moves money directly.
+    first to resolve a platform name to its id. quantity is the filled amount.
+    fee is optional. Use fee_kind "coin" when the exchange took the fee out of
+    the coin received: the fee is in coin units and monai stores the net. Use
+    "cash" when it was paid in the position's currency; cash_amount then
+    includes it. A fee paid in a third coin is its value with fee_kind "cash"
+    and a cash_amount of what the account actually paid. Returns a proposal
+    for user confirmation — never moves money directly.
     """
     after = _funded_after(source_account_name, platform_id, ticker, quantity, price,
-                          cash_amount, event_currency, date, notes, asset_type)
+                          cash_amount, event_currency, date, notes, asset_type, fee, fee_kind)
     if after is None:
         return _no_liquid_account("propose_add_funded_buy", source_account_name)
     payload = {"operation": "add_funded_buy", "rows": [{"before": None, "after": after}]}
@@ -1971,7 +1989,7 @@ def propose_add_funded_buy(
         "tool": "propose_add_funded_buy",
         "proposal_id": proposal_id,
         "proposal_token": proposal_token,
-        "summary": f"Buy {quantity} {ticker} @ {price} {after['event_currency']} funded by {cash_amount} {after['cash_currency']} from {source_account_name}",
+        "summary": f"Buy {quantity} {ticker} @ {price} {after['event_currency']} funded by {cash_amount} {after['cash_currency']} from {source_account_name}{_fee_note(after)}",
         "before": None,
         "after": after,
     }
@@ -1988,6 +2006,8 @@ def propose_add_funded_sell(
     date: str | None = None,
     notes: str | None = None,
     asset_type: str | None = None,
+    fee: float | None = None,
+    fee_kind: str | None = None,
 ) -> dict:
     """Propose a funded sell: credits source_account_name and records a
     'sell' portfolio event. cash_amount, quantity, and price must be
@@ -1995,11 +2015,14 @@ def propose_add_funded_sell(
     cash_amount is in the source account's currency (there is no cash
     currency argument); price is in event_currency, which defaults to the
     existing position's currency. platform_id is an int — use find_platforms
-    first to resolve a platform name to its id. Returns a proposal for user
+    first to resolve a platform name to its id. quantity is the amount sold.
+    fee is optional. Use fee_kind "coin" when the fee came out of the coin on
+    top of the quantity sold (fee in coin units); "cash" when it came off the
+    proceeds, and cash_amount is then net of it. Returns a proposal for user
     confirmation — never moves money directly.
     """
     after = _funded_after(source_account_name, platform_id, ticker, quantity, price,
-                          cash_amount, event_currency, date, notes, asset_type)
+                          cash_amount, event_currency, date, notes, asset_type, fee, fee_kind)
     if after is None:
         return _no_liquid_account("propose_add_funded_sell", source_account_name)
     payload = {"operation": "add_funded_sell", "rows": [{"before": None, "after": after}]}
@@ -2008,7 +2031,7 @@ def propose_add_funded_sell(
         "tool": "propose_add_funded_sell",
         "proposal_id": proposal_id,
         "proposal_token": proposal_token,
-        "summary": f"Sell {quantity} {ticker} @ {price} {after['event_currency']}, credit {cash_amount} {after['cash_currency']} to {source_account_name}",
+        "summary": f"Sell {quantity} {ticker} @ {price} {after['event_currency']}, credit {cash_amount} {after['cash_currency']} to {source_account_name}{_fee_note(after)}",
         "before": None,
         "after": after,
     }

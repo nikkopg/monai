@@ -32,6 +32,11 @@ import type { PlatformOption } from "./page";
 // platform (chip, not sent), else a IDR/USD select defaulting to the account's
 // currency and sent as event_currency. The cash amount auto-fills from
 // quantity x price only when both currencies match; no FX is ever applied.
+//
+// Quick 261108-gdf: a funded Buy/Sell can carry a fee (coin or cash). Quantity
+// is always the FILLED amount; the backend stores the net, and an edit shows and
+// sends the filled quantity back so a fee is never applied twice. A cash fee
+// moves the auto-filled cash amount (+ on a buy, - on a sell).
 // ---------------------------------------------------------------------------
 
 export type EditableEvent = {
@@ -43,6 +48,8 @@ export type EditableEvent = {
   price: number;
   transaction_id: number | null;
   cash_amount: number | null;
+  fee?: number | null;
+  fee_kind?: string | null;
 };
 
 type Props = {
@@ -130,6 +137,11 @@ export default function HoldingModal({
     editEvent ? String(editEvent.quantity) : ""
   );
   const [price, setPrice] = useState(editEvent ? String(editEvent.price) : "");
+  const [fee, setFee] = useState(editEvent?.fee ? String(editEvent.fee) : "");
+  // null = follow the default (coin for a new crypto buy, else cash) until picked.
+  const [feeKindPick, setFeeKindPick] = useState<"coin" | "cash" | null>(
+    editEvent?.fee_kind === "coin" || editEvent?.fee_kind === "cash" ? editEvent.fee_kind : null
+  );
   const [date, setDate] = useState(
     editEvent ? `${editEvent.date}T00:00` : toLocalDatetimeInputValue(new Date())
   );
@@ -177,6 +189,16 @@ export default function HoldingModal({
   // shortcut: edit mode has no stored cash currency in the events payload, so it
   // labels the cash side by the position currency only when that is IDR.
   const cashCcy = isEdit ? (eventCcy === "IDR" ? "IDR" : null) : fundingCcy;
+  const feeKind: "coin" | "cash" =
+    feeKindPick ?? (!isEdit && eventType === "buy" && assetType === "crypto" ? "coin" : "cash");
+  const feeNum = parseFloat(fee);
+  const hasFee = feeNum > 0;
+  // The stored movement: a coin fee comes off a buy and goes on top of a sell.
+  const qtyNum = parseFloat(quantity);
+  const moved =
+    hasFee && feeKind === "coin" && !Number.isNaN(qtyNum)
+      ? String(Number((eventType === "sell" ? qtyNum + feeNum : qtyNum - feeNum).toFixed(8)))
+      : quantity;
 
   useEffect(() => {
     let cancelled = false;
@@ -209,10 +231,14 @@ export default function HoldingModal({
     } else if (quantity && price) {
       const q = parseFloat(quantity);
       const p = parseFloat(price);
-      if (!Number.isNaN(q) && !Number.isNaN(p)) setCashAmount(String(q * p));
+      if (!Number.isNaN(q) && !Number.isNaN(p)) {
+        // A cash fee is paid on top of a buy and comes off a sell's proceeds.
+        const cashFee = hasFee && feeKind === "cash" ? (eventType === "sell" ? -feeNum : feeNum) : 0;
+        setCashAmount(String(cashFee ? Number((q * p + cashFee).toFixed(8)) : q * p));
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quantity, price, cashCcy, eventCcy]);
+  }, [quantity, price, cashCcy, eventCcy, fee, feeKind, eventType]);
 
   // When switching to Dividend, default quantity to 1 (still editable) so the
   // form keeps the same field set (quantity=1, price=amount convention).
@@ -240,7 +266,11 @@ export default function HoldingModal({
           price: parseFloat(price),
           date: toLocalDateOnly(date),
         };
-        if (isFunded) body.cash_amount = parseFloat(cashAmount);
+        if (isFunded) {
+          body.cash_amount = parseFloat(cashAmount);
+          body.fee = hasFee ? feeNum : 0; // 0 clears a stored fee
+          if (hasFee) body.fee_kind = feeKind;
+        }
         const r = await fetch(`/api/portfolio-events/${editEvent.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -279,6 +309,7 @@ export default function HoldingModal({
           ...(held ? {} : { event_currency: newCcy }),
           date: toLocalDateOnly(date),
           asset_type: assetType,
+          ...(hasFee ? { fee: feeNum, fee_kind: feeKind } : {}),
         };
         const r = await fetch(endpoint, {
           method: "POST",
@@ -549,6 +580,38 @@ export default function HoldingModal({
                 </div>
               </div>
             )}
+            {isFunded && (
+              <div>
+                <label style={label} htmlFor="holding-fee">
+                  {`Fee (${feeKind === "coin" ? ticker.trim() || "coin" : eventCcy})`}
+                </label>
+                <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
+                  <input
+                    id="holding-fee"
+                    style={{ ...input, flex: 1, minWidth: 0 }}
+                    type="number"
+                    step="any"
+                    min="0"
+                    value={fee}
+                    onChange={(e) => setFee(e.target.value)}
+                  />
+                  <select
+                    aria-label="Fee kind"
+                    style={{ ...input, width: 140, flexShrink: 0 }}
+                    value={feeKind}
+                    onChange={(e) => setFeeKindPick(e.target.value as "coin" | "cash")}
+                  >
+                    <option value="coin">From the coin</option>
+                    <option value="cash">{`Cash (${eventCcy})`}</option>
+                  </select>
+                </div>
+                {isEdit && linked && (
+                  <p style={{ ...label, fontSize: 11, marginTop: 4, color: tokens.color.muted3 }}>
+                    The cash amount is not recalculated; change it too if the fee changed what was paid.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {!isEdit && isFunded && quantity && ticker && (
@@ -561,8 +624,8 @@ export default function HoldingModal({
               }}
             >
               {eventType === "sell"
-                ? `Credits ${fundingAccount} ${fmtSide(parseFloat(cashAmount || "0"), fundingCcy)}, −${quantity} ${ticker}`
-                : `Debits ${fundingAccount} ${fmtSide(parseFloat(cashAmount || "0"), fundingCcy)}, +${quantity} ${ticker}`}
+                ? `Credits ${fundingAccount} ${fmtSide(parseFloat(cashAmount || "0"), fundingCcy)}, −${moved} ${ticker}`
+                : `Debits ${fundingAccount} ${fmtSide(parseFloat(cashAmount || "0"), fundingCcy)}, +${moved} ${ticker}`}
             </p>
           )}
 

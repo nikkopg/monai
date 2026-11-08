@@ -61,6 +61,9 @@ type PortfolioEvent = {
   transaction_id: number | null;
   cash_amount: number | null;
   currency?: string | null; // absent means IDR
+  fee?: number | null; // quick 261108-gdf: coin units for "coin", the position's currency for "cash"
+  fee_kind?: string | null;
+  filled_quantity?: number | null; // stored quantity with a coin fee added back (buy) / taken off (sell)
 };
 
 const EDITABLE_SIDES = ["buy", "sell", "dividend"];
@@ -611,6 +614,13 @@ export default function PlatformDetailPage() {
                       }}
                     >
                       {fmtQty(e.quantity, null)}
+                      {e.fee ? (
+                        <span style={{ display: "block", fontSize: 11 }}>
+                          {e.fee_kind === "coin"
+                            ? `fee ${fmtQty(e.fee, "crypto")} ${e.ticker}`
+                            : `fee ${e.currency === "USD" ? fmtUsdPrice(e.fee) : `${fmtAmount(e.fee)} IDR`}`}
+                        </span>
+                      ) : null}
                     </span>
                     <span
                       style={{
@@ -661,6 +671,9 @@ export default function PlatformDetailPage() {
               }))}
               editEvent={{
                 ...editingEvent,
+                // LOAD-BEARING: the PUT quantity is the FILLED quantity; sending the
+                // stored one back would apply a coin fee a second time.
+                quantity: editingEvent.filled_quantity ?? editingEvent.quantity,
                 event_type: editingEvent.event_type as "buy" | "sell" | "dividend",
               }}
               onClose={() => setEditingEvent(null)}
