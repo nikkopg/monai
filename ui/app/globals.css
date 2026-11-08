@@ -213,6 +213,8 @@ input, select, button, textarea {
 @media (pointer: coarse) {
   .coarse-tap { min-height: 44px; }
 }
+/* Sign-in button hover: literal tokens.color.greenDark (inline styles cannot hover). */
+.login-submit:hover { background: #23543c !important; }
 .source-chip:hover { background: #f2efe8 !important; text-decoration: underline; }
 .step-toggle:hover .step-label { text-decoration: underline; }
 .steps-toggle:hover { color: #23201b !important; }

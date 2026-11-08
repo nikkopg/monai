@@ -1,5 +1,5 @@
 import { Instrument_Serif, Hanken_Grotesk } from "next/font/google";
-import Nav from "./components/Nav";
+import AppShell from "./components/AppShell";
 import { tokens } from "./styles";
 import "./globals.css";
 
@@ -37,40 +37,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           minHeight: "100vh",
         }}
       >
-        {/* Centered app frame — mockup shell geometry */}
-        <div
-          className="app-frame"
-          style={{
-            minHeight: "100vh",
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "flex-start",
-            padding: 28,
-            boxSizing: "border-box",
-          }}
-        >
-          <div
-            className="app-panel"
-            style={{
-              width: 1240,
-              maxWidth: "100%",
-              minHeight: "calc(100vh - 56px)",
-              display: "flex",
-              background: tokens.color.panel,
-              border: `1px solid ${tokens.color.border2}`,
-              borderRadius: tokens.radius.xl,
-              // clip, not hidden: hidden makes this a scroll container and stops the chat
-              // composer's `position: sticky` from pinning to the window (D-22a).
-              overflow: "clip",
-              boxShadow: tokens.shadow.panel,
-            }}
-          >
-            <Nav />
-            <main style={{ flex: 1, minWidth: 0, overflowX: "clip" }}>
-              {children}
-            </main>
-          </div>
-        </div>
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );
