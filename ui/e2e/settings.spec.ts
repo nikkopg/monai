@@ -122,3 +122,158 @@ test.describe("/settings page", () => {
     await expect(items).toHaveText(["Edit", "Delete"]);
   });
 });
+
+// Phase 44-01 — AccountManager currency surfaces. Synthetic data; GETs are
+// mocked and every non-GET is fulfilled by the test, so nothing reaches the
+// live backend through the dev server's proxy.
+test.describe("AccountManager currency (Phase 44)", () => {
+  const mockSummary = async (pg: Page, accounts: object[]) => {
+    await pg.route("**/api/categories*", (route) =>
+      route.request().method() === "GET"
+        ? route.fulfill({ json: [] })
+        : route.fulfill({ status: 500, json: { detail: "blocked in test" } })
+    );
+    await pg.route("**/api/cashflow/summary**", (route) =>
+      route.request().method() === "GET"
+        ? route.fulfill({ json: { accounts } })
+        : route.fulfill({ status: 500, json: { detail: "blocked in test" } })
+    );
+  };
+
+  test("USD account create and chip", async ({ page }) => {
+    await mockSummary(page, [
+      { id: 1, name: "ZZ44 Cash", current_balance: 0, type: "liquid", currency: "IDR" },
+      { id: 2, name: "ZZ44 Wallet", current_balance: 0, type: "liquid", currency: "USD" },
+      { id: 3, name: "ZZ44 Card", current_balance: 0, type: "liquid" },
+    ]);
+    const posted: unknown[] = [];
+    await page.route("**/api/accounts", (route) => {
+      if (route.request().method() !== "POST") return route.fulfill({ status: 500, json: { detail: "blocked in test" } });
+      posted.push(route.request().postDataJSON());
+      return route.fulfill({ status: 201, json: { id: 9, name: "ZZ44 New", type: "liquid", currency: "USD" } });
+    });
+    await page.goto("/settings");
+
+    const chip = (name: string) =>
+      page.locator("tr", { hasText: name }).getByText(/^(IDR|USD)$/);
+    await expect(chip("ZZ44 Cash")).toHaveText("IDR");
+    await expect(chip("ZZ44 Wallet")).toHaveText("USD");
+    await expect(chip("ZZ44 Card")).toHaveText("IDR");
+
+    await page.getByRole("button", { name: "Add account", exact: true }).click();
+    const select = page.getByLabel("Account currency");
+    expect(
+      await select.locator("option").evaluateAll((o) => o.map((x) => (x as HTMLOptionElement).value))
+    ).toEqual(["IDR", "USD"]);
+    await expect(select).toHaveValue("IDR");
+
+    await select.selectOption("USD");
+    await page.getByPlaceholder("Account name").fill("ZZ44 New");
+    await page.getByRole("button", { name: "Add account", exact: true }).click();
+    await expect.poll(() => posted.length).toBe(1);
+    expect(posted[0]).toEqual({ name: "ZZ44 New", type: "liquid", currency: "USD" });
+
+    await page.getByRole("button", { name: "Add account", exact: true }).click();
+    await expect(page.getByLabel("Account currency")).toHaveValue("IDR");
+  });
+  test("reassign lists same-currency accounts only", async ({ page }) => {
+    await mockSummary(page, [
+      { id: 1, name: "ZZ44 Cash", current_balance: 0, type: "liquid", currency: "IDR" },
+      { id: 2, name: "ZZ44 Bank", current_balance: 0, type: "liquid", currency: "IDR" },
+      { id: 3, name: "ZZ44 Card", current_balance: 0, type: "liquid" },
+      { id: 4, name: "ZZ44 Wallet", current_balance: 0, type: "liquid", currency: "USD" },
+    ]);
+    const deletes: string[] = [];
+    await page.route(/\/api\/accounts\/\d+/, (route) => {
+      const req = route.request();
+      if (req.method() !== "DELETE") return route.fulfill({ status: 500, json: { detail: "blocked in test" } });
+      deletes.push(req.url());
+      return req.url().includes("reassign_to")
+        ? route.fulfill({ json: { status: "deleted", reassigned: 3 } })
+        : route.fulfill({ status: 422, json: { detail: { message: "3 transactions use this account", affected_count: 3 } } });
+    });
+    await page.goto("/settings");
+
+    const startDelete = async (name: string) => {
+      await page.getByRole("button", { name: `Account options: ${name}`, exact: true }).click();
+      await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
+      await page.getByRole("button", { name: "Delete account", exact: true }).click();
+    };
+
+    // USD account, no other USD account: no select, disabled confirm, Cancel closes.
+    await startDelete("ZZ44 Wallet");
+    await expect(page.getByText("No other USD account to move these records to.")).toBeVisible();
+    await expect(page.getByLabel("Destination account", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Reassign & delete", exact: true })).toBeDisabled();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Reassign & delete", exact: true })).toHaveCount(0);
+    expect(deletes.filter((u) => u.includes("reassign_to"))).toEqual([]);
+
+    // IDR account: only IDR accounts (a missing currency counts as IDR), never itself.
+    await startDelete("ZZ44 Cash");
+    const dest = page.getByLabel("Destination account", { exact: true });
+    expect(await dest.locator("option").allTextContents()).toEqual(["ZZ44 Bank", "ZZ44 Card"]);
+    const confirm = page.getByRole("button", { name: "Reassign & delete", exact: true });
+    await expect(confirm).toBeEnabled();
+    await confirm.click();
+    await expect.poll(() => deletes.filter((u) => u.includes("reassign_to=2")).length).toBe(1);
+    expect(deletes.find((u) => u.includes("reassign_to"))).toContain("/api/accounts/1?reassign_to=2");
+  });
+
+  // Phase 44-03: a USD account is adjusted in USD against its native balance.
+  const openAdjust = async (page: Page, name: string) => {
+    await page.goto("/settings");
+    await page.getByRole("button", { name: `Account options: ${name}`, exact: true }).click();
+    await page.getByRole("menuitem", { name: "Adjust balance", exact: true }).click();
+  };
+  const usdWallet = {
+    id: 2, name: "ZZ44 Wallet", type: "liquid", currency: "USD", native_balance: 50,
+    current_balance: 812_500, fx_rate: 16250, fx_as_of: "2026-10-30", fx_stale: false,
+  };
+
+  test("adjust a USD balance in USD", async ({ page }) => {
+    await mockSummary(page, [usdWallet]);
+    const posted: unknown[] = [];
+    await page.route("**/api/accounts/2/adjust-balance", (route) => {
+      if (route.request().method() !== "POST") return route.fulfill({ status: 500, json: { detail: "blocked in test" } });
+      posted.push(route.request().postDataJSON());
+      return route.fulfill({ status: 201, json: { status: "ok" } });
+    });
+    await openAdjust(page, "ZZ44 Wallet");
+
+    await expect(page.getByText("Target balance (USD)", { exact: true })).toBeVisible();
+    const target = page.locator("form input[type=number]");
+    await expect(target).toHaveValue("50");
+    const preview = page.getByText(/^(Adjustment:|No change)/);
+    const save = page.getByRole("button", { name: "Save adjustment", exact: true });
+
+    await target.fill("62.34");
+    await expect(preview).toHaveText("Adjustment: +12.34 USD");
+    await target.fill("50.001");
+    await expect(preview).toHaveText("No change — target equals current balance.");
+    await expect(save).toBeDisabled();
+    await target.fill("40");
+    await expect(preview).toHaveText("Adjustment: −10.00 USD");
+
+    await target.fill("62.34");
+    await save.click();
+    await expect.poll(() => posted.length).toBe(1);
+    expect(posted[0]).toEqual({ target_balance: 62.34 });
+  });
+
+  test("a USD account with no rate still opens at its native balance", async ({ page }) => {
+    await mockSummary(page, [{ ...usdWallet, current_balance: null, fx_rate: null, fx_as_of: null }]);
+    await openAdjust(page, "ZZ44 Wallet");
+    await expect(page.locator("form input[type=number]")).toHaveValue("50");
+  });
+
+  test("an IDR account keeps its copy and Rp preview", async ({ page }) => {
+    await mockSummary(page, [{ id: 1, name: "ZZ44 Cash", type: "liquid", current_balance: 1_000_000 }]);
+    await openAdjust(page, "ZZ44 Cash");
+    await expect(page.getByText("Target balance", { exact: true })).toBeVisible();
+    const target = page.locator("form input[type=number]");
+    await expect(target).toHaveValue("1000000");
+    await target.fill("1500000");
+    await expect(page.getByText("Adjustment: +Rp 500,000", { exact: true })).toBeVisible();
+  });
+});

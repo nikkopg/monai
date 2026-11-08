@@ -806,7 +806,7 @@ def test_confirm_transfer_writes_both_legs(client, api_key, db_session):
         from backend.tools import propose_add_transfer  # RED: not implemented until Plan 14-02
 
         result = propose_add_transfer(
-            from_account=name_a, to_account=name_b, amount=100000, currency="IDR",
+            from_account=name_a, to_account=name_b, amount=100000,
             date="2024-03-01", notes="test transfer",
         )
         resp = client.post(
@@ -835,73 +835,6 @@ def test_confirm_transfer_writes_both_legs(client, api_key, db_session):
         _cleanup_account(db_session, name_b)
 
 
-def test_confirm_investment_transfer_links_event(client, api_key, db_session):
-    """propose_add_investment_transfer -> confirm -> 1 cash Transaction
-    (is_transfer=True, negative amount) + 1 PortfolioEvent whose
-    source_account_id == the cash leg's account_id, and NO new synthetic
-    accounts row. Deposit sentinel: ticker=='CASH', event_type=='deposit'
-    (RESEARCH Q1 resolution, XFER-02). RED until Plan 14-02."""
-    from backend.models import Account, Transaction, PortfolioEvent
-
-    name = "zz14test-InvestSource"
-    ticker = "CASH"
-    acc_id = _make_account(db_session, name)
-    plat_id = _make_platform_local(db_session, "zz14test-InvestPlatform")
-    try:
-        accounts_before = int(db_session.execute(text("SELECT COUNT(*) FROM accounts")).scalar() or 0)
-
-        from backend.tools import propose_add_investment_transfer  # RED: not implemented until Plan 14-02
-
-        result = propose_add_investment_transfer(
-            from_account=name, platform_id=plat_id, amount=500000, currency="IDR",
-            date="2024-03-02", notes="fund platform",
-        )
-        resp = client.post(
-            f"/proposals/{result['proposal_id']}/confirm",
-            json={"token": result["proposal_token"]},
-            headers={"MONAI_API_KEY": api_key},
-        )
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text}"
-
-        db_session.expire_all()
-        tx = db_session.query(Transaction).filter(Transaction.account_id == acc_id).one()
-        assert tx.is_transfer is True
-        assert tx.amount == Decimal("-500000")
-
-        ev = db_session.query(PortfolioEvent).filter(
-            PortfolioEvent.platform_id == plat_id, PortfolioEvent.ticker == ticker
-        ).one()
-        assert ev.source_account_id == tx.account_id, "event must link back to the funding account (D-05)"
-        assert ev.event_type == "deposit"
-
-        accounts_after = int(db_session.execute(text("SELECT COUNT(*) FROM accounts")).scalar() or 0)
-        assert accounts_after == accounts_before, "no synthetic accounts row for the investment side (D-05)"
-    finally:
-        db_session.rollback()
-        # CASH is a shared production sentinel ticker (RESEARCH Q1) — scope
-        # cleanup to this test's own platform_id, never a global ticker purge.
-        from backend.models import AuditLog, Holding
-        eids = [e.id for e in db_session.query(PortfolioEvent).filter(
-            PortfolioEvent.platform_id == plat_id, PortfolioEvent.ticker == ticker
-        ).all()]
-        if eids:
-            db_session.query(AuditLog).filter(
-                AuditLog.entity == "portfolio_event", AuditLog.entity_id.in_(eids)
-            ).delete(synchronize_session=False)
-            db_session.query(PortfolioEvent).filter(PortfolioEvent.id.in_(eids)).delete(synchronize_session=False)
-        hids = [h.id for h in db_session.query(Holding).filter(
-            Holding.platform_id == plat_id, Holding.ticker == ticker
-        ).all()]
-        if hids:
-            db_session.query(AuditLog).filter(
-                AuditLog.entity == "holding", AuditLog.entity_id.in_(hids)
-            ).delete(synchronize_session=False)
-            db_session.query(Holding).filter(Holding.id.in_(hids)).delete(synchronize_session=False)
-        db_session.commit()
-        _cleanup_platform(db_session, plat_id)
-        _cleanup_account(db_session, name)
-
-
 def test_confirm_funded_buy_writes_both_sides(client, api_key, db_session):
     """propose_add_funded_buy -> confirm -> cash Transaction amount ==
     Decimal(str(-cash_amount)) (DEBIT, is_transfer=True), 'buy' PortfolioEvent
@@ -919,8 +852,8 @@ def test_confirm_funded_buy_writes_both_sides(client, api_key, db_session):
 
         result = propose_add_funded_buy(
             source_account_name=name, platform_id=plat_id, ticker=ticker,
-            quantity=10, price=100000, cash_amount=1000000, cash_currency="IDR",
-            event_currency="IDR", date="2024-03-03",
+            quantity=10, price=100000, cash_amount=1000000,
+            date="2024-03-03",
         )
         resp = client.post(
             f"/proposals/{result['proposal_id']}/confirm",
@@ -961,12 +894,17 @@ def test_confirm_funded_sell_writes_both_sides(client, api_key, db_session):
     plat_id = _make_platform_local(db_session, "zz14test-FundedSellPlatform")
     _cleanup_ticker(db_session, ticker)
     try:
+        from backend.writes import apply_add_portfolio_event
+        apply_add_portfolio_event(db_session, {  # a larger buy first: a sell beyond the held quantity is refused
+            "ticker": ticker, "event_type": "buy", "quantity": 20, "price": 100000,
+            "platform_id": plat_id, "currency": "IDR", "date": "2024-03-01"})
+        db_session.commit()
         from backend.tools import propose_add_funded_sell  # RED: not implemented until Plan 14-02
 
         result = propose_add_funded_sell(
             source_account_name=name, platform_id=plat_id, ticker=ticker,
-            quantity=10, price=100000, cash_amount=1000000, cash_currency="IDR",
-            event_currency="IDR", date="2024-03-04",
+            quantity=10, price=100000, cash_amount=1000000,
+            date="2024-03-04",
         )
         resp = client.post(
             f"/proposals/{result['proposal_id']}/confirm",
@@ -981,7 +919,8 @@ def test_confirm_funded_sell_writes_both_sides(client, api_key, db_session):
         assert tx.amount == Decimal("1000000")
         assert tx.is_transfer is True
 
-        ev = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
+        ev = db_session.query(PortfolioEvent).filter(
+            PortfolioEvent.ticker == ticker, PortfolioEvent.event_type == "sell").one()
         assert ev.event_type == "sell"
         assert ev.source_account_id == acc_id
     finally:
@@ -1085,6 +1024,41 @@ def test_confirm_malformed_funded_buy_returns_422(client, api_key, db_session):
         _cleanup_account(db_session, "zz14test-MalformedBuySrc")
 
 
+def test_confirm_retired_operation_returns_422(client, api_key, db_session):
+    """A pending proposal whose operation no longer has a dispatch branch gets
+    the unknown-operation 422, applies nothing and stays pending so the owner
+    can still reject it."""
+    import secrets
+    from backend.models import Proposal
+
+    token = secrets.token_urlsafe(32)
+    expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=15)
+    payload = {"operation": "add_retired_operation", "rows": [{"before": None, "after": {}}]}
+    p = Proposal(token=token, operation="add_retired_operation", payload=payload,
+                status="pending", expires_at=expires_at)
+    db_session.add(p)
+    db_session.commit()
+    db_session.refresh(p)
+
+    try:
+        resp = client.post(
+            f"/proposals/{p.id}/confirm",
+            json={"token": token},
+            headers={"MONAI_API_KEY": api_key},
+        )
+        assert resp.status_code == 422, resp.text
+        assert "Unknown proposal operation" in resp.text
+        db_session.expire_all()
+        assert db_session.get(Proposal, p.id).status == "pending"
+    finally:
+        db_session.rollback()
+        db_session.expire_all()
+        leftover = db_session.get(Proposal, p.id)
+        if leftover is not None:
+            db_session.delete(leftover)
+            db_session.commit()
+
+
 def _make_platform_local(db, name: str) -> int:
     """zz14test-scoped platform seed helper (parallels test_proposals.py's
     existing `_make_platform`, but WITHOUT the random-suffix behavior so the
@@ -1099,3 +1073,267 @@ def _make_platform_local(db, name: str) -> int:
     db.commit()
     db.refresh(plat)
     return plat.id
+
+
+# ---------------------------------------------------------------------------
+# Currency guard on confirm (Phase 42, D-08): the account decides the currency
+# ---------------------------------------------------------------------------
+
+def _add_txn_proposal(db, account: str, **after_extra) -> tuple[str, str]:
+    """Insert a pending add_transaction proposal against `account`; return (id, token)."""
+    import secrets
+    from backend.models import Proposal
+
+    after = {"date": "2024-05-02", "amount": "-12.50", "account": account, "category": None,
+             "merchant": "zz42", "notes": None, "is_transfer": False, **after_extra}
+    token = secrets.token_urlsafe(32)
+    p = Proposal(
+        token=token, operation="add_transaction",
+        payload={"operation": "add_transaction", "rows": [{"before": None, "after": after}]},
+        status="pending",
+        expires_at=datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=15),
+    )
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+    return str(p.id), token
+
+
+def _usd_account_cleanup(db, name: str, proposal_id: str) -> None:
+    db.rollback()
+    ids = [r[0] for r in db.execute(text(
+        "SELECT t.id FROM transactions t JOIN accounts a ON a.id = t.account_id WHERE a.name = :n"), {"n": name})]
+    if ids:
+        db.execute(text("DELETE FROM audit_log WHERE entity = 'transaction' AND entity_id = ANY(:i)"), {"i": ids})
+        db.execute(text("DELETE FROM transactions WHERE id = ANY(:i)"), {"i": ids})
+    db.execute(text("DELETE FROM audit_log WHERE entity = 'proposal' AND entity_id::text = :p"), {"p": proposal_id})
+    db.execute(text("DELETE FROM proposals WHERE id = :p"), {"p": uuid.UUID(proposal_id)})
+    db.execute(text("DELETE FROM accounts WHERE name = :n"), {"n": name})
+    db.commit()
+
+
+def _seed_usd_account(db, name: str) -> int:
+    acc_id = db.execute(text("INSERT INTO accounts (name, type, currency) VALUES (:n, 'liquid', 'USD') RETURNING id"),
+                        {"n": name}).scalar()
+    db.commit()
+    return acc_id
+
+
+def test_confirm_add_transaction_currency_mismatch_is_422(client, api_key, db_session):
+    import secrets
+    name = f"ZZ42 prop usd {secrets.token_hex(4)}"
+    acc_id = _seed_usd_account(db_session, name)
+    pid, token = _add_txn_proposal(db_session, name, currency="IDR")
+    try:
+        resp = client.post(f"/proposals/{pid}/confirm", json={"token": token}, headers={"MONAI_API_KEY": api_key})
+        assert resp.status_code == 422, resp.text
+        assert "USD" in resp.text and "IDR" in resp.text
+        db_session.rollback()
+        assert db_session.execute(text("SELECT status FROM proposals WHERE id = :p"), {"p": uuid.UUID(pid)}).scalar() == "pending"
+        assert db_session.execute(text("SELECT COUNT(*) FROM transactions WHERE account_id = :a"), {"a": acc_id}).scalar() == 0
+    finally:
+        _usd_account_cleanup(db_session, name, pid)
+
+
+def test_confirm_add_transaction_without_currency_uses_account_currency(client, api_key, db_session):
+    import secrets
+    name = f"ZZ42 prop usd {secrets.token_hex(4)}"
+    acc_id = _seed_usd_account(db_session, name)
+    pid, token = _add_txn_proposal(db_session, name)
+    try:
+        resp = client.post(f"/proposals/{pid}/confirm", json={"token": token}, headers={"MONAI_API_KEY": api_key})
+        assert resp.status_code == 200, resp.text
+        db_session.rollback()
+        cur = db_session.execute(text("SELECT currency FROM transactions WHERE account_id = :a"), {"a": acc_id}).scalars().all()
+        assert cur == ["USD"]
+    finally:
+        _usd_account_cleanup(db_session, name, pid)
+
+
+# ---------------------------------------------------------------------------
+# Phase 45 (ENTRY-02, MOVE-01..03 in chat): the model has no currency parameter;
+# every currency in a proposal comes from the account or holding in the database.
+# ---------------------------------------------------------------------------
+
+import inspect  # noqa: E402
+
+from backend.tests.test_cross_currency_moves import (  # noqa: E402,F401  (zz45 is a fixture)
+    _ISO_DAY, _events, _holding, _post, _seed_event, zz45,
+)
+
+
+def _proposal_count(db) -> int:
+    db.rollback()
+    return db.execute(text("SELECT COUNT(*) FROM proposals")).scalar()
+
+
+def _track(zz45, result: dict) -> dict:
+    zz45.proposal_ids.append(uuid.UUID(result["proposal_id"]))
+    return result
+
+
+def _confirm(client, api_key, result: dict):
+    return _post(client, api_key, f"/proposals/{result['proposal_id']}/confirm", {"token": result["proposal_token"]})
+
+
+def test_propose_add_transaction_has_no_currency_parameter():
+    from backend.tools import TOOLS
+    assert "currency" not in inspect.signature(TOOLS["propose_add_transaction"]).parameters
+    with pytest.raises(TypeError):
+        TOOLS["propose_add_transaction"](date=_ISO_DAY, amount=-1, account="x", currency="IDR")
+
+
+def test_propose_add_transaction_usd_account(client, api_key, zz45):
+    from backend.tools import propose_add_transaction
+    usd = zz45.account("usd", "USD")
+    result = _track(zz45, propose_add_transaction(date=_ISO_DAY, amount=-12.5, account=usd))
+    assert f"Add transaction: -12.5 USD on {_ISO_DAY}" == result["summary"]
+    assert result["after"]["currency"] == "USD"  # looked up from the account (Task 1: option-a)
+    assert zz45.tx_rows(usd) == []  # a producer writes nothing
+    assert _confirm(client, api_key, result).status_code == 200
+    (row,) = zz45.tx_rows(usd)
+    assert row.currency == "USD" and row.amount == Decimal("-12.5")
+
+
+def test_legacy_add_transaction_payload_currency(client, api_key, zz45):
+    usd = zz45.account("usd", "USD")
+    pid, token = _add_txn_proposal(zz45.db, usd, currency="IDR")
+    zz45.proposal_ids.append(uuid.UUID(pid))
+    assert _post(client, api_key, f"/proposals/{pid}/confirm", {"token": token}).status_code == 422
+    assert zz45.tx_rows(usd) == []
+    pid, token = _add_txn_proposal(zz45.db, usd, currency="USD")
+    zz45.proposal_ids.append(uuid.UUID(pid))
+    assert _post(client, api_key, f"/proposals/{pid}/confirm", {"token": token}).status_code == 200
+    assert [r.currency for r in zz45.tx_rows(usd)] == ["USD"]
+
+
+def test_producers_have_no_model_currency():
+    from backend.tools import TOOLS
+    sig = {n: inspect.signature(TOOLS[n]).parameters for n in (
+        "propose_add_transfer", "propose_add_funded_buy",
+        "propose_add_funded_sell", "propose_add_holding")}
+    assert "currency" not in sig["propose_add_transfer"] and "to_amount" in sig["propose_add_transfer"]
+    for n in ("propose_add_funded_buy", "propose_add_funded_sell"):
+        assert "cash_currency" not in sig[n] and sig[n]["event_currency"].default is None
+    assert "currency" in sig["propose_add_holding"]
+
+
+def test_propose_transfer_cross_currency_both_amounts(client, api_key, zz45):
+    from backend.tools import propose_add_transfer
+    usd, idr = zz45.account("usd", "USD"), zz45.account("idr")
+    result = _track(zz45, propose_add_transfer(
+        from_account=usd, to_account=idr, amount=100.0, to_amount=1631000.0, date=_ISO_DAY))
+    after = result["after"]
+    assert (after["leg_a"]["amount"], after["leg_a"]["currency"]) == ("-100.0", "USD")
+    assert (after["leg_b"]["amount"], after["leg_b"]["currency"]) == ("1631000.0", "IDR")
+    assert after["to_amount"] == "1631000.0"
+    assert result["summary"] == f"Transfer 100.0 USD from {usd} to {idr}, receiving 1631000.0 IDR"
+    assert zz45.tx_rows(usd, idr) == []
+    assert _confirm(client, api_key, result).status_code == 200
+    by_ccy = {r.currency: r.amount for r in zz45.tx_rows(usd, idr)}
+    assert by_ccy == {"USD": Decimal("-100.0"), "IDR": Decimal("1631000.0")}
+
+
+def test_propose_transfer_same_currency_unchanged(client, api_key, zz45):
+    from backend.tools import propose_add_transfer
+    a, b = zz45.account("idr-a"), zz45.account("idr-b")
+    result = _track(zz45, propose_add_transfer(from_account=a, to_account=b, amount=5000.0, date=_ISO_DAY))
+    assert "to_amount" not in result["after"] and "receiving" not in result["summary"]
+    assert _confirm(client, api_key, result).status_code == 200
+    assert sorted(r.amount for r in zz45.tx_rows(a, b)) == [Decimal("-5000.0"), Decimal("5000.0")]
+
+
+def test_propose_transfer_refusals_create_no_proposal(zz45):
+    from backend.tools import propose_add_transfer
+    usd, idr, idr2 = zz45.account("usd", "USD"), zz45.account("idr"), zz45.account("idr2")
+    before = _proposal_count(zz45.db)
+    missing = propose_add_transfer(from_account=usd, to_account=idr, amount=100.0, date=_ISO_DAY)
+    assert missing["tool"] == "propose_add_transfer" and "proposal_id" not in missing
+    assert "USD" in missing["error"] and "IDR" in missing["error"]
+    fee = propose_add_transfer(from_account=idr, to_account=idr2, amount=100.0, to_amount=90.0, date=_ISO_DAY)
+    assert "error" in fee and "fee" in fee["error"]
+    assert _proposal_count(zz45.db) == before
+
+
+def test_propose_funded_buy_from_usd_account(client, api_key, zz45):
+    from backend.tools import propose_add_funded_buy
+    usd, plat, plat2 = zz45.account("usd", "USD"), zz45.platform(), zz45.platform("held")
+    zz45.rate(_ISO_DAY)
+    result = _track(zz45, propose_add_funded_buy(
+        source_account_name=usd, platform_id=plat, ticker="ZZ45T", quantity=1, price=50, cash_amount=50, date=_ISO_DAY))
+    assert (result["after"]["cash_currency"], result["after"]["event_currency"]) == ("USD", "USD")
+    assert "funded by 50 USD" in result["summary"]
+    assert _confirm(client, api_key, result).status_code == 200
+    (leg,) = zz45.tx_rows(usd)
+    assert (leg.amount, leg.currency) == (Decimal("-50.0"), "USD")
+
+    _seed_event(zz45, plat2, "ZZ45H", "buy", 1, 10, "IDR")  # an existing IDR position keeps its currency
+    held = _track(zz45, propose_add_funded_buy(
+        source_account_name=usd, platform_id=plat2, ticker="ZZ45H", quantity=1, price=10, cash_amount=5, date=_ISO_DAY))
+    assert (held["after"]["cash_currency"], held["after"]["event_currency"]) == ("USD", "IDR")
+    assert _confirm(client, api_key, held).status_code == 200
+    assert _events(zz45, plat2)[-1].currency == "IDR"
+
+
+def test_propose_funded_sell_into_usd_account(client, api_key, zz45):
+    from backend.tools import propose_add_funded_sell
+    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    zz45.rate(_ISO_DAY)
+    _seed_event(zz45, plat, "ZZ45T", "buy", 2, 50, "USD")
+    result = _track(zz45, propose_add_funded_sell(
+        source_account_name=usd, platform_id=plat, ticker="ZZ45T", quantity=1, price=60, cash_amount=60, date=_ISO_DAY))
+    assert (result["after"]["cash_currency"], result["after"]["event_currency"]) == ("USD", "USD")
+    assert _confirm(client, api_key, result).status_code == 200
+    (leg,) = zz45.tx_rows(usd)
+    assert (leg.amount, leg.currency) == (Decimal("60.0"), "USD")
+
+
+def test_chat_producers_resolve_a_miscased_account(client, api_key, zz45):
+    """A mis-cased name still finds the USD account, so no guard is skipped (Phase 45 CR-01)."""
+    from backend.tools import propose_add_funded_buy, propose_add_transaction, propose_add_transfer
+    usd, idr, plat = zz45.account("usd", "USD"), zz45.account("idr"), zz45.platform()
+    before = _proposal_count(zz45.db)
+
+    # The USD guard fires: this reads as USD->IDR, not IDR->IDR.
+    refused = propose_add_transfer(usd.lower(), idr, 10, date=_ISO_DAY)
+    assert "both amounts" in refused["error"]
+    assert _proposal_count(zz45.db) == before
+
+    row = _track(zz45, propose_add_transaction(_ISO_DAY, -12.5, f" {usd.lower()} "))
+    assert (row["after"]["account"], row["after"]["currency"]) == (usd, "USD")
+
+    transfer = _track(zz45, propose_add_transfer(usd.lower(), idr.upper(), 10, date=_ISO_DAY, to_amount=163100))
+    legs = transfer["after"]
+    assert (legs["leg_a"]["account"], legs["leg_a"]["currency"]) == (usd, "USD")
+    assert (legs["leg_b"]["account"], legs["leg_b"]["currency"]) == (idr, "IDR")
+
+    funded = _track(zz45, propose_add_funded_buy(
+        source_account_name=usd.lower(), platform_id=plat, ticker="ZZ45T", quantity=1, price=6, cash_amount=6,
+        date=_ISO_DAY))
+    assert (funded["after"]["source_account_name"], funded["after"]["cash_currency"]) == (usd, "USD")
+
+
+def test_chat_transfer_refuses_one_account_spelled_two_ways(client, api_key, zz45):
+    """Two spellings resolve to one account; the pair would move nothing (the MCP producer refuses this too)."""
+    from backend import tools
+    name = zz45.account("usd", "USD")
+    before = _proposal_count(zz45.db)
+    result = tools.TOOLS["propose_add_transfer"](from_account=name, to_account=name.lower(), amount=10)
+    assert "different accounts" in result["error"]
+    assert _proposal_count(zz45.db) == before
+
+
+@pytest.mark.parametrize("call", [
+    lambda t, plat: t.propose_add_transaction(_ISO_DAY, -1, "ZZ45 nosuch"),
+    lambda t, plat: t.propose_add_transfer("ZZ45 nosuch", "ZZ45 nosuch2", 1, date=_ISO_DAY),
+    lambda t, plat: t.propose_add_funded_buy("ZZ45 nosuch", plat, "ZZ45T", 1, 1, 1, date=_ISO_DAY),
+    lambda t, plat: t.propose_add_funded_sell("ZZ45 nosuch", plat, "ZZ45T", 1, 1, 1, date=_ISO_DAY),
+])
+def test_chat_producers_refuse_an_unknown_account(client, api_key, zz45, call):
+    """An unknown name never becomes a phantom IDR account (Phase 45 CR-01)."""
+    from backend import tools
+    plat = zz45.platform()
+    before = _proposal_count(zz45.db)
+    result = call(tools, plat)
+    assert "find_accounts" in result["error"]
+    assert _proposal_count(zz45.db) == before

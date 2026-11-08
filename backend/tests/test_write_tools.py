@@ -153,14 +153,16 @@ def test_propose_creates_row(db_session):
 def test_propose_add_transaction_creates_proposal(db_session):
     """propose_add_transaction returns proposal with required fields."""
     from backend.tools import propose_add_transaction
-    from backend.models import Proposal
+    from backend.models import Account, Proposal
 
+    account = Account(name=f"ZZ45 tools-{uuid.uuid4().hex[:6]}", type="liquid", currency="IDR")
+    db_session.add(account)
+    db_session.commit()
     result = propose_add_transaction(
         date="2024-03-01",
         amount=-75000,
-        account="BCA",
+        account=account.name,
         category="Food",
-        currency="IDR",
     )
     assert "proposal_id" in result
     assert "proposal_token" in result
@@ -171,7 +173,8 @@ def test_propose_add_transaction_creates_proposal(db_session):
     p = db_session.get(Proposal, UUID(result["proposal_id"]))
     if p:
         db_session.delete(p)
-        db_session.commit()
+    db_session.delete(account)
+    db_session.commit()
 
 
 def test_propose_delete_transaction_creates_proposal(db_session):
@@ -1408,7 +1411,7 @@ def test_apply_add_portfolio_event_currency_mismatch_422_at_api(client, api_key,
     try:
         r1 = client.post(
             "/portfolio-events",
-            json={"ticker": ticker, "event_type": "buy", "quantity": "10",
+            json={"ticker": ticker, "event_type": "dividend", "quantity": "10",
                   "price": "100", "date": "2024-01-10", "platform_id": plat_id,
                   "currency": "USD"},
             headers=hdr,
@@ -1417,7 +1420,7 @@ def test_apply_add_portfolio_event_currency_mismatch_422_at_api(client, api_key,
 
         r2 = client.post(
             "/portfolio-events",
-            json={"ticker": ticker, "event_type": "buy", "quantity": "5",
+            json={"ticker": ticker, "event_type": "dividend", "quantity": "5",
                   "price": "110", "date": "2024-01-11", "platform_id": plat_id,
                   "currency": "IDR"},
             headers=hdr,
@@ -1520,8 +1523,9 @@ def test_apply_add_transfer_pairs_both_legs(db_session):
     """apply_add_transfer(db, leg_a_after, leg_b_after) inserts two paired
     Transaction rows (XFER-01): both is_transfer=true, sharing one
     transfer_pair_id equal to leg A's own id (shared-group-id convention,
-    D-03/D-09), each with its own AuditLog row (D-02), each leg free to carry
-    its own currency independently (D-09). RED until Plan 13-03."""
+    D-03/D-09), each with its own AuditLog row (D-02), each leg in its
+    own account's currency (CUR-03: the DB rejects a leg whose currency differs
+    from its account's). RED until Plan 13-03."""
     from backend.models import Transaction
 
     name_a, name_b = "zz13test-TransferA", "zz13test-TransferB"
@@ -1539,7 +1543,7 @@ def test_apply_add_transfer_pairs_both_legs(db_session):
             "is_transfer": True, "date": "2024-01-15", "notes": "Transfer out",
         }
         leg_b_after = {
-            "account": name_b, "amount": 6.5, "currency": "USD",
+            "account": name_b, "amount": 100000, "currency": "IDR",
             "is_transfer": True, "date": "2024-01-15", "notes": "Transfer in",
         }
 
@@ -1558,7 +1562,7 @@ def test_apply_add_transfer_pairs_both_legs(db_session):
 
         by_account = {r.account_id: r for r in rows}
         assert by_account[acc_a].currency == "IDR"
-        assert by_account[acc_b].currency == "USD", "legs may carry different currencies independently (D-09)"
+        assert by_account[acc_b].currency == "IDR"
 
         after_audit = int(db_session.execute(
             text("SELECT COUNT(*) FROM audit_log WHERE entity = 'transaction'")
@@ -1568,54 +1572,6 @@ def test_apply_add_transfer_pairs_both_legs(db_session):
         db_session.rollback()
         _cleanup_account(db_session, name_a)
         _cleanup_account(db_session, name_b)
-
-
-def test_apply_add_investment_transfer(db_session):
-    """apply_add_investment_transfer(db, cash_leg_after, event_after) debits a
-    liquid source account (is_transfer=true) and links a portfolio deposit
-    event to it via source_account_id (XFER-02/D-05) — never creates a
-    synthetic `accounts` row for the investment side. RED until Plan 13-04."""
-    from backend.models import Transaction, PortfolioEvent, Platform
-
-    name = "zz13test-InvestSource"
-    ticker = "ZZ13DEPOSIT"
-    acc_id = _make_account(db_session, name)
-    plat_id = _make_platform(db_session, "zz13test-InvestPlatform")
-    _cleanup_ticker(db_session, ticker)
-    try:
-        from backend.writes import apply_add_investment_transfer  # RED: not implemented until Plan 13-04
-
-        accounts_before = int(db_session.execute(text("SELECT COUNT(*) FROM accounts")).scalar() or 0)
-
-        cash_leg_after = {
-            "account": name, "amount": -500000, "currency": "IDR",
-            "is_transfer": True, "date": "2024-01-20",
-        }
-        event_after = {
-            "ticker": ticker, "event_type": "deposit", "quantity": 500000,
-            "price": 1, "date": "2024-01-20", "platform_id": plat_id, "currency": "IDR",
-        }
-
-        tx, ev = apply_add_investment_transfer(db_session, cash_leg_after, event_after)
-        db_session.commit()
-
-        db_session.expire_all()
-        tx_row = db_session.query(Transaction).filter(Transaction.account_id == acc_id).one()
-        assert tx_row.is_transfer is True
-
-        ev_row = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
-        assert ev_row.source_account_id == acc_id, "event must link back to the funding account (D-05)"
-
-        accounts_after = int(db_session.execute(text("SELECT COUNT(*) FROM accounts")).scalar() or 0)
-        assert accounts_after == accounts_before, "no synthetic accounts row for the investment side (D-05)"
-    finally:
-        db_session.rollback()
-        _cleanup_ticker(db_session, ticker)
-        _cleanup_account(db_session, name)
-        plat = db_session.get(Platform, plat_id)
-        if plat is not None:
-            db_session.delete(plat)
-            db_session.commit()
 
 
 def test_apply_add_funded_buy_one_commit_boundary(db_session):
@@ -1747,6 +1703,11 @@ def test_apply_add_funded_sell_one_commit_boundary(db_session):
     plat_id = _make_platform(db_session, "zz13test-FundedSellPlatform")
     _cleanup_ticker(db_session, ticker)
     try:
+        from backend.writes import apply_add_portfolio_event
+        apply_add_portfolio_event(db_session, {  # a larger buy first: a sell beyond the held quantity is refused
+            "ticker": ticker, "event_type": "buy", "quantity": 20, "price": 100000,
+            "platform_id": plat_id, "currency": "IDR", "date": "2024-01-01"})
+        db_session.commit()
         from backend.writes import apply_add_funded_sell
 
         after = {
@@ -1766,7 +1727,8 @@ def test_apply_add_funded_sell_one_commit_boundary(db_session):
         # sell CREDITS the destination — positive, the sign that distinguishes it from a funded buy
         assert tx.amount == Decimal("1000000")
 
-        ev = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
+        ev = db_session.query(PortfolioEvent).filter(
+            PortfolioEvent.ticker == ticker, PortfolioEvent.event_type == "sell").one()
         assert ev.event_type == "sell"
         assert ev.source_account_id == acc_id
     finally:

@@ -376,6 +376,38 @@ def test_batch_one_bad_row_refuses_everything(db_session, wallets, bad):
     assert _count(db_session) == n
 
 
+def test_propose_rows_into_usd_account_land_in_usd(db_session, wallets, track):
+    usd = wallets(currency="USD")
+    r = mcp_writes.propose_transactions([_row(usd.name, amount=-12.5)])
+    track.append(r["proposal_id"])
+    assert _db_row(db_session, r["proposal_id"]).payload["rows"][0]["after"]["currency"] == "USD"
+    from backend.models import Proposal
+    p = db_session.get(Proposal, uuid.UUID(r["proposal_id"]))
+    _confirm(p, _db_row(db_session, p.id).code)
+    db_session.rollback()
+    cur = db_session.execute(text("SELECT currency FROM transactions WHERE account_id = :a"), {"a": usd.id}).scalars().all()
+    assert cur == ["USD"]
+
+
+def test_propose_empty_batch_and_missing_amount_refused(db_session, wallets):
+    usd = wallets(currency="USD")
+    n = _count(db_session)
+    with pytest.raises(ToolError):
+        mcp_writes.propose_transactions([])
+    with pytest.raises(ToolError, match="amount must be a non-zero number with at most 2 decimals"):
+        mcp_writes.propose_transactions([TxnRow(account=usd.name, date="2026-01-10", amount="")])
+    assert _count(db_session) == n
+
+
+def test_propose_rows_keep_submission_order(db_session, wallets, track):
+    usd = wallets(currency="USD")
+    amts = [-3, -1, -2]
+    r = mcp_writes.propose_transactions([_row(usd.name, amount=a, merchant=f"M{i}") for i, a in enumerate(amts)])
+    track.append(r["proposal_id"])
+    rows = [x["after"] for x in _db_row(db_session, r["proposal_id"]).payload["rows"]]
+    assert [Decimal(a["amount"]) for a in rows] == amts and {a["currency"] for a in rows} == {"USD"}
+
+
 def test_propose_duplicate_is_flagged_not_blocked(db_session, wallets, track):
     w = wallets()
     _ledger(db_session, w.id, D, -12500)
@@ -397,10 +429,43 @@ def test_transfer_valid_and_refusals(db_session, wallets, track):
     assert after["leg_a"]["currency"] == after["leg_b"]["currency"] == "IDR"
     n = _count(db_session)
     for args, msg in [((a.name, a.name, 10, "2026-01-10"), "different"), ((a.name, b.name, 0, "2026-01-10"), "positive"),
-                      ((a.name, b.name, -5, "2026-01-10"), "positive"), ((a.name, usd.name, 10, "2026-01-10"), "same currency")]:
+                      ((a.name, b.name, -5, "2026-01-10"), "positive"), ((a.name, usd.name, 10, "2026-01-10"), "both amounts")]:
         with pytest.raises(ToolError, match=msg):
             mcp_writes.propose_transfer(*args)
+    for kw, msg in [({"to_amount": 11}, "one amount")]:
+        with pytest.raises(ToolError, match=msg):
+            mcp_writes.propose_transfer(a.name, b.name, 10, "2026-01-10", **kw)
+    for bad in (0, -5, "abc", "1.234"):
+        with pytest.raises(ToolError, match="positive number with at most 2 decimals"):
+            mcp_writes.propose_transfer(a.name, usd.name, 10, "2026-01-10", to_amount=bad)
     assert _count(db_session) == n
+
+
+def test_transfer_cross_currency_both_amounts(db_session, wallets, track):
+    usd, idr = wallets(currency="USD"), wallets(currency="IDR")
+    r = mcp_writes.propose_transfer(usd.name, idr.name, 100, "2026-01-10", to_amount=1631000)
+    track.append(r["proposal_id"])
+    after = _db_row(db_session, r["proposal_id"]).payload["rows"][0]["after"]
+    assert after["leg_a"]["account"] == usd.name and Decimal(after["leg_a"]["amount"]) == -100
+    assert after["leg_a"]["currency"] == "USD"
+    assert after["leg_b"]["account"] == idr.name and Decimal(after["leg_b"]["amount"]) == 1631000
+    assert after["leg_b"]["currency"] == "IDR" and Decimal(after["to_amount"]) == 1631000
+    assert "100" in r["summary"] and "USD" in r["summary"] and "1631000" in r["summary"] and "IDR" in r["summary"]
+
+
+def test_confirm_cross_currency_transfer_writes_exact_legs(db_session, wallets, track):
+    usd, idr = wallets(currency="USD"), wallets(currency="IDR")
+    r = mcp_writes.propose_transfer(usd.name, idr.name, 100, "2026-01-10", to_amount=1631000)
+    track.append(r["proposal_id"])
+    from backend.models import Proposal
+    p = db_session.get(Proposal, uuid.UUID(r["proposal_id"]))
+    code = _db_row(db_session, p.id).code
+    _confirm(p, code)
+    rows = lambda acc: db_session.execute(text("SELECT amount, currency FROM transactions WHERE account_id = :a"),
+                                          {"a": acc.id}).all()
+    db_session.rollback()
+    assert [(Decimal(a), c) for a, c in rows(usd)] == [(Decimal(-100), "USD")]
+    assert [(Decimal(a), c) for a, c in rows(idr)] == [(Decimal(1631000), "IDR")]
 
 
 # ---------------------------------------------------------------------------
@@ -520,7 +585,7 @@ def test_wrappers_are_not_registered_as_agent_tools_and_have_fixed_params():
         assert name not in tools.TOOLS and name not in tools.READ_TOOL_NAMES
     params = lambda f: list(inspect.signature(f).parameters)
     assert params(mcp_writes.propose_transactions) == ["rows", "replaces"]
-    assert params(mcp_writes.propose_transfer) == ["from_account", "to_account", "amount", "date", "notes", "replaces"]
+    assert params(mcp_writes.propose_transfer) == ["from_account", "to_account", "amount", "date", "notes", "to_amount", "replaces"]
     assert params(mcp_writes.reject_proposal) == ["proposal_id"]
 
 
@@ -922,3 +987,14 @@ def test_mcp_writes_need_code_over_mcp(client, api_key, db_session, wallets, tra
         ok = _tools_call(client, hdr, "confirm_proposal", {"proposal_id": tid, "code": code})
         assert ok["isError"] is False
     assert count() == before + 1
+
+
+def test_confirm_currency_mismatch_is_refused_with_fixed_text(db_session, wallets, mcp_proposal):
+    w = wallets(currency="USD")
+    p = mcp_proposal(_txn_payload((w.name, -10, _d(0))))  # rows carry currency "IDR"
+    stored = _db_row(db_session, p.id).code
+    with pytest.raises(ToolError) as ei:
+        _confirm(p, stored)
+    assert str(ei.value) == mcp_writes._APPLY_FAILED
+    assert "USD" not in str(ei.value) and w.name not in str(ei.value)
+    assert _db_row(db_session, p.id).status == "pending" and _tx_count(db_session, w.id) == 0

@@ -80,6 +80,8 @@ period_a and period_b, each with its own a_start_date/a_end_date or b_start_date
   {_NAMED_PERIODS}.
   this_week and last_week are calendar weeks, Monday through Sunday — prefer them over \
 a custom range when the user says "this week" or "last week"; they do NOT mean a rolling 7-day window.
+  last_N_months (any N, for example last_6_months) is the N full calendar months before this one; \
+monthly_trend(months=N) gives every month of that window its totals and top_categories, so cover every month.
 - For ANY specific/absolute range — a named calendar month, a year, a quarter, or an \
 explicit "from X to Y" — you MUST pass period="custom" with start_date and end_date. \
 end_date is INCLUSIVE (the last day you want counted).
@@ -99,7 +101,9 @@ average daily spending — over any period. I can also compare two periods and f
 charges. I can also add, edit, or delete transactions, \
 accounts, categories, and holdings."
 4. Never fabricate a number. If a tool returns zero, say zero. Never compute a \
-period-over-period difference or percentage yourself — use compare_periods for those.
+period-over-period difference or percentage yourself — use compare_periods for those. \
+When a tool result has an fx_note, repeat it in your answer, and write USD amounts with \
+two decimals and the code USD.
 5. Do not run raw SQL queries — only invoke the named tools provided.
 6. For write requests (add/edit/delete a transaction, account, category, or holding), \
 use the propose_* tools. These create a proposal for user approval — they do NOT \
@@ -294,9 +298,13 @@ def _llm_tool(name: str, fn):
                 "note": f"{first['note']} ({note})" if first.get("note") else note}
 
     async def _cap(raw):
-        from backend.agent_loop import cap_for_llm
+        from backend.agent_loop import cap_for_llm, recurring_for_llm
 
-        return cap_for_llm(raw)
+        if name != "recurring_charges":
+            return cap_for_llm(raw)
+        view = recurring_for_llm(raw)
+        capped = cap_for_llm(view)
+        return capped if capped is not None or view is raw else str(view)
 
     if not inspect.signature(fn).parameters:
         return FunctionTool.from_defaults(fn=hidden, name=name)
@@ -330,7 +338,7 @@ def _build_agent_workflow(names: frozenset[str], eff, *, extra_tools=(), extra_p
 
     llm = _get_llm()
 
-    # Tools come from the single TOOLS registry (18 read + 16 propose_*
+    # Tools come from the single TOOLS registry (18 read + 15 propose_*
     # writes); descriptions live in the functions' docstrings. A new
     # tool needs only a TOOLS entry — nothing here changes. Registry
     # order is kept so the tool-surface snapshot is stable.

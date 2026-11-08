@@ -4,10 +4,10 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
-import { tokens, card, btn, btnDark } from "../../styles";
-import DepositCashModal from "../DepositCashModal";
+import { tokens, card, btnDark } from "../../styles";
 import HoldingModal from "../HoldingModal";
 import { extractDetail } from "../../lib/api";
+import { fmtAmount, fmtAmountSigned, fmtUsdPrice, rateHover } from "../../lib/money";
 import RowMenu from "../../components/RowMenu";
 import type { PlatformOption } from "../page";
 
@@ -24,6 +24,7 @@ import type { PlatformOption } from "../page";
 type PlatformDetailHolding = {
   id: number;
   ticker: string;
+  currency?: string | null; // absent means IDR
   asset_type: string | null;
   quantity: number;
   avg_cost: number;
@@ -31,6 +32,13 @@ type PlatformDetailHolding = {
   current_value: number | null;
   unrealized_pnl: number | null;
   realized_pnl: number;
+  // USD positions only (quick 261108-d2c); all null when no USD rate exists.
+  usd_avg_cost?: number | null;
+  usd_current_price?: number | null;
+  usd_current_value?: number | null;
+  usd_unrealized_pnl?: number | null;
+  usd_rate?: number | null;
+  usd_rate_date?: string | null;
 };
 
 type PlatformDetail = {
@@ -39,6 +47,8 @@ type PlatformDetail = {
   kind: string | null;
   subtotal: number;
   holdings: PlatformDetailHolding[];
+  // Realized P&L of positions closed on this platform (absent in old mocks).
+  closed_realized_pnl?: number;
 };
 
 type PortfolioEvent = {
@@ -50,12 +60,19 @@ type PortfolioEvent = {
   price: number;
   transaction_id: number | null;
   cash_amount: number | null;
+  currency?: string | null; // absent means IDR
+  fee?: number | null; // quick 261108-gdf: coin units for "coin", the position's currency for "cash"
+  fee_kind?: string | null;
+  filled_quantity?: number | null; // stored quantity with a coin fee added back (buy) / taken off (sell)
 };
 
 const EDITABLE_SIDES = ["buy", "sell", "dividend"];
 
 const fmtPlain = (n: number) =>
   new Intl.NumberFormat("en-US").format(Math.round(n));
+// A USD unit price can be a fraction of a cent: keep its digits (up to 12).
+const fmtEventPrice = (e: { price: number; currency?: string | null }) =>
+  e.currency === "USD" ? fmtUsdPrice(e.price) : fmtPlain(e.price);
 const fmtSigned = (n: number) =>
   new Intl.NumberFormat("en-US", { signDisplay: "always" }).format(
     Math.round(n)
@@ -108,6 +125,16 @@ function sideColor(eventType: string): string {
 
 const muted = tokens.color.muted;
 
+// USD figure on top, the IDR figure in small muted text underneath.
+const withIdr = (primary: string, idrText: string, title?: string) => (
+  <>
+    <span style={{ display: "block" }}>{primary}</span>
+    <span style={{ display: "block", fontSize: 11, color: muted }} title={title}>
+      {idrText}
+    </span>
+  </>
+);
+
 type Tab = "pnl" | "buysell";
 const TABS: { key: Tab; label: string }[] = [
   { key: "pnl", label: "PnL" },
@@ -125,7 +152,6 @@ export default function PlatformDetailPage() {
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("pnl");
-  const [showDeposit, setShowDeposit] = useState(false);
   const [showLogEvent, setShowLogEvent] = useState(false);
   const [editingEvent, setEditingEvent] = useState<PortfolioEvent | null>(null);
   // Per-invocation sequence token (CR-01): one flag per request, never one
@@ -183,9 +209,9 @@ export default function PlatformDetailPage() {
     try {
       const pRes = await fetch(`/api/platforms`);
       if (pRes.ok) {
-        const p: { id: number; name: string }[] = await pRes.json();
+        const p: { id: number; name: string; currency?: string }[] = await pRes.json();
         if (!isStale()) {
-          setPlatformOptions(p.map((pl) => ({ id: pl.id, name: pl.name })));
+          setPlatformOptions(p.map((pl) => ({ id: pl.id, name: pl.name, currency: pl.currency })));
         }
       }
     } catch {
@@ -204,7 +230,8 @@ export default function PlatformDetailPage() {
 
   // Platform-wide totals — sum of each holding's own realized/unrealized.
   const totalRealized =
-    detail?.holdings.reduce((a, h) => a + h.realized_pnl, 0) ?? 0;
+    (detail?.holdings.reduce((a, h) => a + h.realized_pnl, 0) ?? 0) +
+    (detail?.closed_realized_pnl ?? 0);
   const totalUnrealized =
     detail?.holdings.reduce((a, h) => a + (h.unrealized_pnl ?? 0), 0) ?? 0;
 
@@ -289,13 +316,6 @@ export default function PlatformDetailPage() {
                 )}
               </h1>
             </div>
-            <button
-              type="button"
-              style={btn}
-              onClick={() => setShowDeposit(true)}
-            >
-              Deposit cash
-            </button>
           </div>
 
           <div
@@ -426,7 +446,14 @@ export default function PlatformDetailPage() {
                         >
                           {h.ticker.slice(0, 4)}
                         </span>
-                        <span style={{ fontWeight: 500 }}>{h.ticker}</span>
+                        <span style={{ minWidth: 0 }}>
+                          <span style={{ fontWeight: 500, display: "block" }}>{h.ticker}</span>
+                          {h.currency === "USD" && h.usd_rate == null && (
+                            <span style={{ display: "block", fontSize: 11, color: muted }}>
+                              No USD rate, shown in IDR
+                            </span>
+                          )}
+                        </span>
                       </span>
                       <span
                         style={{
@@ -446,7 +473,9 @@ export default function PlatformDetailPage() {
                           color: tokens.color.muted3,
                         }}
                       >
-                        {fmtPlain(h.avg_cost)}
+                        {h.usd_avg_cost != null
+                          ? withIdr(fmtUsdPrice(h.usd_avg_cost, 8), `${fmtPlain(h.avg_cost)} IDR`)
+                          : fmtPlain(h.avg_cost)}
                       </span>
                       <span
                         style={{
@@ -456,7 +485,15 @@ export default function PlatformDetailPage() {
                           color: tokens.color.muted3,
                         }}
                       >
-                        {h.current_price != null ? fmtPlain(h.current_price) : "—"}
+                        {h.usd_current_price != null
+                          ? withIdr(
+                              fmtUsdPrice(h.usd_current_price, 8),
+                              `${fmtPlain(h.current_price ?? 0)} IDR`,
+                              rateHover(h.usd_rate, h.usd_rate_date)
+                            )
+                          : h.current_price != null
+                            ? fmtPlain(h.current_price)
+                            : "—"}
                       </span>
                       <span
                         style={{
@@ -466,7 +503,15 @@ export default function PlatformDetailPage() {
                           fontWeight: 600,
                         }}
                       >
-                        {h.current_value != null ? fmtPlain(h.current_value) : "—"}
+                        {h.usd_current_value != null
+                          ? withIdr(
+                              fmtAmount(h.usd_current_value, "USD"),
+                              `${fmtPlain(h.current_value ?? 0)} IDR`,
+                              rateHover(h.usd_rate, h.usd_rate_date)
+                            )
+                          : h.current_value != null
+                            ? fmtPlain(h.current_value)
+                            : "—"}
                       </span>
                       <span
                         style={{
@@ -491,9 +536,14 @@ export default function PlatformDetailPage() {
                               : muted,
                         }}
                       >
-                        {h.unrealized_pnl != null
-                          ? fmtSigned(h.unrealized_pnl)
-                          : "—"}
+                        {h.usd_unrealized_pnl != null
+                          ? withIdr(
+                              fmtAmountSigned(h.usd_unrealized_pnl, "USD"),
+                              `${fmtSigned(h.unrealized_pnl ?? 0)} IDR`
+                            )
+                          : h.unrealized_pnl != null
+                            ? fmtSigned(h.unrealized_pnl)
+                            : "—"}
                       </span>
                     </div>
                   ))}
@@ -564,6 +614,13 @@ export default function PlatformDetailPage() {
                       }}
                     >
                       {fmtQty(e.quantity, null)}
+                      {e.fee ? (
+                        <span style={{ display: "block", fontSize: 11 }}>
+                          {e.fee_kind === "coin"
+                            ? `fee ${fmtQty(e.fee, "crypto")} ${e.ticker}`
+                            : `fee ${e.currency === "USD" ? fmtUsdPrice(e.fee) : `${fmtAmount(e.fee)} IDR`}`}
+                        </span>
+                      ) : null}
                     </span>
                     <span
                       style={{
@@ -572,7 +629,7 @@ export default function PlatformDetailPage() {
                         fontVariantNumeric: "tabular-nums",
                       }}
                     >
-                      {fmtPlain(e.price)}
+                      {fmtEventPrice(e)}
                     </span>
                     <span
                       style={{
@@ -598,14 +655,6 @@ export default function PlatformDetailPage() {
             )}
           </div>
 
-          {showDeposit && (
-            <DepositCashModal
-              platformId={Number(platformId)}
-              platformName={detail.platform_name}
-              onClose={() => setShowDeposit(false)}
-              onSaved={() => load({ silent: true })}
-            />
-          )}
           {editingEvent && (
             <HoldingModal
               platforms={
@@ -614,8 +663,17 @@ export default function PlatformDetailPage() {
                   : [{ id: Number(platformId), name: detail.platform_name }]
               }
               defaultPlatformId={Number(platformId)}
+              positions={detail.holdings.map((h) => ({
+                ticker: h.ticker,
+                platformId: Number(platformId),
+                currency: h.currency ?? "IDR",
+                quantity: h.quantity,
+              }))}
               editEvent={{
                 ...editingEvent,
+                // LOAD-BEARING: the PUT quantity is the FILLED quantity; sending the
+                // stored one back would apply a coin fee a second time.
+                quantity: editingEvent.filled_quantity ?? editingEvent.quantity,
                 event_type: editingEvent.event_type as "buy" | "sell" | "dividend",
               }}
               onClose={() => setEditingEvent(null)}
@@ -633,6 +691,12 @@ export default function PlatformDetailPage() {
                     [{ id: Number(platformId), name: detail.platform_name }]
               }
               defaultPlatformId={Number(platformId)}
+              positions={detail.holdings.map((h) => ({
+                ticker: h.ticker,
+                platformId: Number(platformId),
+                currency: h.currency ?? "IDR",
+                quantity: h.quantity,
+              }))}
               onClose={() => setShowLogEvent(false)}
               onSaved={() => load({ silent: true })}
             />

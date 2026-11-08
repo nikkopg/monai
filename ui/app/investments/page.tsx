@@ -5,7 +5,9 @@ import Link from "next/link";
 
 import { tokens, card, btn, btnDark } from "../styles";
 import PlatformManager, { type Platform } from "./PlatformManager";
+import ClosedPositions, { type ClosedPosition } from "./ClosedPositions";
 import { extractDetail } from "../lib/api";
+import { fmtAmount, fmtUsdPrice, rateHover } from "../lib/money";
 import HoldingModal from "./HoldingModal";
 import HoldingOverrideModal from "./HoldingOverrideModal";
 import PriceOverrideDialog from "./PriceOverrideDialog";
@@ -22,11 +24,12 @@ import AllocationPieChart, { type AllocationSlice } from "./AllocationPieChart";
 // PlatformManager). Only presentation changed.
 // ---------------------------------------------------------------------------
 
-export type PlatformOption = { id: number; name: string };
+export type PlatformOption = { id: number; name: string; currency?: string };
 
 export type HoldingRow = {
   id: number;
   ticker: string;
+  currency?: string | null; // absent means IDR
   asset_type: string | null;
   quantity: number;
   avg_cost: number;
@@ -34,6 +37,13 @@ export type HoldingRow = {
   current_value: number | null;
   unrealized_pnl: number | null;
   realized_pnl: number;
+  // USD positions only (quick 261108-d2c); all null when no USD rate exists.
+  usd_avg_cost?: number | null;
+  usd_current_price?: number | null;
+  usd_current_value?: number | null;
+  usd_unrealized_pnl?: number | null;
+  usd_rate?: number | null;
+  usd_rate_date?: string | null;
   platform_id: number | null;
   coingecko_id?: string | null;
   price_source: string | null;
@@ -91,9 +101,21 @@ const badgeColor = (t: string) => {
 
 const muted = tokens.color.muted;
 
+// USD figure on top, the IDR figure in small muted text underneath (copied
+// from the platform page, like the other helpers above).
+const withIdr = (primary: string, idrText: string, title?: string) => (
+  <>
+    <span style={{ display: "block" }}>{primary}</span>
+    <span style={{ display: "block", fontSize: 11, color: muted }} title={title}>
+      {idrText}
+    </span>
+  </>
+);
+
 export default function InvestmentsPage() {
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
+  const [closed, setClosed] = useState<ClosedPosition[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -121,6 +143,13 @@ export default function InvestmentsPage() {
       if (!pRes.ok || !sRes.ok) throw new Error("fetch failed");
       setPlatforms(await pRes.json());
       setSummary(await sRes.json());
+      // Best-effort: a failed closed list leaves it empty, never the page error.
+      try {
+        const cRes = await fetch("/api/closed-positions");
+        setClosed(cRes.ok ? await cRes.json() : []);
+      } catch {
+        setClosed([]);
+      }
     } catch {
       setError(
         "Couldn't load your portfolio — check the backend is running and reload the page."
@@ -164,6 +193,7 @@ export default function InvestmentsPage() {
   const platformOptions: PlatformOption[] = platforms.map((p) => ({
     id: p.id,
     name: p.name,
+    currency: p.currency,
   }));
 
   // Active holdings only (D-04: zero-qty drops off the active list).
@@ -690,6 +720,11 @@ export default function InvestmentsPage() {
                                   source={h.price_source}
                                   isStale={h.is_stale}
                                 />
+                                {h.currency === "USD" && h.usd_rate == null && (
+                                  <span style={{ display: "block", fontSize: 11, color: muted }}>
+                                    No USD rate, shown in IDR
+                                  </span>
+                                )}
                               </span>
                             </span>
                             <span
@@ -710,9 +745,15 @@ export default function InvestmentsPage() {
                                 color: tokens.color.muted3,
                               }}
                             >
-                              {h.current_price != null
-                                ? fmtPlain(h.current_price)
-                                : "—"}
+                              {h.usd_current_price != null
+                                ? withIdr(
+                                    fmtUsdPrice(h.usd_current_price, 8),
+                                    `${fmtPlain(h.current_price ?? 0)} IDR`,
+                                    rateHover(h.usd_rate, h.usd_rate_date)
+                                  )
+                                : h.current_price != null
+                                  ? fmtPlain(h.current_price)
+                                  : "—"}
                             </span>
                             <span
                               style={{
@@ -722,9 +763,15 @@ export default function InvestmentsPage() {
                                 fontWeight: 600,
                               }}
                             >
-                              {h.current_value != null
-                                ? fmtPlain(h.current_value)
-                                : "—"}
+                              {h.usd_current_value != null
+                                ? withIdr(
+                                    fmtAmount(h.usd_current_value, "USD"),
+                                    `${fmtPlain(h.current_value ?? 0)} IDR`,
+                                    rateHover(h.usd_rate, h.usd_rate_date)
+                                  )
+                                : h.current_value != null
+                                  ? fmtPlain(h.current_value)
+                                  : "—"}
                             </span>
                             <span
                               style={{
@@ -735,7 +782,14 @@ export default function InvestmentsPage() {
                                 color: upnl != null ? pnlColor(upnl) : muted,
                               }}
                             >
-                              {upnl != null ? pct(upnl, basis) : "—"}
+                              {upnl != null && h.usd_unrealized_pnl != null && h.usd_avg_cost != null
+                                ? withIdr(
+                                    `${pct(h.usd_unrealized_pnl, h.usd_avg_cost * h.quantity)} USD`,
+                                    `${pct(upnl, basis)} IDR`
+                                  )
+                                : upnl != null
+                                  ? pct(upnl, basis)
+                                  : "—"}
                             </span>
                             <span
                               style={{
@@ -796,6 +850,8 @@ export default function InvestmentsPage() {
               );
             })}
 
+            <ClosedPositions rows={closed} load={load} />
+
             <PlatformManager platforms={platforms} onChanged={load} />
           </>
         )
@@ -804,6 +860,16 @@ export default function InvestmentsPage() {
       {showEvent && (
         <HoldingModal
           platforms={platformOptions}
+          positions={(summary?.groups ?? []).flatMap((g) =>
+            g.platform_id === null
+              ? []
+              : g.holdings.map((h) => ({
+                  ticker: h.ticker,
+                  platformId: g.platform_id as number,
+                  currency: h.currency ?? "IDR",
+                  quantity: h.quantity,
+                }))
+          )}
           onClose={() => setShowEvent(false)}
           onSaved={load}
         />

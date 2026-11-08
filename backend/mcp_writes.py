@@ -58,6 +58,50 @@ def _clean_text(value: str | None, limit: int | None = 80) -> str | None:
     return kept.strip()[:limit]
 
 
+def _merchant_key(merchant: str | None) -> str:
+    """Normalize a merchant so "ZZ SHOP 1234" and "zz shop" share one history bucket.
+
+    Casefold, collapse whitespace, drop trailing reference-code tokens (a digit and
+    not led by 3+ letters; the first token is never dropped), then strip trailing
+    digits/punctuation. A non-empty merchant never gives an empty key:
+    "ZZ SHOP #A12B" -> "zz shop"; "1234" -> "1234".
+    """
+    toks = (merchant or "").casefold().split()
+    collapsed = " ".join(toks)
+    while len(toks) > 1 and re.search(r"\d", toks[-1]) and not re.match(r"[^\W\d_]{3}", toks[-1]):
+        toks.pop()
+    return re.sub(r"[\d#*/:._-]+$", "", " ".join(toks)).rstrip() or collapsed
+
+
+def _history_categories(db: Session, currency: str) -> dict[str, str]:
+    """Normalized merchant key -> the owner's most-used category name for it, in `currency` only.
+
+    Most used wins, ties go to the most recent date, then the highest id. Transfers,
+    balance adjustments and system categories (Transfer, Uncategorized) are ignored.
+    The joined categories.name is the current canonical name, so it is always one of
+    the owner's existing categories.
+    """
+    # ponytail: full-history GROUP BY once per upload batch; ceiling is ledger size,
+    # upgrade path is a stored merchant-key column with an index.
+    rows = db.execute(text(
+        "SELECT t.merchant, c.name, COUNT(*), MAX(t.date), MAX(t.id) FROM transactions t "
+        "JOIN categories c ON c.id = t.category_id "
+        "WHERE NOT t.is_transfer AND t.merchant IS NOT NULL AND COALESCE(t.category, '') <> 'Adjustment' "
+        "AND NOT c.is_system AND t.currency = :currency GROUP BY t.merchant, c.name"), {"currency": currency})
+    best: dict[tuple[str, str], tuple] = {}
+    for merchant, name, n, last, last_id in rows:
+        key = (_merchant_key(merchant), name)
+        if not key[0]:
+            continue
+        old = best.get(key, (0, last, last_id))
+        best[key] = (old[0] + n, max(old[1], last), max(old[2], last_id))
+    winner: dict[str, tuple] = {}
+    for (key, name), score in best.items():
+        if key not in winner or score > winner[key][0]:
+            winner[key] = (score, name)
+    return {key: name for key, (_, name) in winner.items()}
+
+
 def _entries(p: Proposal, ids: dict[str, int]):
     """Yield (row_index, account_id, amount, day, skipped) per matchable payload entry.
 
@@ -237,7 +281,7 @@ def _load_refs(db: Session):
     """(liquid accounts by casefolded name, casefolded -> canonical category)."""
     accounts: dict[str, list] = {}
     for id_, name, currency in db.execute(text("SELECT id, name, currency FROM accounts WHERE type = 'liquid'")):
-        accounts.setdefault(name.strip().casefold(), []).append((id_, name, currency or "IDR"))
+        accounts.setdefault(name.strip().casefold(), []).append((id_, name, currency))
     cats: dict[str, str] = {}
     for (name,) in db.execute(text("SELECT name FROM categories ORDER BY id")):
         cats.setdefault(name.strip().casefold(), name)  # lowest id wins a case-insensitive tie
@@ -396,7 +440,7 @@ def propose_batch(
         if row is None:
             raise BatchRefused("The account for this file can't take transactions any more. "
                                "Upload it again with another account.")
-        account = (row[0], row[1], row[2] or "IDR")
+        account = (row[0], row[1], row[2])
     for i, r in enumerate(rows):
         errs = []
         acct, err = (account, None) if upload else _resolve_account(accounts, r.account)
@@ -431,6 +475,15 @@ def propose_batch(
         more = f", and {len(errors) - 20} more" if len(errors) > 20 else ""
         raise BatchRefused("Nothing was proposed. Fix these rows (numbered from 0) and call again: "
                            + "; ".join(errors[:20]) + more)
+    if upload and any(o["after"]["category"] is None for o in out):
+        # Fill from the owner's own history; row level (not in `after`, which goes to AuditLog).
+        history = {c: _history_categories(db, c) for c in {o["after"]["currency"] for o in out}}
+        for o in out:
+            suggested = (history[o["after"]["currency"]].get(_merchant_key(o["after"]["merchant"]))
+                         if o["after"]["category"] is None else None)
+            if suggested:
+                o["after"]["category"] = suggested
+                o["category_suggested"] = True
     n = len(out)
     payload = {"operation": "add_transaction", "rows": out}
     if upload:
@@ -455,6 +508,7 @@ def propose_transfer(
     amount: str | int | float,
     date: str,
     notes: str | None = None,
+    to_amount: str | int | float | None = None,
     replaces: str | None = None,
 ) -> dict:
     today = datetime.now(_JAKARTA).date()
@@ -469,20 +523,33 @@ def propose_transfer(
             errors.append(f"to_account: {err}")
         if src and dst and src[0] == dst[0]:
             errors.append("from_account and to_account must be different accounts")
-        elif src and dst and src[2] != dst[2]:
-            errors.append("Both accounts must use the same currency.")
         mag = _parse_amount(amount)
         if mag is None or mag <= 0:
             errors.append("amount must be a positive number with at most 2 decimals")
+        to_mag = None if to_amount is None else _parse_amount(to_amount)
+        if to_amount is not None and (to_mag is None or to_mag <= 0):
+            errors.append("to_amount must be a positive number with at most 2 decimals")
+        elif src and dst and src[0] != dst[0]:
+            cross = src[2] != dst[2]
+            if cross and to_amount is None:
+                errors.append(f"Transfers between {src[2]} and {dst[2]} accounts need both amounts: "
+                              "pass to_amount, the amount received")
+            elif not cross and to_mag is not None and to_mag != mag:
+                errors.append("A transfer between two accounts in the same currency moves one amount; "
+                              "record a fee as a separate expense")
         errors += [e for e in (_date_error(date, today), _text_error("notes", notes)) if e]
         if errors:
             _refuse("Nothing was proposed. " + "; ".join(errors))
-        cur, notes = src[2], _clean_text(notes, None)
-        leg = lambda acct, amt: {"account": acct[1], "amount": str(amt), "currency": cur, "date": date, "notes": notes}
-        payload = {"operation": "add_transfer",
-                   "rows": [{"before": None, "after": {"leg_a": leg(src, -mag), "leg_b": leg(dst, mag)}}]}
+        notes = _clean_text(notes, None)
+        cross = src[2] != dst[2]
+        leg = lambda acct, amt: {"account": acct[1], "amount": str(amt), "currency": acct[2], "date": date, "notes": notes}
+        after = {"leg_a": leg(src, -mag), "leg_b": leg(dst, to_mag if cross else mag)}
+        if to_mag is not None:
+            after["to_amount"] = str(to_mag)
+        payload = {"operation": "add_transfer", "rows": [{"before": None, "after": after}]}
         return _create(db, "add_transfer", payload, replaces,
-                       f"Transfer {mag} {cur} from {src[1]} to {dst[1]} on {date}", many=False)
+                       f"Transfer {mag} {src[2]} from {src[1]} to {dst[1]}"
+                       + (f", receiving {to_mag} {dst[2]}" if cross else "") + f" on {date}", many=False)
 
 
 @_safe

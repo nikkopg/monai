@@ -152,6 +152,17 @@ test.describe("PnL tab (D-05, Component 11)", () => {
   });
 });
 
+test.describe("Realized stat includes closed positions (quick 261107-nq6)", () => {
+  test("adds closed_realized_pnl to the platform Realized total", async ({ page }) => {
+    const body = { ...platformDetailFixture(), closed_realized_pnl: 50000 };
+    await mockPlatformDetail(page, { body });
+    await mockPortfolioEvents(page);
+    await page.goto("/investments/1");
+    // 200,000 open holding + 50,000 closed record.
+    await expect(page.getByText(fmtSigned(250000)).first()).toBeVisible();
+  });
+});
+
 test.describe("Buy & Sell tab (D-05, Component 12)", () => {
   test("clicking Buy & Sell switches to the event table with the locked headers and colored Title-cased Side", async ({
     page,
@@ -179,6 +190,50 @@ test.describe("Buy & Sell tab (D-05, Component 12)", () => {
       .click();
     await expect(page.getByRole("menuitem")).toHaveText(["Edit", "Delete"]);
     await page.keyboard.press("Escape");
+  });
+});
+
+test.describe("Event price currency (quick 261108-bkz)", () => {
+  test("a USD event price shows its digits and currency; an IDR one reads as before", async ({ page }) => {
+    await mockPlatformDetail(page);
+    await page.route("**/api/portfolio-events*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          { id: 601, date: "2026-07-20T10:00:00Z", ticker: "ZZUSD", event_type: "buy", quantity: 5, price: 0.18982345, currency: "USD" },
+          { id: 602, date: "2026-06-15T10:00:00Z", ticker: "ZZIDR", event_type: "sell", quantity: 1, price: 3170.4 },
+        ]),
+      });
+    });
+    await page.goto("/investments/1");
+    await page.getByRole("button", { name: "Buy & Sell", exact: true }).click();
+    await expect(page.getByText("0.18982345 USD", { exact: true })).toBeVisible();
+    await expect(page.getByText(fmtPlain(3170.4), { exact: true })).toBeVisible();
+  });
+});
+
+test.describe("Event fee line (quick 261108-gdf)", () => {
+  test("each fee shows under its quantity with the right formatter; fee-less rows show none", async ({ page }) => {
+    await mockPlatformDetail(page);
+    await page.route("**/api/portfolio-events*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          { id: 701, date: "2026-07-20", ticker: "ZZETH", event_type: "buy", quantity: 1.998, price: 30000, fee: 0.002, fee_kind: "coin", filled_quantity: 2 },
+          { id: 702, date: "2026-07-19", ticker: "ZZUSD", event_type: "buy", quantity: 5, price: 0.18982345, currency: "USD", fee: 0.0123, fee_kind: "cash" },
+          { id: 703, date: "2026-07-18", ticker: "ZZIDR", event_type: "sell", quantity: 1, price: 3170, fee: 1500, fee_kind: "cash" },
+          { id: 704, date: "2026-07-17", ticker: "ZZNOFEE", event_type: "buy", quantity: 1, price: 10 },
+        ]),
+      });
+    });
+    await page.goto("/investments/1");
+    await page.getByRole("button", { name: "Buy & Sell", exact: true }).click();
+    await expect(page.getByText("fee 0.002 ZZETH", { exact: true })).toBeVisible();
+    await expect(page.getByText("fee 0.0123 USD", { exact: true })).toBeVisible();
+    await expect(page.getByText("fee 1,500 IDR", { exact: true })).toBeVisible();
+    await expect(page.getByText(/^fee /)).toHaveCount(3);
   });
 });
 

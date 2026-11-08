@@ -82,6 +82,19 @@ def test_no_evidence_defaults_to_idr_and_reads_thousands():
     assert infer_decimal_sep_with_evidence(["1.250,00"]) == (",", "values")
 
 
+def test_default_is_the_tie_answer_and_evidence_wins():
+    assert infer_decimal_sep_with_evidence(["1,250", "20,000"], default=".") == (".", "none")
+    assert infer_decimal_sep_with_evidence(["1,250", "12.50"], default=",") == (".", "values")
+    assert infer_decimal_sep_with_evidence([]) == (",", "none")
+
+
+def test_three_decimals_stay_exact_and_the_batch_refuses_them():
+    from backend import mcp_writes
+
+    assert parse_amount("12.345", ".") == Decimal("12.345")
+    assert mcp_writes._parse_amount("12.345") is None
+
+
 def test_no_float_in_money_paths():
     # Pieces, so this file does not trip a repo-wide grep for the rule it enforces.
     call = re.compile(r"\b" + "flo" + "at" + r"\s*\(")

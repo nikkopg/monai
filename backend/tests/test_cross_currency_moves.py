@@ -1,0 +1,514 @@
+"""
+Phase 45 (MOVE-01..04): money moves between USD and IDR with BOTH amounts entered.
+
+Transfers and funded buys/sells reach the same
+primitives from REST, chat confirm and MCP confirm, so the two-amount rules are
+pinned here once. No FX rate is computed or stored: each leg keeps exactly the
+amount the owner typed.
+
+Synthetic values only: `ZZ45` account names, lowercase `zz45-` platform names,
+round amounts, 1996 dates and made-up rates. Runs against monai_test only.
+"""
+
+import secrets
+import uuid
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+
+import pytest
+from sqlalchemy import text
+
+_RATE_RANGE = ("1996-03-01", "1996-03-31")
+_ISO_DAY = "1996-03-02"  # a Saturday: the cached rate comes from Friday 03-01 in the route tests
+
+
+@pytest.fixture(scope="module")
+def db_available():
+    from backend.db import engine
+    try:
+        with engine.connect() as c:
+            c.execute(text("SELECT 1"))
+    except Exception as e:
+        pytest.skip(f"Postgres not available: {e}")
+    return True
+
+
+@pytest.fixture()
+def db_session(db_available):
+    from backend.db import SessionLocal
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+def _purge(db, proposal_ids=()) -> None:
+    """Delete everything a ZZ45 test can have written, by prefix."""
+    db.rollback()
+    acc = "(SELECT id FROM accounts WHERE name LIKE 'ZZ45%')"
+    plat = "(SELECT id FROM platforms WHERE name LIKE 'zz45-%')"
+    for sql in (
+        f"DELETE FROM audit_log WHERE entity = 'portfolio_event' AND entity_id IN "
+        f"(SELECT id FROM portfolio_events WHERE platform_id IN {plat} OR source_account_id IN {acc})",
+        f"DELETE FROM audit_log WHERE entity = 'transaction' AND entity_id IN "
+        f"(SELECT id FROM transactions WHERE account_id IN {acc})",
+        f"DELETE FROM audit_log WHERE entity = 'holding' AND entity_id IN "
+        f"(SELECT id FROM holdings WHERE platform_id IN {plat})",
+        f"DELETE FROM audit_log WHERE entity = 'platform' AND entity_id IN {plat}",
+        f"DELETE FROM portfolio_events WHERE platform_id IN {plat} OR source_account_id IN {acc}",
+        f"DELETE FROM holdings WHERE platform_id IN {plat}",
+        f"DELETE FROM transactions WHERE account_id IN {acc}",
+        f"DELETE FROM platforms WHERE id IN {plat}",
+        "DELETE FROM accounts WHERE name LIKE 'ZZ45%'",
+        "DELETE FROM price_cache WHERE ticker LIKE 'ZZ45%'",
+        f"DELETE FROM fx_rate_cache WHERE rate_date BETWEEN '{_RATE_RANGE[0]}' AND '{_RATE_RANGE[1]}' "
+        "AND base_currency = 'USD' AND quote_currency = 'IDR'",
+    ):
+        db.execute(text(sql))
+    for pid in proposal_ids:
+        db.execute(text("DELETE FROM proposals WHERE id = :i"), {"i": pid})
+    db.commit()
+
+
+class _Zz45:
+    """Factory handed to tests; the fixture purges by prefix before and after."""
+
+    def __init__(self, db):
+        self.db = db
+        self.proposal_ids: list = []
+
+    def account(self, label: str, currency: str = "IDR") -> str:
+        from backend.models import Account
+        name = f"ZZ45 {label}-{uuid.uuid4().hex[:6]}"
+        self.db.add(Account(name=name, type="liquid", currency=currency))
+        self.db.commit()
+        return name
+
+    def platform(self, label: str = "plat") -> int:
+        from backend.models import Platform
+        plat = Platform(name=f"zz45-{label}-{uuid.uuid4().hex[:6]}", kind="exchange")
+        self.db.add(plat)
+        self.db.commit()
+        return plat.id
+
+    def rate(self, day: str, rate: str = "16250.5") -> None:
+        """Seed one cached USD->IDR rate (the position recompute reads it for USD events)."""
+        self.db.execute(
+            text(
+                "INSERT INTO fx_rate_cache (rate_date, base_currency, quote_currency, rate, source) "
+                "VALUES (:d, 'USD', 'IDR', :r, 'zz45') ON CONFLICT DO NOTHING"
+            ),
+            {"d": day, "r": rate},
+        )
+        self.db.commit()
+
+    def proposal(self, operation: str, after: dict) -> tuple[str, str]:
+        from backend.models import Proposal
+        token = secrets.token_urlsafe(32)
+        p = Proposal(
+            token=token, operation=operation,
+            payload={"operation": operation, "rows": [{"after": after}]},
+            status="pending", channel="chat",
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=15),
+        )
+        self.db.add(p)
+        self.db.commit()
+        self.proposal_ids.append(p.id)
+        return str(p.id), token
+
+    def tx_rows(self, *names: str) -> list:
+        from backend.models import Account, Transaction
+        ids = [a.id for a in self.db.query(Account).filter(Account.name.in_(names)).all()]
+        self.db.expire_all()
+        return self.db.query(Transaction).filter(Transaction.account_id.in_(ids)).order_by(Transaction.id).all()
+
+
+@pytest.fixture()
+def zz45(db_session):
+    _purge(db_session)
+    z = _Zz45(db_session)
+    yield z
+    _purge(db_session, z.proposal_ids)
+
+
+def _post(client, api_key, path, body):
+    return client.post(path, json=body, headers={"MONAI_API_KEY": api_key})
+
+
+# ---------------------------------------------------------------------------
+# Task 1: transfers (MOVE-01, D-06)
+# ---------------------------------------------------------------------------
+
+def test_rest_transfer_usd_to_idr_two_exact_legs(client, api_key, zz45):
+    usd, idr = zz45.account("usd", "USD"), zz45.account("idr")
+    resp = _post(client, api_key, "/transactions/transfer", {
+        "from_account": usd, "to_account": idr, "amount": 100.00, "to_amount": 1631000, "date": _ISO_DAY,
+    })
+    assert resp.status_code == 201, resp.text
+    leg_a_id = resp.json()["leg_a_id"]
+    rows = zz45.tx_rows(usd, idr)
+    assert len(rows) == 2
+    by_ccy = {r.currency: r for r in rows}
+    assert by_ccy["USD"].amount == Decimal("-100.00")
+    assert by_ccy["IDR"].amount == Decimal("1631000")
+    assert all(r.is_transfer for r in rows)
+    assert all(r.transfer_pair_id == leg_a_id for r in rows)
+
+
+def test_confirmed_proposal_transfer_with_to_amount(client, api_key, zz45):
+    usd, idr = zz45.account("usd", "USD"), zz45.account("idr")
+    pid, token = zz45.proposal("add_transfer", {
+        "leg_a": {"account": usd, "amount": "-100.00", "date": _ISO_DAY},
+        "leg_b": {"account": idr, "amount": "100.00", "date": _ISO_DAY},
+        "to_amount": "1631000",
+    })
+    resp = _post(client, api_key, f"/proposals/{pid}/confirm", {"token": token})
+    assert resp.status_code == 200, resp.text
+    by_ccy = {r.currency: r for r in zz45.tx_rows(usd, idr)}
+    assert by_ccy["USD"].amount == Decimal("-100.00")
+    assert by_ccy["IDR"].amount == Decimal("1631000")  # from to_amount, not leg_b.amount
+
+
+def test_cross_currency_without_to_amount_refused(client, api_key, zz45):
+    from backend.writes import apply_add_transfer
+    usd, idr = zz45.account("usd", "USD"), zz45.account("idr")
+    for extra in ({}, {"currency": "USD"}):
+        resp = _post(client, api_key, "/transactions/transfer", {
+            "from_account": usd, "to_account": idr, "amount": 25, "date": _ISO_DAY, **extra,
+        })
+        assert resp.status_code == 422, f"{extra}: {resp.text}"
+        detail = resp.json()["detail"]
+        assert "USD" in detail and "IDR" in detail and "need both amounts" in detail
+    with pytest.raises(ValueError, match="USD.*IDR.*need both amounts"):
+        apply_add_transfer(
+            zz45.db,
+            {"account": usd, "amount": "-25", "date": _ISO_DAY},
+            {"account": idr, "amount": "25", "date": _ISO_DAY},
+        )
+    zz45.db.rollback()
+    assert zz45.tx_rows(usd, idr) == []
+
+
+def test_same_currency_to_amount_rules(client, api_key, zz45):
+    a, b = zz45.account("idr-a"), zz45.account("idr-b")
+    body = {"from_account": a, "to_account": b, "amount": 5000, "date": _ISO_DAY}
+
+    resp = _post(client, api_key, "/transactions/transfer", {**body, "to_amount": 5000})
+    assert resp.status_code == 201, resp.text
+    assert sorted(r.amount for r in zz45.tx_rows(a, b)) == [Decimal("-5000"), Decimal("5000")]
+    assert {r.currency for r in zz45.tx_rows(a, b)} == {"IDR"}
+
+    before = len(zz45.tx_rows(a, b))
+    resp = _post(client, api_key, "/transactions/transfer", {**body, "to_amount": 4900})
+    assert resp.status_code == 422
+    assert len(zz45.tx_rows(a, b)) == before
+
+    resp = _post(client, api_key, "/transactions/transfer", body)
+    assert resp.status_code == 201, resp.text
+    assert len(zz45.tx_rows(a, b)) == before + 2
+
+
+def test_to_amount_bad_values_refused(client, api_key, zz45):
+    from backend.writes import apply_add_transfer
+    usd, idr = zz45.account("usd", "USD"), zz45.account("idr")
+    for bad in (0, -5):
+        resp = _post(client, api_key, "/transactions/transfer", {
+            "from_account": usd, "to_account": idr, "amount": 10, "to_amount": bad, "date": _ISO_DAY,
+        })
+        assert resp.status_code == 422, f"to_amount={bad}: {resp.text}"
+    for bad in ("0", "-5", "NaN", "Infinity"):
+        with pytest.raises(ValueError, match="to_amount must be a positive amount"):
+            apply_add_transfer(
+                zz45.db,
+                {"account": usd, "amount": "-10", "date": _ISO_DAY},
+                {"account": idr, "amount": "10", "date": _ISO_DAY},
+                to_amount=bad,
+            )
+    zz45.db.rollback()
+    assert zz45.tx_rows(usd, idr) == []
+
+
+def test_cross_currency_pair_leaves_cashflow_unchanged(client, api_key, zz45):
+    from backend import tools
+    usd, idr = zz45.account("usd", "USD"), zz45.account("idr")
+    # Totals demand a cached rate for any USD row's day, transfers included (Phase 43 gap check).
+    zz45.rate(_ISO_DAY)
+    window = {"period": "custom", "start_date": "1996-03-01", "end_date": "1996-03-31"}
+    before = (tools.TOOLS["spending_total"](**window), tools.TOOLS["income_total"](**window))
+    resp = _post(client, api_key, "/transactions/transfer", {
+        "from_account": usd, "to_account": idr, "amount": 100, "to_amount": 1631000, "date": _ISO_DAY,
+    })
+    assert resp.status_code == 201, resp.text
+    after = (tools.TOOLS["spending_total"](**window), tools.TOOLS["income_total"](**window))
+    assert after == before
+    ids = [r.id for r in zz45.tx_rows(usd, idr)]
+    assert len(ids) == 2  # no third (FX plug) row
+    counted = zz45.db.execute(
+        text("SELECT COUNT(*) FROM cashflow_transactions WHERE is_transfer = false AND id = ANY(:ids)"),
+        {"ids": ids},
+    ).scalar()
+    assert counted == 0
+
+
+# ---------------------------------------------------------------------------
+# Task 2: funded trades through a USD account (MOVE-02/03, D-02/05/07/08)
+# ---------------------------------------------------------------------------
+
+def _seed_event(zz45, plat: int, ticker: str, event_type: str, qty, price, ccy: str) -> None:
+    """Record one event through the primitive (so the position has a backing event)."""
+    from backend.writes import apply_add_portfolio_event
+    after = {
+        "ticker": ticker, "event_type": event_type, "quantity": str(qty), "price": str(price),
+        "platform_id": plat, "currency": ccy, "date": _ISO_DAY,
+    }
+    if ticker == "CASH":
+        after["asset_type"] = "cash"
+    apply_add_portfolio_event(zz45.db, after)
+    zz45.db.commit()
+
+
+def _holding(zz45, plat: int, ticker: str):
+    from backend.models import Holding
+    zz45.db.expire_all()
+    return zz45.db.query(Holding).filter(Holding.ticker == ticker, Holding.platform_id == plat).one_or_none()
+
+
+def _events(zz45, plat: int) -> list:
+    from backend.models import PortfolioEvent
+    zz45.db.expire_all()
+    return zz45.db.query(PortfolioEvent).filter(PortfolioEvent.platform_id == plat).order_by(PortfolioEvent.id).all()
+
+
+def _funded(client, api_key, kind, **body):
+    return _post(client, api_key, f"/portfolio-events/funded-{kind}", {
+        "ticker": "ZZ45T", "quantity": 1, "price": 50, "cash_amount": 50, "date": _ISO_DAY, **body,
+    })
+
+
+def test_funded_buy_from_usd_account_new_position(client, api_key, zz45):
+    from backend.models import AuditLog
+    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    zz45.rate(_ISO_DAY)
+    resp = _funded(client, api_key, "buy", source_account_name=usd, platform_id=plat)
+    assert resp.status_code == 201, resp.text
+    (leg,) = zz45.tx_rows(usd)
+    assert leg.amount == Decimal("-50.00") and leg.currency == "USD"
+    (event,) = _events(zz45, plat)
+    assert event.currency == "USD"
+    audit = zz45.db.query(AuditLog).filter(
+        AuditLog.entity == "portfolio_event", AuditLog.entity_id == event.id
+    ).one()
+    assert audit.after["currency"] == "USD"
+
+
+def test_funded_buy_event_currency_defaults_to_holding(client, api_key, zz45):
+    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    zz45.rate(_ISO_DAY)
+    _seed_event(zz45, plat, "ZZ45T", "buy", 1, 10, "IDR")
+
+    resp = _funded(client, api_key, "buy", source_account_name=usd, platform_id=plat, event_currency="USD")
+    assert resp.status_code == 422, resp.text
+    assert zz45.tx_rows(usd) == [] and len(_events(zz45, plat)) == 1
+
+    resp = _funded(client, api_key, "buy", source_account_name=usd, platform_id=plat)
+    assert resp.status_code == 201, resp.text
+    assert _events(zz45, plat)[-1].currency == "IDR"
+    assert zz45.tx_rows(usd)[0].currency == "USD"
+
+
+def test_funded_sell_into_usd_account(client, api_key, zz45):
+    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    zz45.rate(_ISO_DAY)
+    _seed_event(zz45, plat, "ZZ45T", "buy", 2, 50, "USD")
+    resp = _funded(client, api_key, "sell", source_account_name=usd, platform_id=plat, cash_amount=60, price=60)
+    assert resp.status_code == 201, resp.text
+    (leg,) = zz45.tx_rows(usd)
+    assert leg.amount == Decimal("60") and leg.currency == "USD"
+
+
+def test_given_cash_currency_mismatch_refused(client, api_key, zz45):
+    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    zz45.rate(_ISO_DAY)
+    resp = _funded(client, api_key, "buy", source_account_name=usd, platform_id=plat, cash_currency="IDR")
+    assert resp.status_code == 422, resp.text
+    assert zz45.tx_rows(usd) == [] and _events(zz45, plat) == []
+
+    resp = _funded(client, api_key, "buy", source_account_name=usd, platform_id=plat, cash_currency="USD")
+    assert resp.status_code == 201, resp.text
+
+
+# ---------------------------------------------------------------------------
+# Task 3: cache-only ECB rate for a date (MOVE-04, D-09)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture()
+def no_vendor(monkeypatch):
+    """Any vendor call during the test is a failure: the route is cache-only."""
+    from backend import fx
+
+    def boom(*a, **k):
+        raise AssertionError("GET /fx/rate must not reach the FX vendor")
+
+    monkeypatch.setattr(fx, "fetch_frankfurter_rate", boom)
+    monkeypatch.setattr(fx, "fetch_frankfurter_range", boom)
+    monkeypatch.setitem(fx.FX_ADAPTERS, "frankfurter", boom)
+
+
+def _rate(client, api_key, **params):
+    return client.get("/fx/rate", params=params, headers={"MONAI_API_KEY": api_key})
+
+
+def test_fx_rate_route_cached_weekend(client, api_key, zz45, no_vendor):
+    zz45.rate("1996-03-01", "16250.5")  # Friday
+    resp = _rate(client, api_key, currency="USD", on=_ISO_DAY)  # Saturday
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert (body["currency"], body["on"], body["rate_date"]) == ("USD", _ISO_DAY, "1996-03-01")
+    assert Decimal(body["rate"]) == Decimal("16250.5") and isinstance(body["rate"], str)
+
+
+def test_fx_rate_route_missing_is_null(client, api_key, zz45, no_vendor):
+    zz45.rate("1996-03-01")
+    resp = _rate(client, api_key, currency="USD", on="1996-03-20")
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"currency": "USD", "on": "1996-03-20", "rate": None, "rate_date": None}
+
+
+def test_fx_rate_route_bad_input(client, api_key, zz45, no_vendor):
+    assert _rate(client, api_key, currency="USD", on="1996-13-01").status_code == 422
+    assert client.get("/fx/rate", params={"currency": "USD", "on": _ISO_DAY}).status_code == 401
+    resp = _rate(client, api_key, currency="IDR", on=_ISO_DAY)
+    assert resp.status_code == 200 and Decimal(resp.json()["rate"]) == 1
+
+
+@pytest.mark.parametrize("path", ["/portfolio-events/funded-buy", "/portfolio-events/funded-sell"])
+def test_funded_event_currency_must_be_supported(client, api_key, zz45, path):
+    """An unsupported event currency is refused before any write; it could never be priced (Phase 45 WR-01)."""
+    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    r = _post(client, api_key, path, {
+        "source_account_name": usd, "platform_id": plat, "ticker": "ZZ45E", "quantity": "1", "price": "1",
+        "cash_amount": "1", "event_currency": "EUR", "date": "1996-03-01",
+    })
+    assert r.status_code == 422
+    assert zz45.tx_rows(usd) == []
+
+
+def test_funded_buy_blank_event_currency_falls_through_to_the_account(client, api_key, zz45):
+    """Spaces are no currency: they must not read as IDR on a USD account's new position."""
+    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    zz45.rate(_ISO_DAY)
+    r = _post(client, api_key, "/portfolio-events/funded-buy", {
+        "source_account_name": usd, "platform_id": plat, "ticker": "ZZ45E", "quantity": "1", "price": "1",
+        "cash_amount": "1", "event_currency": "   ", "date": _ISO_DAY,
+    })
+    assert r.status_code == 201, r.text
+    zz45.db.expire_all()
+    assert _holding(zz45, plat, "ZZ45E").currency == "USD"
+
+
+def test_deposit_raises_cash_quantity_and_delete_reverses_it(client, api_key, zz45):
+    """A historical deposit event's money reaches the live investment total, at that date's rate."""
+    plat = zz45.platform()
+    zz45.rate(_ISO_DAY)
+    for amount in (100, 50):
+        _seed_event(zz45, plat, "CASH", "deposit", amount, 1, "USD")
+    zz45.db.expire_all()
+    cash = _holding(zz45, plat, "CASH")
+    assert cash.quantity == Decimal("150.00")
+    assert cash.currency == "USD" and cash.avg_cost > 1  # IDR per USD, so no phantom gain on the first read
+
+    first = _events(zz45, plat)[0]
+    assert client.delete(f"/portfolio-events/{first.id}", headers={"MONAI_API_KEY": api_key}).status_code == 200
+    zz45.db.expire_all()
+    assert _holding(zz45, plat, "CASH").quantity == Decimal("50.00")
+
+
+def test_no_rate_refuses_the_position_write_and_saves_nothing(client, api_key, zz45, monkeypatch):
+    """With no rate the quantity can't be rebuilt: refuse, or the money leaves liquid and reaches nothing."""
+    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    zz45.rate(_ISO_DAY)
+    for amount in (100, 50):
+        _seed_event(zz45, plat, "CASH", "deposit", amount, 1, "USD")
+    zz45.db.expire_all()
+    events = [e.id for e in _events(zz45, plat)]
+    zz45.db.rollback()
+
+    monkeypatch.setattr("backend.fx.get_rate", lambda *a, **k: None)
+    refused = _funded(client, api_key, "buy", source_account_name=usd, platform_id=plat)
+    assert refused.status_code == 422 and "rate" in refused.json()["detail"]
+    # The other deposit still needs a rate once this one is gone.
+    deleted = client.delete(f"/portfolio-events/{events[0]}", headers={"MONAI_API_KEY": api_key})
+    assert deleted.status_code == 422 and "rate" in deleted.json()["detail"]
+
+    zz45.db.expire_all()
+    assert [e.id for e in _events(zz45, plat)] == events
+    assert zz45.tx_rows(usd) == []
+    assert _holding(zz45, plat, "CASH").quantity == Decimal("150.00")
+
+
+# ---------------------------------------------------------------------------
+# Quick 261108-bkz: 12-decimal USD prices and a platform currency
+# ---------------------------------------------------------------------------
+
+def test_usd_price_keeps_twelve_decimals_through_the_api(client, api_key, zz45):
+    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    zz45.rate(_ISO_DAY)
+    resp = _funded(client, api_key, "buy", source_account_name=usd, platform_id=plat,
+                   price="0.123456789012", quantity=1, cash_amount="0.12")
+    assert resp.status_code == 201, resp.text
+    (event,) = _events(zz45, plat)
+    assert event.price == Decimal("0.123456789012")
+    (row,) = client.get(f"/portfolio-events?platform_id={plat}", headers={"MONAI_API_KEY": api_key}).json()
+    assert row["price"] == 0.123456789012 and row["currency"] == "USD"
+
+
+def _platform_api(client, api_key, method, path, body):
+    return getattr(client, method)(path, json=body, headers={"MONAI_API_KEY": api_key})
+
+
+def _plat_row(zz45, name):
+    from backend.models import Platform
+    zz45.db.expire_all()
+    return zz45.db.query(Platform).filter(Platform.name == name).one_or_none()
+
+
+def test_platform_currency_create_defaults_normalizes_and_refuses(client, api_key, zz45):
+    n = uuid.uuid4().hex[:6]
+    r = _platform_api(client, api_key, "post", "/platforms", {"name": f"zz45-a-{n}"})
+    assert r.status_code == 201 and r.json()["currency"] == "IDR", r.text
+    r = _platform_api(client, api_key, "post", "/platforms", {"name": f"zz45-b-{n}", "currency": "usd"})
+    assert r.status_code == 201 and r.json()["currency"] == "USD", r.text
+    r = _platform_api(client, api_key, "post", "/platforms", {"name": f"zz45-c-{n}", "currency": "EUR"})
+    assert r.status_code == 422, r.text
+    assert _plat_row(zz45, f"zz45-c-{n}") is None
+
+
+def test_platform_currency_edit_audits_and_refuses(client, api_key, zz45):
+    from backend.models import AuditLog
+    plat = zz45.platform()
+    zz45.db.expire_all()
+    r = _platform_api(client, api_key, "put", f"/platforms/{plat}", {"currency": "USD"})
+    assert r.status_code == 200 and r.json()["currency"] == "USD", r.text
+    audit = zz45.db.query(AuditLog).filter(
+        AuditLog.entity == "platform", AuditLog.entity_id == plat, AuditLog.operation == "edit").one()
+    assert audit.after["currency"] == "USD"
+    r = _platform_api(client, api_key, "put", f"/platforms/{plat}", {"kind": "wallet"})
+    assert r.status_code == 200 and r.json()["currency"] == "USD"  # absent -> unchanged
+    r = _platform_api(client, api_key, "put", f"/platforms/{plat}", {"currency": "EUR"})
+    assert r.status_code == 422, r.text
+    assert _platform_api(client, api_key, "put", f"/platforms/{plat}", {}).json()["currency"] == "USD"
+
+
+def test_changing_platform_currency_converts_nothing(client, api_key, zz45):
+    idr, plat = zz45.account("idr", "IDR"), zz45.platform()
+    _seed_event(zz45, plat, "ZZ45T", "buy", 2, 100, "IDR")
+    h0 = (_holding(zz45, plat, "ZZ45T").currency, _holding(zz45, plat, "ZZ45T").avg_cost)
+    e0 = [(e.id, e.price, e.currency, e.quantity) for e in _events(zz45, plat)]
+    assert _platform_api(client, api_key, "put", f"/platforms/{plat}", {"currency": "USD"}).status_code == 200
+    h = _holding(zz45, plat, "ZZ45T")
+    assert (h.currency, h.avg_cost) == h0
+    assert [(e.id, e.price, e.currency, e.quantity) for e in _events(zz45, plat)] == e0
+    resp = _funded(client, api_key, "buy", source_account_name=idr, platform_id=plat, cash_amount=50)
+    assert resp.status_code == 201, resp.text
+    assert _events(zz45, plat)[-1].currency == "IDR"

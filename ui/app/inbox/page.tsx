@@ -50,6 +50,28 @@ export default function InboxPage() {
   };
   const announce = (msg: string) => setLiveMsg(msg);
 
+  // Names for each row's Category select; any failure leaves [] (the select still shows the current one).
+  const [categories, setCategories] = useState<string[]>([]);
+  useEffect(() => {
+    type Node = { name: string; children?: Node[] };
+    const flat = (ns: Node[]): string[] => ns.flatMap((n) => [n.name, ...flat(n.children ?? [])]);
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/categories");
+        if (!r.ok) return;
+        const tree: Node[] = await r.json();
+        // "Uncategorized" is the select's empty option, so drop the system node of that name.
+        if (!cancelled) setCategories(flat(tree ?? []).filter((n) => n !== "Uncategorized"));
+      } catch {
+        // leave empty
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const poll = useVisiblePoll<InboxProposal[]>({
     url: "/api/proposals?status=pending",
     intervalMs: 10_000,
@@ -223,6 +245,7 @@ export default function InboxPage() {
               onSettle={onSettle}
               onRows={onRows}
               announce={announce}
+              categories={categories}
             />
           </li>
         ))}

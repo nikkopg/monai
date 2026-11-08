@@ -19,7 +19,10 @@ import { extractDetail } from "../lib/api";
 //   4. On confirming the destination, re-issue DELETE with ?reassign_to=.
 // ---------------------------------------------------------------------------
 
-export type Platform = { id: number; name: string; kind: string | null };
+export type Platform = { id: number; name: string; kind: string | null; currency?: string };
+
+const CCY_HINT =
+  "Starting currency for new tickers on this platform. Positions you already hold keep theirs.";
 
 type Props = {
   platforms: Platform[];
@@ -35,9 +38,11 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
   const [editKind, setEditKind] = useState("");
+  const [editCcy, setEditCcy] = useState("IDR");
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
   const [newKind, setNewKind] = useState("");
+  const [newCcy, setNewCcy] = useState("IDR");
   const [error, setError] = useState<string | null>(null);
   const [deleteFlow, setDeleteFlow] = useState<DeleteFlowState>({ stage: "idle" });
 
@@ -48,11 +53,12 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
       const r = await fetch("/api/platforms", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newName, kind: newKind || null }),
+        body: JSON.stringify({ name: newName, kind: newKind || null, currency: newCcy }),
       });
       if (r.ok) {
         setNewName("");
         setNewKind("");
+        setNewCcy("IDR");
         setAdding(false);
         onChanged();
       } else {
@@ -74,7 +80,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
       const r = await fetch(`/api/platforms/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: editName, kind: editKind || null }),
+        body: JSON.stringify({ name: editName, kind: editKind || null, currency: editCcy }),
       });
       if (r.ok) {
         setEditingId(null);
@@ -179,6 +185,16 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
                       placeholder="e.g. brokerage, crypto app"
                       onChange={(e) => setEditKind(e.target.value)}
                     />
+                    <select
+                      aria-label="Platform currency"
+                      title={CCY_HINT}
+                      style={{ ...input, width: 80, marginLeft: 8 }}
+                      value={editCcy}
+                      onChange={(e) => setEditCcy(e.target.value)}
+                    >
+                      <option value="IDR">IDR</option>
+                      <option value="USD">USD</option>
+                    </select>
                   </>
                 ) : (
                   <>
@@ -225,6 +241,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
                           setEditingId(p.id);
                           setEditName(p.name);
                           setEditKind(p.kind ?? "");
+                          setEditCcy(p.currency ?? "IDR");
                         },
                       },
                       {
@@ -265,6 +282,16 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
               placeholder="e.g. brokerage, crypto app"
               onChange={(e) => setNewKind(e.target.value)}
             />
+            <select
+              aria-label="New platform currency"
+              title={CCY_HINT}
+              style={{ ...input, width: 80 }}
+              value={newCcy}
+              onChange={(e) => setNewCcy(e.target.value)}
+            >
+              <option value="IDR">IDR</option>
+              <option value="USD">USD</option>
+            </select>
             <button style={btn} type="submit">
               Add platform
             </button>

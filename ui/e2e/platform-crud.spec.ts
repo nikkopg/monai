@@ -83,6 +83,7 @@ test.describe("platform CRUD parity (PLAT-02)", () => {
 
     await expect.poll(() => postedBody?.name).toBe("IBKR");
     await expect.poll(() => postedBody?.kind).toBe("brokerage");
+    await expect.poll(() => postedBody?.currency).toBe("IDR");
   });
 
   test("Edit updates both name and kind via PUT /api/platforms/{id}", async ({
@@ -126,6 +127,7 @@ test.describe("platform CRUD parity (PLAT-02)", () => {
 
     await expect.poll(() => putBody?.name).toBe("Binance Global");
     await expect.poll(() => putBody?.kind).toBe("exchange");
+    await expect.poll(() => putBody?.currency).toBe("IDR");
   });
 
   test("Delete on a platform with holdings surfaces the reassign select (422 path)", async ({

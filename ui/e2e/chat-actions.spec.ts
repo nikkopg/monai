@@ -287,3 +287,54 @@ test.describe("Disabled states (D-19)", () => {
     });
   }
 });
+
+// Phase 45 (D-04): a cross-currency add_transfer card reads as two real amounts plus the
+// implied-vs-ECB line; every other card keeps the shared diff lines.
+test.describe("Transfer and currency cards (Phase 45)", () => {
+  const card = (operation: string, after: Record<string, unknown>) => ({
+    id: ids.h,
+    operation,
+    payload: { operation, rows: [{ before: null, after }] },
+    status: "pending",
+    expires_at: new Date(Date.now() + 9.5 * MIN).toISOString(),
+  });
+  const open = async (page: Page, c: ReturnType<typeof card>) => {
+    await setup(page, [user("Synthetic question"), asst("Proposed.", "complete", { proposals: [c] })]);
+    await page.route("**/api/fx/rate**", (route) =>
+      route.fulfill({ json: { rate: "16250", rate_date: "2026-10-30" } }),
+    );
+    await page.goto(`/chat?thread=${TID}`);
+  };
+
+  test("cross-currency transfer card in chat", async ({ page }) => {
+    await open(
+      page,
+      card("add_transfer", {
+        leg_a: { account: "Account USD", amount: "-100.00", currency: "USD", date: null },
+        leg_b: { account: "Account IDR", amount: "1631000", currency: "IDR" },
+      }),
+    );
+    const c = conv(page);
+    await expect(
+      c.getByText("Transfer 100.00 USD from Account USD to Account IDR, receiving 1,631,000 on the approval date"),
+    ).toBeVisible();
+    await expect(c.getByText("Implied 1 USD = 16,310 IDR · ECB 16,250 (rate of 30 Oct 2026)")).toBeVisible();
+    await expect(c).not.toContainText("leg_a:");
+  });
+
+  test("IDR transfer and USD add-transaction chat cards are unchanged", async ({ page }) => {
+    await open(
+      page,
+      card("add_transfer", {
+        leg_a: { account: "Account A", amount: "-50000.00", date: "2026-10-07" },
+        leg_b: { account: "Account B", amount: "50000.00" },
+      }),
+    );
+    await expect(conv(page).getByText("leg_a:")).toBeVisible();
+    await expect(conv(page)).not.toContainText("Implied");
+
+    await open(page, card("add_transaction", { date: "2026-10-07", amount: "-12.50", currency: "USD", merchant: "Toko Contoh" }));
+    await expect(conv(page).getByText("currency:")).toBeVisible();
+    await expect(conv(page)).toContainText("USD");
+  });
+});

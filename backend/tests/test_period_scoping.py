@@ -40,7 +40,7 @@ def seeded_scoping_data():
     inserted_ids: list[int] = []
     category_ids: list[int] = []
     try:
-        acc = _get_or_create_account(db, "zzscopetest-account", _CURRENCY)
+        acc = _get_or_create_account(db, "zzscopetest-account")
         db.flush()
 
         # spending_in_category is hierarchy-backed (11-04): each test category
@@ -172,3 +172,74 @@ def test_unknown_period_still_raises_valueerror_naming_the_value():
     with pytest.raises(ValueError) as exc:
         resolve_period("fortnight")
     assert "fortnight" in str(exc.value)
+
+
+# ── POL-04: "the last N months" means N full calendar months ─────────────────
+
+
+def test_last_n_months_resolves_full_months():
+    from backend.tools import PERIODS
+
+    assert resolve_period("last_6_months", today=datetime.date(1996, 3, 15)) == (
+        datetime.date(1995, 9, 1), datetime.date(1996, 3, 1))
+    assert resolve_period("last_1_months", today=datetime.date(1996, 1, 31)) == (
+        datetime.date(1995, 12, 1), datetime.date(1996, 1, 1))
+    assert resolve_period("last_12_months", today=datetime.date(1996, 12, 31)) == (
+        datetime.date(1995, 12, 1), datetime.date(1996, 12, 1))
+    assert resolve_period("LAST_6_MONTHS", today=datetime.date(1996, 3, 15))[0] == datetime.date(1995, 9, 1)
+    with pytest.raises(ValueError):
+        resolve_period("last_0_months")
+    with pytest.raises(ValueError):
+        resolve_period("last_99999999_months")
+    assert {"last_3_months", "last_6_months", "last_12_months"} <= set(PERIODS)
+
+
+def _stub_trend(monkeypatch, tools_mod, *, fx_error=None):
+    today = datetime.date.today()
+    y, m = divmod(today.year * 12 + today.month - 1 - 6, 12)
+    start = datetime.date(y, m + 1, 1)
+    gap = datetime.date(y, m + 1, 1)  # the stub omits the first month
+    present = start
+    rows = []
+    while present <= today.replace(day=1):
+        if present != gap:
+            rows.append({"month": present.isoformat()[:7], "income": 10.0, "expense": 5.0, "net": 5.0,
+                         "unconverted_count": 0})
+        present = tools_mod._first_of_next_month(present)
+    monkeypatch.setattr(tools_mod, "_monthly_trend", lambda months: {
+        "rows": rows, "fx_error": fx_error, "usd_rows": 0, "start": start})
+    seen = []
+
+    def cats(s, e, lim):
+        seen.append((s, e, lim))
+        return {"rows": [("ZZ Food", 2500.0)]}
+
+    monkeypatch.setattr(tools_mod, "_spending_by_category", cats)
+    return start, seen
+
+
+def test_monthly_trend_covers_every_month_with_categories(monkeypatch):
+    from backend import tools as tools_mod
+
+    start, seen = _stub_trend(monkeypatch, tools_mod)
+    r = tools_mod.monthly_trend(6)
+    assert [x["month"] for x in r["rows"]] == sorted(x["month"] for x in r["rows"]) and len(r["rows"]) == 7
+    first = r["rows"][0]
+    assert first["month"] == start.isoformat()[:7] and (first["income"], first["expense"], first["net"]) == (0, 0, 0)
+    assert all(x["top_categories"] == [("ZZ Food", 2500.0)] for x in r["rows"])
+    assert len(seen) == 7 and all(lim == 5 for _, _, lim in seen)
+    today = datetime.date.today()
+    last_full = tools_mod.resolve_period("last_6_months")
+    assert last_full[0] == start
+    assert r["window"] == (f"6 full months {start.isoformat()[:7]} to "
+                           f"{(last_full[1] - datetime.timedelta(days=1)).isoformat()[:7]}, "
+                           f"plus {today.isoformat()[:7]} so far")
+    assert len(tools_mod.monthly_trend(3)["rows"]) == 7
+
+
+def test_monthly_trend_refusal_skips_categories(monkeypatch):
+    from backend import tools as tools_mod
+
+    _, seen = _stub_trend(monkeypatch, tools_mod, fx_error="ZZ no rate")
+    r = tools_mod.monthly_trend(6)
+    assert "error" in r and seen == []

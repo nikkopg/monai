@@ -25,7 +25,8 @@ MoneyDecimal = Annotated[
 class TransactionCreate(BaseModel):
     date: datetime
     amount: MoneyDecimal = Field(..., description="Signed: negative = expense, positive = income")
-    currency: str = "IDR"
+    # Absent means "the account's currency"; a value must match it (D-01/D-03). Clients sending "IDR" keep working.
+    currency: str | None = None
     category: str | None = None
     merchant: str | None = None
     notes: str | None = None
@@ -47,6 +48,10 @@ class TransactionOut(BaseModel):
     account_id: int | None
     is_transfer: bool
     transfer_pair_id: int | None = None  # D-02/REC-05 — collapse-pair key for the ledger
+    # D-16: filled by GET /transactions from transactions_idr; null on POST/PUT responses.
+    amount_idr: MoneyDecimal | None = None
+    fx_rate: MoneyDecimal | None = None
+    fx_rate_date: _date | None = None
 
 
 class AccountOut(BaseModel):
@@ -88,6 +93,10 @@ class CashflowSummary(BaseModel):
     by_category: list[CategoryRollup]  # hierarchy rollup (CAT-04, was tuple rows)
     accounts: list  # rows from account_balances (id/name/current_balance/period_net)
     trend: list  # rows from monthly_trend (month/income/expense/net)
+    # Additive (D-06): totals are the IDR part; USD rows without a rate are counted here.
+    unconverted_count: int = 0
+    unconverted_usd: float = 0.0  # signed native USD of those rows
+    currency: str = "IDR"
 
 
 class NetWorth(BaseModel):
@@ -100,6 +109,11 @@ class NetWorth(BaseModel):
     investment_groups: list  # rows from portfolio_summary.groups
     accounts_covered: int
     accounts_total: int
+    # Additive (D-12): /net-worth builds NetWorth(**result), so keys without a field here are dropped.
+    currency: str = "IDR"
+    fx_excluded: list = []  # liquid accounts left out for want of a rate
+    notice: str | None = None
+    fx_note: str | None = None
 
 
 class TransactionUpdate(BaseModel):
@@ -157,6 +171,7 @@ class AccountUpdate(BaseModel):
 class PlatformCreate(BaseModel):
     name: str
     kind: str | None = None
+    currency: str | None = "IDR"
 
 
 class PlatformUpdate(BaseModel):
@@ -164,6 +179,7 @@ class PlatformUpdate(BaseModel):
 
     name: str | None = None
     kind: str | None = None
+    currency: str | None = None
 
 
 class PlatformOut(BaseModel):
@@ -172,6 +188,7 @@ class PlatformOut(BaseModel):
     id: int
     name: str
     kind: str | None
+    currency: str
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +197,8 @@ class PlatformOut(BaseModel):
 
 
 class PortfolioEventCreate(BaseModel):
-    """Buy/sell/dividend event body (INV-07, D-01).
+    """Buy/sell/dividend event body (INV-07, D-01). POST /portfolio-events accepts
+    dividends only; buys and sells use the funded routes, which require a liquid account.
 
     event_type is a locked literal set — a value outside {buy,sell,dividend}
     (e.g. "gift") is rejected with a 422 at the schema boundary BEFORE the
@@ -218,6 +236,12 @@ class PortfolioEventOut(BaseModel):
     # magnitude, filled only by GET /portfolio-events.
     transaction_id: int | None = None
     cash_amount: MoneyDecimal | None = None
+    currency: str | None = None
+    # Migration 023: the fee, and the filled quantity (stored quantity with a coin
+    # fee added back on a buy / taken off on a sell), filled only by GET /portfolio-events.
+    fee: MoneyDecimal | None = None
+    fee_kind: str | None = None
+    filled_quantity: MoneyDecimal | None = None
 
 
 class PortfolioEventUpdate(BaseModel):
@@ -226,7 +250,9 @@ class PortfolioEventUpdate(BaseModel):
     Same validation as PortfolioEventCreate; platform_id and currency are not
     editable. cash_amount is the new magnitude of the linked cash leg (the
     server applies the sign from the event type) and is only valid on a
-    funded event.
+    funded event. quantity is the FILLED quantity (as on create): the server
+    re-derives the stored quantity from it and the fee, so a fee never applies
+    twice. fee/fee_kind are likewise funded-only.
     """
 
     ticker: str | None = Field(None, min_length=1)
@@ -236,6 +262,13 @@ class PortfolioEventUpdate(BaseModel):
     date: _date | None = None
     cash_amount: MoneyDecimal | None = Field(
         None, gt=0, description="New magnitude of the linked cash leg; funded events only"
+    )
+    fee: MoneyDecimal | None = Field(
+        None, ge=0,
+        description="New trade fee (0 clears it); funded events only. Units of the asset for 'coin', the position's currency for 'cash'",
+    )
+    fee_kind: Literal["coin", "cash"] | None = Field(
+        None, description="Required with a fee above 0 unless the event already has one"
     )
 
 
@@ -253,18 +286,14 @@ class TransferCreate(BaseModel):
     from_account: str
     to_account: str
     amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude; sign is applied per leg")
-    currency: str = "IDR"
-    date: str | None = None
-    notes: str | None = None
-
-
-class InvestmentTransferCreate(BaseModel):
-    """Body for POST /transactions/investment-transfer (XFER-02)."""
-
-    from_account: str
-    platform_id: int = Field(..., description="Required — no by-name resolution, mirrors account-id precedent")
-    amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude")
-    currency: str = "IDR"
+    to_amount: MoneyDecimal | None = Field(
+        None, gt=0,
+        description="Amount received, unsigned, in the destination account's currency; "
+        "required when the two accounts' currencies differ",
+    )
+    # Absent means the from-account's currency; a given value applies to the from leg and,
+    # for a same-currency transfer, to both legs.
+    currency: str | None = None
     date: str | None = None
     notes: str | None = None
 
@@ -275,14 +304,21 @@ class FundedBuyCreate(BaseModel):
     source_account_name: str
     platform_id: int = Field(..., description="Required — position identity is (ticker, platform_id)")
     ticker: str
-    quantity: MoneyDecimal = Field(..., gt=0, description="Units; must be positive")
+    quantity: MoneyDecimal = Field(..., gt=0, description="Units filled; must be positive")
     price: MoneyDecimal = Field(..., gt=0, description="Price per unit in the event's native currency")
     cash_amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude; the primitive always debits")
-    cash_currency: str = "IDR"
-    event_currency: str = "IDR"
+    cash_currency: str | None = None  # absent: the account's currency; a different value is refused
+    event_currency: str | None = None  # absent: the holding's currency, else the account's (D-02)
     date: str | None = None
     notes: str | None = None
     asset_type: str | None = None
+    fee: MoneyDecimal | None = Field(
+        None, ge=0,
+        description="Optional trade fee: units of the asset for kind 'coin', the position's currency for 'cash'",
+    )
+    fee_kind: Literal["coin", "cash"] | None = Field(
+        None, description="Required with a fee above 0; a cash fee is already inside cash_amount on a buy"
+    )
 
 
 class FundedSellCreate(BaseModel):
@@ -291,14 +327,21 @@ class FundedSellCreate(BaseModel):
     source_account_name: str
     platform_id: int = Field(..., description="Required — position identity is (ticker, platform_id)")
     ticker: str
-    quantity: MoneyDecimal = Field(..., gt=0, description="Units; must be positive")
+    quantity: MoneyDecimal = Field(..., gt=0, description="Units filled; must be positive")
     price: MoneyDecimal = Field(..., gt=0, description="Price per unit in the event's native currency")
     cash_amount: MoneyDecimal = Field(..., gt=0, description="Unsigned magnitude; the primitive always credits")
-    cash_currency: str = "IDR"
-    event_currency: str = "IDR"
+    cash_currency: str | None = None  # absent: the account's currency; a different value is refused
+    event_currency: str | None = None  # absent: the holding's currency, else the account's (D-02)
     date: str | None = None
     notes: str | None = None
     asset_type: str | None = None
+    fee: MoneyDecimal | None = Field(
+        None, ge=0,
+        description="Optional trade fee: units of the asset for kind 'coin', the position's currency for 'cash'",
+    )
+    fee_kind: Literal["coin", "cash"] | None = Field(
+        None, description="Required with a fee above 0; on a sell the cash_amount is net of a cash fee"
+    )
 
 
 class BalanceAdjustmentCreate(BaseModel):
@@ -351,6 +394,24 @@ class HoldingOut(BaseModel):
     coingecko_id: str | None
 
 
+class ClosedPositionOut(BaseModel):
+    """One closed-position record (quick 261107-nq6); platform_name is null once its platform is deleted."""
+
+    id: int
+    ticker: str
+    platform_id: int | None
+    platform_name: str | None
+    realized_pnl: MoneyDecimal
+    close_date: date
+
+
+class ClosedPositionUpdate(BaseModel):
+    """Body for PUT /closed-positions/{id}: None keeps the value. No sign constraint, a loss is negative."""
+
+    realized_pnl: MoneyDecimal | None = None
+    close_date: date | None = None
+
+
 class PortfolioSummary(BaseModel):
     """Composed GET /investments/summary payload (D-05, INV-06).
 
@@ -385,10 +446,10 @@ class ValueHistoryResponse(BaseModel):
 class NetWorthHistoryLiquidOut(BaseModel):
     """One month's liquid half of the composed net-worth series (NWH-02).
 
-    Nulls here mean the liquid half could not be verified for that month —
-    no interpolation, no carry-forward (D-06). `valuation_basis` of
-    "ledger_plus_corrections" marks pre-anchor months (23.1 D-05); it is
-    None for both a gapped month and the post-anchor D-07 basis."""
+    Each point is the plain per-account sum of that month's records. Nulls
+    here mean the month is before the first liquid record or a needed FX rate
+    is missing; a liquid gap is never carried forward. `valuation_basis` is
+    "ledger_plus_corrections" for every non-gap month."""
 
     total: MoneyDecimal | None
     by_account: dict[str, MoneyDecimal] | None
@@ -400,8 +461,10 @@ class NetWorthHistoryLiquidOut(BaseModel):
 class NetWorthHistoryInvestmentOut(BaseModel):
     """One month's investment half of the composed net-worth series (NWH-02).
 
-    Nulls here mean the investment half could not be verified for that month —
-    no interpolation, no carry-forward (D-06)."""
+    A month with no usable value carries the previous known month (total,
+    positions, `as_of_date` and `valuation_basis` included), so `as_of_date`
+    can be earlier than the month. Nulls mean no value is known yet at or
+    before that month."""
 
     total: MoneyDecimal | None
     by_position: dict[str, MoneyDecimal] | None
@@ -414,7 +477,7 @@ class NetWorthHistoryInvestmentOut(BaseModel):
 class NetWorthHistoryRowOut(BaseModel):
     """One composed month of GET /cashflow/networth-history (NWH-02).
 
-    total is non-null only when both halves are independently honest (D-04).
+    total is non-null whenever both halves have a value for the month.
     liquid and investment are always present, honest or not, so Phase 23's
     split view can draw either half alone (SC4/NWH-06)."""
 
@@ -432,7 +495,8 @@ class NetWorthHistoryResponse(BaseModel):
 
     `liquid_drift_estimate` is the anchor-day residual (23.1 D-06): the sum
     of each anchored liquid account's positive residual, an upper bound on
-    how far pre-anchor liquid balances may be overstated. It is null when no
+    how far the months before an anchor may be overstated by recovered
+    corrections. It is null when no
     live liquid account has an anchor."""
 
     rows: list[NetWorthHistoryRowOut]
@@ -679,9 +743,13 @@ class ConfirmRequest(BaseModel):
 
 
 class RowSkipRequest(BaseModel):
-    """Body for PATCH /proposals/{id}/rows/{index}."""
+    """Body for PATCH /proposals/{id}/rows/{index}: skip and/or category.
 
-    skip: bool
+    An explicit null (or blank) category clears it; leaving the key out leaves it alone.
+    """
+
+    skip: bool | None = None
+    category: str | None = Field(default=None, max_length=255)
 
 
 # ---------------------------------------------------------------------------

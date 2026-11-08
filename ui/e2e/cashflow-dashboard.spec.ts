@@ -211,3 +211,149 @@ test.describe("Spending by category card layout", () => {
     });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Phase 44 plan 03 — USD balances (DISP-01). Mocked, synthetic: ZZ44 names,
+// round example rates and dates.
+// ---------------------------------------------------------------------------
+function netWorthFixture(overrides: Partial<Record<string, unknown>> = {}) {
+  return {
+    ...layoutNetWorth,
+    accounts_total: 2,
+    accounts_covered: 2,
+    ...overrides,
+  };
+}
+
+async function mockNetWorth(page: Page, body: unknown) {
+  await page.route("**/api/net-worth", (route) => route.fulfill({ json: body }));
+}
+
+const usdWallet = {
+  id: 2,
+  name: "ZZ44 Wallet",
+  type: "liquid",
+  currency: "USD",
+  native_balance: -12.34,
+  current_balance: -200_525,
+  fx_rate: 16250,
+  fx_as_of: "2026-10-30",
+  fx_stale: false,
+  fx_note: null,
+  period_net: 0,
+};
+
+test.describe("USD balances (Phase 44)", () => {
+  test("USD balance shows native, ≈ IDR and the rate", async ({ page }) => {
+    await mockSummary(page);
+    await mockNetWorth(
+      page,
+      netWorthFixture({
+        liquid_accounts: [
+          { id: 1, name: "ZZ44 Cash", type: "liquid", current_balance: 4_000_000, period_net: 0 },
+          usdWallet,
+        ],
+      })
+    );
+    await page.goto("/cashflow");
+
+    const wallet = page.getByText("ZZ44 Wallet", { exact: true }).locator("xpath=../..");
+    await expect(wallet.getByText("-12.34 USD", { exact: true })).toBeVisible();
+    await expect(wallet.getByText("≈ -200,525", { exact: true })).toBeVisible();
+    await expect(wallet.locator("[title]")).toHaveAttribute(
+      "title",
+      "1 USD = 16,250 IDR · rate of 30 Oct 2026"
+    );
+
+    const cash = page.getByText("ZZ44 Cash", { exact: true }).locator("xpath=../..");
+    await expect(cash.getByText("4,000,000", { exact: true })).toBeVisible();
+    await expect(cash).not.toContainText("≈");
+    await expect(cash.locator("[title]")).toHaveCount(0);
+  });
+
+  test("stale rate is a visible label", async ({ page }) => {
+    await mockSummary(page);
+    await mockNetWorth(
+      page,
+      netWorthFixture({
+        liquid_accounts: [
+          { ...usdWallet, fx_stale: true, fx_as_of: "2026-10-27", fx_note: "stale, rate of 2026-10-27" },
+        ],
+      })
+    );
+    await page.goto("/cashflow");
+    await expect(page.getByText("stale, rate of 27 Oct 2026", { exact: true })).toBeVisible();
+  });
+
+  test("missing rate is never 0", async ({ page }) => {
+    await mockSummary(page);
+    await mockNetWorth(
+      page,
+      netWorthFixture({
+        liquid_accounts: [{ ...usdWallet, current_balance: null, fx_rate: null, fx_as_of: null }],
+      })
+    );
+    await page.goto("/cashflow");
+    const wallet = page.getByText("ZZ44 Wallet", { exact: true }).locator("xpath=../..");
+    await expect(wallet.getByText("-12.34 USD", { exact: true })).toBeVisible();
+    await expect(wallet.getByText("IDR value unavailable", { exact: true })).toBeVisible();
+    await expect(wallet).not.toContainText("≈");
+    await expect(wallet.locator("[title]")).toHaveCount(0);
+  });
+
+  test("unconverted notice sits above the cards and keeps the IDR totals", async ({ page }) => {
+    await mockSummary(page, summaryFixture({ unconverted_count: 3, unconverted_usd: -12.34 }));
+    await mockNetWorth(page, netWorthFixture());
+    await page.goto("/cashflow");
+    await expect(page.getByText("3 USD rows unconverted (-12.34 USD)", { exact: true })).toBeVisible();
+    await expect(page.getByText("5,000,000", { exact: true })).toBeVisible();
+    await expect(page.getByText("2,000,000", { exact: true })).toBeVisible();
+    await expect(page.getByText("+3,000,000", { exact: true })).toBeVisible();
+  });
+
+  test("unconverted notice uses the singular for one row and is absent for zero or missing", async ({
+    page,
+  }) => {
+    await mockSummary(page, summaryFixture({ unconverted_count: 1, unconverted_usd: -12.34 }));
+    await mockNetWorth(page, netWorthFixture());
+    await page.goto("/cashflow");
+    await expect(page.getByText("1 USD row unconverted (-12.34 USD)", { exact: true })).toBeVisible();
+
+    for (const body of [
+      summaryFixture({ unconverted_count: 0, unconverted_usd: 0 }),
+      summaryFixture(),
+    ]) {
+      await page.unroute("**/api/cashflow/summary**");
+      await mockSummary(page, body);
+      await page.reload();
+      await expect(page.getByText("Net saved", { exact: true })).toBeVisible();
+      await expect(page.getByText(/USD rows? unconverted/)).toHaveCount(0);
+    }
+  });
+
+  test("net-worth notice shows the server strings and the excluded accounts", async ({ page }) => {
+    await mockSummary(page);
+    await mockNetWorth(
+      page,
+      netWorthFixture({
+        notice: "1 account(s) left out of the total: no USD->IDR rate within 7 days",
+        fx_note: "stale, rate of 2026-10-27",
+        fx_excluded: [{ name: "ZZ44 Savings", native_balance: 1234.5, currency: "USD" }],
+      })
+    );
+    await page.goto("/cashflow");
+    await expect(
+      page.getByText("1 account(s) left out of the total: no USD->IDR rate within 7 days", { exact: true })
+    ).toBeVisible();
+    await expect(page.getByText("stale, rate of 2026-10-27", { exact: true })).toBeVisible();
+    await expect(page.getByText("ZZ44 Savings: 1,234.50 USD", { exact: true })).toBeVisible();
+  });
+
+  test("net-worth notice block is absent when there is nothing to say", async ({ page }) => {
+    await mockSummary(page);
+    await mockNetWorth(page, netWorthFixture({ notice: null, fx_note: null, fx_excluded: [] }));
+    await page.goto("/cashflow");
+    await expect(page.getByText("Net saved", { exact: true })).toBeVisible();
+    await expect(page.getByText(/left out of the total|rate of/)).toHaveCount(0);
+  });
+});

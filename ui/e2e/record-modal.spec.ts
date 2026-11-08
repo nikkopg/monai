@@ -112,7 +112,7 @@ test.describe("record-modal — Expense/Income segment (REC-04)", () => {
     await expect(segmentButtons.nth(0)).toHaveCSS("font-weight", "600");
   });
 
-  test("Expense posts a negative signed amount and currency IDR", async ({ page }) => {
+  test("Expense posts a negative signed amount and no currency", async ({ page }) => {
     await mockDashboard(page);
     let postedBody: Record<string, unknown> | null = null;
     await page.route("**/api/transactions", async (route) => {
@@ -137,7 +137,7 @@ test.describe("record-modal — Expense/Income segment (REC-04)", () => {
       .click();
 
     await expect.poll(() => postedBody?.amount).toBe(-25000);
-    await expect.poll(() => postedBody?.currency).toBe("IDR");
+    expect(Object.keys(postedBody ?? {})).not.toContain("currency");
   });
 
   test("Income posts a positive signed amount", async ({ page }) => {
@@ -288,7 +288,7 @@ test.describe("record-modal — Transfer segment (REC-04)", () => {
     const body = postedBody as unknown as Record<string, unknown>;
     const keys = Object.keys(body).sort();
     expect(keys).toEqual(
-      ["amount", "currency", "date", "from_account", "notes", "to_account"].sort()
+      ["amount", "date", "from_account", "notes", "to_account"].sort()
     );
     expect(body.from_account).toBe("Cash");
     expect(body.to_account).toBe("Bank");

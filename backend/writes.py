@@ -14,14 +14,19 @@ Every apply_* function:
 """
 
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from backend.importer import _get_or_create_account
-from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, PriceCache, Transaction
-from backend.portfolio import recompute_holding_from_events
+from backend.models import (
+    Account, AuditLog, Category, ClosedPosition, Holding, Platform, PortfolioEvent, PriceCache, Transaction,
+)
+from backend.portfolio import filled_quantity, recompute_holding_from_events
+
+# Mirrors migration 020's CHECK on accounts.currency; fx.py names only BASE.
+ACCOUNT_CURRENCIES = ("IDR", "USD")
 
 
 def resolve_category_id(db: Session, name: str | None) -> int:
@@ -52,10 +57,21 @@ def resolve_category_id(db: Session, name: str | None) -> int:
 
 
 def apply_add_transaction(db: Session, after: dict) -> Transaction:
-    """Insert a new transaction, resolving/creating its account by name."""
+    """Insert a new transaction, resolving/creating its account by name.
+
+    The account decides the currency (D-01): an absent/blank payload currency
+    means the account's; a different one is refused with ValueError (the
+    composite FK in migration 020 would otherwise surface it as a 500).
+    """
     account_name = after.get("account", "Unknown")
-    currency = after.get("currency", "IDR")
-    acc = _get_or_create_account(db, account_name, currency)
+    # Check the currency BEFORE creating the account, so a refusal never leaves a stray flushed row.
+    existing = db.query(Account).filter(Account.name == account_name).one_or_none()
+    target = existing.currency if existing is not None else "IDR"  # auto-created accounts are IDR
+    given = (after.get("currency") or "").strip().upper()
+    if given and given != target:
+        raise ValueError(f"Account '{account_name}' is in {target}; this row is in {given}")
+    acc = existing or _get_or_create_account(db, account_name)
+    currency = acc.currency
     category_name = after.get("category")
     tx = Transaction(
         date=datetime.fromisoformat(after["date"]) if after.get("date") else datetime.now(timezone.utc),
@@ -72,7 +88,7 @@ def apply_add_transaction(db: Session, after: dict) -> Transaction:
     db.add(tx)
     db.flush()  # LOAD-BEARING: populates tx.id before the AuditLog row below
     db.add(AuditLog(entity="transaction", entity_id=tx.id, operation="add",
-                    before=None, after=after))
+                    before=None, after={**after, "currency": currency}))
     return tx
 
 
@@ -167,7 +183,8 @@ def apply_add_balance_adjustment(
             text("SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE account_id = :id"),
             {"id": account_id},
         ).scalar()
-    delta = Decimal(str(target_balance)) - Decimal(str(current))
+    # Quantize to the column's 2 dp so the audit row records what is stored (WR-03).
+    delta = (Decimal(str(target_balance)) - Decimal(str(current))).quantize(Decimal("0.01"), ROUND_HALF_UP)
     account = db.get(Account, account_id)
     after = {
         "account": account.name if account is not None else "Unknown",
@@ -274,8 +291,31 @@ def apply_delete_transaction_or_pair(db: Session, tx_id: int, before: dict | Non
     return [tx_id]
 
 
-def apply_add_transfer(db: Session, leg_a_after: dict, leg_b_after: dict) -> tuple[Transaction, Transaction]:
-    """Insert a paired liquid->liquid transfer (XFER-01/D-03/D-09).
+def currency_of_account(db: Session, name: str) -> str:
+    """Currency of the account called `name` (exact-name lookup).
+
+    A missing account reads as "IDR": apply_add_transaction would auto-create
+    it as IDR, so that is the currency its leg would carry.
+    """
+    acc = db.query(Account).filter(Account.name == name).one_or_none()
+    return acc.currency if acc is not None else "IDR"
+
+
+def _positive_amount(value, label: str) -> Decimal:
+    """Parse a second amount: finite and > 0, else ValueError (T-45-01)."""
+    try:
+        amount = Decimal(str(value))
+    except InvalidOperation:
+        raise ValueError(f"{label} must be a positive amount")
+    if not amount.is_finite() or amount <= 0:
+        raise ValueError(f"{label} must be a positive amount")
+    return amount
+
+
+def apply_add_transfer(
+    db: Session, leg_a_after: dict, leg_b_after: dict, to_amount=None
+) -> tuple[Transaction, Transaction]:
+    """Insert a paired liquid->liquid transfer (XFER-01/D-03/D-09, MOVE-01/D-06).
 
     Composes `apply_add_transaction` twice — one call per leg — so each leg
     gets account resolution by name, the Decimal money idiom, and its own
@@ -286,7 +326,23 @@ def apply_add_transfer(db: Session, leg_a_after: dict, leg_b_after: dict) -> tup
     is set to leg A's own id (shared-group-id convention, D-03 — matches
     migration 011's `min(id)` scheme). Does NOT commit — caller owns the
     single transaction boundary (D-01).
+
+    Two accounts in different currencies need BOTH amounts: leg A's amount is
+    what leaves the from account, `to_amount` (unsigned, in the destination's
+    currency) is what arrives. Neither is computed from the other and no rate
+    is stored (MOVE-04). Two accounts in the same currency move one amount, so
+    a `to_amount` that differs is refused. Every refusal happens before either
+    leg is written, so it leaves nothing behind.
     """
+    given = None if to_amount is None else _positive_amount(to_amount, "to_amount")
+    a = currency_of_account(db, leg_a_after.get("account", "Unknown"))
+    b = currency_of_account(db, leg_b_after.get("account", "Unknown"))
+    if a != b:
+        if given is None:
+            raise ValueError(f"Transfers between {a} and {b} accounts need both amounts")
+        leg_b_after = {**leg_b_after, "amount": str(given)}
+    elif given is not None and given != abs(Decimal(str(leg_a_after["amount"]))):
+        raise ValueError(f"A transfer between two {a} accounts moves one amount; record a fee as a separate expense")
     leg_a = apply_add_transaction(db, {**leg_a_after, "is_transfer": True})
     leg_b = apply_add_transaction(db, {**leg_b_after, "is_transfer": True})
     leg_a.transfer_pair_id = leg_a.id
@@ -294,53 +350,122 @@ def apply_add_transfer(db: Session, leg_a_after: dict, leg_b_after: dict) -> tup
     return leg_a, leg_b
 
 
-def apply_add_investment_transfer(
-    db: Session, cash_leg_after: dict, event_after: dict
-) -> tuple[Transaction, PortfolioEvent]:
-    """Insert a liquid->investment funding transfer (XFER-02/D-05).
+def currency_of_holding(db: Session, ticker: str, platform_id: int) -> str | None:
+    """Currency of the existing (ticker, platform_id) position, or None when there is none."""
+    holding = db.query(Holding).filter(
+        Holding.ticker == ticker, Holding.platform_id == platform_id
+    ).one_or_none()
+    return holding.currency if holding is not None else None
 
-    Composes `apply_add_transaction` for the cash leg on the liquid SOURCE
-    account (resolved by name; the layer forces is_transfer=True, mirroring
-    apply_add_transfer — T-13-07, not left to the caller's after-dict)
-    with `apply_add_portfolio_event` for a 'deposit' event on the target
-    platform. After the event flushes (its primitive already flushes to
-    populate `.id`), `event.source_account_id` is set directly to the cash
-    leg's `account_id` — the composition-then-mutate-in-place idiom (mirrors
-    apply_add_portfolio_event's own asset_type post-hoc set). Investment
-    money is NEVER turned into a synthetic `accounts` row (D-05) — it stays a
-    PortfolioEvent linked back to its funding account. No extra top-level
-    audit row — each primitive already writes its own (D-02). Does NOT
-    commit — caller owns the transaction boundary (D-01).
+
+def _require_liquid_account(db: Session, name: str) -> None:
+    """Refuse unless exactly this account exists and is liquid (OD-2, ValueError -> 422).
+
+    Runs first in both funded primitives, so a refusal precedes every write and
+    apply_add_transaction's auto-create of an unknown name can't be reached from a trade.
     """
-    tx = apply_add_transaction(db, {**cash_leg_after, "is_transfer": True})
-    ev = apply_add_portfolio_event(db, event_after)
-    ev.source_account_id = tx.account_id
-    return tx, ev
+    acct = db.query(Account).filter(Account.name == name).first()
+    if acct is None or acct.type != "liquid":
+        raise ValueError(f"No liquid account is called '{name}'; trades are funded from a liquid account. Nothing was saved")
+
+
+def _event_date(after: dict) -> date:
+    return date.fromisoformat(after["date"]) if after.get("date") else datetime.now(timezone.utc).date()
+
+
+def _funded_event_currency(db: Session, after: dict) -> str:
+    """Event currency of a funded trade: explicit, else the holding's, else the cash account's (D-02).
+
+    Checked before the cash leg is written, so a position mismatch leaves nothing behind.
+    """
+    explicit = (after.get("event_currency") or "").strip()
+    ev_ccy = (
+        (_account_currency(explicit) if explicit else None)
+        or currency_of_holding(db, after["ticker"], after["platform_id"])
+        or currency_of_account(db, after["source_account_name"])
+    )
+    _check_position_target(db, after["ticker"], after["platform_id"], ev_ccy, _event_date(after))
+    return ev_ccy
+
+
+_FEE_KINDS = ("coin", "cash")
+_EIGHT = Decimal("1e-8")
+
+
+def _trade_fee(after: dict) -> tuple[Decimal | None, str | None]:
+    """The (fee, fee_kind) of a trade, normalized: absent or 0 is (None, None).
+
+    A non-finite or negative fee, or a positive fee whose kind is not coin or cash, is a
+    ValueError (422 at the API). The one place REST, chat confirm and edits share.
+    """
+    raw = after.get("fee")
+    if raw is None:
+        return None, None
+    try:
+        fee = Decimal(str(raw))
+    except InvalidOperation:
+        raise ValueError("fee must be a number; nothing was saved")
+    if not fee.is_finite() or fee < 0:
+        raise ValueError("fee must be zero or a positive amount; nothing was saved")
+    fee = fee.quantize(_EIGHT, rounding=ROUND_HALF_UP)
+    if fee == 0:
+        return None, None
+    kind = (after.get("fee_kind") or "").strip().lower()
+    if kind not in _FEE_KINDS:
+        raise ValueError("fee_kind must be 'coin' or 'cash' when a fee is given; nothing was saved")
+    return fee, kind
+
+
+def _stored_quantity(event_type: str, filled, fee: Decimal | None, kind: str | None) -> Decimal:
+    """The real position movement for a filled quantity: a coin fee comes off a buy and goes on top of a sell."""
+    filled = Decimal(str(filled))
+    if fee is None or kind != "coin":
+        return filled
+    stored = (filled - fee if event_type == "buy" else filled + fee).quantize(_EIGHT)
+    if stored <= 0:
+        raise ValueError("A coin fee must be smaller than the quantity bought; nothing was saved")
+    return stored
+
+
+def _fee_fields(event_type: str, after: dict) -> dict:
+    """Quantity/fee/fee_kind overrides for apply_add_portfolio_event (strings: AuditLog is JSON); {} without a fee."""
+    fee, kind = _trade_fee(after)
+    if fee is None:
+        return {}
+    stored = _stored_quantity(event_type, after["quantity"], fee, kind)
+    return {"quantity": _fmt_qty(stored), "fee": _fmt_qty(fee), "fee_kind": kind}
 
 
 def apply_add_funded_buy(db: Session, after: dict) -> dict:
     """Insert a funded 'buy' — cash leg + portfolio event, one commit boundary (XFER-03).
 
-    `after` carries both the cash side (source_account_name, cash_currency,
-    cash_amount) and the investment side (ticker, quantity, price,
-    platform_id, event_currency) as one dict (locked contract, Plan 13-01).
-    The cash leg DEBITS the liquid source account (negative amount,
-    is_transfer=True, category='Investment' — the human-readable
+    `after` carries both the cash side (source_account_name, optional
+    cash_currency, cash_amount) and the investment side (ticker, quantity,
+    price, platform_id, optional event_currency) as one dict (locked contract,
+    Plan 13-01). The cash leg DEBITS the liquid source account (negative
+    amount, is_transfer=True, category='Investment' — the human-readable
     disambiguator that keeps the leg out of spending/income totals while
-    remaining distinguishable from a plain transfer, D-08/Open-Question-2).
-    The investment leg is a 'buy' PortfolioEvent, which already triggers
-    `recompute_holding_from_events` internally (D-06) — this function never
-    hand-rolls a holding update. The cash-leg `Transaction.currency` and the
-    `PortfolioEvent.currency` are set independently from the two `after`
-    inputs (D-09 dual-currency) — no live FX rate is ever called here
-    (D-10); `recompute_holding_from_events` resolves historical, date-keyed
-    rates itself when it needs an IDR valuation. Does NOT commit.
+    remaining distinguishable from a plain transfer, D-08/Open-Question-2) in
+    the account's own currency; a given cash_currency that differs is refused,
+    never relabelled. The event currency defaults to the existing position's,
+    else the account's (D-02). The investment leg is a 'buy' PortfolioEvent,
+    which already triggers `recompute_holding_from_events` internally (D-06) —
+    this function never hand-rolls a holding update. The two amounts are
+    stored as entered, never cross-checked against each other, and no live FX
+    rate is ever called here (D-10); `recompute_holding_from_events` resolves
+    historical, date-keyed rates itself when it needs an IDR valuation. An optional
+    fee/fee_kind (quick 261108-gdf): `quantity` is the filled amount; a coin fee is
+    stored net (quantity - fee), a cash fee leaves it as entered, and the cash leg
+    is never derived from the fee. Does NOT commit.
     """
+    _require_liquid_account(db, after["source_account_name"])
+    fee_fields = _fee_fields("buy", after)  # refuses before any write
+    ev_ccy = _funded_event_currency(db, after)
     cash_amount = -abs(after["cash_amount"])  # buy DEBITS the source; Decimal() happens inside apply_add_transaction
     tx = apply_add_transaction(db, {
         "account": after["source_account_name"],
         "amount": cash_amount,
-        "currency": after["cash_currency"],
+        "currency": after.get("cash_currency"),
         "category": "Investment",
         "is_transfer": True,
         "date": after.get("date"),
@@ -352,9 +477,10 @@ def apply_add_funded_buy(db: Session, after: dict) -> dict:
         "quantity": after["quantity"],
         "price": after["price"],
         "platform_id": after["platform_id"],
-        "currency": after.get("event_currency"),
+        "currency": ev_ccy,
         "date": after.get("date"),
         "asset_type": after.get("asset_type"),
+        **fee_fields,
     })
     ev.source_account_id = tx.account_id
     ev.transaction_id = tx.id  # both rows flushed by their primitives
@@ -368,14 +494,20 @@ def apply_add_funded_sell(db: Session, after: dict) -> dict:
     destination account (positive amount) instead of debiting it, and the
     investment leg is a 'sell' PortfolioEvent (which already realizes P&L via
     `recompute_holding_from_events`, D-06 — never hand-rolled here). Same
-    is_transfer/category tagging, dual-currency handling (D-09), and no-live-FX
-    contract (D-10) as the buy side. Does NOT commit.
+    is_transfer/category tagging, currency handling (cash in the account's
+    currency, event currency per D-02), and no-live-FX contract (D-10) as the
+    buy side. A sell that takes the ledger quantity to exactly zero also closes
+    the position (`close_position_if_flat`); the cash leg is kept. A coin fee is stored on
+    top of the quantity sold, so the stored quantity is what really left. Does NOT commit.
     """
+    _require_liquid_account(db, after["source_account_name"])
+    fee_fields = _fee_fields("sell", after)  # refuses before any write
+    ev_ccy = _funded_event_currency(db, after)
     cash_amount = abs(after["cash_amount"])  # sell CREDITS the destination; Decimal() happens inside apply_add_transaction
     tx = apply_add_transaction(db, {
         "account": after["source_account_name"],
         "amount": cash_amount,
-        "currency": after["cash_currency"],
+        "currency": after.get("cash_currency"),
         "category": "Investment",
         "is_transfer": True,
         "date": after.get("date"),
@@ -387,26 +519,47 @@ def apply_add_funded_sell(db: Session, after: dict) -> dict:
         "quantity": after["quantity"],
         "price": after["price"],
         "platform_id": after["platform_id"],
-        "currency": after.get("event_currency"),
+        "currency": ev_ccy,
         "date": after.get("date"),
         "asset_type": after.get("asset_type"),
+        **fee_fields,
     })
     ev.source_account_id = tx.account_id
     ev.transaction_id = tx.id  # both rows flushed by their primitives
-    return {"transaction": tx, "portfolio_event": ev}
+    _refuse_oversell(db, ev)
+    # A sell that leaves exactly zero closes the position; ev is deleted then.
+    closed = close_position_if_flat(db, after["ticker"], after["platform_id"])
+    return {"transaction": tx, "portfolio_event": ev, "closed_position": closed}
+
+
+def _account_currency(value, label: str = "Account") -> str:
+    """Trim + upper; null/blank -> IDR; anything outside ACCOUNT_CURRENCIES is refused (D-01)."""
+    currency = (value or "").strip().upper() or "IDR"
+    if currency not in ACCOUNT_CURRENCIES:
+        raise ValueError(f"{label} currency must be one of " + ", ".join(ACCOUNT_CURRENCIES))
+    return currency
+
+
+def _refuse_taken_account_name(db: Session, name: str, acc_id: int | None = None) -> None:
+    """A name another account holds -> ValueError (422), not the unique index's 500."""
+    taken = db.query(Account).filter(Account.name == name, Account.id != acc_id).first()
+    if taken is not None:
+        raise ValueError(f"An account named '{name}' already exists")
 
 
 def apply_add_account(db: Session, after: dict) -> Account:
-    """Insert a new account."""
+    """Insert a new account (currency IDR or USD; blank -> IDR)."""
+    currency = _account_currency(after.get("currency"))
+    _refuse_taken_account_name(db, after["name"])
     acc = Account(
         name=after["name"],
         type=after.get("type"),
-        currency=after.get("currency"),
+        currency=currency,
     )
     db.add(acc)
     db.flush()  # LOAD-BEARING: populates acc.id before the AuditLog row below
     db.add(AuditLog(entity="account", entity_id=acc.id, operation="add",
-                    before=None, after=after))
+                    before=None, after={**after, "currency": currency}))
     return acc
 
 
@@ -415,14 +568,27 @@ def apply_edit_account(db: Session, acc_id: int, after: dict, before: dict | Non
     acc = db.get(Account, acc_id)
     if acc is None:
         raise ValueError(f"Account {acc_id} not found during confirm")
+    # Blank means "unchanged" on edit, not IDR (that default is for create only).
+    new_currency = _account_currency(after["currency"]) if (after.get("currency") or "").strip() else None
+    # Compare against the stored currency, not `before`: chat edits always carry the
+    # current currency. Migration 020's composite FK is only the race backstop.
+    if new_currency is not None and new_currency != acc.currency:
+        n = int(db.execute(text("SELECT COUNT(*) FROM transactions WHERE account_id = :id"), {"id": acc_id}).scalar() or 0)
+        if n:
+            raise ValueError(f"Account '{acc.name}' has {n} record(s); its currency can't change")
     if after.get("name") is not None:
+        _refuse_taken_account_name(db, after["name"], acc_id)
         acc.name = after["name"]
     if after.get("type") is not None:
         acc.type = after["type"]
-    if after.get("currency") is not None:
-        acc.currency = after["currency"]
+    if new_currency is not None:
+        acc.currency = new_currency
+    # A blank currency means "unchanged", so it stays out of the audit.
+    audit_after = {k: v for k, v in after.items() if k != "currency"}
+    if new_currency is not None:
+        audit_after["currency"] = new_currency
     db.add(AuditLog(entity="account", entity_id=acc_id, operation="edit",
-                    before=before, after=after))
+                    before=before, after=audit_after))
     return acc
 
 
@@ -436,17 +602,37 @@ def apply_delete_account(db: Session, acc_id: int, before: dict | None, reassign
     audited in one place rather than as an un-audited inline bulk update in
     the calling endpoint (WARNING 1 fix). Returns the reassignment count
     (0 when reassign_to is None, i.e. a plain audited delete).
+
+    Portfolio events pointing at the account as their funding source follow the
+    reassignment. Without one the account has no transactions left, so those
+    links lead to no cash and are cleared; either way the foreign key can't
+    block the delete with a 500.
     """
     reassigned_count = 0
     audit_after: dict | None = None
 
     if reassign_to is not None:
+        if reassign_to == acc_id:
+            raise ValueError("Can't reassign an account's records to itself")
+        dst = db.get(Account, reassign_to)
+        if dst is None:
+            raise ValueError(f"Reassign target account {reassign_to} not found")
+        src = db.get(Account, acc_id)
+        if src is not None and src.currency != dst.currency:
+            raise ValueError(f"Can't move {src.currency} records into {dst.currency} account '{dst.name}'")
         result = db.execute(
             text("UPDATE transactions SET account_id = :reassign_to WHERE account_id = :acc_id"),
             {"reassign_to": reassign_to, "acc_id": acc_id},
         )
         reassigned_count = result.rowcount
         audit_after = {"reassign_to": reassign_to, "reassigned_count": reassigned_count}
+
+    event_links = db.execute(
+        text("UPDATE portfolio_events SET source_account_id = :reassign_to WHERE source_account_id = :acc_id"),
+        {"reassign_to": reassign_to, "acc_id": acc_id},
+    ).rowcount
+    if event_links:
+        audit_after = {**(audit_after or {}), "event_links_moved_or_cleared": event_links}
 
     acc = db.get(Account, acc_id)
     if acc is not None:
@@ -457,15 +643,17 @@ def apply_delete_account(db: Session, acc_id: int, before: dict | None, reassign
 
 
 def apply_add_platform(db: Session, after: dict) -> Platform:
-    """Insert a new investment platform (D-12)."""
+    """Insert a new investment platform (D-12). Currency IDR or USD; blank -> IDR."""
+    currency = _account_currency(after.get("currency"), "Platform")
     plat = Platform(
         name=after["name"],
         kind=after.get("kind"),
+        currency=currency,
     )
     db.add(plat)
     db.flush()  # LOAD-BEARING: populates plat.id before the AuditLog row below
     db.add(AuditLog(entity="platform", entity_id=plat.id, operation="add",
-                    before=None, after=after))
+                    before=None, after={**after, "currency": currency}))
     return plat
 
 
@@ -474,10 +662,16 @@ def apply_edit_platform(db: Session, platform_id: int, after: dict, before: dict
     plat = db.get(Platform, platform_id)
     if plat is None:
         raise ValueError(f"Platform {platform_id} not found during confirm")
+    # Blank means "unchanged". A platform's currency is a default for new tickers only:
+    # it never touches holdings or events.
+    new_currency = _account_currency(after["currency"], "Platform") if (after.get("currency") or "").strip() else None
     if after.get("name") is not None:
         plat.name = after["name"]
     if after.get("kind") is not None:
         plat.kind = after["kind"]
+    if new_currency is not None:
+        plat.currency = new_currency
+        after = {**after, "currency": new_currency}
     db.add(AuditLog(entity="platform", entity_id=platform_id, operation="edit",
                     before=before, after=after))
     return plat
@@ -526,6 +720,10 @@ def apply_delete_platform(db: Session, platform_id: int, before: dict | None, re
             text("UPDATE portfolio_events SET platform_id = :reassign_to WHERE platform_id = :pid"),
             {"reassign_to": reassign_to, "pid": platform_id},
         )
+        db.execute(
+            text("UPDATE closed_positions SET platform_id = :reassign_to WHERE platform_id = :pid"),
+            {"reassign_to": reassign_to, "pid": platform_id},
+        )
         audit_after = {"reassign_to": reassign_to, "reassigned_count": reassigned_count}
 
     plat = db.get(Platform, platform_id)
@@ -536,24 +734,29 @@ def apply_delete_platform(db: Session, platform_id: int, before: dict | None, re
     return reassigned_count
 
 
-def _check_position_target(db: Session, ticker: str, platform_id: int, currency: str | None) -> str:
+def _check_position_target(db: Session, ticker: str, platform_id: int, currency: str | None, on: date) -> str:
     """Guards for putting an event on position (ticker, platform_id); returns the resolved currency.
 
-    GUARD (recompute-clobbers-holdings): recompute_holding_from_events rebuilds
+    OPENING LOT (recompute-clobbers-holdings): recompute_holding_from_events rebuilds
     a position purely from its (ticker, platform_id) event slice. A non-zero
-    LEGACY holding with ZERO backing events would therefore be silently
-    overwritten by just this new event, destroying the opening balance (live
-    loss in Phase 18 UAT #3). Refuse loudly instead — run migration 012
-    (opening-balance backfill) so the position has a backing event first, after
-    which a funded buy correctly SUMS. Once any event exists this never fires.
+    holding with ZERO backing events (Add holding creates exactly these) would
+    be silently overwritten by just this new event, destroying its quantity
+    (live loss in Phase 18 UAT #3). The current row is authoritative, so it is
+    written down first as one opening 'buy' lot from the row (quantity, avg_cost,
+    currency), dated `on` (the new event's date) and audited with
+    after.source = opening_lot_from_holding; the new event then SUMS with it.
+    Never dated from purchase_date: that gaps snapshot months. A negative
+    event-less row still refuses.
 
     T-07-02-CUR: one currency per position. A mismatch with the existing
     holding's currency raises ValueError (422 at the API boundary); an omitted
     currency defaults to the holding's (or "IDR" for a brand-new position).
     """
+    # Row lock so a concurrent close cannot delete the holding under a buy (F-9).
+    # ponytail: edit and delete paths do not take this lock; add it there if a real race appears.
     existing_holding = db.query(Holding).filter(
         Holding.ticker == ticker, Holding.platform_id == platform_id
-    ).one_or_none()
+    ).with_for_update().one_or_none()
 
     if existing_holding is not None and existing_holding.quantity != 0:
         prior_events = db.query(PortfolioEvent).filter(
@@ -561,12 +764,22 @@ def _check_position_target(db: Session, ticker: str, platform_id: int, currency:
             PortfolioEvent.platform_id == platform_id,
         ).count()
         if prior_events == 0:
-            raise ValueError(
-                f"holding {ticker} on platform {platform_id} has "
-                f"{existing_holding.quantity} units but no backing portfolio_events — "
-                "recording an event now would overwrite that opening balance. Run the "
-                "opening-balance backfill (migration 012) first."
+            if existing_holding.quantity < 0:
+                raise ValueError(
+                    f"holding {ticker} on platform {platform_id} has a negative quantity "
+                    f"({existing_holding.quantity}) and no ledger events; correct it with Edit holding first"
+                )
+            lot = PortfolioEvent(
+                date=on, ticker=ticker, event_type="buy", quantity=existing_holding.quantity,
+                price=existing_holding.avg_cost, platform_id=platform_id, currency=existing_holding.currency,
             )
+            db.add(lot)
+            db.flush()  # lower id than the new event, so (date, id) replays the lot first
+            db.add(AuditLog(entity="portfolio_event", entity_id=lot.id, operation="add", before=None, after={
+                "source": "opening_lot_from_holding", "ticker": ticker, "event_type": "buy",
+                "quantity": str(lot.quantity), "price": str(lot.price), "platform_id": platform_id,
+                "currency": lot.currency, "date": on.isoformat(),
+            }))
 
     if currency is None:
         return existing_holding.currency if existing_holding is not None else "IDR"
@@ -576,6 +789,178 @@ def _check_position_target(db: Session, ticker: str, platform_id: int, currency:
             f"{existing_holding.currency} (one currency per position)"
         )
     return currency
+
+
+def _recompute_or_refuse(db: Session, ticker: str, platform_id: int) -> dict:
+    """Rebuild a position, refusing the write when a rate is missing (ValueError -> 422).
+
+    recompute leaves the holding untouched without a rate, so saving anyway would
+    move cash while the position's quantity stayed wrong. Returns recompute's dict,
+    so a close can store the exact realized_pnl the summary already showed.
+    """
+    result = recompute_holding_from_events(db, ticker, platform_id)
+    if result["quantity"] is None:
+        raise ValueError(f"No FX rate to IDR for one of {ticker}'s event dates; nothing was saved. Try again later")
+    return result
+
+
+def _running_quantities(events) -> list[Decimal]:
+    """Running quantity after each event, in the order given: buy and deposit add, sell subtracts,
+    dividend leaves it unchanged."""
+    qty, out = Decimal("0"), []
+    for ev in events:
+        if ev.event_type in ("buy", "deposit"):
+            qty += ev.quantity
+        elif ev.event_type == "sell":
+            qty -= ev.quantity
+        out.append(qty)
+    return out
+
+
+def _fmt_qty(q: Decimal) -> str:
+    return format(q.normalize(), "f")
+
+
+def _refuse_oversell(db: Session, ev: PortfolioEvent) -> None:
+    """Refuse a sell that would leave the ledger below zero at or after it (Q2, ValueError -> 422).
+
+    Judged on stored precision, in (date, id) order, so a sell dated before the first buy
+    is refused too. Runs in the caller's transaction, so nothing persists on a refusal.
+    """
+    db.flush()
+    db.refresh(ev)
+    events = db.query(PortfolioEvent).filter(
+        PortfolioEvent.ticker == ev.ticker, PortfolioEvent.platform_id == ev.platform_id
+    ).order_by(PortfolioEvent.date, PortfolioEvent.id).all()
+    running = _running_quantities(events)
+    i = next(n for n, e in enumerate(events) if e.id == ev.id)
+    if any(q < 0 for q in running[i:]):
+        held = running[i - 1] if i else Decimal("0")
+        raise ValueError(
+            f"Sell of {_fmt_qty(ev.quantity)} {ev.ticker} exceeds the {_fmt_qty(held)} held at that "
+            "point in the ledger; nothing was saved"
+        )
+
+
+def _ledger_negative(db: Session, ticker: str, platform_id: int) -> bool:
+    """True when the position's running quantity drops below zero at any point."""
+    events = db.query(PortfolioEvent).filter(
+        PortfolioEvent.ticker == ticker, PortfolioEvent.platform_id == platform_id
+    ).order_by(PortfolioEvent.date, PortfolioEvent.id).all()
+    return any(q < 0 for q in _running_quantities(events))
+
+
+def _refuse_new_negative(db: Session, ticker: str, platform_id: int, was_negative: bool) -> None:
+    """Refuse an edit or delete that takes the ledger below zero (ValueError -> 422).
+
+    Only a change that CAUSES it is refused: a ledger already negative from old data stays
+    editable, so it can be repaired. Call after flushing the change, before recompute.
+    """
+    if not was_negative and _ledger_negative(db, ticker, platform_id):
+        raise ValueError(f"That change would take {ticker} below zero in the ledger; nothing was saved")
+
+
+def close_blocker(holding: Holding, events) -> str | None:
+    """Why a flat position must NOT be closed, or None when it may be (Q1, Q2, Q7).
+
+    cash: CASH rows are left alone. no_sell: nothing was sold, so there is nothing to realize.
+    ledger_not_zero: the events do not sum to zero. negative_running_quantity: the ledger went
+    below zero at some point, so a wrong number would be frozen. Shared with the hand-run
+    script so the live rule and the script's rule cannot drift.
+    """
+    if holding.asset_type == "cash" or holding.ticker == "CASH":
+        return "cash"
+    if not any(e.event_type == "sell" for e in events):
+        return "no_sell"
+    running = _running_quantities(events)
+    if any(q < 0 for q in running):
+        return "negative_running_quantity"
+    if not running or running[-1] != 0:
+        return "ledger_not_zero"
+    return None
+
+
+def close_position_if_flat(db: Session, ticker: str, platform_id: int) -> ClosedPosition | None:
+    """Close a position whose ledger quantity is exactly zero. Does NOT commit.
+
+    Saves one ClosedPosition (realized P&L in IDR as recompute returned it, close
+    date = the latest sell), then deletes the holding and ALL its events with plain
+    db.delete. It never touches a Transaction: the sell's cash leg already sits in
+    the liquid balance, so the record can never be a cash row. Dust (a non-zero
+    stored quantity) and any position close_blocker names stay open. Audited row by row, with
+    strings only in the JSON (no Decimal).
+    """
+    db.flush()
+    result = _recompute_or_refuse(db, ticker, platform_id)
+    db.flush()
+    holding = db.query(Holding).filter(Holding.ticker == ticker, Holding.platform_id == platform_id).one_or_none()
+    if holding is None:
+        return None
+    db.refresh(holding)  # judge exactly-zero on the stored Numeric(28,8) value
+    if holding.quantity != 0:
+        return None
+    events = db.query(PortfolioEvent).filter(
+        PortfolioEvent.ticker == ticker, PortfolioEvent.platform_id == platform_id
+    ).order_by(PortfolioEvent.date, PortfolioEvent.id).all()
+    if close_blocker(holding, events) is not None:
+        return None
+    rec = ClosedPosition(
+        ticker=ticker, platform_id=platform_id,
+        realized_pnl=result["realized_pnl"],
+        close_date=max(e.date for e in events if e.event_type == "sell"),
+    )
+    db.add(rec)
+    db.flush()
+    db.refresh(rec)  # the stored (rounded) value is what the audit row quotes
+    db.add(AuditLog(entity="closed_position", entity_id=rec.id, operation="add", before=None, after={
+        "ticker": ticker, "platform_id": platform_id, "realized_pnl": str(rec.realized_pnl),
+        "close_date": rec.close_date.isoformat(), "event_ids": [e.id for e in events],
+        "holding_id": holding.id,
+    }))
+    for ev in events:
+        db.add(AuditLog(entity="portfolio_event", entity_id=ev.id, operation="delete",
+                        before=_portfolio_event_snapshot(ev), after={"closed_position_id": rec.id}))
+        db.delete(ev)
+    db.add(AuditLog(entity="holding", entity_id=holding.id, operation="delete", before={
+        "id": holding.id, "ticker": holding.ticker, "quantity": str(holding.quantity),
+        "avg_cost": str(holding.avg_cost), "platform_id": holding.platform_id,
+        "currency": holding.currency, "asset_type": holding.asset_type,
+    }, after={"closed_position_id": rec.id}))
+    db.delete(holding)
+    db.flush()
+    return rec
+
+
+def _closed_snapshot(rec: ClosedPosition) -> dict:
+    """Audit snapshot of a closed record — strings only (no Decimal in AuditLog JSON)."""
+    return {
+        "id": rec.id, "ticker": rec.ticker, "platform_id": rec.platform_id,
+        "realized_pnl": str(rec.realized_pnl), "close_date": rec.close_date.isoformat(),
+    }
+
+
+def apply_edit_closed_position(db: Session, closed_id: int, after: dict, before: dict | None) -> ClosedPosition:
+    """Correct a closed record's realized P&L and/or close date (ticker and platform are fixed). Audited, no commit."""
+    rec = db.get(ClosedPosition, closed_id)
+    if rec is None:
+        raise ValueError(f"closed position {closed_id} not found")
+    if after.get("realized_pnl") is not None:
+        rec.realized_pnl = Decimal(str(after["realized_pnl"]))  # LOAD-BEARING: str() before Decimal()
+    if after.get("close_date"):
+        rec.close_date = date.fromisoformat(after["close_date"])
+    db.add(AuditLog(entity="closed_position", entity_id=rec.id, operation="edit",
+                    before=before, after=_closed_snapshot(rec)))
+    db.flush()
+    return rec
+
+
+def apply_delete_closed_position(db: Session, closed_id: int, before: dict | None) -> None:
+    """Delete a closed record; its realized P&L leaves the total. Cash transactions are untouched. Audited, no commit."""
+    rec = db.get(ClosedPosition, closed_id)
+    if rec is None:
+        raise ValueError(f"closed position {closed_id} not found")
+    db.delete(rec)
+    db.add(AuditLog(entity="closed_position", entity_id=closed_id, operation="delete", before=before, after=None))
 
 
 def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
@@ -606,24 +991,26 @@ def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
         raise ValueError(f"platform {after['platform_id']} not found")
 
     event_currency = _check_position_target(
-        db, after["ticker"], after["platform_id"], after.get("currency")
+        db, after["ticker"], after["platform_id"], after.get("currency"), _event_date(after)
     )
 
     ev = PortfolioEvent(
-        date=date.fromisoformat(after["date"]) if after.get("date") else datetime.now(timezone.utc).date(),
+        date=_event_date(after),
         ticker=after["ticker"],
         event_type=after["event_type"],
         quantity=Decimal(str(after["quantity"])),  # LOAD-BEARING: str() before Decimal() avoids float artifacts
         price=Decimal(str(after["price"])),
         platform_id=after["platform_id"],
         currency=event_currency,
+        fee=Decimal(str(after["fee"])) if after.get("fee") is not None else None,
+        fee_kind=after.get("fee_kind") if after.get("fee") is not None else None,
     )
     db.add(ev)
     db.flush()  # LOAD-BEARING: populates ev.id before the AuditLog row below
     db.add(AuditLog(entity="portfolio_event", entity_id=ev.id, operation="add",
                     before=None, after=after))
     # D-01: position derives from the ledger — recompute after every event.
-    recompute_holding_from_events(db, after["ticker"], after["platform_id"])
+    _recompute_or_refuse(db, after["ticker"], after["platform_id"])
     # Set-when-provided: a later event with asset_type omitted must NOT clobber
     # an existing asset_type assignment back to null (matches the None-means-keep
     # convention in apply_edit_holding above). platform_id is now identity — it's
@@ -641,11 +1028,12 @@ def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
 
 
 _EDITABLE_EVENT_TYPES = ("buy", "sell", "dividend")
+_DELETABLE_EVENT_TYPES = _EDITABLE_EVENT_TYPES + ("deposit",)  # a deposit is delete-only
 
 
 def _portfolio_event_snapshot(ev: PortfolioEvent) -> dict:
     """Audit snapshot of a portfolio event — strings only (AuditLog JSON-serializes, no Decimal)."""
-    return {
+    snap = {
         "id": ev.id,
         "date": ev.date.isoformat() if ev.date else None,
         "ticker": ev.ticker,
@@ -657,16 +1045,21 @@ def _portfolio_event_snapshot(ev: PortfolioEvent) -> dict:
         "source_account_id": ev.source_account_id,
         "transaction_id": ev.transaction_id,
     }
+    if ev.fee is not None:  # fee-less snapshots stay byte-identical
+        snap.update(fee=str(ev.fee), fee_kind=ev.fee_kind)
+    return snap
 
 
-def _load_editable_event(db: Session, event_id: int) -> PortfolioEvent:
+def _load_editable_event(
+    db: Session, event_id: int, allowed: tuple[str, ...] = _EDITABLE_EVENT_TYPES
+) -> PortfolioEvent:
     ev = db.get(PortfolioEvent, event_id)
     if ev is None:
         raise ValueError(f"portfolio event {event_id} not found")
-    if ev.event_type not in _EDITABLE_EVENT_TYPES:
+    if ev.event_type not in allowed:
         raise ValueError(
-            f"portfolio event {event_id} is a {ev.event_type}; only buy/sell/dividend "
-            "events can be edited or deleted here"
+            f"portfolio event {event_id} is a {ev.event_type}; only "
+            f"{'/'.join(allowed)} events can be changed this way"
         )
     return ev
 
@@ -679,26 +1072,46 @@ def apply_edit_portfolio_event(
     None/absent fields in `after` keep the current value. A funded event
     (transaction_id set) must stay buy or sell; its cash leg takes the new
     date and a signed amount (buy negative, sell positive; magnitude from
-    `cash_amount`, else the leg's current magnitude). Does NOT commit.
+    `cash_amount`, else the leg's current magnitude). The PUT `quantity` is the
+    FILLED quantity; the stored quantity is re-derived from it and the (new or
+    current) fee, so a fee is never applied twice, and the fee never writes the
+    cash leg. An edit that leaves the event
+    a sell and the position at exactly zero closes it (the event is then deleted,
+    its cash leg kept); editing a buy never does. Does NOT commit.
     """
     ev = _load_editable_event(db, event_id)
     old_ticker = ev.ticker
     new_ticker = after.get("ticker") or old_ticker
+    was_negative = {t: _ledger_negative(db, t, ev.platform_id) for t in {old_ticker, new_ticker}}
     new_type = after.get("event_type") or ev.event_type
     funded = ev.transaction_id is not None
     if funded and new_type == "dividend":
         raise ValueError("a funded event must stay a buy or sell (its cash leg is linked)")
     if after.get("cash_amount") is not None and not funded:
         raise ValueError("cash_amount can only be set on a funded event (no linked cash transaction)")
+    if ("fee" in after or "fee_kind" in after) and not funded:
+        raise ValueError("fee can only be set on a funded event (no linked cash transaction)")
+    filled_now = filled_quantity(ev)  # before the type or quantity move
+    new_filled = after["quantity"] if after.get("quantity") is not None else filled_now
+    fee, fee_kind = _trade_fee({
+        "fee": after["fee"] if "fee" in after else ev.fee,
+        "fee_kind": after.get("fee_kind") or ev.fee_kind,
+    })
+    new_quantity = _stored_quantity(new_type, new_filled, fee, fee_kind)
+    if not funded and new_type != ev.event_type:
+        raise ValueError("an unfunded event can't change type (a trade needs a liquid account); delete it and log a funded one")
     if new_ticker != old_ticker:
-        _check_position_target(db, new_ticker, ev.platform_id, ev.currency)
+        _check_position_target(
+            db, new_ticker, ev.platform_id, ev.currency,
+            date.fromisoformat(after["date"]) if after.get("date") else ev.date,
+        )
 
     ev.ticker = new_ticker
     ev.event_type = new_type
     if after.get("date"):
         ev.date = date.fromisoformat(after["date"])
-    if after.get("quantity") is not None:
-        ev.quantity = Decimal(str(after["quantity"]))  # LOAD-BEARING: str() before Decimal()
+    ev.quantity = new_quantity  # LOAD-BEARING: _stored_quantity does str() before Decimal()
+    ev.fee, ev.fee_kind = fee, fee_kind
     if after.get("price") is not None:
         ev.price = Decimal(str(after["price"]))
 
@@ -718,9 +1131,11 @@ def apply_edit_portfolio_event(
     db.add(AuditLog(entity="portfolio_event", entity_id=ev.id, operation="edit",
                     before=before, after=_portfolio_event_snapshot(ev)))
     db.flush()  # LOAD-BEARING: autoflush=False, recompute's SELECT must see the edited rows
-    recompute_holding_from_events(db, ev.ticker, ev.platform_id)
+    for t in was_negative:
+        _refuse_new_negative(db, t, ev.platform_id, was_negative[t])
+    _recompute_or_refuse(db, ev.ticker, ev.platform_id)
     if new_ticker != old_ticker:
-        recompute_holding_from_events(db, old_ticker, ev.platform_id)
+        _recompute_or_refuse(db, old_ticker, ev.platform_id)
         db.flush()
         new_h = db.query(Holding).filter(
             Holding.ticker == new_ticker, Holding.platform_id == ev.platform_id
@@ -730,17 +1145,26 @@ def apply_edit_portfolio_event(
         ).one_or_none()
         if new_h is not None and new_h.asset_type is None and old_h is not None:
             new_h.asset_type = old_h.asset_type
+    if new_type == "sell":  # Q1: only a sell write closes; the old-ticker side of a rename never does
+        close_position_if_flat(db, ev.ticker, ev.platform_id)
     return ev
 
 
 def apply_delete_portfolio_event(db: Session, event_id: int, before: dict | None) -> int | None:
-    """Delete a buy/sell/dividend event (and its linked cash leg), then recompute.
+    """Delete a buy/sell/dividend/deposit event (and its linked cash leg), then recompute.
 
     Returns the deleted cash-leg transaction id, or None. A position left with
     no events becomes a zero-quantity holding row (D-04). Does NOT commit.
+
+    A deposit is deletable but not editable. A historical deposit has no linked
+    cash leg, so any source-account debit is left alone (delete it
+    separately via DELETE /transactions/{id} if it was also a mistake). A hand-linked
+    leg that is transfer-paired is refused by apply_delete_transaction's pair guard
+    (ValueError -> 422).
     """
-    ev = _load_editable_event(db, event_id)
+    ev = _load_editable_event(db, event_id, _DELETABLE_EVENT_TYPES)
     ticker, platform_id, tx_id = ev.ticker, ev.platform_id, ev.transaction_id
+    was_negative = _ledger_negative(db, ticker, platform_id)
     deleted_tx_id = None
     if tx_id is not None:
         tx = db.get(Transaction, tx_id)
@@ -752,7 +1176,8 @@ def apply_delete_portfolio_event(db: Session, event_id: int, before: dict | None
     db.add(AuditLog(entity="portfolio_event", entity_id=event_id, operation="delete",
                     before=before, after=None))
     db.flush()  # LOAD-BEARING: autoflush=False, recompute's SELECT must not see the deleted rows
-    recompute_holding_from_events(db, ticker, platform_id)
+    _refuse_new_negative(db, ticker, platform_id, was_negative)
+    _recompute_or_refuse(db, ticker, platform_id)
     return deleted_tx_id
 
 

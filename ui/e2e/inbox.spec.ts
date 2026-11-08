@@ -16,7 +16,6 @@ import {
   chatTx,
   editProposal,
   ids,
-  investmentTransferProposal,
   iso,
   mockInbox,
   proposal,
@@ -252,8 +251,11 @@ test.describe("card rows", () => {
     await expect(card.getByRole("cell", { name: "7 Oct 2026" }).first()).toBeVisible();
     await expect(card.getByRole("cell", { name: "-35,000", exact: true })).toBeVisible();
     await expect(card.getByRole("cell", { name: "+250,000", exact: true })).toBeVisible();
-    await expect(card.getByText("Uncategorized", { exact: true })).toHaveCount(2);
-    await expect(card.getByText("Groceries", { exact: true })).toBeVisible();
+    // /api/categories is unmocked here (500): the select still shows the current category.
+    const catSel = (n: number) => card.getByRole("combobox", { name: new RegExp(`^Category for row ${n}:`) });
+    await expect(catSel(1)).toHaveValue("");
+    await expect(catSel(2)).toHaveValue("Groceries");
+    await expect(catSel(3)).toHaveValue("");
     await expect(card.getByText("Synthetic note", { exact: true })).toBeVisible();
     await expect(card.getByText("Possible duplicate", { exact: true })).toHaveCount(2);
     await expect(
@@ -318,18 +320,69 @@ test.describe("card rows", () => {
   test("undated transfer lines say the approval date, not a dash (IN-05)", async ({ page }) => {
     const xfer = transferProposal();
     (xfer.payload.rows[0].after as { leg_a: Record<string, unknown> }).leg_a.date = null;
-    const invest = investmentTransferProposal();
-    (invest.payload.rows[0].after as { cash_leg: Record<string, unknown> }).cash_leg.date = null;
-    await mockInbox(page, { list: [xfer, invest] });
+    await mockInbox(page, { list: [xfer] });
     await openInbox(page);
     await expect(
       art(page, "Add 1 transfer").getByText("Transfer 50,000 from Account A to Account B on the approval date")
     ).toBeVisible();
+  });
+
+  // Phase 45 (D-04, D-09): a cross-currency transfer reads as two real amounts plus the
+  // implied-vs-ECB line. Synthetic values only; /api/fx/rate is always fulfilled here.
+  const crossXfer = (legB: Record<string, unknown> = { currency: "IDR" }) => {
+    const x = transferProposal();
+    x.payload.rows[0].after = {
+      leg_a: { account: "Account USD", amount: "-100.00", currency: "USD", date: null },
+      leg_b: { account: "Account IDR", amount: "1631000", ...legB },
+      to_amount: "1631000",
+    };
+    return x;
+  };
+  // The page clock is pinned by mockInbox, so ask the page rather than the test process.
+  const jakartaToday = (page: Page) =>
+    page.evaluate(() => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Jakarta" }));
+
+  test("cross-currency transfer card shows both legs and the rate", async ({ page }) => {
+    await mockInbox(page, { list: [crossXfer()] });
+    const asked: string[] = [];
+    await page.route("**/api/fx/rate**", (route) => {
+      asked.push(route.request().url());
+      return route.fulfill({ json: { rate: "16250", rate_date: "2026-10-30" } });
+    });
+    await openInbox(page);
+    const card = art(page, "Add 1 transfer");
     await expect(
-      art(page, "Move cash to investments").getByText(
-        "Move 500,000 IDR from Account A to platform #2 on the approval date"
-      )
+      card.getByText("Transfer 100.00 USD from Account USD to Account IDR, receiving 1,631,000 on the approval date")
     ).toBeVisible();
+    await expect(card.getByText("Implied 1 USD = 16,310 IDR · ECB 16,250 (rate of 30 Oct 2026)")).toBeVisible();
+    expect(new URL(asked[0]).searchParams.get("on")).toBe(await jakartaToday(page));
+  });
+
+  for (const mode of ["null", "500"] as const) {
+    test(`cross-currency card without a rate (${mode}) keeps Approve and Reject enabled`, async ({ page }) => {
+      await mockInbox(page, { list: [crossXfer()] });
+      await page.route("**/api/fx/rate**", (route) =>
+        mode === "null"
+          ? route.fulfill({ json: { rate: null, rate_date: null } })
+          : route.fulfill({ status: 500, json: { detail: "down" } })
+      );
+      await openInbox(page);
+      const card = art(page, "Add 1 transfer");
+      await expect(card.getByText("Implied 1 USD = 16,310 IDR · ECB rate unavailable")).toBeVisible();
+      await expect(approveBtn(card)).toBeEnabled();
+      await expect(rejectBtn(card)).toBeEnabled();
+    });
+  }
+
+  test("same-currency USD transfer card has no rate line", async ({ page }) => {
+    const x = crossXfer({ currency: "USD", amount: "100.00" });
+    (x.payload.rows[0].after as { leg_a: Record<string, unknown> }).leg_a.date = "2026-10-07";
+    await mockInbox(page, { list: [x] });
+    await page.route("**/api/fx/rate**", (route) => route.fulfill({ json: { rate: "16250", rate_date: "2026-10-30" } }));
+    await openInbox(page);
+    const card = art(page, "Add 1 transfer");
+    await expect(card.getByText("Transfer 100.00 USD from Account USD to Account IDR on 7 Oct 2026")).toBeVisible();
+    await expect(card).not.toContainText("Implied");
   });
 
   test("edit proposal renders the shared before-to-after diff", async ({ page }) => {
@@ -370,31 +423,24 @@ test.describe("card rows", () => {
     await expect(card).not.toContainText("+5,000,000");
   });
 
-  test("investment transfer line with notes, never an object dump", async ({ page }) => {
-    await mockInbox(page, { list: [investmentTransferProposal()] });
+  test("USD rows carry their currency, in submission order", async ({ page }) => {
+    await mockInbox(page, {
+      list: [
+        proposal({
+          payload: {
+            operation: "add_transaction",
+            rows: [
+              txRow({ after: { amount: "-12.50", currency: "USD" } }),
+              txRow({ after: { amount: "-50000" } }),
+            ],
+          },
+        }),
+      ],
+    });
     await openInbox(page);
-    const card = art(page, "Move cash to investments");
-    await expect(
-      card.getByText("Move 500,000 IDR from Account A to platform #2 on 7 Oct 2026")
-    ).toBeVisible();
-    await expect(card.getByText("Setoran contoh")).toBeVisible();
-    await expect(card.getByRole("button", { name: /^Skip/ })).toHaveCount(0);
-    await expect(
-      card.getByRole("button", { name: "Approve: Move cash to investments" })
-    ).toBeVisible();
-    await expect(card).not.toContainText("[object Object]");
-  });
-
-  test("a non-IDR investment transfer keeps its decimals (WR-08)", async ({ page }) => {
-    const usd = investmentTransferProposal();
-    const after = usd.payload.rows[0].after as { cash_leg: Record<string, unknown> };
-    after.cash_leg.amount = "-1234.56";
-    after.cash_leg.currency = "USD";
-    await mockInbox(page, { list: [usd] });
-    await openInbox(page);
-    const card = art(page, "Move cash to investments");
-    await expect(card.getByText("Move 1,234.56 USD from Account A")).toBeVisible();
-    await expect(card).not.toContainText("1,235");
+    const card = art(page, "Add 2 transactions to Account A");
+    await expect(card.locator(".inbox-row")).toContainText(["-12.50 USD", "-50,000"]);
+    await expect(card.getByRole("cell", { name: "-50,000", exact: true })).toBeVisible();
   });
 
   test("an unknown row shape falls back to key: value lines", async ({ page }) => {
@@ -1216,6 +1262,8 @@ test.describe("keyboard", () => {
     await openInbox(page);
     const card = byId(page, ids.c);
     const copy = card.getByRole("button", { name: "Copy confirm code" });
+    const cat1 = card.getByRole("combobox", { name: /^Category for row 1:/ });
+    const cat2 = card.getByRole("combobox", { name: /^Category for row 2:/ });
     const skip1 = card.getByRole("button", { name: /^Skip row 1:/ });
     const skip2 = card.getByRole("button", { name: /^Skip row 2:/ });
     const approve = approveBtn(card);
@@ -1223,7 +1271,7 @@ test.describe("keyboard", () => {
 
     await copy.focus();
     await expect(copy).toBeFocused();
-    for (const next of [skip1, skip2, approve, reject]) {
+    for (const next of [cat1, skip1, cat2, skip2, approve, reject]) {
       await page.keyboard.press("Tab");
       await expect(next).toBeFocused();
       if (next === skip1) {
@@ -1233,7 +1281,7 @@ test.describe("keyboard", () => {
         expect(await css(next, "outline-offset")).toBe("2px");
       }
     }
-    for (const prev of [approve, skip2, skip1]) {
+    for (const prev of [approve, skip2, cat2, skip1]) {
       await page.keyboard.press("Shift+Tab");
       await expect(prev).toBeFocused();
     }
@@ -1243,6 +1291,7 @@ test.describe("keyboard", () => {
     const include1 = card.getByRole("button", { name: /^Include row 1:/ });
     await expect(include1).toBeFocused();
 
+    await page.keyboard.press("Tab"); // Category row 2
     await page.keyboard.press("Tab"); // Skip row 2
     await page.keyboard.press("Tab"); // Approve
     await expect(approve).toBeFocused();
@@ -1463,5 +1512,117 @@ test.describe("chat card", () => {
     await page.getByRole("button", { name: "Reject", exact: true }).click();
     await expect(page.getByText("Rejected — no changes made.")).toBeVisible();
     expect(posts.map((p) => p.path)).toEqual([`/api/proposals/${pid}/reject`]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// quick 261101-fk9 — editable row category (PATCH rows with {category}).
+// ---------------------------------------------------------------------------
+
+type CatNode = { id: number; name: string; is_system: boolean; children: CatNode[] };
+const catNode = (id: number, name: string, children: CatNode[] = [], is_system = false): CatNode => ({
+  id,
+  name,
+  is_system,
+  children,
+});
+const CAT_TREE = [
+  catNode(1, "Groceries"),
+  catNode(2, "ZZ Food", [catNode(3, "ZZ Snacks")]),
+  catNode(4, "Uncategorized", [], true),
+];
+
+/** Registered AFTER mockInbox so it wins: serves the tree and applies skip/category like the backend. */
+async function mockCategoryEdit(page: Page, inbox: InboxMock) {
+  const patches: { index: number; body: { skip?: boolean; category?: string | null } }[] = [];
+  await page.route(/\/api\/categories$/, (route) => route.fulfill({ json: CAT_TREE }));
+  await page.route(/\/api\/proposals\/[0-9a-fA-F-]{36}\/rows\/\d+$/, (route) => {
+    const req = route.request();
+    const url = req.url();
+    const id = /\/proposals\/([0-9a-fA-F-]{36})/.exec(url)?.[1];
+    const index = Number(/\/rows\/(\d+)$/.exec(url)?.[1]);
+    const body = JSON.parse(req.postData() ?? "{}");
+    patches.push({ index, body });
+    const p = inbox.list.find((x) => x.id === id);
+    if (!p || !p.payload.rows[index]) return route.fulfill({ status: 404, json: { detail: "Proposal not found" } });
+    const row = p.payload.rows[index];
+    if ("skip" in body) row.skip = body.skip === true;
+    if ("category" in body) {
+      row.after = { ...row.after, category: body.category };
+      delete row.category_suggested;
+    }
+    const copy: InboxProposal = JSON.parse(JSON.stringify(p));
+    copy.payload.rows.forEach((r) => delete r.duplicates);
+    return route.fulfill({ json: copy });
+  });
+  return patches;
+}
+
+test.describe("row category", () => {
+  test("category: the owner sets and clears a row category", async ({ page }) => {
+    const inbox = await mockInbox(page, { list: [batch3()] });
+    const patches = await mockCategoryEdit(page, inbox);
+    await openInbox(page);
+    const card = byId(page, ids.a);
+    const sel = (n: number) => card.getByRole("combobox", { name: new RegExp(`^Category for row ${n}:`) });
+
+    await expect(sel(1)).toHaveValue("");
+    await expect(sel(2)).toHaveValue("Groceries");
+    await expect(sel(1).locator("option")).toHaveText(["Uncategorized", "Groceries", "ZZ Food", "ZZ Snacks"]);
+
+    await sel(1).selectOption({ label: "ZZ Snacks" });
+    await expect(sel(1)).toHaveValue("ZZ Snacks");
+    expect(patches).toEqual([{ index: 0, body: { category: "ZZ Snacks" } }]);
+    await expect(live(page)).toContainText("Row 1 category set to ZZ Snacks");
+
+    await sel(2).selectOption({ label: "Uncategorized" });
+    await expect(sel(2)).toHaveValue("");
+    expect(patches[1]).toEqual({ index: 1, body: { category: null } });
+  });
+});
+
+test.describe("suggested category", () => {
+  const suggested = () =>
+    proposal({
+      payload: {
+        operation: "add_transaction",
+        rows: [
+          { ...txRow({ after: { merchant: "ZZ Shop", category: "ZZ Food" } }), category_suggested: true },
+          txRow({ after: { merchant: "ZZ Plain" } }),
+        ],
+      },
+    });
+
+  test("suggested category: marker until the owner changes it", async ({ page }) => {
+    const inbox = await mockInbox(page, { list: [suggested()] });
+    const patches = await mockCategoryEdit(page, inbox);
+    await openInbox(page);
+    const card = byId(page, ids.a);
+    const sel1 = card.getByRole("combobox", { name: /^Category for row 1:/ });
+    const chip = card.getByText("Suggested", { exact: true });
+
+    await expect(chip).toHaveCount(1);
+    await expect(card.locator(".inbox-row").nth(0).getByText("Suggested", { exact: true })).toBeVisible();
+    await expect(card.locator(".inbox-row").nth(1).getByText("Suggested", { exact: true })).toHaveCount(0);
+    await expect(sel1).toHaveValue("ZZ Food");
+    await expect(sel1).toHaveAccessibleDescription(/Suggested/);
+
+    await sel1.selectOption({ label: "ZZ Snacks" });
+    expect(patches).toEqual([{ index: 0, body: { category: "ZZ Snacks" } }]);
+    await expect(chip).toHaveCount(0);
+  });
+
+  test("suggested category: approving keeps it without an edit", async ({ page }) => {
+    const inbox = await mockInbox(page, { list: [suggested()] });
+    const patches = await mockCategoryEdit(page, inbox);
+    await openInbox(page);
+    const card = byId(page, ids.a);
+    await expect(card.getByText("Suggested", { exact: true })).toHaveCount(1);
+
+    await approveBtn(card).click();
+    await expect(statusOf(page, ids.a)).toBeFocused();
+    expect(inbox.sent("POST", "/approve")).toHaveLength(1);
+    expect(patches).toHaveLength(0);
+    await expect(card.getByText("Suggested", { exact: true })).toHaveCount(0);
   });
 });

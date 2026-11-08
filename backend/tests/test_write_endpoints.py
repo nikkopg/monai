@@ -46,13 +46,13 @@ def db_session(db_available):
 # Seed / cleanup helpers (mirror test_write_tools.py's idiom)
 # ---------------------------------------------------------------------------
 
-def _make_account(db, name: str) -> int:
+def _make_account(db, name: str, currency: str = "IDR") -> int:
     from backend.models import Account
     existing = db.query(Account).filter(Account.name == name).first()
     if existing:
         db.delete(existing)
         db.commit()
-    acc = Account(name=name, type="liquid", currency="IDR")
+    acc = Account(name=name, type="liquid", currency=currency)
     db.add(acc)
     db.commit()
     db.refresh(acc)
@@ -150,59 +150,122 @@ def test_post_transfer(client, api_key, db_session):
         _cleanup_account(db_session, name_b)
 
 
-def test_post_investment_transfer(client, api_key, db_session):
-    """POST /transactions/investment-transfer -> 201, cash leg + linked
-    PortfolioEvent (ticker=='CASH', deposit sentinel, RESEARCH Q1) (XFER-02)."""
-    from backend.models import Transaction, PortfolioEvent, AuditLog, Holding
+def test_post_transaction_usd_account_without_currency(client, api_key, db_session):
+    """Phase 44 D-09 / ENTRY-01: no currency in the body -> the row takes the
+    USD account's currency and keeps its cents (Phase 42 D-01 characterization)."""
+    import uuid
+    from backend.models import Transaction
 
-    name = "zz14test-RestInvestSource"
-    ticker = "CASH"
-    acc_id = _make_account(db_session, name)
-    plat_id = _make_platform(db_session, "zz14test-RestInvestPlatform")
+    name = f"ZZ44 rec usd-{uuid.uuid4().hex[:6]}"
+    acc_id = _make_account(db_session, name, currency="USD")
     try:
         resp = client.post(
-            "/transactions/investment-transfer",
-            json={
-                "from_account": name, "platform_id": plat_id, "amount": 500000,
-                "currency": "IDR", "date": "2024-03-11",
-            },
+            "/transactions",
+            json={"date": "1997-06-06T12:00:00", "amount": -12.34, "account": name},
+            headers={"MONAI_API_KEY": api_key},
+        )
+        assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
+        assert resp.json()["currency"] == "USD"
+
+        db_session.expire_all()
+        rows = db_session.query(Transaction).filter(Transaction.account_id == acc_id).all()
+        assert len(rows) == 1
+        assert rows[0].currency == "USD"
+        assert rows[0].amount == Decimal("-12.34")
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name)
+
+
+def test_transfer_usd_to_usd_without_currency(client, api_key, db_session):
+    """Phase 44 D-10: two USD accounts, no currency in the body -> 201, both
+    legs USD with their exact cents, one pair id, audit after.currency USD."""
+    import uuid
+    from backend.models import AuditLog, Transaction
+
+    sfx = uuid.uuid4().hex[:6]
+    name_a, name_b = f"ZZ44 xfer usd A-{sfx}", f"ZZ44 xfer usd B-{sfx}"
+    acc_a = _make_account(db_session, name_a, currency="USD")
+    acc_b = _make_account(db_session, name_b, currency="USD")
+    try:
+        resp = client.post(
+            "/transactions/transfer",
+            json={"from_account": name_a, "to_account": name_b, "amount": 25.5, "date": "1997-06-06"},
             headers={"MONAI_API_KEY": api_key},
         )
         assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
 
         db_session.expire_all()
-        tx = db_session.query(Transaction).filter(Transaction.account_id == acc_id).one()
-        assert tx.is_transfer is True
-        assert tx.amount == Decimal("-500000")
-
-        ev = db_session.query(PortfolioEvent).filter(
-            PortfolioEvent.platform_id == plat_id, PortfolioEvent.ticker == ticker
-        ).one()
-        assert ev.source_account_id == acc_id
-        assert ev.event_type == "deposit"
+        rows = db_session.query(Transaction).filter(Transaction.account_id.in_([acc_a, acc_b])).all()
+        assert len(rows) == 2
+        assert {r.currency for r in rows} == {"USD"}
+        assert {r.amount for r in rows} == {Decimal("-25.50"), Decimal("25.50")}
+        pair_ids = {r.transfer_pair_id for r in rows}
+        assert len(pair_ids) == 1 and None not in pair_ids
+        audits = db_session.query(AuditLog).filter(
+            AuditLog.entity == "transaction", AuditLog.entity_id.in_([r.id for r in rows]),
+            AuditLog.operation == "add",
+        ).all()
+        assert len(audits) == 2 and all(a.after["currency"] == "USD" for a in audits)
     finally:
         db_session.rollback()
-        # CASH is a shared production sentinel ticker — scope cleanup to this
-        # test's own platform_id, never a global ticker purge.
-        eids = [e.id for e in db_session.query(PortfolioEvent).filter(
-            PortfolioEvent.platform_id == plat_id, PortfolioEvent.ticker == ticker
-        ).all()]
-        if eids:
-            db_session.query(AuditLog).filter(
-                AuditLog.entity == "portfolio_event", AuditLog.entity_id.in_(eids)
-            ).delete(synchronize_session=False)
-            db_session.query(PortfolioEvent).filter(PortfolioEvent.id.in_(eids)).delete(synchronize_session=False)
-        hids = [h.id for h in db_session.query(Holding).filter(
-            Holding.platform_id == plat_id, Holding.ticker == ticker
-        ).all()]
-        if hids:
-            db_session.query(AuditLog).filter(
-                AuditLog.entity == "holding", AuditLog.entity_id.in_(hids)
-            ).delete(synchronize_session=False)
-            db_session.query(Holding).filter(Holding.id.in_(hids)).delete(synchronize_session=False)
-        db_session.commit()
-        _cleanup_platform(db_session, plat_id)
-        _cleanup_account(db_session, name)
+        _cleanup_account(db_session, name_a)
+        _cleanup_account(db_session, name_b)
+
+
+def test_transfer_cross_currency_refused_nothing_written(client, api_key, db_session):
+    """Phase 45 D-06: USD -> IDR without to_amount is a 422 naming both codes
+    and "need both amounts", whether currency is omitted or sent, and neither
+    leg is written."""
+    import uuid
+    from backend.models import Transaction
+
+    sfx = uuid.uuid4().hex[:6]
+    name_a, name_b = f"ZZ44 xfer mix usd-{sfx}", f"ZZ44 xfer mix idr-{sfx}"
+    acc_a = _make_account(db_session, name_a, currency="USD")
+    acc_b = _make_account(db_session, name_b)
+    try:
+        for extra in ({}, {"currency": "USD"}):
+            resp = client.post(
+                "/transactions/transfer",
+                json={"from_account": name_a, "to_account": name_b, "amount": 25, "date": "1997-06-06", **extra},
+                headers={"MONAI_API_KEY": api_key},
+            )
+            assert resp.status_code == 422, f"{extra}: expected 422, got {resp.status_code}: {resp.text}"
+            detail = resp.json()["detail"]
+            assert "USD" in detail and "IDR" in detail and "need both amounts" in detail
+        db_session.expire_all()
+        assert db_session.query(Transaction).filter(Transaction.account_id.in_([acc_a, acc_b])).count() == 0
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name_a)
+        _cleanup_account(db_session, name_b)
+
+
+def test_apply_add_transfer_cross_currency_refused(db_session):
+    """Phase 45 D-06: the primitive itself refuses a cross-currency pair with no
+    to_amount (chat/MCP confirms reach it) before either leg is flushed."""
+    import uuid
+    from backend.models import Transaction
+    from backend.writes import apply_add_transfer
+
+    sfx = uuid.uuid4().hex[:6]
+    name_a, name_b = f"ZZ44 prim usd-{sfx}", f"ZZ44 prim idr-{sfx}"
+    acc_a = _make_account(db_session, name_a, currency="USD")
+    acc_b = _make_account(db_session, name_b)
+    try:
+        with pytest.raises(ValueError, match="USD.*IDR.*need both amounts"):
+            apply_add_transfer(
+                db_session,
+                {"account": name_a, "amount": "-25", "date": "1997-06-06"},
+                {"account": name_b, "amount": "25", "date": "1997-06-06"},
+            )
+        # Same session, autoflush on: nothing was added before the refusal.
+        assert db_session.query(Transaction).filter(Transaction.account_id.in_([acc_a, acc_b])).count() == 0
+    finally:
+        db_session.rollback()
+        _cleanup_account(db_session, name_a)
+        _cleanup_account(db_session, name_b)
 
 
 def test_post_funded_buy(client, api_key, db_session):
@@ -259,6 +322,11 @@ def test_post_funded_sell(client, api_key, db_session):
     plat_id = _make_platform(db_session, "zz14test-RestFundedSellPlatform")
     _cleanup_ticker(db_session, ticker)
     try:
+        from backend.writes import apply_add_portfolio_event
+        apply_add_portfolio_event(db_session, {  # a larger buy first: a sell beyond the held quantity is refused
+            "ticker": ticker, "event_type": "buy", "quantity": 20, "price": 100000,
+            "platform_id": plat_id, "currency": "IDR", "date": "2024-03-01"})
+        db_session.commit()
         resp = client.post(
             "/portfolio-events/funded-sell",
             json={
@@ -275,7 +343,8 @@ def test_post_funded_sell(client, api_key, db_session):
         assert tx.amount == Decimal("1000000")
         assert tx.is_transfer is True
 
-        ev = db_session.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker).one()
+        ev = db_session.query(PortfolioEvent).filter(
+            PortfolioEvent.ticker == ticker, PortfolioEvent.event_type == "sell").one()
         assert ev.event_type == "sell"
         assert ev.source_account_id == acc_id
         assert ev.transaction_id == tx.id
@@ -797,14 +866,19 @@ def _cleanup_o3y_audit(db, event_ids, tx_ids) -> None:
 
 
 def _o3y_buy(client, api_key, plat_id, ticker, qty, price=100, day="2024-03-12") -> int:
-    r = client.post(
-        "/portfolio-events",
-        json={"ticker": ticker, "event_type": "buy", "quantity": qty, "price": price,
-              "date": day, "platform_id": plat_id, "currency": "IDR"},
-        headers={"MONAI_API_KEY": api_key},
-    )
-    assert r.status_code == 201, r.text
-    return r.json()["id"]
+    """Seed a buy through the primitive on its own committed session: POST /portfolio-events no longer takes trades."""
+    from backend.db import SessionLocal
+    from backend.writes import apply_add_portfolio_event
+
+    s = SessionLocal()
+    try:
+        ev = apply_add_portfolio_event(s, {
+            "ticker": ticker, "event_type": "buy", "quantity": qty, "price": price,
+            "date": day, "platform_id": plat_id, "currency": "IDR"})
+        s.commit()
+        return ev.id
+    finally:
+        s.close()
 
 
 def _o3y_holding(db, ticker, plat_id):
@@ -859,8 +933,18 @@ def test_o3y_funded_event_edit_delete_moves_cash_leg(client, api_key, db_session
     plat_id = _make_platform(db_session, "zzo3y-plat-funded")
     _cleanup_ticker(db_session, ticker)
     hdr = {"MONAI_API_KEY": api_key}
-    ev_id = tx_id = None
+    ev_id = tx_id = held_ev = held_tx = None
     try:
+        # A prior holding, so switching the edited event to a sell stays covered.
+        r = client.post(
+            "/portfolio-events/funded-buy",
+            json={"source_account_name": name, "platform_id": plat_id, "ticker": ticker,
+                  "quantity": 20, "price": 100000, "cash_amount": 2000000,
+                  "cash_currency": "IDR", "event_currency": "IDR", "date": "2024-03-01"},
+            headers=hdr,
+        )
+        assert r.status_code == 201, r.text
+        held_ev, held_tx = r.json()["portfolio_event_id"], r.json()["transaction_id"]
         r = client.post(
             "/portfolio-events/funded-buy",
             json={"source_account_name": name, "platform_id": plat_id, "ticker": ticker,
@@ -896,7 +980,7 @@ def test_o3y_funded_event_edit_delete_moves_cash_leg(client, api_key, db_session
         db_session.expire_all()
         assert db_session.get(PortfolioEvent, ev_id) is None
         assert db_session.get(Transaction, tx_id) is None
-        assert _o3y_holding(db_session, ticker, plat_id).quantity == Decimal("0")
+        assert _o3y_holding(db_session, ticker, plat_id).quantity == Decimal("20")
         assert db_session.query(AuditLog).filter(
             AuditLog.entity == "portfolio_event", AuditLog.entity_id == ev_id, AuditLog.operation == "delete"
         ).count() == 1
@@ -905,7 +989,7 @@ def test_o3y_funded_event_edit_delete_moves_cash_leg(client, api_key, db_session
         ).count() == 1
     finally:
         db_session.rollback()
-        _cleanup_o3y_audit(db_session, [ev_id] if ev_id else [], [tx_id] if tx_id else [])
+        _cleanup_o3y_audit(db_session, [e for e in (ev_id, held_ev) if e], [t for t in (tx_id, held_tx) if t])
         _cleanup_ticker(db_session, ticker)
         _cleanup_account(db_session, name)
         _cleanup_platform(db_session, plat_id)
@@ -955,3 +1039,69 @@ def test_o3y_edit_delete_error_cases(client, api_key, db_session):
         _cleanup_o3y_audit(db_session, ids, [])
         _cleanup_ticker(db_session, ticker)
         _cleanup_platform(db_session, plat_id)
+
+
+# ---------------------------------------------------------------------------
+# Quick 261031-gff: audited delete of a deposit event
+# ---------------------------------------------------------------------------
+
+def test_gff_delete_deposit_event(client, api_key, db_session):
+    from backend.models import AuditLog, Holding, PortfolioEvent, Transaction
+
+    name = "zzgff-DepositSource"
+    plat_id = _make_platform(db_session, "zzgff-plat-deposit")
+    acc_id = _make_account(db_session, name)
+    hdr = {"MONAI_API_KEY": api_key}
+    ev_id = tx_id = None
+    try:
+        # Seed the historical shape directly: an unlinked cash debit plus a CASH deposit event.
+        from backend.writes import apply_add_portfolio_event, apply_add_transaction
+        tx = apply_add_transaction(db_session, {
+            "account": name, "amount": "-250000", "currency": "IDR",
+            "date": "2024-03-11", "is_transfer": True,
+        })
+        ev = apply_add_portfolio_event(db_session, {
+            "ticker": "CASH", "event_type": "deposit", "quantity": "250000", "price": "1",
+            "platform_id": plat_id, "currency": "IDR", "date": "2024-03-11", "asset_type": "cash",
+        })
+        ev.source_account_id = tx.account_id
+        db_session.commit()
+        ev_id, tx_id = ev.id, tx.id
+
+        assert _o3y_holding(db_session, "CASH", plat_id).quantity == Decimal("250000")
+
+        # edit stays buy/sell/dividend only
+        assert client.put(f"/portfolio-events/{ev_id}", json={"quantity": 1}, headers=hdr).status_code == 422
+
+        r = client.delete(f"/portfolio-events/{ev_id}", headers=hdr)
+        assert r.status_code == 200, r.text
+        assert r.json()["deleted_transaction_id"] is None
+
+        db_session.expire_all()
+        assert db_session.get(PortfolioEvent, ev_id) is None
+        assert db_session.query(AuditLog).filter(
+            AuditLog.entity == "portfolio_event", AuditLog.entity_id == ev_id, AuditLog.operation == "delete"
+        ).count() == 1
+        assert db_session.get(Transaction, tx_id) is not None  # unlinked cash leg untouched
+        assert _o3y_holding(db_session, "CASH", plat_id).quantity == Decimal("0")  # the deposit is reversed
+    finally:
+        db_session.rollback()
+        _cleanup_o3y_audit(db_session, [ev_id] if ev_id else [], [])
+        # CASH is a shared sentinel ticker — scope cleanup to this test's platform
+        eids = [e.id for e in db_session.query(PortfolioEvent).filter(
+            PortfolioEvent.platform_id == plat_id, PortfolioEvent.ticker == "CASH").all()]
+        if eids:
+            db_session.query(AuditLog).filter(
+                AuditLog.entity == "portfolio_event", AuditLog.entity_id.in_(eids)
+            ).delete(synchronize_session=False)
+            db_session.query(PortfolioEvent).filter(PortfolioEvent.id.in_(eids)).delete(synchronize_session=False)
+        hids = [h.id for h in db_session.query(Holding).filter(
+            Holding.platform_id == plat_id, Holding.ticker == "CASH").all()]
+        if hids:
+            db_session.query(AuditLog).filter(
+                AuditLog.entity == "holding", AuditLog.entity_id.in_(hids)
+            ).delete(synchronize_session=False)
+            db_session.query(Holding).filter(Holding.id.in_(hids)).delete(synchronize_session=False)
+        db_session.commit()
+        _cleanup_platform(db_session, plat_id)
+        _cleanup_account(db_session, name)

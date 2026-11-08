@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import { card, input, btn, label, tokens } from "../styles";
 import { extractDetail, fmtPlain } from "../lib/api";
+import { fmtAmount } from "../lib/money";
 import type { PlatformOption } from "./page";
 
 // ---------------------------------------------------------------------------
@@ -13,16 +14,29 @@ import type { PlatformOption } from "./page";
 // position recompute happens server-side (05-RESEARCH Pattern 2). On success
 // calls onSaved() (parent refetches the summary) then onClose().
 //
-// XFER-03 extension: an optional "Funding account" <select> (modal-owned
-// GET /api/accounts fetch, client-filtered to type === "liquid" — never free
-// text, RESEARCH Pitfall 2) routes Buy/Sell submits to
-// /api/portfolio-events/funded-buy|sell instead, carrying a cash_amount that
-// defaults to quantity x price until manually edited (D-06). Dividend has no
-// funded schema — a funding selection is ignored for it (unfunded path).
+// XFER-03 extension: a required "Investment liquid account" <select>
+// (modal-owned GET /api/accounts fetch, client-filtered to type === "liquid" —
+// never free text, RESEARCH Pitfall 2) routes every Buy/Sell submit to
+// /api/portfolio-events/funded-buy|sell, carrying a cash_amount that defaults
+// to quantity x price until manually edited (D-06). Submit stays disabled until
+// an account is chosen (quick 261107-nq6). Dividend has no funded schema: it
+// drops the account and is the only thing POSTed to /api/portfolio-events.
 //
 // Edit mode (editEvent prop): prefilled from an existing event; submit PUTs
 // /api/portfolio-events/{id}. A linked (funded) event shows its Cash amount
 // field; the funding link, platform and asset type are not editable here.
+//
+// Phase 45: the cash currency is never an input — it is the funding account's
+// own (read-only chip, omitted from the body; the backend derives it). The
+// position's currency is the holding's when the ticker is already held on the
+// platform (chip, not sent), else a IDR/USD select defaulting to the account's
+// currency and sent as event_currency. The cash amount auto-fills from
+// quantity x price only when both currencies match; no FX is ever applied.
+//
+// Quick 261108-gdf: a funded Buy/Sell can carry a fee (coin or cash). Quantity
+// is always the FILLED amount; the backend stores the net, and an edit shows and
+// sends the filled quantity back so a fee is never applied twice. A cash fee
+// moves the auto-filled cash amount (+ on a buy, - on a sell).
 // ---------------------------------------------------------------------------
 
 export type EditableEvent = {
@@ -34,6 +48,8 @@ export type EditableEvent = {
   price: number;
   transaction_id: number | null;
   cash_amount: number | null;
+  fee?: number | null;
+  fee_kind?: string | null;
 };
 
 type Props = {
@@ -42,7 +58,31 @@ type Props = {
   onSaved: () => void;
   defaultPlatformId?: number;
   editEvent?: EditableEvent;
+  // Existing positions, to tell a held ticker (currency fixed) from a new one.
+  positions?: {
+    ticker: string;
+    platformId: number;
+    currency: string;
+    quantity: number;
+  }[];
 };
+
+const chipStyle: React.CSSProperties = {
+  border: input.border,
+  borderRadius: tokens.radius.sm,
+  padding: "0 16px",
+  display: "flex",
+  alignItems: "center",
+  background: tokens.color.sidebar,
+  fontSize: 14,
+  fontWeight: 600,
+  color: tokens.color.muted3,
+  flexShrink: 0,
+};
+
+// IDR keeps this modal's historical "Rp n"; USD uses the shared formatter.
+const fmtSide = (n: number, ccy: string) =>
+  ccy === "USD" ? fmtAmount(n, "USD") : `Rp ${fmtPlain(n)}`;
 
 type Account = {
   id: number;
@@ -75,6 +115,7 @@ export default function HoldingModal({
   onSaved,
   defaultPlatformId,
   editEvent,
+  positions,
 }: Props) {
   const isEdit = editEvent !== undefined;
   const linked = editEvent?.transaction_id != null;
@@ -96,6 +137,11 @@ export default function HoldingModal({
     editEvent ? String(editEvent.quantity) : ""
   );
   const [price, setPrice] = useState(editEvent ? String(editEvent.price) : "");
+  const [fee, setFee] = useState(editEvent?.fee ? String(editEvent.fee) : "");
+  // null = follow the default (coin for a new crypto buy, else cash) until picked.
+  const [feeKindPick, setFeeKindPick] = useState<"coin" | "cash" | null>(
+    editEvent?.fee_kind === "coin" || editEvent?.fee_kind === "cash" ? editEvent.fee_kind : null
+  );
   const [date, setDate] = useState(
     editEvent ? `${editEvent.date}T00:00` : toLocalDatetimeInputValue(new Date())
   );
@@ -106,9 +152,10 @@ export default function HoldingModal({
   const isDividend = eventType === "dividend";
 
   // Funding selector (XFER-03) — modal-owned GET /api/accounts fetch,
-  // client-filtered to liquid. A funding account is only meaningful for
-  // Buy/Sell; Dividend has no funded schema, so it's ignored there.
+  // client-filtered to liquid. Required for Buy/Sell; Dividend has no funded
+  // schema, so the account is dropped there.
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [accountsLoaded, setAccountsLoaded] = useState(false);
   const [fundingAccount, setFundingAccount] = useState("");
   const [cashAmount, setCashAmount] = useState(
     editEvent?.cash_amount != null ? String(editEvent.cash_amount) : ""
@@ -121,6 +168,38 @@ export default function HoldingModal({
     ? linked && !isDividend
     : fundingAccount !== "" && !isDividend;
 
+  // Currencies (Phase 45). Absent account currency means IDR.
+  const fundingCcy =
+    liquidAccounts.find((a) => a.name === fundingAccount)?.currency ?? "IDR";
+  const held = positions?.find(
+    (p) =>
+      p.ticker.toUpperCase() === ticker.trim().toUpperCase() &&
+      p.platformId === parseInt(platformId, 10)
+  );
+  // null = follow the funding account until the owner picks one.
+  const [positionCurrency, setPositionCurrency] = useState<string | null>(null);
+  // A NEW ticker starts in the platform's currency (the funding account's when the
+  // platform carries none); the owner's pick wins. One value feeds the select, the
+  // labels and the POST. Edit mode keeps the stored event's own currency rules.
+  const platformCcy = isEdit
+    ? undefined
+    : platforms.find((p) => String(p.id) === platformId)?.currency;
+  const newCcy = positionCurrency ?? platformCcy ?? fundingCcy;
+  const eventCcy = held?.currency ?? newCcy;
+  // shortcut: edit mode has no stored cash currency in the events payload, so it
+  // labels the cash side by the position currency only when that is IDR.
+  const cashCcy = isEdit ? (eventCcy === "IDR" ? "IDR" : null) : fundingCcy;
+  const feeKind: "coin" | "cash" =
+    feeKindPick ?? (!isEdit && eventType === "buy" && assetType === "crypto" ? "coin" : "cash");
+  const feeNum = parseFloat(fee);
+  const hasFee = feeNum > 0;
+  // The stored movement: a coin fee comes off a buy and goes on top of a sell.
+  const qtyNum = parseFloat(quantity);
+  const moved =
+    hasFee && feeKind === "coin" && !Number.isNaN(qtyNum)
+      ? String(Number((eventType === "sell" ? qtyNum + feeNum : qtyNum - feeNum).toFixed(8)))
+      : quantity;
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -128,9 +207,12 @@ export default function HoldingModal({
         const r = await fetch("/api/accounts");
         if (!r.ok) throw new Error("fetch failed");
         const data: Account[] = await r.json();
-        if (!cancelled) setAccounts(data);
+        if (!cancelled) {
+          setAccounts(data);
+          setAccountsLoaded(true);
+        }
       } catch {
-        // leave accounts empty; the funding select just shows "none"
+        // leave accounts empty; the select offers only "Choose an account"
       }
     })();
     return () => {
@@ -139,15 +221,24 @@ export default function HoldingModal({
   }, []);
 
   // Re-sync cash_amount to quantity x price only while the user hasn't
-  // manually edited it (D-06) — never silently overwrite a manual edit.
+  // manually edited it (D-06) — never silently overwrite a manual edit — and
+  // only when cash and position share a currency (D-08). Across currencies an
+  // untouched value is one we filled ourselves, so it is cleared, never converted.
   useEffect(() => {
-    if (!cashAmountTouched && quantity && price) {
+    if (cashAmountTouched) return;
+    if (cashCcy !== eventCcy) {
+      setCashAmount("");
+    } else if (quantity && price) {
       const q = parseFloat(quantity);
       const p = parseFloat(price);
-      if (!Number.isNaN(q) && !Number.isNaN(p)) setCashAmount(String(q * p));
+      if (!Number.isNaN(q) && !Number.isNaN(p)) {
+        // A cash fee is paid on top of a buy and comes off a sell's proceeds.
+        const cashFee = hasFee && feeKind === "cash" ? (eventType === "sell" ? -feeNum : feeNum) : 0;
+        setCashAmount(String(cashFee ? Number((q * p + cashFee).toFixed(8)) : q * p));
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quantity, price]);
+  }, [quantity, price, cashCcy, eventCcy, fee, feeKind, eventType]);
 
   // When switching to Dividend, default quantity to 1 (still editable) so the
   // form keeps the same field set (quantity=1, price=amount convention).
@@ -175,7 +266,11 @@ export default function HoldingModal({
           price: parseFloat(price),
           date: toLocalDateOnly(date),
         };
-        if (isFunded) body.cash_amount = parseFloat(cashAmount);
+        if (isFunded) {
+          body.cash_amount = parseFloat(cashAmount);
+          body.fee = hasFee ? feeNum : 0; // 0 clears a stored fee
+          if (hasFee) body.fee_kind = feeKind;
+        }
         const r = await fetch(`/api/portfolio-events/${editEvent.id}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
@@ -209,17 +304,12 @@ export default function HoldingModal({
           quantity: parseFloat(quantity),
           price: parseFloat(price),
           cash_amount: parseFloat(cashAmount),
-          // WR-10: the cash leg debits the selected liquid account, so label it
-          // with that account's own currency (D-09 supports per-leg currency).
-          cash_currency:
-            liquidAccounts.find((a) => a.name === fundingAccount)?.currency ??
-            "IDR",
-          // event_currency is the instrument's currency; no UI field for it, so
-          // the single-currency IDR assumption holds (ponytail: add a field if
-          // non-IDR instruments are ever entered).
-          event_currency: "IDR",
+          // cash_currency is omitted: the backend takes it from the account.
+          // event_currency only for a new position; a held one keeps its own.
+          ...(held ? {} : { event_currency: newCcy }),
           date: toLocalDateOnly(date),
           asset_type: assetType,
+          ...(hasFee ? { fee: feeNum, fee_kind: feeKind } : {}),
         };
         const r = await fetch(endpoint, {
           method: "POST",
@@ -353,9 +443,17 @@ export default function HoldingModal({
                   onEventTypeChange(e.target.value as "buy" | "sell" | "dividend")
                 }
               >
-                <option value="buy">Buy</option>
-                <option value="sell">Sell</option>
-                <option value="dividend" disabled={linked}>
+                {/* An unfunded event cannot change type (backend 422). */}
+                <option value="buy" disabled={isEdit && !linked && editEvent.event_type !== "buy"}>
+                  Buy
+                </option>
+                <option value="sell" disabled={isEdit && !linked && editEvent.event_type !== "sell"}>
+                  Sell
+                </option>
+                <option
+                  value="dividend"
+                  disabled={linked || (isEdit && editEvent.event_type !== "dividend")}
+                >
                   Dividend
                 </option>
               </select>
@@ -371,20 +469,49 @@ export default function HoldingModal({
                 value={quantity}
                 onChange={(e) => setQuantity(e.target.value)}
               />
+              {!isEdit && eventType === "sell" && held && (
+                <p style={{ ...label, fontSize: 11, marginTop: 4, color: tokens.color.muted3 }}>
+                  Held: {held.quantity}
+                </p>
+              )}
             </div>
             <div>
-              <label style={label}>
-                {isDividend ? "Dividend amount (IDR)" : "Price per unit (IDR)"}
+              <label style={label} htmlFor="holding-price">
+                {isDividend
+                  ? "Dividend amount (IDR)"
+                  : isFunded || isEdit
+                  ? `Price per unit (${eventCcy})`
+                  : "Price per unit"}
               </label>
-              <input
-                style={input}
-                type="number"
-                step="any"
-                min="0"
-                required
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-              />
+              <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
+                <input
+                  id="holding-price"
+                  style={{ ...input, flex: 1, minWidth: 0 }}
+                  type="number"
+                  step="any"
+                  min="0"
+                  required
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                />
+                {isFunded &&
+                  !isDividend &&
+                  (held || isEdit ? (
+                    <span aria-label="Position currency" style={chipStyle}>
+                      {eventCcy}
+                    </span>
+                  ) : (
+                    <select
+                      aria-label="Position currency"
+                      style={{ ...input, width: 96, flexShrink: 0 }}
+                      value={newCcy}
+                      onChange={(e) => setPositionCurrency(e.target.value)}
+                    >
+                      <option value="IDR">IDR</option>
+                      <option value="USD">USD</option>
+                    </select>
+                  ))}
+              </div>
             </div>
             <div>
               <label style={label}>Date</label>
@@ -397,14 +524,17 @@ export default function HoldingModal({
             </div>
             {!isEdit && (
             <div>
-              <label style={label}>Funding account</label>
+              <label style={label}>Investment liquid account</label>
               <select
                 style={input}
                 value={fundingAccount}
+                required={!isDividend}
                 disabled={isDividend}
                 onChange={(e) => setFundingAccount(e.target.value)}
               >
-                <option value="">— none (unfunded) —</option>
+                <option value="" disabled>
+                  Choose an account
+                </option>
                 {liquidAccounts.map((a) => (
                   <option key={a.id} value={a.name}>
                     {a.name}
@@ -416,22 +546,70 @@ export default function HoldingModal({
                   Dividends aren&apos;t funded from an account.
                 </p>
               )}
+              {!isDividend && accountsLoaded && liquidAccounts.length === 0 && (
+                <p style={{ ...label, fontSize: 11, marginTop: 4, color: tokens.color.muted3 }}>
+                  Add a liquid account in Settings, or use Add holding directly for a
+                  position you already hold.
+                </p>
+              )}
             </div>
             )}
             {isFunded && (
               <div>
-                <label style={label}>Cash amount (IDR)</label>
-                <input
-                  style={input}
-                  type="number"
-                  step="any"
-                  required
-                  value={cashAmount}
-                  onChange={(e) => {
-                    setCashAmount(e.target.value);
-                    setCashAmountTouched(true);
-                  }}
-                />
+                <label style={label} htmlFor="holding-cash-amount">
+                  {cashCcy ? `Cash amount (${cashCcy})` : "Cash amount"}
+                </label>
+                <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
+                  <input
+                    id="holding-cash-amount"
+                    style={{ ...input, flex: 1, minWidth: 0 }}
+                    type="number"
+                    step="any"
+                    required
+                    value={cashAmount}
+                    onChange={(e) => {
+                      setCashAmount(e.target.value);
+                      setCashAmountTouched(true);
+                    }}
+                  />
+                  {cashCcy && (
+                    <span aria-label="Cash currency" style={chipStyle}>
+                      {cashCcy}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+            {isFunded && (
+              <div>
+                <label style={label} htmlFor="holding-fee">
+                  {`Fee (${feeKind === "coin" ? ticker.trim() || "coin" : eventCcy})`}
+                </label>
+                <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
+                  <input
+                    id="holding-fee"
+                    style={{ ...input, flex: 1, minWidth: 0 }}
+                    type="number"
+                    step="any"
+                    min="0"
+                    value={fee}
+                    onChange={(e) => setFee(e.target.value)}
+                  />
+                  <select
+                    aria-label="Fee kind"
+                    style={{ ...input, width: 140, flexShrink: 0 }}
+                    value={feeKind}
+                    onChange={(e) => setFeeKindPick(e.target.value as "coin" | "cash")}
+                  >
+                    <option value="coin">From the coin</option>
+                    <option value="cash">{`Cash (${eventCcy})`}</option>
+                  </select>
+                </div>
+                {isEdit && linked && (
+                  <p style={{ ...label, fontSize: 11, marginTop: 4, color: tokens.color.muted3 }}>
+                    The cash amount is not recalculated; change it too if the fee changed what was paid.
+                  </p>
+                )}
               </div>
             )}
           </div>
@@ -446,8 +624,8 @@ export default function HoldingModal({
               }}
             >
               {eventType === "sell"
-                ? `Credits ${fundingAccount} Rp ${fmtPlain(parseFloat(cashAmount || "0"))}, −${quantity} ${ticker}`
-                : `Debits ${fundingAccount} Rp ${fmtPlain(parseFloat(cashAmount || "0"))}, +${quantity} ${ticker}`}
+                ? `Credits ${fundingAccount} ${fmtSide(parseFloat(cashAmount || "0"), fundingCcy)}, −${moved} ${ticker}`
+                : `Debits ${fundingAccount} ${fmtSide(parseFloat(cashAmount || "0"), fundingCcy)}, +${moved} ${ticker}`}
             </p>
           )}
 
@@ -476,6 +654,7 @@ export default function HoldingModal({
                 platforms.length === 0 ||
                 !(parseFloat(quantity) > 0) ||
                 !(parseFloat(price) > 0) ||
+                (!isEdit && !isDividend && fundingAccount === "") ||
                 (isFunded && !(parseFloat(cashAmount) > 0))
               }
             >

@@ -56,7 +56,11 @@ class Account(Base):
     # CHECK ck_accounts_type + NOT NULL + server_default 'liquid' — mirrors
     # PortfolioEvent.currency's server_default idiom.
     type: Mapped[str] = mapped_column(String(64), nullable=False, server_default="liquid")
-    currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    # IDR/USD only. The CHECK, UNIQUE (id, currency) and the composite FK
+    # transactions (account_id, currency) -> accounts (id, currency) live in
+    # migration 020 only: declaring them here adds a second FK path between
+    # these tables and makes the Account.transactions relationship ambiguous.
+    currency: Mapped[str] = mapped_column(String(8), nullable=False, server_default="IDR")
 
     transactions: Mapped[list["Transaction"]] = relationship(
         back_populates="account"
@@ -78,6 +82,8 @@ class Platform(Base):
         String(128), unique=True, index=True, nullable=False
     )
     kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Starting currency for a NEW ticker in the buy/sell form only; converts nothing.
+    currency: Mapped[str] = mapped_column(String(8), server_default="IDR", nullable=False)
 
 
 class Category(Base):
@@ -136,7 +142,7 @@ class Transaction(Base):
     # Pitfall 5 fix: annotation changed from Mapped[float] to Mapped[Decimal]
     # to match the Numeric(18,2) column type (psycopg3 returns Decimal natively).
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2))
-    currency: Mapped[str] = mapped_column(String(8))
+    currency: Mapped[str] = mapped_column(String(8), server_default="IDR")
     category: Mapped[str | None] = mapped_column(String(255), nullable=True)
     raw_category: Mapped[str | None] = mapped_column(String(255), nullable=True)
     merchant: Mapped[str | None] = mapped_column(String(512), nullable=True)
@@ -508,7 +514,7 @@ class PortfolioEvent(Base):
     ticker: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
     event_type: Mapped[str] = mapped_column(String(16), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(28, 8), nullable=False)
-    price: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    price: Mapped[Decimal] = mapped_column(Numeric(28, 12), nullable=False)
     platform_id: Mapped[int] = mapped_column(
         ForeignKey("platforms.id"), nullable=False, index=True
     )
@@ -531,6 +537,33 @@ class PortfolioEvent(Base):
     transaction_id: Mapped[int | None] = mapped_column(
         ForeignKey("transactions.id", ondelete="SET NULL"),
         nullable=True, unique=True, index=True,
+    )
+    # Migration 023 (CHECK ck_portfolio_events_fee lives in the DB only, like
+    # platforms.currency): a trade fee, in coin units for 'coin', in the
+    # position's currency for 'cash'. Both null when the event has none.
+    fee: Mapped[Decimal | None] = mapped_column(Numeric(28, 8), nullable=True)
+    fee_kind: Mapped[str | None] = mapped_column(String(8), nullable=True)
+
+
+class ClosedPosition(Base):
+    """Realized P&L record for a position sold to exactly zero (quick 261107-nq6).
+
+    Written by writes.close_position_if_flat, which then deletes the holding and
+    its events. Never a Transaction: the sell's cash leg stays as it was.
+    realized_pnl is IDR at trade-date rates, Numeric(28,8) like recompute's own.
+    """
+
+    __tablename__ = "closed_positions"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ticker: Mapped[str] = mapped_column(String(32), nullable=False)
+    platform_id: Mapped[int | None] = mapped_column(
+        ForeignKey("platforms.id", ondelete="SET NULL"), nullable=True
+    )
+    realized_pnl: Mapped[Decimal] = mapped_column(Numeric(28, 8), nullable=False)
+    close_date: Mapped[date] = mapped_column(Date, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", nullable=False
     )
 
 
@@ -602,6 +635,9 @@ class FxRateCache(Base):
     fetched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default="now()", nullable=False
     )
+    # The vendor's business date when it differs from rate_date (weekend or
+    # holiday carry-back). NULL means the rate is for the requested date.
+    rate_effective_date: Mapped[date | None] = mapped_column(Date, nullable=True)
 
 
 class PortfolioValueHistory(Base):

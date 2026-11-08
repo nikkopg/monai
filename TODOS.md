@@ -105,11 +105,11 @@ The open-work list. `ARCHITECTURE.md` holds *decisions*; this holds *open work*.
 
 ### Multi-currency spending
 
-**What:** Add `base_currency` + `fx_rate` to transactions so a foreign-currency spending account could be supported.
+**What:** Liquid accounts carry a currency (IDR or USD), each transaction is in its account's currency, and every total converts to IDR before adding up.
 
-**Why:** Spending stays single-currency IDR by design — this was validated as a non-issue across the full import history. Investments already convert USD to IDR through the FX rate cache, which shipped early and is unrelated to this item.
+**Why:** A foreign-currency spending account was added, so the earlier "single-currency IDR by design" assumption no longer holds. Investments already convert USD to IDR through the FX rate cache.
 
-**Context:** Revisit only if a foreign-currency spending account is actually added. No code change needed until then.
+**Context:** In progress as milestone v1.7 Multi-Currency Liquids. Done: the currency model and rates (migration 020, `transactions_idr` view), IDR totals behind a guard test, and USD accounts in the app (create, currency lock, native amount plus IDR value). Still to come: USD through chat, MCP and attachments, and cross-currency moves.
 
 **Effort:** L
 **Priority:** P4

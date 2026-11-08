@@ -35,13 +35,13 @@ def db_session():
 
 
 def test_account_classification():
-    """Every live accounts row is classified: no NULLs, the original liquid
-    ids stay liquid, and there is exactly one investment account ('Investments').
+    """Every live accounts row is classified: no NULLs, and the original liquid
+    ids stay liquid.
 
-    The investment account's surrogate id is intentionally NOT asserted — it is
-    not load-bearing and changes if the account is ever deleted+recreated (it
-    moved 3 -> 994 after an accidental delete/restore). The D-02 classification
-    invariant is what matters, not the id."""
+    The investment-account count is intentionally NOT asserted. The single
+    'Investments' account (id 3, later 994) was retired in v1.2 — investments
+    live on platforms/holdings now — and whether to restore it is still open
+    (todo 260817), so neither 0 nor 1 is a stable invariant."""
     with engine.connect() as conn:
         rows = conn.execute(text("SELECT id, name, type FROM accounts")).fetchall()
     types_by_id = {row[0]: row[2] for row in rows}
@@ -55,10 +55,6 @@ def test_account_classification():
     assert types_by_id.get(1) == "liquid"
     assert types_by_id.get(2) == "liquid"
     assert types_by_id.get(559) == "liquid"
-
-    investments = [(row[0], row[1]) for row in rows if row[2] == "investment"]
-    assert len(investments) == 1, f"expected exactly one investment account, got {investments}"
-    assert investments[0][1] == "Investments", f"investment account misnamed: {investments}"
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,9 @@ Endpoints:
     POST /categories/merge      merge one category into another (requires API key)
     PUT  /portfolio-events/{id}  edit a buy/sell/dividend event + its cash leg (requires API key)
     DELETE /portfolio-events/{id}  delete an event + its cash leg (requires API key)
+    GET  /closed-positions      realized P&L records of positions sold to zero, newest close first (requires API key)
+    PUT  /closed-positions/{id}  correct a record's realized P&L or close date, audited (requires API key)
+    DELETE /closed-positions/{id}  delete a record; its P&L leaves the total, cash is untouched (requires API key)
     POST /import                multipart CSV upload (Wallet export)
     POST /threads/{id}/attachments  upload one CSV, PDF or image to a chat, parsed once in code; creates the thread if new (requires API key)
     GET  /attachments/locality  {local, destination}: where an attached file would be sent (requires API key)
@@ -63,7 +66,7 @@ import logging
 import re
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -82,10 +85,13 @@ from backend.mcp_client_api import router as mcp_client_router
 from backend.auth import optional_approver, require_api_key, require_approver_key, require_reject_scope
 from backend.mcp_server import build_mcp
 from backend.db import get_session, get_session_sync
-from backend.importer import _get_or_create_account, import_csv_text
-from backend.mcp_writes import duplicate_flags
-from backend.models import Account, AuditLog, Category, Holding, Platform, PortfolioEvent, Proposal, Transaction
+from backend.importer import import_csv_text
+from backend.mcp_writes import _load_refs, duplicate_flags
+from backend.models import (
+    Account, AuditLog, Category, ClosedPosition, Holding, Platform, PortfolioEvent, Proposal, Transaction,
+)
 from backend.net_worth_history import monthly_net_worth_series
+from backend.portfolio import filled_quantity
 from backend.portfolio import portfolio_summary as compose_portfolio_summary
 from backend.proposals import ALL_SKIPPED_MSG, expire_stale, transition
 from backend.portfolio import value_history_series
@@ -95,8 +101,10 @@ from backend.writes import (
     apply_add_category,
     apply_add_funded_buy,
     apply_add_funded_sell,
+    apply_delete_closed_position,
+    apply_edit_closed_position,
+    _closed_snapshot,
     apply_add_holding,
-    apply_add_investment_transfer,
     apply_add_platform,
     apply_add_portfolio_event,
     apply_add_transaction,
@@ -118,7 +126,6 @@ from backend.writes import (
     apply_rename_category,
     apply_set_price,
     _portfolio_event_snapshot,
-    resolve_category_id,
 )
 from backend.schemas import (
     AccountCreate,
@@ -135,6 +142,8 @@ from backend.schemas import (
     CategoryNode,
     CategoryRenameRequest,
     CategoryUpdate,
+    ClosedPositionOut,
+    ClosedPositionUpdate,
     ConfirmRequest,
     RowSkipRequest,
     FundedBuyCreate,
@@ -143,7 +152,6 @@ from backend.schemas import (
     HoldingCreate,
     HoldingOut,
     HoldingUpdate,
-    InvestmentTransferCreate,
     NetWorth,
     NetWorthHistoryResponse,
     PlatformCreate,
@@ -170,15 +178,13 @@ from backend.schemas import (
 )
 from backend.tools import (
     account_balances,
-    income_total,
-    monthly_trend,
-    net_total,
     net_worth,
     resolve_period,
-    spending_by_category,
-    spending_total,
     _descendant_ids,
     _find_category_node,
+    _flow_totals,
+    _monthly_trend,
+    _spending_by_category,
 )
 from backend.settings import (
     KEY_ANTHROPIC_API_KEY,
@@ -340,8 +346,12 @@ def list_accounts(db: Session = Depends(get_session)):
 @app.post("/accounts", response_model=AccountOut, status_code=201, dependencies=[Depends(require_api_key)])
 def create_account(payload: AccountCreate, db: Session = Depends(get_session)):
     """Create an account (CASH-05). Routed through apply_add_account (audited)."""
-    acc = apply_add_account(db, payload.model_dump(mode="json"))
-    db.commit()
+    try:
+        acc = apply_add_account(db, payload.model_dump(mode="json"))
+        db.commit()
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
     db.refresh(acc)
     from backend.query import reset_engine
     reset_engine()
@@ -428,9 +438,14 @@ def delete_account(
         target = db.get(Account, reassign_to)
         if target is None:
             raise HTTPException(status_code=404, detail=f"Reassign target account {reassign_to} not found")
-        reassigned = apply_delete_account(db, account_id, before, reassign_to=reassign_to)
-    else:
-        reassigned = apply_delete_account(db, account_id, before)
+
+    try:
+        reassigned = apply_delete_account(
+            db, account_id, before, reassign_to=reassign_to if tx_count > 0 else None
+        )
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
 
     db.commit()
     from backend.query import reset_engine
@@ -452,8 +467,12 @@ def list_platforms(db: Session = Depends(get_session)):
 @app.post("/platforms", response_model=PlatformOut, status_code=201, dependencies=[Depends(require_api_key)])
 def create_platform(payload: PlatformCreate, db: Session = Depends(get_session)):
     """Create an investment platform (INV-01). Routed through apply_add_platform (audited)."""
-    plat = apply_add_platform(db, payload.model_dump(mode="json"))
-    db.commit()
+    try:
+        plat = apply_add_platform(db, payload.model_dump(mode="json"))
+        db.commit()
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
     db.refresh(plat)
     from backend.query import reset_engine
     reset_engine()
@@ -466,7 +485,7 @@ def update_platform(platform_id: int, payload: PlatformUpdate, db: Session = Dep
     plat = db.get(Platform, platform_id)
     if plat is None:
         raise HTTPException(status_code=404, detail=f"Platform {platform_id} not found")
-    before = {"id": plat.id, "name": plat.name, "kind": plat.kind}
+    before = {"id": plat.id, "name": plat.name, "kind": plat.kind, "currency": plat.currency}
     try:
         apply_edit_platform(db, platform_id, payload.model_dump(mode="json", exclude_none=True), before)
     except ValueError as e:
@@ -546,11 +565,14 @@ def platform_detail(platform_id: int, db: Session = Depends(get_session)):
 
     refresh_all_prices(db, force=False)  # only stale tickers (D-09), same idiom as investments_summary
     db.commit()
-    summary = compose_portfolio_summary(db)
+    summary = compose_portfolio_summary(db, usd_view=True)
     group = next((g for g in summary["groups"] if g["platform_id"] == platform_id), None)
-    return group or {
+    # Closed positions leave the holdings list but keep their P&L in this platform's Realized stat.
+    closed_realized = db.query(func.coalesce(func.sum(ClosedPosition.realized_pnl), 0)).filter(
+        ClosedPosition.platform_id == platform_id).scalar()
+    return {**group, "closed_realized_pnl": closed_realized} if group else {
         "platform_id": platform_id, "platform_name": platform.name,
-        "kind": platform.kind, "subtotal": 0, "holdings": [],
+        "kind": platform.kind, "subtotal": 0, "holdings": [], "closed_realized_pnl": closed_realized,
     }
 
 
@@ -563,13 +585,19 @@ def platform_detail(platform_id: int, db: Session = Depends(get_session)):
 
 @app.post("/portfolio-events", response_model=PortfolioEventOut, status_code=201, dependencies=[Depends(require_api_key)])
 def create_portfolio_event(payload: PortfolioEventCreate, db: Session = Depends(get_session)):
-    """Log a buy/sell/dividend event (INV-07, D-01).
+    """Log a dividend (INV-07, D-01). Buys and sells need a liquid account: they go through
+    POST /portfolio-events/funded-buy and /funded-sell, so this route returns 422 for them.
 
     event_type is validated to the {buy,sell,dividend} literal set at the schema
-    boundary (422 on anything else) BEFORE apply_add_portfolio_event runs the
-    recompute. The helper inserts the event, audits it, then recomputes the
-    holding's qty/avg_cost from the full ledger.
+    boundary (422 on anything else). The helper inserts the event, audits it, then
+    recomputes the holding's qty/avg_cost from the full ledger.
     """
+    if payload.event_type != "dividend":
+        raise HTTPException(
+            status_code=422,
+            detail="Buys and sells name an Investment liquid account: use POST /portfolio-events/funded-buy "
+                   "or /portfolio-events/funded-sell. This route logs dividends only.",
+        )
     try:
         ev = apply_add_portfolio_event(db, payload.model_dump(mode="json"))
     except ValueError as e:
@@ -598,6 +626,7 @@ def list_portfolio_events(platform_id: int, db: Session = Depends(get_session)):
     for ev, amount in rows:
         item = PortfolioEventOut.model_validate(ev)
         item.cash_amount = abs(amount) if amount is not None else None
+        item.filled_quantity = filled_quantity(ev)
         out.append(item)
     return out
 
@@ -615,16 +644,16 @@ def update_portfolio_event(event_id: int, payload: PortfolioEventUpdate, db: Ses
     except ValueError as e:
         db.rollback()
         raise HTTPException(status_code=422, detail=str(e))
+    out = PortfolioEventOut.model_validate(ev)  # before the commit: a sell edit may have closed, and deleted, the event
     db.commit()
-    db.refresh(ev)
     from backend.query import reset_engine
     reset_engine()
-    return ev
+    return out
 
 
 @app.delete("/portfolio-events/{event_id}", dependencies=[Depends(require_api_key)])
 def delete_portfolio_event(event_id: int, db: Session = Depends(get_session)):
-    """Delete a buy/sell/dividend event (and its linked cash leg); the holding is recomputed."""
+    """Delete a buy/sell/dividend/deposit event (and its linked cash leg); non-deposit deletes recompute the holding."""
     ev = db.get(PortfolioEvent, event_id)
     if ev is None:
         raise HTTPException(status_code=404, detail=f"Portfolio event {event_id} not found")
@@ -660,6 +689,7 @@ def create_funded_buy(payload: FundedBuyCreate, db: Session = Depends(get_sessio
         "cash_amount": float(payload.cash_amount), "cash_currency": payload.cash_currency,
         "event_currency": payload.event_currency, "date": payload.date,
         "notes": payload.notes, "asset_type": payload.asset_type,
+        "fee": float(payload.fee) if payload.fee else None, "fee_kind": payload.fee_kind,
     }
     try:
         result = apply_add_funded_buy(db, after)
@@ -683,6 +713,7 @@ def create_funded_sell(payload: FundedSellCreate, db: Session = Depends(get_sess
         "cash_amount": float(payload.cash_amount), "cash_currency": payload.cash_currency,
         "event_currency": payload.event_currency, "date": payload.date,
         "notes": payload.notes, "asset_type": payload.asset_type,
+        "fee": float(payload.fee) if payload.fee else None, "fee_kind": payload.fee_kind,
     }
     try:
         result = apply_add_funded_sell(db, after)
@@ -690,10 +721,79 @@ def create_funded_sell(payload: FundedSellCreate, db: Session = Depends(get_sess
         raise HTTPException(status_code=422, detail=str(e))
     db.commit()
     db.refresh(result["transaction"])
-    db.refresh(result["portfolio_event"])
+    closed = result["closed_position"]
+    if closed is None:  # a close deleted the event; there is nothing to refresh
+        db.refresh(result["portfolio_event"])
     from backend.query import reset_engine
     reset_engine()
-    return {"transaction_id": result["transaction"].id, "portfolio_event_id": result["portfolio_event"].id}
+    return {
+        "transaction_id": result["transaction"].id,
+        "portfolio_event_id": None if closed is not None else result["portfolio_event"].id,
+        "closed_position_id": closed.id if closed is not None else None,
+    }
+
+
+@app.get("/closed-positions", response_model=list[ClosedPositionOut], dependencies=[Depends(require_api_key)])
+def list_closed_positions(db: Session = Depends(get_session)):
+    """Realized P&L records of positions sold to zero, newest close first (quick 261107-nq6).
+
+    Keyed read for the Investments page. Not registered in backend/tools.py TOOLS:
+    chat sees only the total, through net_worth.
+    """
+    rows = (
+        db.query(ClosedPosition, Platform.name)
+        .outerjoin(Platform, Platform.id == ClosedPosition.platform_id)
+        .order_by(desc(ClosedPosition.close_date), desc(ClosedPosition.id))
+        .all()
+    )
+    return [
+        ClosedPositionOut(
+            id=c.id, ticker=c.ticker, platform_id=c.platform_id, platform_name=name,
+            realized_pnl=c.realized_pnl, close_date=c.close_date,
+        )
+        for c, name in rows
+    ]
+
+
+def _closed_out(db: Session, rec: ClosedPosition) -> ClosedPositionOut:
+    plat = db.get(Platform, rec.platform_id) if rec.platform_id is not None else None
+    return ClosedPositionOut(
+        id=rec.id, ticker=rec.ticker, platform_id=rec.platform_id,
+        platform_name=plat.name if plat is not None else None,
+        realized_pnl=rec.realized_pnl, close_date=rec.close_date,
+    )
+
+
+@app.put("/closed-positions/{closed_id}", response_model=ClosedPositionOut, dependencies=[Depends(require_api_key)])
+def update_closed_position(closed_id: int, payload: ClosedPositionUpdate, db: Session = Depends(get_session)):
+    """Correct a closed record's realized P&L or close date. Audited."""
+    rec = db.get(ClosedPosition, closed_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"Closed position {closed_id} not found")
+    before = _closed_snapshot(rec)
+    try:
+        apply_edit_closed_position(db, closed_id, payload.model_dump(mode="json", exclude_none=True), before)
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
+    out = _closed_out(db, rec)
+    db.commit()
+    return out
+
+
+@app.delete("/closed-positions/{closed_id}", dependencies=[Depends(require_api_key)])
+def delete_closed_position(closed_id: int, db: Session = Depends(get_session)):
+    """Delete a closed record; its realized P&L leaves the total. No cash transaction is touched. Audited."""
+    rec = db.get(ClosedPosition, closed_id)
+    if rec is None:
+        raise HTTPException(status_code=404, detail=f"Closed position {closed_id} not found")
+    try:
+        apply_delete_closed_position(db, closed_id, _closed_snapshot(rec))
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
+    db.commit()
+    return {"status": "deleted", "id": closed_id}
 
 
 @app.post("/holdings", response_model=HoldingOut, status_code=201, dependencies=[Depends(require_api_key)])
@@ -788,7 +888,7 @@ def investments_summary(db: Session = Depends(get_session)):
 
     refresh_all_prices(db, force=False)  # only stale tickers (D-09)
     db.commit()
-    return compose_portfolio_summary(db)
+    return compose_portfolio_summary(db, usd_view=True)
 
 
 @app.get("/investments/history", response_model=ValueHistoryResponse, dependencies=[Depends(require_api_key)])
@@ -885,6 +985,8 @@ def list_transactions(
     rows regardless of the requested `limit` (Pitfall 4) — the Records page
     pages via `offset`. Open read (no require_api_key), matching the
     unmodified endpoint's existing convention.
+    Each row also carries `amount_idr`, `fx_rate` and `fx_rate_date` from the
+    transactions_idr view (null when no rate within 7 days; D-16).
     """
     query = db.query(Transaction)
     if q:
@@ -938,12 +1040,34 @@ def list_transactions(
         # to an exclusive upper bound so a same-day timestamp isn't dropped
         # (mirrors resolve_period's [start, end) convention).
         query = query.filter(Transaction.date < end)
-    return (
+    rows = (
         query.order_by(desc(Transaction.date))
         .offset(offset)
         .limit(min(limit, 500))
         .all()
     )
+    # D-16: enrich the page with amount_idr / fx_rate / fx_rate_date.
+    from backend import fx
+
+    usd_days = [r.date.date() for r in rows if r.currency != fx.BASE]
+    if usd_days:
+        try:
+            fx.ensure_flow_rates(db, min(usd_days), max(usd_days))
+        except fx.FxUnavailable:
+            pass  # the view then yields NULL and the row shows "no rate yet", never a guessed rate
+    idr = {
+        m["id"]: m
+        for m in db.execute(
+            text("SELECT id, amount_idr, fx_rate, fx_rate_date FROM transactions_idr WHERE id = ANY(:ids)"),
+            {"ids": [r.id for r in rows]},
+        ).mappings()
+    } if rows else {}
+    return [
+        TransactionOut.model_validate(r).model_copy(update={
+            k: idr[r.id][k] if r.id in idr else None for k in ("amount_idr", "fx_rate", "fx_rate_date")
+        })
+        for r in rows
+    ]
 
 
 def _category_rollup(db: Session, rows: list, children: dict) -> list[dict]:
@@ -1016,16 +1140,39 @@ def cashflow_summary(
         # an unrecognized/malformed period is a client error, never a raw 500.
         # Named `exc` (not `e`) so it can't shadow the end-bound `e` above.
         raise HTTPException(status_code=422, detail=str(exc))
-    totals = {
-        "income": income_total(period, start_date, end_date)["total"],
-        "expense": spending_total(period, start_date, end_date)["total"],
-        "net": net_total(period, start_date, end_date)["net"],
-    }
-    by_cat_result = spending_by_category(period, start_date, end_date, limit=10)
+    # Dashboard policy (D-06): show the IDR part, report what could not be converted.
+    t = _flow_totals(s, e)
+    totals = {"income": float(t["income"]), "expense": float(t["expense"]), "net": float(t["net"])}
+    by_cat_result = _spending_by_category(s, e, 10)
     by_category = _category_rollup(db, by_cat_result["rows"], by_cat_result["children"])
     accounts = account_balances(s, e)["rows"]
-    trend = monthly_trend(6)["rows"]
-    return CashflowSummary(totals=totals, by_category=by_category, accounts=accounts, trend=trend)
+    trend = _monthly_trend(6)["rows"]
+    return CashflowSummary(
+        totals=totals, by_category=by_category, accounts=accounts, trend=trend,
+        unconverted_count=t["unconverted_count"], unconverted_usd=float(t["unconverted_usd"]),
+        currency="IDR")
+
+
+@app.get("/fx/rate", dependencies=[Depends(require_api_key)])
+def fx_rate(currency: str = "USD", on: str | None = None, db: Session = Depends(get_session)):
+    """Cached ECB rate for `currency`->IDR on a date (MOVE-04, D-09).
+
+    A display hint only, for the implied-vs-ECB line next to a two-amount move.
+    Cache only: never the vendor, never a default rate. A date with no cache row
+    within 7 days answers rate/rate_date null; a weekend carries Friday's
+    rate_date back.
+    """
+    from backend import fx
+    try:
+        day = date.fromisoformat(on) if on else fx._jakarta_today()
+    except ValueError:
+        raise HTTPException(status_code=422, detail="on must be a YYYY-MM-DD date")
+    found = fx.cached_rate_within(db, currency, day, 7)
+    return {
+        "currency": currency.strip().upper(), "on": day.isoformat(),
+        "rate": None if found is None else str(found[0]),
+        "rate_date": None if found is None else found[1].isoformat(),
+    }
 
 
 @app.get("/net-worth", response_model=NetWorth, dependencies=[Depends(require_api_key)])
@@ -1048,13 +1195,15 @@ def net_worth_endpoint(db: Session = Depends(get_session)):
 def networth_history_endpoint(months: int = 72, db: Session = Depends(get_session)):
     """Composed monthly net-worth series (NWH-02) — keyed read, computes on read.
 
-    Nothing is persisted (D-03): every call re-composes Phase 20's liquid
-    series and Phase 21's investment series fresh from one session. Every
-    row carries both a liquid and an investment sub-object, honest or not, so
-    Phase 23's split view can draw either half alone (SC4/NWH-06). `months`
-    outside 1-600 raises ValueError in monthly_net_worth_series, which maps to
-    422 here, never a raw 500. A sparse honest_months list is the correct
-    honest answer on today's data (D-05), not a defect.
+    Nothing is persisted (D-03): every call re-composes the liquid series
+    (a plain per-account sum of each month's records) and the investment
+    series (carried forward from its last known month) fresh from one
+    session. Every row carries both a liquid and an investment sub-object,
+    honest or not, so Phase 23's split view can draw either half alone
+    (SC4/NWH-06). `months` outside 1-600 raises ValueError in
+    monthly_net_worth_series, which maps to 422 here, never a raw 500. A row
+    is blank only before the first record or investment value, or when an FX
+    rate is missing.
     """
     try:
         result = monthly_net_worth_series(months=months, db=db)
@@ -1065,21 +1214,14 @@ def networth_history_endpoint(months: int = 72, db: Session = Depends(get_sessio
 
 @app.post("/transactions", response_model=TransactionOut, status_code=201, dependencies=[Depends(require_api_key)])
 def create_transaction(payload: TransactionCreate, db: Session = Depends(get_session)):
-    acc = _get_or_create_account(db, payload.account, payload.currency)
-    tx = Transaction(
-        date=payload.date,
-        amount=payload.amount,
-        currency=payload.currency,
-        category=payload.category,
-        raw_category=payload.category,
-        category_id=resolve_category_id(db, payload.category),  # D-08 dual-write
-        merchant=payload.merchant,
-        notes=payload.notes,
-        account_id=acc.id,
-        is_transfer=payload.is_transfer,
-    )
-    db.add(tx)
-    db.commit()
+    after = payload.model_dump(mode="json")
+    after["amount"] = str(payload.amount)  # keep the exact Decimal (json mode gives a float)
+    try:
+        tx = apply_add_transaction(db, after)
+        db.commit()
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
     db.refresh(tx)
     # New data — invalidate the cached query engine (currency/date context)
     from backend.query import reset_engine
@@ -1248,10 +1390,15 @@ def create_transfer(payload: TransferCreate, db: Session = Depends(get_session))
     }
     leg_b_after = {
         "account": payload.to_account, "amount": str(abs(payload.amount)),
-        "currency": payload.currency, "date": payload.date, "notes": payload.notes,
+        # With a to_amount the leg-B currency is the destination account's, not payload.currency.
+        "currency": payload.currency if payload.to_amount is None else None,
+        "date": payload.date, "notes": payload.notes,
     }
     try:
-        leg_a, leg_b = apply_add_transfer(db, leg_a_after, leg_b_after)
+        leg_a, leg_b = apply_add_transfer(
+            db, leg_a_after, leg_b_after,
+            to_amount=None if payload.to_amount is None else str(payload.to_amount),
+        )
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     db.commit()
@@ -1260,36 +1407,6 @@ def create_transfer(payload: TransferCreate, db: Session = Depends(get_session))
     from backend.query import reset_engine
     reset_engine()
     return {"leg_a_id": leg_a.id, "leg_b_id": leg_b.id, "transfer_pair_id": leg_a.transfer_pair_id}
-
-
-@app.post("/transactions/investment-transfer", status_code=201, dependencies=[Depends(require_api_key)])
-def create_investment_transfer(payload: InvestmentTransferCreate, db: Session = Depends(get_session)):
-    """Direct (non-agent) liquid->investment funding transfer (CHAT-09/XFER-02).
-
-    Cash leg debits the liquid source account; the investment side is a
-    'deposit' PortfolioEvent using the documented CASH sentinel (ticker=CASH,
-    asset_type=cash, price=1, quantity=amount — matches the existing
-    asset_type=='cash' 1:1 valuation convention).
-    """
-    cash_leg = {
-        "account": payload.from_account, "amount": str(-abs(payload.amount)),
-        "currency": payload.currency, "date": payload.date, "notes": payload.notes,
-    }
-    event = {
-        "ticker": "CASH", "event_type": "deposit", "quantity": str(abs(payload.amount)),
-        "price": "1", "platform_id": payload.platform_id, "currency": payload.currency,
-        "date": payload.date, "asset_type": "cash",
-    }
-    try:
-        tx, ev = apply_add_investment_transfer(db, cash_leg, event)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-    db.commit()
-    db.refresh(tx)
-    db.refresh(ev)
-    from backend.query import reset_engine
-    reset_engine()
-    return {"transaction_id": tx.id, "portfolio_event_id": ev.id}
 
 
 @app.get("/categories", response_model=list[CategoryNode], dependencies=[Depends(require_api_key)])
@@ -1813,7 +1930,7 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
             apply_delete_holding(db, row.get("id"), before)
 
         elif operation in (
-            "add_transfer", "add_investment_transfer", "add_funded_buy",
+            "add_transfer", "add_funded_buy",
             "add_funded_sell", "add_balance_adjustment",
         ):
             # Malformed/mismatched payload keys must surface as a clean 422,
@@ -1821,10 +1938,7 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
             # decision 4) — the confirm endpoint already maps ValueError to 422.
             try:
                 if operation == "add_transfer":
-                    apply_add_transfer(db, after["leg_a"], after["leg_b"])
-
-                elif operation == "add_investment_transfer":
-                    apply_add_investment_transfer(db, after["cash_leg"], after["event"])
+                    apply_add_transfer(db, after["leg_a"], after["leg_b"], to_amount=after.get("to_amount"))
 
                 elif operation == "add_funded_buy":
                     apply_add_funded_buy(db, after)
@@ -1904,10 +2018,12 @@ def skip_proposal_row(
     req: RowSkipRequest,
     db: Session = Depends(get_session),
 ):
-    """Mark a pending transaction-batch row skipped (or not). Approver key only.
+    """Skip a pending transaction-batch row and/or set its category. Approver key only.
 
-    Owner-only: MCP cannot skip. Phase 33 Inbox calls this through the proxy
-    allowlist. Skips are not carried across a replace (D-16).
+    Owner-only: MCP cannot skip or edit (the route stays behind require_approver_key).
+    Phase 33 Inbox calls this through the proxy allowlist. Skips are not carried
+    across a replace (D-16). A category must be an existing one (any case, stored
+    canonical); null or blank clears it. Editing drops the row's category_suggested.
     """
     proposal = db.get(Proposal, proposal_id, with_for_update=True)
     if proposal is None:
@@ -1918,7 +2034,22 @@ def skip_proposal_row(
     rows = proposal.payload.get("rows", [])
     if not 0 <= index < len(rows):
         raise HTTPException(status_code=422, detail="Row index out of range")
-    rows[index]["skip"] = req.skip
+    if req.skip is None and "category" not in req.model_fields_set:
+        raise HTTPException(status_code=422, detail="Send skip or category")
+    if req.skip is not None:
+        rows[index]["skip"] = req.skip
+    if "category" in req.model_fields_set:
+        after = rows[index].get("after")
+        if not isinstance(after, dict):
+            raise HTTPException(status_code=422, detail="Row has no editable fields")
+        name = (req.category or "").strip()
+        if name:
+            _, cats = _load_refs(db)
+            if name.casefold() not in cats:
+                raise HTTPException(status_code=422, detail="Unknown category")
+            name = cats[name.casefold()]
+        after["category"] = name or None
+        rows[index].pop("category_suggested", None)  # row level, beside skip; never in `after` (AuditLog)
     flag_modified(proposal, "payload")
     db.commit()
     return proposal

@@ -5,6 +5,7 @@ import Link from "next/link";
 
 import { tokens, btn, btnGhost } from "../styles";
 import ProposalDiff from "../components/ProposalDiff";
+import TransferLine, { legCurrency } from "../components/TransferLine";
 import type { DiffRow } from "../components/ProposalDiff";
 import { hhmm } from "../lib/inbox";
 import type { UploadMeta } from "./UploadCard";
@@ -172,6 +173,12 @@ export default function ProposalCard({
   const expiresAt = proposal.expiresAt;
   const timeExpired = expiresAt !== null && now > expiresAt;
   const rows = proposal.payload?.rows ?? [];
+  // Only a transfer whose legs differ in currency swaps the diff for the transfer line (D-04).
+  const legs = rows[0]?.after as { leg_a?: Record<string, unknown>; leg_b?: Record<string, unknown> } | null | undefined;
+  const xferLegs =
+    proposal.operation === "add_transfer" && legs?.leg_a && legs.leg_b && legCurrency(legs.leg_a) !== legCurrency(legs.leg_b)
+      ? legs
+      : null;
   const unapprovableReason: string | null =
     rows.length === 0
       ? "Nothing to review: this proposal has no details, so it can't be approved. Reject it and ask again."
@@ -309,7 +316,11 @@ export default function ProposalCard({
         {step ? `${step}. ` : ""}Proposed {(proposal.operation ?? "write").replace(/_/g, " ")}
       </div>
 
-      {rows.length > 0 && <ProposalDiff rows={rows} dimColor={tokens.color.muted3} />}
+      {xferLegs ? (
+        <TransferLine legA={xferLegs.leg_a} legB={xferLegs.leg_b} showRate />
+      ) : (
+        rows.length > 0 && <ProposalDiff rows={rows} dimColor={tokens.color.muted3} />
+      )}
 
       {pending && !readOnly && unapprovableReason && (
         <div id={noticeId} style={{ ...small, marginTop: 8 }}>

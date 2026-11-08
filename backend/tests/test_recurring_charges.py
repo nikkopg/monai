@@ -341,7 +341,10 @@ def test_exclusion_structural(seeded):
 
 
 def test_limit_and_months_clamped(seeded):
+    import inspect
+
     from backend.tools import recurring_charges
+    assert inspect.signature(recurring_charges).parameters["limit"].default == 50  # POL-01: every group by default
     assert recurring_charges(months=0)["months"] == 3
     assert recurring_charges(months=999)["months"] == 60
     assert len(recurring_charges(limit=0)["groups"]) <= 1
@@ -361,3 +364,46 @@ def test_signature_is_db_free():
     sig = inspect.signature(recurring_charges)
     assert list(sig.parameters) == ["months", "limit"]
     assert all(p.annotation is int for p in sig.parameters.values())
+
+
+# --------------------------------------------------------------------------
+# Currency-aware grouping (CONV-05, D-10): rows may carry currency + amount_idr
+# --------------------------------------------------------------------------
+
+def _with_fx(rows, currency, idr_amounts=None):
+    """Append (currency, amount_idr) to 8-tuples; amount_idr defaults to the native amount."""
+    if idr_amounts is None:
+        return [(*r, currency, r[2]) for r in rows]
+    return [(*r, currency, -a) for r, a in zip(rows, idr_amounts)]
+
+
+def _usd_sub(**kw):
+    rows = _series([30, 30, 30], 9.99, merchant=kw.pop("merchant", "zz43-sub"), **kw)
+    return _with_fx(rows, "USD", [159840.00, 160839.00, 161838.00, 162837.00])
+
+
+def test_usd_subscription_drift_is_one_group():
+    g = _one(_usd_sub())
+    assert g["currency"] == "USD"
+    assert g["typical_amount"] == 9.99
+    assert g["typical_amount_idr"] == 161338.5
+    assert g["est_monthly"] == 161338.5
+    assert g["cadence"] == "monthly"
+
+
+def test_usd_and_idr_same_merchant_never_cluster():
+    idr = _with_fx(_series([30, 30, 30], 150000, merchant="zz43-sub"), "IDR")
+    groups = _recurring_groups(_usd_sub() + idr, TODAY)
+    assert sorted(g["currency"] for g in groups) == ["IDR", "USD"]
+
+
+def test_eight_tuple_rows_default_to_idr():
+    g = _one(_series([30, 30, 30], 50000))
+    assert g["currency"] == "IDR"
+    assert g["typical_amount_idr"] == g["typical_amount"]
+
+
+def test_category_cluster_label_names_currency():
+    rows = _series([30, 30, 30], 9.99, merchant=None, cat=7, cat_name="zz43-cat")
+    g = _one(_with_fx(rows, "USD", [159840.00, 160839.00, 161838.00, 162837.00]))
+    assert g["key_type"] == "category" and "USD" in g["label"]

@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 
 import { tokens, card, input, btn, label } from "../styles";
+import { fmtRateCompare, impliedRate } from "../lib/money";
+import { useEcbRate } from "../lib/ecb";
 
 // Categories became first-class hierarchy rows in Phase 11: GET /categories
 // returns a tree, and a name the backend does not recognise resolves to
@@ -51,9 +53,10 @@ export type Tx = {
   account_id: number | null;
   notes: string | null;
   is_transfer: boolean;
+  currency?: string | null; // absent means IDR
 };
 
-export type AccountOption = { id: number; name: string };
+export type AccountOption = { id: number; name: string; currency?: string | null };
 
 type Props = {
   editingTx: Tx | null;
@@ -104,6 +107,12 @@ export default function TransactionModal({
   onSaved,
 }: Props) {
   const isEdit = editingTx != null;
+  // The account decides the currency (Phase 42); the modal only displays it
+  // and never sends one. Absent account currency means IDR.
+  const acctOf = (id: string) => accounts.find((a) => String(a.id) === id);
+  const ccyOf = (id: string) => acctOf(id)?.currency ?? "IDR";
+  // To lists every account except From, in any currency (Phase 45 D-10).
+  const toOptionsFor = (fromId: string) => accounts.filter((a) => String(a.id) !== fromId);
   // Editing an existing transfer leg locks the segmented control to
   // "transfer" and keeps the row on the legacy single-leg PUT path — see the
   // segmented control and handleSubmit below (D-03 / RESEARCH Pitfall 1 /
@@ -125,7 +134,6 @@ export default function TransactionModal({
   const [amount, setAmount] = useState(
     editingTx ? String(Math.abs(editingTx.amount)) : ""
   );
-  const [currency, setCurrency] = useState("IDR"); // D-05, no FX/enum
   // Category is a select sourced from the GET /categories tree.
   // `categorySelection` holds the chosen <select> value: "" -> (no category),
   // otherwise the exact stored category name.
@@ -149,10 +157,14 @@ export default function TransactionModal({
   const [fromAccountId, setFromAccountId] = useState<string>(
     accounts[0] ? String(accounts[0].id) : ""
   );
-  const [toAccountId, setToAccountId] = useState<string>(
-    accounts[1] ? String(accounts[1].id) : accounts[0] ? String(accounts[0].id) : ""
-  );
+  const [toAccountId, setToAccountId] = useState<string>(() => {
+    const first = toOptionsFor(accounts[0] ? String(accounts[0].id) : "")[0];
+    return first ? String(first.id) : "";
+  });
   const [notes, setNotes] = useState(editingTx?.notes ?? "");
+  // The amount received, only when a transfer crosses currencies (D-10). Typed
+  // by the owner, never derived from the other amount or from a rate.
+  const [toAmount, setToAmount] = useState("");
 
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -205,6 +217,33 @@ export default function TransactionModal({
   // (D-03 / UI-SPEC Interaction States #7).
   const showFromTo = segment === "transfer" && !isEdit;
 
+  const toOptions = toOptionsFor(fromAccountId);
+  const noToAccount = showFromTo && toOptions.length === 0;
+  const crossCcy = showFromTo && !noToAccount && ccyOf(fromAccountId) !== ccyOf(toAccountId);
+  // Same currency again: the second amount goes away, so it cannot be posted.
+  useEffect(() => {
+    if (!crossCcy) setToAmount("");
+  }, [crossCcy]);
+  const sentN = parseFloat(amount);
+  const recvN = parseFloat(toAmount);
+  const recvOk = recvN > 0 && Number.isFinite(recvN);
+  const fromCcy = ccyOf(fromAccountId);
+  const toCcy = ccyOf(toAccountId);
+  // Implied rate only for one IDR and one USD amount; display only, never sent.
+  const idrAmt = fromCcy === "IDR" ? sentN : recvN;
+  const usdAmt = fromCcy === "IDR" ? recvN : sentN;
+  const implied =
+    crossCcy && recvOk && sentN > 0 && Number.isFinite(sentN) && fromCcy !== toCcy && [fromCcy, toCcy].sort().join() === "IDR,USD"
+      ? impliedRate(idrAmt, usdAmt)
+      : null;
+  const ecb = useEcbRate("USD", date.slice(0, 10), implied !== null);
+  const chipId = showFromTo ? fromAccountId : accountId;
+  const chipCcy = isEdit
+    ? editingTx!.currency ?? "IDR"
+    : acctOf(chipId)
+    ? ccyOf(chipId)
+    : "—";
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -226,7 +265,7 @@ export default function TransactionModal({
           from_account: fromAcc?.name ?? "",
           to_account: toAcc?.name ?? "",
           amount: Math.abs(parseFloat(amount)),
-          currency,
+          ...(crossCcy ? { to_amount: Math.abs(recvN) } : {}),
           date: new Date(date).toISOString(),
           notes: notes || null,
         };
@@ -239,6 +278,7 @@ export default function TransactionModal({
           onSaved();
           if (addAnotherRef.current) {
             setAmount("");
+            setToAmount("");
             setNotes("");
           } else {
             onClose();
@@ -277,7 +317,6 @@ export default function TransactionModal({
         category: categoryValue,
         merchant: merchant || null,
         notes: notes || null,
-        currency,
         // Explicit boolean — the old checkbox UI is removed (D-03). Only the
         // locked-transfer-leg edit sends true; everywhere else it's false.
         is_transfer: locked,
@@ -303,7 +342,7 @@ export default function TransactionModal({
       if (r.ok) {
         onSaved();
         if (!isEdit && addAnotherRef.current) {
-          // Sticky fields (D-06): segment, accountId, date, currency stay put.
+          // Sticky fields (D-06): segment, accountId, date stay put.
           setAmount("");
           setCategorySelection("");
           setMerchant("");
@@ -431,30 +470,37 @@ export default function TransactionModal({
             </div>
             <div>
               <label style={label} htmlFor="tx-amount">
-                Amount
+                {crossCcy ? `Amount sent (${fromCcy})` : "Amount"}
               </label>
-              <input
-                id="tx-amount"
-                style={input}
-                type="number"
-                step="any"
-                required
-                value={amount}
-                placeholder="25000"
-                onChange={(e) => setAmount(e.target.value)}
-              />
-            </div>
-            <div>
-              <label style={label} htmlFor="tx-currency">
-                Currency
-              </label>
-              <input
-                id="tx-currency"
-                style={input}
-                type="text"
-                value={currency}
-                onChange={(e) => setCurrency(e.target.value)}
-              />
+              <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
+                <input
+                  id="tx-amount"
+                  style={{ ...input, flex: 1, minWidth: 0 }}
+                  type="number"
+                  step="any"
+                  required
+                  value={amount}
+                  placeholder="25000"
+                  onChange={(e) => setAmount(e.target.value)}
+                />
+                <span
+                  aria-label="Currency"
+                  style={{
+                    border: input.border,
+                    borderRadius: tokens.radius.sm,
+                    padding: "0 16px",
+                    display: "flex",
+                    alignItems: "center",
+                    background: tokens.color.sidebar,
+                    fontSize: 14,
+                    fontWeight: 600,
+                    color: tokens.color.muted3,
+                    flexShrink: 0,
+                  }}
+                >
+                  {chipCcy}
+                </span>
+              </div>
             </div>
             {categoryVisible && (
               <div>
@@ -486,7 +532,14 @@ export default function TransactionModal({
                     id="tx-from-account"
                     style={input}
                     value={fromAccountId}
-                    onChange={(e) => setFromAccountId(e.target.value)}
+                    onChange={(e) => {
+                      const next = e.target.value;
+                      setFromAccountId(next);
+                      const opts = toOptionsFor(next);
+                      if (!opts.some((a) => String(a.id) === toAccountId)) {
+                        setToAccountId(opts[0] ? String(opts[0].id) : "");
+                      }
+                    }}
                   >
                     {accounts.map((a) => (
                       <option key={a.id} value={a.id}>
@@ -499,18 +552,67 @@ export default function TransactionModal({
                   <label style={label} htmlFor="tx-to-account">
                     To account
                   </label>
-                  <select
-                    id="tx-to-account"
-                    style={input}
-                    value={toAccountId}
-                    onChange={(e) => setToAccountId(e.target.value)}
-                  >
-                    {accounts.map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.name}
-                      </option>
-                    ))}
-                  </select>
+                  {noToAccount ? (
+                    <div style={{ fontSize: 12, color: tokens.color.terracottaText }}>
+                      No other account to transfer to.
+                    </div>
+                  ) : (
+                    <select
+                      id="tx-to-account"
+                      style={input}
+                      value={toAccountId}
+                      onChange={(e) => setToAccountId(e.target.value)}
+                    >
+                      {toOptions.map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  {crossCcy && (
+                    <div style={{ marginTop: 10 }}>
+                      <label style={label} htmlFor="tx-to-amount">
+                        Amount received ({toCcy})
+                      </label>
+                      <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
+                        <input
+                          id="tx-to-amount"
+                          style={{ ...input, flex: 1, minWidth: 0 }}
+                          type="number"
+                          step="any"
+                          required
+                          value={toAmount}
+                          placeholder={toCcy === "USD" ? "100.00" : "1631000"}
+                          onChange={(e) => setToAmount(e.target.value)}
+                        />
+                        <span
+                          aria-label="Received currency"
+                          style={{
+                            border: input.border,
+                            borderRadius: tokens.radius.sm,
+                            padding: "0 16px",
+                            display: "flex",
+                            alignItems: "center",
+                            background: tokens.color.sidebar,
+                            fontSize: 14,
+                            fontWeight: 600,
+                            color: tokens.color.muted3,
+                            flexShrink: 0,
+                          }}
+                        >
+                          {toCcy}
+                        </span>
+                      </div>
+                      <div
+                        aria-live="polite"
+                        style={{ marginTop: 4, fontSize: 12, color: tokens.color.muted3 }}
+                      >
+                        {implied !== null &&
+                          fmtRateCompare(implied, ecb.rate, ecb.rateDate, ecb.status)}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </>
             ) : (
@@ -584,7 +686,7 @@ export default function TransactionModal({
             <button
               style={btn}
               type="submit"
-              disabled={saving}
+              disabled={saving || noToAccount || (crossCcy && !recvOk)}
               onClick={() => {
                 addAnotherRef.current = false;
               }}
@@ -601,7 +703,7 @@ export default function TransactionModal({
               <button
                 style={btn}
                 type="submit"
-                disabled={saving}
+                disabled={saving || noToAccount || (crossCcy && !recvOk)}
                 onClick={() => {
                   addAnotherRef.current = true;
                 }}

@@ -5,12 +5,13 @@ No LlamaIndex import at module level (query.py and main.py load at startup,
 llama stays lazy); later plans add the result cap and the tail reminder here.
 
 tools_for_turn decides, in code and with no extra LLM call, which tools a turn
-carries: the 18 reads always, the 16 propose_* writes only when the turn shows
+carries: the 18 reads always, the 15 propose_* writes only when the turn shows
 write intent (LOOP-01). A smaller tool block is cheaper on every iteration and
 the small default model picks from a shorter list more reliably.
 """
 
 import functools
+import json
 import re
 
 # D-04 list, finalised from the eval questions. Biased towards false positives:
@@ -71,6 +72,34 @@ def cap_for_llm(raw, cap: int = CAP_CHARS) -> str | None:
     note = "partial result; narrow the query (period, category, limit) for the rest"
     out["note"] = f"{raw['note']} ({note})" if raw.get("note") else note  # keep the tool's own caveat
     return str(out)
+
+
+def _recurring_line(g: dict, base: str) -> str:
+    """One readable line per recurring group, built here so the model copies it, not recomputes it."""
+    cur = g.get("currency", base)
+    typical = f"{g['typical_amount']:,.0f}" if cur == "IDR" else f"{g['typical_amount']:,.2f}"
+    # A monthly charge in the base currency costs its typical amount: one figure, or the model keeps only the typical.
+    same = g["cadence"] == "monthly" and cur == base
+    parts = [f"{g['cadence']}", f"{g['est_monthly']:,.0f} {base} a month", *([] if same else [f"typically {typical} {cur}"]),
+             f"{g['confidence']} confidence", g["status"], f"last {g['last_date']}"]
+    if g.get("next_expected"):
+        parts.append(f"overdue since {g['next_expected']}" if g.get("overdue")
+                     else f"next expected {g['next_expected']}")
+    return f"{json.dumps(g['label'], ensure_ascii=False)}: " + ", ".join(parts)  # quoted: the label is untrusted text
+
+
+def recurring_for_llm(raw):
+    """The LLM-only view of recurring_charges: a line per group, no evidence rows.
+
+    12 evidence rows per group made 20 groups overflow the cap, which trimmed the list to a few
+    before the model ever answered. The raw result (SSE trace, chips, MCP) keeps the full groups.
+    """
+    if not isinstance(raw, dict) or not raw.get("groups"):
+        return raw
+    base = raw.get("currency", "IDR")
+    # In the result, beside the lines: live, the model still summarized lapsed groups under the docstring alone.
+    rule = f"Write out all {len(raw['groups'])} lines, lapsed ones too, each with its monthly cost. Never summarize a group."
+    return {**raw, "groups": [_recurring_line(g, base) for g in raw["groups"]], "answer_rule": rule}
 
 
 def tools_for_turn(

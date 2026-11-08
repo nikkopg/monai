@@ -518,61 +518,24 @@ def test_anchor_parity_2026_09_03(db_session):
     )
 
 
-def test_honesty_model_matches_current_adjustment_history(db_session):
-    """RECON-03 / D-07 (user decisions 2 and 3, 2026-09-24), relaxed by
-    23.1 D-03/D-05 on the user's decision of 2026-09-24: every month from
-    the ledger start up to (not including) the liquid anchor is now honest
-    on the "ledger_plus_corrections" basis, superseding Phase 20's
-    `no_opening_anchor` gate for that stretch. Independently derives the
-    expected adjustment/window set from the live category='Adjustment'
-    rows, then applies the relaxed rule against those independently-derived
-    windows — never a literal honest-month list, an exact adjustment count,
-    or a pinned first-anchor date, all of which break the moment a new
-    Adjustment (a D-DEF-04 back-dated anchor included) or a new calendar
-    month lands. The honest-month list is expected to roll forward with the
-    calendar (decision 2); it is compared against a value re-derived from
-    live data every run, never hardcoded.
+def _month_end(month_str: str) -> date:
+    year, month = (int(p) for p in month_str.split("-"))
+    return date(year + (month // 12), (month % 12) + 1, 1) - timedelta(days=1)
 
-    False-pass guard: the window boundaries themselves — not just a
-    hardcoded month count — are asserted against the independently-queried
-    adjustment dates, so an off-by-one window boundary cannot "pass" merely
-    because the final honest-month count happens to match. No Adjustment
-    AMOUNT is asserted anywhere in this test: revised decision 1 rewrites
-    Adjustment amounts on a back-dated anchor, so an amount assertion here
-    would be a second, unrelated brittleness.
+
+def test_every_month_from_ledger_start_has_a_liquid_point(db_session):
+    """Each month's liquid point is the plain per-account sum of the records,
+    with no adjustment required. Over a window reaching one month before the
+    ledger start, a month-end before the first liquid transaction gaps
+    `pre_ledger`; every other month is honest or gaps `fx_unavailable`.
+
+    For IDR accounts the expected figure is re-derived here from whole-ledger
+    SUMs: the account's transactions up to the month-end, plus its recovered
+    corrections while the month-end is still before the account's first
+    Adjustment (D-03). Every figure comes from the live rows at run time;
+    no amount, name or date is pinned.
     """
-    from backend.reconstruction import _adjustment_windows, monthly_liquid_series
-
-    live_adjustments = db_session.execute(
-        text(
-            "SELECT a.name, t.date::date FROM transactions t "
-            "JOIN accounts a ON a.id = t.account_id "
-            "WHERE a.type = 'liquid' AND t.category = 'Adjustment' "
-            "ORDER BY a.name, t.date"
-        )
-    ).all()
-
-    # Floor, not exact count (decision 3): at least one liquid Adjustment
-    # exists, or every window below is vacuously empty. No account name, date
-    # or amount is pinned here — those are the user's personal data.
-    assert live_adjustments, "no liquid Adjustment rows — window check would be vacuous"
-
-    # Windows, exact and derived independently: account names come from
-    # their own query, never backend.reconstruction's own SQL constant.
-    liquid_names = [
-        r[0] for r in db_session.execute(text("SELECT name FROM accounts WHERE type = 'liquid'")).all()
-    ]
-    dates_by_account: dict[str, list] = {name: [] for name in liquid_names}
-    for name, d in live_adjustments:
-        dates_by_account.setdefault(name, []).append(d)
-    expected_windows: dict[str, list[tuple]] = {
-        name: [(lo, dates[i + 1] if i + 1 < len(dates) else None) for i, lo in enumerate(dates)]
-        for name, dates in dates_by_account.items()
-    }
-
-    conn = db_session.connection()
-    actual_windows = _adjustment_windows(conn)
-    assert actual_windows == expected_windows, (actual_windows, expected_windows)
+    from backend.reconstruction import GAP_REASONS, monthly_liquid_series
 
     earliest_liquid_tx = db_session.execute(
         text(
@@ -580,74 +543,60 @@ def test_honesty_model_matches_current_adjustment_history(db_session):
             "JOIN accounts a ON a.id = t.account_id WHERE a.type = 'liquid'"
         )
     ).scalar()
-    current_month = date.today().strftime("%Y-%m")
-
-    # Data-derived window: exactly one pre-ledger month included, never a
-    # literal month count.
     today = date.today()
     months = (today.year - earliest_liquid_tx.year) * 12 + (today.month - earliest_liquid_tx.month) + 2
 
-    # expected_liquid_anchor, independently derived (23.1 D-03, CR-01): MAX
-    # over the FIRST adjustment date of every live liquid account that HAS
-    # one, or None when no liquid account has ever been adjusted — an
-    # unanchored account never extends the relaxed regime forever. Mirrors
-    # backend.reconstruction._regime_cutoff without importing it.
-    first_dates = [dates_by_account[name][0] for name in liquid_names if dates_by_account.get(name)]
-    expected_liquid_anchor: date | None = max(first_dates) if first_dates else None
+    idr_accounts = db_session.execute(
+        text(
+            "SELECT a.id, a.name, MIN(t.date) FILTER (WHERE t.category = 'Adjustment')::date "
+            "FROM accounts a LEFT JOIN transactions t ON t.account_id = a.id "
+            "WHERE a.type = 'liquid' AND a.currency = 'IDR' GROUP BY a.id, a.name"
+        )
+    ).all()
 
-    def month_end(month_str: str) -> date:
-        year, month = (int(p) for p in month_str.split("-"))
-        next_month_first = date(year + (month // 12), (month % 12) + 1, 1)
-        return next_month_first - timedelta(days=1)
+    def scalar(sql: str, **params) -> Decimal:
+        return Decimal(str(db_session.execute(text(sql), params).scalar()))
 
-    def expected_honest(month: str) -> tuple[bool, str | None]:
-        m_end = month_end(month)
-        if earliest_liquid_tx is None or m_end < earliest_liquid_tx:
-            return False, None
-        if expected_liquid_anchor is not None and m_end <= expected_liquid_anchor:
-            return True, "ledger_plus_corrections"
-        for account_windows in expected_windows.values():
-            if not any(lo < m_end for lo, _hi in account_windows):
-                return False, None
-        for account_windows in expected_windows.values():
-            contained = False
-            for lo, hi in account_windows:
-                if hi is None:
-                    if lo < m_end:
-                        contained = contained or (month == current_month)
-                else:
-                    if lo < m_end <= hi:
-                        contained = True
-            if not contained:
-                return False, None
-        return True, None
-
-    result = monthly_liquid_series(months=months)
-    expected = {row["month"]: expected_honest(row["month"]) for row in result["rows"]}
-    expected_honest_months = [m for m, (h, _basis) in expected.items() if h]
-    assert result["honest_months"] == expected_honest_months, (
-        result["honest_months"],
-        expected_honest_months,
-    )
-    for row in result["rows"]:
-        _exp_honest, exp_basis = expected[row["month"]]
-        assert row["valuation_basis"] == exp_basis, (row["month"], row["valuation_basis"], exp_basis)
-
-    # Non-vacuity: at least one "ledger_plus_corrections" row, at least one
-    # pre_ledger row, and (unchanged) the current month is honest when every
-    # account has an adjustment.
-    bases = [row["valuation_basis"] for row in result["rows"] if row["honest"]]
-    assert "ledger_plus_corrections" in bases, bases
-    gap_reasons = [row["gap_reason"] for row in result["rows"] if not row["honest"]]
-    assert "pre_ledger" in gap_reasons, gap_reasons
-    if all(dates_by_account[name] for name in liquid_names):
-        assert current_month in result["honest_months"], result["honest_months"]
+    rows = monthly_liquid_series(months=months)["rows"]
+    pre_ledger_seen = honest_seen = False
+    for row in rows:
+        m_end = _month_end(row["month"])
+        end_excl = m_end + timedelta(days=1)
+        if m_end < earliest_liquid_tx:
+            assert (row["honest"], row["gap_reason"]) == (False, "pre_ledger"), row
+            pre_ledger_seen = True
+            continue
+        if not row["honest"]:
+            assert row["gap_reason"] == "fx_unavailable", row
+            continue
+        honest_seen = True
+        assert row["gap_reason"] is None and row["valuation_basis"] == "ledger_plus_corrections", row
+        for acc_id, name, first_adjustment in idr_accounts:
+            expected = scalar(
+                "SELECT COALESCE(SUM(amount), 0) FROM transactions "
+                "WHERE account_id = :id AND date < :end_excl",
+                id=acc_id,
+                end_excl=end_excl,
+            )
+            if first_adjustment is None or m_end < first_adjustment:
+                expected += scalar(
+                    "SELECT COALESCE(SUM(amount), 0) FROM net_worth_corrections "
+                    "WHERE source = :source AND orig_account = :name AND date < :end_excl",
+                    source=_SOURCE,
+                    name=name,
+                    end_excl=end_excl,
+                )
+            assert row["liquid_by_account"][name] == expected.quantize(Decimal("0.01")), (
+                row["month"], name,
+            )
+    assert set(r["gap_reason"] for r in rows if not r["honest"]) <= set(GAP_REASONS)
+    assert pre_ledger_seen and honest_seen, (pre_ledger_seen, honest_seen)
 
 
 def test_gap_reason_never_fabricated(db_session):
     """RECON-03 / D-09. Every unreconciled month is a real, explicit null —
     never a guess, an interpolation, or a value carried forward from the
-    prior month — and every gap_reason is one of the three documented enum
+    prior month — and every gap_reason is one of the documented GAP_REASONS
     strings."""
     from backend.reconstruction import GAP_REASONS, monthly_liquid_series
 
@@ -670,7 +619,7 @@ def test_gap_reason_never_fabricated(db_session):
             assert row["gap_reason"] is None, row
             assert row["liquid_total"] is not None, row
             assert row["liquid_by_account"] is not None, row
-            assert row["valuation_basis"] in ("ledger_plus_corrections", None), row
+            assert row["valuation_basis"] == "ledger_plus_corrections", row
             prev_non_honest_total = None
         else:
             assert row["liquid_total"] is None, row
@@ -688,10 +637,9 @@ def test_liquid_total_excludes_investements_label(db_session):
     """23.1 D-01/D-05, research Pitfall 1 guard. The raw engine's `total`
     double-books the "Investements" correction label into the liquid side
     (it has no live account, so it joins `by_account` via `recovered_by_label`
-    alone). `monthly_liquid_series`'s pre-anchor "ledger_plus_corrections"
-    regime must never inherit that raw total: its `liquid_by_account` map
-    excludes "Investements" entirely, and its `liquid_total` is the sum of
-    that restricted map, not `raw["total"]`.
+    alone). `monthly_liquid_series` must never inherit that raw total: its
+    `liquid_by_account` map excludes "Investements" entirely, and the figure
+    for each IDR account equals the raw engine's figure for it.
     """
     from backend.reconstruction import monthly_liquid_series, reconstructed_liquid_by_month
 
@@ -703,6 +651,12 @@ def test_liquid_total_excludes_investements_label(db_session):
     ).scalar()
     today = date.today()
     months = (today.year - earliest_liquid_tx.year) * 12 + (today.month - earliest_liquid_tx.month) + 2
+    idr_names = {
+        r[0]
+        for r in db_session.execute(
+            text("SELECT name FROM accounts WHERE type = 'liquid' AND currency = 'IDR'")
+        ).all()
+    }
 
     conn = db_session.connection()
     raw_rows = reconstructed_liquid_by_month(months=months, conn=conn)
@@ -712,18 +666,16 @@ def test_liquid_total_excludes_investements_label(db_session):
     non_zero_investements_seen = False
     for raw, row in zip(raw_rows, series_rows):
         assert raw["month"] == row["month"], (raw["month"], row["month"])
-        if row["valuation_basis"] != "ledger_plus_corrections":
+        if not row["honest"]:
             continue
         assert "Investements" not in row["liquid_by_account"], row["liquid_by_account"]
         assert row["liquid_total"] == sum(row["liquid_by_account"].values()), row
-        raw_investements = raw["by_account"].get("Investements", Decimal("0.00"))
-        assert row["liquid_total"] == raw["total"] - raw_investements, (
-            row["month"], row["liquid_total"], raw["total"], raw_investements
-        )
-        if raw_investements != Decimal("0.00"):
+        for name in idr_names:
+            assert row["liquid_by_account"][name] == raw["by_account"][name], (row["month"], name)
+        if raw["by_account"].get("Investements", Decimal("0.00")) != Decimal("0.00"):
             non_zero_investements_seen = True
 
-    assert non_zero_investements_seen, "guard is vacuous — no ledger_plus_corrections row had a non-zero raw Investements value"
+    assert non_zero_investements_seen, "guard is vacuous — no honest row had a non-zero raw Investements value"
 
 
 def test_reconstruction_module_has_no_write_imports():
@@ -1035,9 +987,11 @@ def test_as_of_not_exposed_to_agent_tool_surface():
     schema_props = tool.metadata.get_parameters_dict().get("properties", {})
     assert "as_of" not in schema_props, schema_props
 
-    # 4. Plain-text scan: neither registration module mentions as_of at all.
+    # 4. Plain-text scan: neither registration module mentions as_of at all,
+    # bar Phase 43's fx_as_of output key (a rate date, not a parameter).
+    # Substring, not \b: as_of_date and similar must still trip.
     for mod_path in (Path(tools.__file__), Path(query.__file__)):
-        module_text = mod_path.read_text(encoding="utf-8")
+        module_text = mod_path.read_text(encoding="utf-8").replace("fx_as_of", "")
         assert "as_of" not in module_text, (
             f"{mod_path} contains 'as_of' — the propose_*/FunctionTool "
             "registrations in this file are introspected to build both the "
@@ -1063,11 +1017,11 @@ def test_as_of_not_exposed_to_agent_tool_surface():
 
 def test_liquid_drift_estimate_matches_anchor_day_residual(db_session):
     """23.1 D-06, WR-01. `liquid_drift_estimate()` is an "up to" bound: for
-    each anchored liquid account, what the ledger_plus_corrections regime
+    each anchored liquid account, what the ledger_plus_corrections basis
     would have shown on that account's anchor day minus the statement truth
     recorded that day, summing only the overstated (positive) accounts.
 
-    Independent oracle: the regime value and the truth are each computed
+    Independent oracle: the corrected value and the truth are each computed
     from whole-ledger SUMs per `account_id` (non-Adjustment ledger plus
     recovered legs vs the full ledger including the Adjustment), never via
     any helper or constant from backend.reconstruction, and never through
@@ -1094,7 +1048,7 @@ def test_liquid_drift_estimate_matches_anchor_day_residual(db_session):
     overstatements = {}
     for acc_id, name, anchor in anchored:
         end_excl = anchor + timedelta(days=1)
-        regime_value = scalar(
+        corrected_value = scalar(
             "SELECT COALESCE(SUM(amount), 0) FROM transactions WHERE account_id = :id "
             "AND category IS DISTINCT FROM 'Adjustment' AND date < :end_excl",
             id=acc_id,
@@ -1112,9 +1066,9 @@ def test_liquid_drift_estimate_matches_anchor_day_residual(db_session):
             id=acc_id,
             end_excl=end_excl,
         )
-        overstatements[name] = regime_value - truth
-        if regime_value > truth:
-            expected += regime_value - truth
+        overstatements[name] = corrected_value - truth
+        if corrected_value > truth:
+            expected += corrected_value - truth
 
     actual = liquid_drift_estimate(conn=db_session.connection())
     assert actual is not None
@@ -1127,7 +1081,7 @@ def test_liquid_drift_estimate_is_none_without_any_anchor(monkeypatch, db_sessio
     """23.1 D-06, CR-01. Only when NO live liquid account has ever been
     adjusted does `liquid_drift_estimate` return None — there is nothing to
     measure against. One unanchored account alone must not hide the
-    caption (see the series test below)."""
+    caption."""
     import backend.reconstruction as reconstruction
 
     def fake_anchor_dates(conn):
@@ -1135,96 +1089,3 @@ def test_liquid_drift_estimate_is_none_without_any_anchor(monkeypatch, db_sessio
 
     monkeypatch.setattr(reconstruction, "_anchor_dates", fake_anchor_dates)
     assert reconstruction.liquid_drift_estimate(conn=db_session.connection()) is None
-
-
-def _month_end_of(month_str: str) -> date:
-    year, month = (int(p) for p in month_str.split("-"))
-    return date(year + (month // 12), (month % 12) + 1, 1) - timedelta(days=1)
-
-
-def test_unanchored_liquid_account_keeps_d07_after_regime_cutoff(monkeypatch, db_session):
-    """CR-01. A new liquid account with no Adjustment row (agent "add
-    account", or the importer's get-or-create) must not move the whole
-    series onto the relaxed basis. Months before the cutoff (MAX over the
-    anchors that exist) stay "ledger_plus_corrections"; every month on or
-    after it stays on D-07 and gaps with `no_opening_anchor` because the
-    newcomer has no window. Stubs the anchor/window queries instead of
-    inserting an account, so the live DB is never written."""
-    import backend.reconstruction as reconstruction
-
-    conn = db_session.connection()
-    real_anchors = reconstruction._anchor_dates(conn)
-    real_windows = reconstruction._adjustment_windows(conn)
-    known = [d for d in real_anchors.values() if d is not None]
-    assert known, real_anchors
-    cutoff = max(known)
-
-    newcomer = "__cr01_unanchored_newcomer__"
-    monkeypatch.setattr(reconstruction, "_anchor_dates", lambda c: {**real_anchors, newcomer: None})
-    monkeypatch.setattr(
-        reconstruction, "_adjustment_windows", lambda c: {**real_windows, newcomer: []}
-    )
-
-    earliest = conn.execute(
-        text(
-            "SELECT MIN(t.date)::date FROM transactions t "
-            "JOIN accounts a ON a.id = t.account_id WHERE a.type = 'liquid'"
-        )
-    ).scalar()
-    today = date.today()
-    months = (today.year - earliest.year) * 12 + (today.month - earliest.month) + 2
-
-    result = reconstruction.monthly_liquid_series(months=months, conn=conn)
-    pre, post = [], []
-    for row in result["rows"]:
-        m_end = _month_end_of(row["month"])
-        if m_end < earliest:
-            assert row["gap_reason"] == "pre_ledger", row
-        elif m_end <= cutoff:
-            assert row["honest"] and row["valuation_basis"] == "ledger_plus_corrections", row
-            pre.append(row["month"])
-        else:
-            assert not row["honest"] and row["gap_reason"] == "no_opening_anchor", row
-            post.append(row["month"])
-    assert pre and post, (pre, post)
-
-    # The drift caption survives: the anchored accounts still measure it.
-    assert reconstruction.liquid_drift_estimate(conn=conn) is not None
-
-    # No anchor anywhere: no relaxed regime at all, never "honest forever".
-    monkeypatch.setattr(reconstruction, "_anchor_dates", lambda c: dict.fromkeys(real_anchors))
-    monkeypatch.setattr(reconstruction, "_adjustment_windows", lambda c: {n: [] for n in real_anchors})
-    result = reconstruction.monthly_liquid_series(months=months, conn=conn)
-    assert not any(r["valuation_basis"] == "ledger_plus_corrections" for r in result["rows"])
-    assert not result["honest_months"], result["honest_months"]
-
-
-def test_month_end_anchor_leaves_no_gap_between_regimes(monkeypatch, db_session):
-    """WR-04. An anchor dated on the last day of a month must not strand
-    that month between the two regimes: `month_end < anchor` is False there
-    and D-07's half-open `lo < month_end` is False too, so a strict test
-    would gap a fully anchored month with a misleading `no_opening_anchor`.
-    Stubs every account's anchor to 2026-08-31 (no live writes)."""
-    import backend.reconstruction as reconstruction
-
-    conn = db_session.connection()
-    names = list(reconstruction._anchor_dates(conn))
-    anchor = date(2026, 8, 31)
-    monkeypatch.setattr(reconstruction, "_anchor_dates", lambda c: dict.fromkeys(names, anchor))
-    monkeypatch.setattr(
-        reconstruction, "_adjustment_windows", lambda c: {n: [(anchor, None)] for n in names}
-    )
-
-    earliest = conn.execute(
-        text(
-            "SELECT MIN(t.date)::date FROM transactions t "
-            "JOIN accounts a ON a.id = t.account_id WHERE a.type = 'liquid'"
-        )
-    ).scalar()
-    today = date.today()
-    months = (today.year - earliest.year) * 12 + (today.month - earliest.month) + 2
-
-    rows = {r["month"]: r for r in reconstruction.monthly_liquid_series(months=months, conn=conn)["rows"]}
-    aug = rows["2026-08"]
-    assert aug["honest"] and aug["valuation_basis"] == "ledger_plus_corrections", aug
-    assert not any(r["gap_reason"] == "no_opening_anchor" for r in rows.values()), rows

@@ -227,3 +227,135 @@ def test_snapshot_records_both_platforms_for_shared_ticker(db_session):
             if p:
                 db_session.delete(p)
         db_session.commit()
+
+
+# ---------------------------------------------------------------------------
+# daily_fx_warm (Phase 42-05, D-23). Synthetic 1902 dates; today pinned 1902-05-14.
+# ---------------------------------------------------------------------------
+
+_WARM_TODAY = _dt.date(1902, 5, 14)
+
+
+@pytest.fixture()
+def fx_warm_env(db_available, monkeypatch):
+    """Pins Jakarta today, counts httpx.get calls, cleans 1902 USD->IDR rows."""
+    import httpx
+    from backend import fx
+    from backend.db import SessionLocal
+
+    def _clean():
+        s = SessionLocal()
+        try:
+            s.execute(text(
+                "DELETE FROM fx_rate_cache WHERE rate_date BETWEEN '1902-01-01' AND '1902-12-31' "
+                "AND base_currency = 'USD' AND quote_currency = 'IDR'"
+            ))
+            s.commit()
+        finally:
+            s.close()
+
+    _clean()
+    monkeypatch.setattr(fx, "_jakarta_today", lambda: _WARM_TODAY)
+    env = {"calls": [], "behaviour": None}
+
+    def _get(url, params=None, **kw):
+        env["calls"].append((url, params))
+        return env["behaviour"](url, params)
+
+    monkeypatch.setattr(httpx, "get", _get)
+    yield env
+    _clean()
+
+
+def _range_resp(rates: dict):
+    class _R:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"base": "USD", "rates": {d: {"IDR": v} for d, v in rates.items()}}
+
+    return _R()
+
+
+def _warm_rows():
+    from backend.db import SessionLocal
+
+    s = SessionLocal()
+    try:
+        return [tuple(r) for r in s.execute(text(
+            "SELECT rate_date, rate_effective_date, source FROM fx_rate_cache "
+            "WHERE rate_date BETWEEN '1902-01-01' AND '1902-12-31' "
+            "AND base_currency = 'USD' AND quote_currency = 'IDR' ORDER BY rate_date"
+        ))]
+    finally:
+        s.close()
+
+
+def test_build_scheduler_registers_fx_warm_job():
+    from backend.scheduler import build_scheduler
+
+    scheduler = build_scheduler()
+    job = scheduler.get_job("daily_fx_warm")
+    assert job is not None
+    fields = {f.name: str(f) for f in job.trigger.fields}
+    assert (fields["hour"], fields["minute"]) == ("0", "30")
+    assert str(job.trigger.timezone) == "Asia/Jakarta"
+    assert job.misfire_grace_time == 3600
+    assert job.coalesce is True
+    assert job.max_instances == 1
+    assert scheduler.get_job("daily_portfolio_snapshot") is not None
+    assert scheduler.get_job("daily_attachment_purge") is not None
+
+
+def test_fx_warm_job_fills_window_with_one_range_call(fx_warm_env):
+    from backend.scheduler import daily_fx_warm_job
+
+    fx_warm_env["behaviour"] = lambda u, p: _range_resp(
+        {"1902-05-05": 16000, "1902-05-06": 16010, "1902-05-13": 16050.5, "1902-05-14": 16060}
+    )
+    daily_fx_warm_job()
+
+    assert len(fx_warm_env["calls"]) == 1
+    url, params = fx_warm_env["calls"][0]
+    assert url.endswith("/v1/1902-05-06..1902-05-13")
+    assert params == {"base": "USD", "symbols": "IDR"}
+    assert _warm_rows() == [
+        (_dt.date(1902, 5, 5), _dt.date(1902, 5, 5), "frankfurter"),
+        (_dt.date(1902, 5, 6), _dt.date(1902, 5, 6), "frankfurter"),
+        (_dt.date(1902, 5, 13), _dt.date(1902, 5, 13), "frankfurter"),
+    ]
+
+
+def test_fx_warm_job_covered_makes_no_call(fx_warm_env):
+    from backend.db import SessionLocal
+    from backend.scheduler import daily_fx_warm_job
+
+    s = SessionLocal()
+    try:
+        s.execute(text(
+            "INSERT INTO fx_rate_cache (rate_date, base_currency, quote_currency, rate, source, fetched_at) "
+            "VALUES ('1902-05-13', 'USD', 'IDR', 16000, 'frankfurter', now())"
+        ))
+        s.commit()
+    finally:
+        s.close()
+
+    daily_fx_warm_job()
+    assert fx_warm_env["calls"] == []
+
+
+def test_fx_warm_job_vendor_failure_does_not_raise(fx_warm_env, caplog):
+    import httpx
+    import logging
+    from backend.scheduler import daily_fx_warm_job
+
+    def _boom(u, p):
+        raise httpx.ConnectError("down")
+
+    fx_warm_env["behaviour"] = _boom
+    with caplog.at_level(logging.WARNING):
+        daily_fx_warm_job()  # must not raise
+
+    assert _warm_rows() == []
+    assert any("fx warm" in r.getMessage().lower() for r in caplog.records)

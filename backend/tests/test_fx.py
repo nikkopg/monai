@@ -55,6 +55,60 @@ def fx_key_clean():
     _clean()
 
 
+_JAN_TODAY = date(1900, 1, 10)
+
+
+@pytest.fixture()
+def fx_jan1900_clean(monkeypatch):
+    """Deletes USD->IDR fx_rate_cache rows dated January 1900 before and after,
+    and pins the Jakarta "today" to 1900-01-10. Skips when Postgres is down."""
+    from backend import fx
+    from backend.db import SessionLocal, engine
+
+    try:
+        with engine.connect() as c:
+            c.execute(text("SELECT 1"))
+    except Exception as e:
+        pytest.skip(f"Postgres not available: {e}")
+
+    def _clean():
+        db = SessionLocal()
+        try:
+            db.execute(
+                text(
+                    "DELETE FROM fx_rate_cache WHERE rate_date BETWEEN '1900-01-01' "
+                    "AND '1900-01-31' AND base_currency = 'USD' AND quote_currency = 'IDR'"
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+    _clean()
+    monkeypatch.setattr(fx, "_jakarta_today", lambda: _JAN_TODAY, raising=False)
+    yield
+    _clean()
+
+
+def _jan_rows() -> list[tuple]:
+    from backend.db import SessionLocal
+
+    db = SessionLocal()
+    try:
+        return [
+            tuple(r)
+            for r in db.execute(
+                text(
+                    "SELECT rate_date, rate_effective_date, rate FROM fx_rate_cache "
+                    "WHERE rate_date BETWEEN '1900-01-01' AND '1900-01-31' "
+                    "AND base_currency = 'USD' AND quote_currency = 'IDR' ORDER BY rate_date"
+                )
+            )
+        ]
+    finally:
+        db.close()
+
+
 def _count_key_rows() -> int:
     from backend.db import SessionLocal
 
@@ -87,8 +141,41 @@ def test_fetch_frankfurter_rate_success(monkeypatch):
 
     monkeypatch.setattr(httpx, "get", lambda *a, **k: _Resp())
     result = fx.fetch_frankfurter_rate("USD", "IDR", date(2024, 1, 15))
-    assert result == (Decimal("15561"), "frankfurter")
+    assert result == (Decimal("15561"), "frankfurter", date(2024, 1, 15))
     assert isinstance(result[0], Decimal)
+
+
+def _resp(body):
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return body
+
+    return _Resp()
+
+
+def test_fetch_frankfurter_rate_missing_date_tolerated(monkeypatch):
+    """A body without "date" -> effective date None, rate still returned."""
+    from backend import fx
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _resp({"rates": {"IDR": 15561}}))
+    assert fx.fetch_frankfurter_rate("USD", "IDR", date(2024, 1, 15)) == (
+        Decimal("15561"),
+        "frankfurter",
+        None,
+    )
+
+
+def test_fetch_frankfurter_rate_malformed_date_returns_none(monkeypatch):
+    """A malformed "date" -> None, never raises."""
+    from backend import fx
+
+    monkeypatch.setattr(
+        httpx, "get", lambda *a, **k: _resp({"date": "not-a-date", "rates": {"IDR": 15561}})
+    )
+    assert fx.fetch_frankfurter_rate("USD", "IDR", date(2024, 1, 15)) is None
 
 
 def test_fetch_frankfurter_rate_http_error_returns_none(monkeypatch):
@@ -115,6 +202,17 @@ def test_fetch_frankfurter_rate_malformed_json_returns_none(monkeypatch):
 
     monkeypatch.setattr(httpx, "get", lambda *a, **k: _Resp())
     assert fx.fetch_frankfurter_rate("USD", "IDR", date(2024, 1, 15)) is None
+
+
+def test_fetch_frankfurter_rate_bad_rate_returns_none(monkeypatch):
+    """null / garbage / zero / negative / non-finite rate -> None, never raises."""
+    from backend import fx
+
+    for bad in ("garbage", 0, -1, "NaN", "Infinity"):
+        monkeypatch.setattr(
+            httpx, "get", lambda *a, _b=bad, **k: _resp({"date": "2024-01-15", "rates": {"IDR": _b}})
+        )
+        assert fx.fetch_frankfurter_rate("USD", "IDR", date(2024, 1, 15)) is None
 
 
 def test_get_rate_identity_shortcut_no_http_call(monkeypatch):
@@ -179,8 +277,10 @@ def test_get_rate_adapter_none_returns_none_no_fallback_to_one(monkeypatch):
 
 
 class _FakeRow:
-    def __init__(self, rate):
+    def __init__(self, rate, rate_date=date(2024, 1, 15), rate_effective_date=None):
         self.rate = rate
+        self.rate_date = rate_date
+        self.rate_effective_date = rate_effective_date
 
 
 class _FakeQuery:
@@ -352,6 +452,143 @@ def test_get_rate_integrity_conflict_returns_existing_row(monkeypatch, fx_key_cl
     assert _count_key_rows() == 1
 
 
+def test_get_rate_past_saturday_records_effective_date(monkeypatch, fx_jan1900_clean):
+    """D-19: a past weekend date is cached under the requested date with the
+    business date Frankfurter reports beside it."""
+    from backend import fx
+
+    monkeypatch.setattr(
+        httpx,
+        "get",
+        lambda *a, **k: _resp({"date": "1900-01-05", "rates": {"IDR": 16000}}),
+    )
+    assert fx.get_rate("USD", "IDR", date(1900, 1, 6), db=_FakeDb()) == Decimal("16000")
+    assert _jan_rows() == [(date(1900, 1, 6), date(1900, 1, 5), Decimal("16000.000000"))]
+
+
+def test_get_rate_today_and_future_not_persisted(monkeypatch, fx_jan1900_clean):
+    """D-17: as_of >= Jakarta today returns a rate and writes nothing; today-1 persists."""
+    from backend import fx
+
+    monkeypatch.setattr(
+        httpx, "get", lambda *a, **k: _resp({"date": "1900-01-09", "rates": {"IDR": 16000}})
+    )
+    for d in (date(1900, 1, 10), date(1900, 1, 11)):
+        assert fx.get_rate("USD", "IDR", d, db=_FakeDb()) == Decimal("16000")
+    assert _jan_rows() == []
+    assert fx.get_rate("USD", "IDR", date(1900, 1, 9), db=_FakeDb()) == Decimal("16000")
+    assert [r[0] for r in _jan_rows()] == [date(1900, 1, 9)]
+
+
+def test_get_rate_today_ignores_frozen_cache_row(monkeypatch, fx_jan1900_clean):
+    """D-17/D-24: a row frozen under today's date is neither served nor modified."""
+    from backend import fx
+    from backend.db import SessionLocal
+    from backend.models import FxRateCache
+
+    seed = SessionLocal()
+    try:
+        seed.add(
+            FxRateCache(
+                rate_date=_JAN_TODAY,
+                base_currency="USD",
+                quote_currency="IDR",
+                rate=Decimal("15000"),
+                source="zz-test",
+                fetched_at=datetime.now(timezone.utc),
+            )
+        )
+        seed.commit()
+    finally:
+        seed.close()
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _resp({"rates": {"IDR": 16000}}))
+    db = _FakeDb(existing_row=_FakeRow(Decimal("15000")))
+    assert fx.get_rate("USD", "IDR", _JAN_TODAY, db=db) == Decimal("16000")
+    assert _jan_rows() == [(_JAN_TODAY, None, Decimal("15000.000000"))]
+
+
+def _counting_get(body):
+    calls = {"n": 0}
+
+    def _get(*a, **k):
+        calls["n"] += 1
+        return _resp(body)
+
+    return calls, _get
+
+
+def _failing_get(*a, **k):
+    raise httpx.HTTPError("vendor down")
+
+
+def test_get_rate_today_memo_one_http_call(monkeypatch, fx_jan1900_clean):
+    """D-18: today's rate is memoised ~15 min per (pair, date); never in the DB."""
+    from types import SimpleNamespace
+
+    from backend import fx
+
+    calls, getter = _counting_get({"rates": {"IDR": 16000}})
+    monkeypatch.setattr(httpx, "get", getter)
+    clock = {"t": 1000.0}
+    monkeypatch.setattr(fx, "time", SimpleNamespace(monotonic=lambda: clock["t"]))
+
+    for _ in range(2):
+        assert fx.get_rate("USD", "IDR", _JAN_TODAY, db=_FakeDb()) == Decimal("16000")
+    assert calls["n"] == 1
+    clock["t"] += fx._TODAY_TTL_SECONDS + 1
+    assert fx.get_rate("USD", "IDR", _JAN_TODAY, db=_FakeDb()) == Decimal("16000")
+    assert calls["n"] == 2
+    assert _jan_rows() == []
+
+
+def test_get_rate_today_failure_not_memoised(monkeypatch, fx_jan1900_clean):
+    from backend import fx
+
+    monkeypatch.setattr(httpx, "get", _failing_get)
+    assert fx.get_rate("USD", "IDR", _JAN_TODAY, db=_FakeDb()) is None
+    calls, getter = _counting_get({"rates": {"IDR": 16000}})
+    monkeypatch.setattr(httpx, "get", getter)
+    assert fx.get_rate("USD", "IDR", _JAN_TODAY, db=_FakeDb()) == Decimal("16000")
+    assert calls["n"] == 1
+
+
+def test_spot_returns_rate_and_effective_date(monkeypatch, fx_jan1900_clean):
+    from backend import fx
+
+    monkeypatch.setattr(
+        httpx, "get", lambda *a, **k: _resp({"date": "1900-01-09", "rates": {"IDR": 16000}})
+    )
+    assert fx.spot("USD", _FakeDb()) == (Decimal("16000"), date(1900, 1, 9))
+
+    monkeypatch.setattr(httpx, "get", _failing_get)
+    assert fx.spot("IDR", _FakeDb()) == (Decimal("1"), _JAN_TODAY)  # identity, no HTTP
+    fx._today_memo.clear()
+    with pytest.raises(fx.FxUnavailable):
+        fx.spot("USD", _FakeDb())
+
+
+def test_to_idr(monkeypatch, fx_jan1900_clean):
+    from backend import fx
+
+    monkeypatch.setattr(httpx, "get", _failing_get)
+    out = fx.to_idr(Decimal("-12.50"), "IDR", date(1900, 1, 3), _FakeDb())
+    assert out == Decimal("-12.50") and isinstance(out, Decimal)
+    with pytest.raises(fx.FxUnavailable):  # never returns the unconverted amount
+        fx.to_idr("-12.50", "USD", date(1900, 1, 3), _FakeDb())
+
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: _resp({"rates": {"IDR": 16000}}))
+    out = fx.to_idr("-12.50", "USD", date(1900, 1, 3), _FakeDb())
+    assert out == Decimal("-200000.00") and isinstance(out, Decimal)
+
+
+def test_base_and_exception():
+    from backend import fx
+
+    assert fx.BASE == "IDR"
+    assert issubclass(fx.FxUnavailable, Exception)
+
+
 def test_cash_and_gold_have_explicit_ttl_entries():
     """cash and gold must not silently inherit _DEFAULT_TTL (Pitfall 1)."""
     from backend import prices
@@ -359,3 +596,346 @@ def test_cash_and_gold_have_explicit_ttl_entries():
     assert "gold" in prices.TTL_BY_ASSET_TYPE
     assert "cash" in prices.TTL_BY_ASSET_TYPE
     assert prices.TTL_BY_ASSET_TYPE["gold"] == prices.TTL_BY_ASSET_TYPE["mutual_fund"]
+
+
+# ---------------------------------------------------------------------------
+# Range adapter, _store_range, ensure_flow_rates (Phase 42-05, D-20/D-21).
+# Synthetic dates: 1902 (store tests, today pinned 1902-01-07), 1903 (ensure
+# tests, today pinned 1903-04-01). Rates are round numbers.
+# ---------------------------------------------------------------------------
+
+def _range_body(rates: dict):
+    return _resp({"base": "USD", "rates": {d: {"IDR": v} for d, v in rates.items()}})
+
+
+def test_fetch_frankfurter_range_parses_probe_shape(monkeypatch):
+    from backend import fx
+
+    body = _range_body({"1902-01-03": 16000, "1902-01-06": 16050.5})
+    monkeypatch.setattr(httpx, "get", lambda *a, **k: body)
+    got = fx.fetch_frankfurter_range("USD", "IDR", date(1902, 1, 3), date(1902, 1, 6))
+    assert got == [(date(1902, 1, 3), Decimal("16000")), (date(1902, 1, 6), Decimal("16050.5"))]
+    assert fx.FX_RANGE_ADAPTERS["frankfurter"] is fx.fetch_frankfurter_range
+
+
+def test_fetch_frankfurter_range_failures_return_none(monkeypatch):
+    from backend import fx
+
+    class _NotFound:
+        def raise_for_status(self):
+            req = httpx.Request("GET", "https://example.invalid")
+            raise httpx.HTTPStatusError("404", request=req, response=httpx.Response(404, request=req))
+
+    bad = [
+        _NotFound(),
+        _resp({"rates": {"1902-01-03": [16000]}}),  # value is a list
+        _resp({"rates": {"not-a-date": {"IDR": 16000}}}),  # non-date key
+        _resp({"rates": {"1902-01-03": {"IDR": "garbage"}}}),  # InvalidOperation
+        _resp({"rates": {"1902-01-03": {"IDR": 16000}, "1902-01-06": {"IDR": 0}}}),  # zero rate
+        _resp({"rates": {"1902-01-03": {"IDR": -5}}}),  # negative rate
+    ]
+    for r in bad:
+        monkeypatch.setattr(httpx, "get", lambda *a, _r=r, **k: _r)
+        assert fx.fetch_frankfurter_range("USD", "IDR", date(1902, 1, 3), date(1902, 1, 6)) is None
+
+
+@pytest.fixture()
+def range_env(monkeypatch):
+    """Counts httpx.get calls; cleans 1902/1903 USD->IDR rows, ZZ42 fx accounts
+    and 1903 transactions before and after. Skips when Postgres is down."""
+    from backend import fx
+    from backend.db import SessionLocal, engine
+
+    try:
+        with engine.connect() as c:
+            c.execute(text("SELECT 1"))
+    except Exception as e:
+        pytest.skip(f"Postgres not available: {e}")
+
+    def _clean():
+        s = SessionLocal()
+        try:
+            s.execute(text("DELETE FROM transactions WHERE date >= '1903-01-01' AND date < '1904-01-01'"))
+            s.execute(text("DELETE FROM accounts WHERE name LIKE 'ZZ42 fx %'"))
+            s.execute(text(
+                "DELETE FROM fx_rate_cache WHERE rate_date >= '1902-01-01' AND rate_date < '1904-01-01' "
+                "AND base_currency = 'USD' AND quote_currency = 'IDR'"
+            ))
+            s.commit()
+        finally:
+            s.close()
+
+    _clean()
+    env = {"calls": [], "behaviour": None}
+
+    def pin(today):
+        monkeypatch.setattr(fx, "_jakarta_today", lambda: today)
+
+    def _get(url, params=None, **kw):
+        env["calls"].append((url, params))
+        return env["behaviour"]()
+
+    monkeypatch.setattr(httpx, "get", _get)
+    env["pin"] = pin
+    yield env
+    _clean()
+
+
+def _seed_cache(rate_date: date, rate: str) -> None:
+    from backend.db import SessionLocal
+
+    s = SessionLocal()
+    try:
+        s.execute(
+            text(
+                "INSERT INTO fx_rate_cache (rate_date, base_currency, quote_currency, rate, source, fetched_at) "
+                "VALUES (:d, 'USD', 'IDR', :r, 'frankfurter', now())"
+            ),
+            {"d": rate_date, "r": rate},
+        )
+        s.commit()
+    finally:
+        s.close()
+
+
+def _seed_txs(rows: list[tuple[date, str, str]]) -> None:
+    """rows: (day, amount, currency). One account per currency."""
+    import secrets
+
+    from backend.db import SessionLocal
+
+    s = SessionLocal()
+    try:
+        accounts: dict[str, int] = {}
+        for _day, _amt, cur in rows:
+            if cur not in accounts:
+                accounts[cur] = s.execute(
+                    text("INSERT INTO accounts (name, type, currency) VALUES (:n, 'liquid', :c) RETURNING id"),
+                    {"n": f"ZZ42 fx {cur.lower()} {secrets.token_hex(4)}", "c": cur},
+                ).scalar()
+        for day, amt, cur in rows:
+            s.execute(
+                text(
+                    "INSERT INTO transactions (date, amount, currency, account_id, is_transfer) "
+                    "VALUES (:d, :a, :c, :acc, false)"
+                ),
+                {"d": datetime(day.year, day.month, day.day, 12), "a": amt, "c": cur, "acc": accounts[cur]},
+            )
+        s.commit()
+    finally:
+        s.close()
+
+
+def _usd_rows() -> list[tuple]:
+    from backend.db import SessionLocal
+
+    s = SessionLocal()
+    try:
+        return [tuple(r) for r in s.execute(text(
+            "SELECT rate_date, rate FROM fx_rate_cache WHERE rate_date >= '1902-01-01' "
+            "AND rate_date < '1904-01-01' AND base_currency = 'USD' AND quote_currency = 'IDR' "
+            "ORDER BY rate_date"
+        ))]
+    finally:
+        s.close()
+
+
+def test_store_range_is_immutable_and_skips_today(range_env):
+    from backend import fx
+    from backend.db import SessionLocal
+
+    range_env["pin"](date(1902, 1, 7))
+    _seed_cache(date(1902, 1, 6), "16000")
+    range_env["behaviour"] = lambda: _range_body(
+        {"1902-01-03": 16100, "1902-01-06": 17000, "1902-01-07": 17100}
+    )
+    n = fx._store_range("USD", "IDR", date(1902, 1, 3), date(1902, 1, 7))
+
+    assert n == 1  # only 01-03 is new; 01-06 exists, 01-07 is today
+    assert _usd_rows() == [
+        (date(1902, 1, 3), Decimal("16100.000000")),
+        (date(1902, 1, 6), Decimal("16000.000000")),
+    ]
+    assert len(range_env["calls"]) == 1
+
+    range_env["calls"].clear()
+    assert fx._store_range("U$D", "IDR", date(1902, 1, 3), date(1902, 1, 6)) == 0
+    assert range_env["calls"] == []
+
+
+def _ensure(start, end):
+    from backend import fx
+    from backend.db import SessionLocal
+
+    s = SessionLocal()
+    try:
+        return fx.ensure_flow_rates(s, start, end)
+    finally:
+        s.close()
+
+
+def test_ensure_flow_rates_covered_makes_no_call(range_env):
+    range_env["pin"](date(1903, 4, 1))
+    _seed_txs([(date(1903, 3, 20), "-12.50", "USD")])
+    _seed_cache(date(1903, 3, 18), "16000")
+    assert _ensure(date(1903, 3, 1), date(1903, 3, 31)) == 0
+    assert range_env["calls"] == []
+
+
+def test_ensure_flow_rates_one_call_spans_gaps(range_env):
+    from backend.db import SessionLocal
+
+    range_env["pin"](date(1903, 4, 1))
+    _seed_txs([(date(1903, 3, 4), "-12.50", "USD"), (date(1903, 3, 12), "-12.50", "USD")])
+    range_env["behaviour"] = lambda: _range_body(
+        {"1903-02-25": 16000, "1903-03-04": 16050.5, "1903-03-12": 16100}
+    )
+    n = _ensure(date(1903, 3, 1), date(1903, 3, 31))
+
+    assert n == 3
+    assert len(range_env["calls"]) == 1
+    assert range_env["calls"][0][0].endswith("/v1/1903-02-25..1903-03-12")
+    s = SessionLocal()
+    try:
+        vals = s.execute(text(
+            "SELECT amount_idr FROM transactions_idr WHERE date >= '1903-03-01' AND date < '1903-04-01' "
+            "AND currency = 'USD'"
+        )).scalars().all()
+    finally:
+        s.close()
+    assert len(vals) == 2 and all(v is not None for v in vals)
+
+
+def test_ensure_flow_rates_idr_only_makes_no_call(range_env):
+    range_env["pin"](date(1903, 4, 1))
+    _seed_txs([(date(1903, 3, 10), "-50000", "IDR")])
+    assert _ensure(date(1903, 3, 1), date(1903, 3, 31)) == 0
+    assert range_env["calls"] == []
+
+
+def test_ensure_flow_rates_future_gap_raises_without_call(range_env):
+    from backend import fx
+
+    range_env["pin"](date(1903, 4, 1))
+    _seed_txs([(date(1903, 4, 11), "-12.50", "USD")])
+    with pytest.raises(fx.FxUnavailable):
+        _ensure(date(1903, 4, 1), date(1903, 4, 30))
+    assert range_env["calls"] == []
+
+
+def test_ensure_flow_rates_vendor_down_raises_after_one_call(range_env):
+    from backend import fx
+
+    class _NotFound:
+        def raise_for_status(self):
+            req = httpx.Request("GET", "https://example.invalid")
+            raise httpx.HTTPStatusError("404", request=req, response=httpx.Response(404, request=req))
+
+    range_env["pin"](date(1903, 4, 1))
+    _seed_txs([(date(1903, 3, 4), "-12.50", "USD")])
+    range_env["behaviour"] = lambda: _NotFound()
+    with pytest.raises(fx.FxUnavailable) as exc:
+        _ensure(date(1903, 3, 1), date(1903, 3, 31))
+
+    assert len(range_env["calls"]) == 1
+    msg = str(exc.value)
+    assert "1 USD transaction date(s)" in msg and "1903-03-04" in msg
+    assert "12.50" not in msg
+
+
+# --- 43-05: cache-only window, stale-tolerant spot, at_rate (synthetic 1904 dates) ---
+
+_FRI = date(1904, 3, 4)
+_TODAY_1904 = date(1904, 3, 10)
+
+
+@pytest.fixture()
+def stale_env(monkeypatch):
+    """Cleans 1904 USD->IDR rows before and after, pins today to 1904-03-10 and
+    exposes a mutable live-adapter stub (None = vendor down). Skips when Postgres is down."""
+    from backend import fx
+    from backend.db import SessionLocal, engine
+
+    try:
+        with engine.connect() as c:
+            c.execute(text("SELECT 1"))
+    except Exception as e:
+        pytest.skip(f"Postgres not available: {e}")
+
+    def _clean():
+        s = SessionLocal()
+        try:
+            s.execute(text(
+                "DELETE FROM fx_rate_cache WHERE rate_date >= '1904-01-01' AND rate_date < '1905-01-01' "
+                "AND base_currency = 'USD' AND quote_currency = 'IDR'"
+            ))
+            s.commit()
+        finally:
+            s.close()
+
+    _clean()
+    fx._today_memo.clear()
+    env = {"live": None, "calls": 0}
+
+    def _adapter(base, quote, as_of):
+        env["calls"] += 1
+        return env["live"]
+
+    monkeypatch.setattr(fx, "_jakarta_today", lambda: _TODAY_1904)
+    monkeypatch.setitem(fx.FX_ADAPTERS, "frankfurter", _adapter)
+    yield env
+    fx._today_memo.clear()
+    _clean()
+
+
+def _fn(name):
+    from backend import fx
+
+    f = getattr(fx, name, None)
+    assert callable(f), f"fx.{name} missing"
+    return f
+
+
+def test_cached_rate_within_window(stale_env):
+    from backend.db import SessionLocal
+
+    _seed_cache(_FRI, "16000")
+    within = _fn("cached_rate_within")
+    with SessionLocal() as s:
+        assert within(s, "USD", date(1904, 3, 6)) == (Decimal("16000"), _FRI)
+        assert within(s, "USD", date(1904, 3, 11)) == (Decimal("16000"), _FRI)  # 7 days back, inclusive
+        assert within(s, "USD", date(1904, 3, 12)) is None
+        assert within(s, "USDT", date(1904, 3, 6)) == (Decimal("16000"), _FRI)
+        assert within(s, "IDR", date(1904, 3, 6)) == (Decimal("1"), date(1904, 3, 6))
+    assert stale_env["calls"] == 0  # cache-only
+
+
+def test_spot_stale_ok_live(stale_env):
+    from backend.db import SessionLocal
+
+    stale_env["live"] = (Decimal("16100"), "frankfurter", _TODAY_1904)
+    with SessionLocal() as s:
+        assert _fn("spot_stale_ok")("USD", s) == (Decimal("16100"), _TODAY_1904, False)
+
+
+def test_spot_stale_ok_falls_back_within_7_days(stale_env):
+    from backend.db import SessionLocal
+
+    _seed_cache(_FRI, "16000")
+    with SessionLocal() as s:
+        assert _fn("spot_stale_ok")("USD", s) == (Decimal("16000"), _FRI, True)
+
+
+def test_spot_stale_ok_raises_beyond_7_days(stale_env):
+    from backend import fx
+    from backend.db import SessionLocal
+
+    _seed_cache(date(1904, 3, 2), "16000")  # one day outside [03-03, 03-10]
+    with SessionLocal() as s, pytest.raises(fx.FxUnavailable):
+        _fn("spot_stale_ok")("USD", s)
+
+
+def test_at_rate_rounds_half_up():
+    at_rate = _fn("at_rate")
+    assert at_rate(Decimal("0.33"), Decimal("16000.5")) == Decimal("5280.17")
+    assert at_rate(Decimal("-17.50"), Decimal("16200")) == Decimal("-283500.00")

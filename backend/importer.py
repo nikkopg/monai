@@ -107,10 +107,11 @@ def parse_csv(text_content: str, primary_currency: str | None = None) -> tuple[l
     return rows, skipped, (detected or "")
 
 
-def _get_or_create_account(db: Session, name: str, currency: str) -> Account:
+def _get_or_create_account(db: Session, name: str) -> Account:
     acc = db.query(Account).filter(Account.name == name).one_or_none()
     if acc is None:
-        acc = Account(name=name, currency=currency)
+        # Auto-created accounts are always IDR; a USD account only comes from the account manager (Phase 44).
+        acc = Account(name=name, currency="IDR")
         db.add(acc)
         db.flush()  # assign id
     return acc
@@ -135,15 +136,28 @@ def _load_category_id_map(db: Session) -> tuple[dict[str, int], int]:
     return name_to_id, uncategorized[0]
 
 
-def insert_rows(db: Session, rows: list[dict]) -> int:
+def insert_rows(db: Session, rows: list[dict]) -> tuple[int, int]:
+    """Insert rows; returns (inserted, skipped). A row whose currency differs from
+    its account's (IDR for an account that does not exist yet) is skipped and
+    counted, never inserted and never given a new account (D-07)."""
     name_to_id, uncategorized_id = _load_category_id_map(db)
-    inserted = 0
+    inserted = skipped = 0
+    mismatches: dict[tuple[str, str, str], int] = {}  # (account, row currency, account currency) -> rows
     for r in rows:
-        acc = _get_or_create_account(db, r["account"], r["currency"])
+        acc = db.query(Account).filter(Account.name == r["account"]).one_or_none()
+        target = acc.currency if acc is not None else "IDR"
+        row_cur = (r["currency"] or "").strip().upper()
+        if row_cur != target:
+            key = (r["account"], row_cur, target)
+            mismatches[key] = mismatches.get(key, 0) + 1
+            skipped += 1
+            continue
+        if acc is None:
+            acc = _get_or_create_account(db, r["account"])
         db.add(Transaction(
             date=r["date"],
             amount=r["amount"],
-            currency=r["currency"],
+            currency=acc.currency,
             category=r["category"],
             raw_category=r["raw_category"],
             category_id=name_to_id.get(r["category"], uncategorized_id),  # D-08 dual-write
@@ -153,12 +167,15 @@ def insert_rows(db: Session, rows: list[dict]) -> int:
             is_transfer=r["is_transfer"],
         ))
         inserted += 1
+    for (account, row_cur, target), n in mismatches.items():  # one line per pair, not per row
+        logger.warning("Skipped %d row(s) for account %r (currency %s != account currency %s)", n, account, row_cur, target)
     db.commit()
-    return inserted
+    return inserted, skipped
 
 
 def import_csv_text(db: Session, text_content: str) -> tuple[int, int, int, str]:
-    """Parse + insert. Returns (parsed, inserted, skipped, currency)."""
+    """Parse + insert. Returns (parsed, inserted, skipped, currency); rows whose
+    currency differs from their account's are counted in skipped."""
     rows, skipped, currency = parse_csv(text_content)
-    inserted = insert_rows(db, rows)
-    return len(rows), inserted, skipped, currency
+    inserted, mismatched = insert_rows(db, rows)
+    return len(rows), inserted, skipped + mismatched, currency

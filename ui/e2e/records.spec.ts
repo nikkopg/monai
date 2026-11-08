@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Route } from "@playwright/test";
 
 // ---------------------------------------------------------------------------
 // Phase 17 Plan 02 — RED e2e spec for the Records ledger (REC-01/02/03/05).
@@ -19,6 +19,10 @@ type FixtureTx = {
   notes: string | null;
   is_transfer: boolean;
   transfer_pair_id: number | null;
+  currency?: string;
+  amount_idr?: number | null;
+  fx_rate?: number | null;
+  fx_rate_date?: string | null;
 };
 
 const money = (n: number) => new Intl.NumberFormat("en-US").format(Math.round(n));
@@ -97,7 +101,7 @@ function transactionsFixture(): FixtureTx[] {
   ];
 }
 
-async function mockSupportRoutes(page: Page) {
+async function mockSupportRoutes(page: Page, accounts: unknown[] = accountsFixture()) {
   await page.route("**/api/accounts", async (route) => {
     if (route.request().method() !== "GET") {
       await route.fallback();
@@ -106,7 +110,7 @@ async function mockSupportRoutes(page: Page) {
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(accountsFixture()),
+      body: JSON.stringify(accounts),
     });
   });
   await page.route("**/api/categories", async (route) => {
@@ -122,8 +126,12 @@ async function mockSupportRoutes(page: Page) {
   });
 }
 
-async function mockRecords(page: Page, rows: FixtureTx[] = transactionsFixture()) {
-  await mockSupportRoutes(page);
+async function mockRecords(
+  page: Page,
+  rows: FixtureTx[] = transactionsFixture(),
+  accounts: unknown[] = accountsFixture()
+) {
+  await mockSupportRoutes(page, accounts);
   await page.route("**/api/transactions*", async (route) => {
     if (route.request().method() !== "GET") {
       await route.fallback();
@@ -425,5 +433,343 @@ test.describe("Records URL-seeded filters and pills (37-07)", () => {
       expect(urls[0].searchParams.has(k)).toBe(false);
     }
     await expect(page.getByRole("group", { name: "Active filters" })).toHaveCount(0);
+  });
+});
+
+// Phase 44 (ENTRY-01, D-09) — the record modal takes its currency from the
+// account and never sends one. Synthetic ZZ44 data; every non-GET route is
+// fulfilled here, so nothing can reach a live backend.
+const accountsWithUsd = () => [
+  ...accountsFixture(),
+  { id: 3, name: "ZZ44 Wallet", currency: "USD" },
+  { id: 4, name: "ZZ44 Spare", currency: "USD" },
+];
+
+test.describe("Record modal currency (Phase 44)", () => {
+  test("record modal takes currency from the account", async ({ page }) => {
+    await mockRecords(page, transactionsFixture(), accountsWithUsd().slice(0, 3));
+    let posted: Record<string, unknown> | null = null;
+    await page.route("**/api/transactions", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.fallback();
+        return;
+      }
+      posted = route.request().postDataJSON();
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({ id: 999 }),
+      });
+    });
+    await page.goto("/records");
+    await page.getByRole("button", { name: "+ Add record" }).click();
+
+    await expect(page.getByRole("textbox", { name: "Currency" })).toHaveCount(0);
+    const chip = page.getByLabel("Currency", { exact: true });
+    await expect(chip).toHaveText("IDR");
+    await page.getByLabel("Account", { exact: true }).selectOption({ label: "ZZ44 Wallet" });
+    await expect(chip).toHaveText("USD");
+
+    await page.getByLabel("Amount", { exact: true }).fill("12.34");
+    await page.getByRole("button", { name: "Add transaction", exact: true }).click();
+
+    await expect.poll(() => posted !== null).toBe(true);
+    const body = posted as unknown as Record<string, unknown>;
+    expect(Object.keys(body)).not.toContain("currency");
+    expect(body.amount).toBe(-12.34);
+    expect(body.account).toBe("ZZ44 Wallet");
+  });
+
+  test("edit mode shows the stored row currency", async ({ page }) => {
+    const row: FixtureTx = {
+      id: 307, date: isoAt(2), amount: -12.34, category: "Transport",
+      merchant: "ZZ44 Vendor", account_id: 3, notes: null,
+      is_transfer: false, transfer_pair_id: null, currency: "USD",
+    };
+    await mockRecords(page, [row], accountsWithUsd().slice(0, 3));
+    await page.goto("/records");
+    await page
+      .getByRole("button", {
+        name: `Record options: ZZ44 Vendor on ${row.date.slice(0, 10)}`,
+        exact: true,
+      })
+      .click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    await expect(page.getByLabel("Currency", { exact: true })).toHaveText("USD");
+  });
+
+  // Phase 45 (D-10): To lists every other account; a cross-currency pair asks
+  // for the received amount. Synthetic ZZ45 data; every non-GET route and every
+  // /api/fx/rate request is fulfilled here, nothing reaches a live backend.
+  const accountsZZ45 = () => [
+    { id: 1, name: "ZZ45 Wallet", currency: "USD" },
+    { id: 2, name: "ZZ45 Bank", currency: "IDR" },
+    { id: 3, name: "ZZ45 Cash", currency: "IDR" },
+  ];
+
+  async function openTransfer(
+    page: Page,
+    opts: { accounts?: unknown[]; fx?: (route: Route) => Promise<void> } = {}
+  ) {
+    await mockRecords(page, transactionsFixture(), opts.accounts ?? accountsZZ45());
+    await page.route("**/api/fx/rate**", opts.fx ?? (async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ currency: "USD", on: "2026-10-30", rate: "16250", rate_date: "2026-10-30" }),
+      });
+    }));
+    const box: { posted: Record<string, unknown> | null } = { posted: null };
+    await page.route("**/api/transactions/transfer", async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.fulfill({ status: 405, body: "{}" });
+        return;
+      }
+      box.posted = route.request().postDataJSON();
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify({ leg_a_id: 1, leg_b_id: 2, transfer_pair_id: 1 }),
+      });
+    });
+    await page.goto("/records");
+    await page.getByRole("button", { name: "+ Add record" }).click();
+    await page.getByRole("button", { name: "Transfer", exact: true }).click();
+    return box;
+  }
+
+  test("cross-currency transfer asks for the received amount", async ({ page }) => {
+    const box = await openTransfer(page);
+    const from = page.getByLabel("From account", { exact: true });
+    const to = page.getByLabel("To account", { exact: true });
+    await from.selectOption({ label: "ZZ45 Wallet" });
+    await expect(to.locator("option")).toHaveText(["ZZ45 Bank", "ZZ45 Cash"]);
+    await expect(page.getByText(/Only .* accounts are listed/)).toHaveCount(0);
+
+    await expect(page.getByLabel("Amount sent (USD)", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Amount received (IDR)", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Currency", { exact: true })).toHaveText("USD");
+    await expect(page.getByLabel("Received currency", { exact: true })).toHaveText("IDR");
+
+    const save = page.getByRole("button", { name: "Add transfer", exact: true });
+    await expect(save).toBeDisabled();
+    await page.getByLabel("Amount sent (USD)", { exact: true }).fill("100");
+    await expect(save).toBeDisabled();
+    await page.getByLabel("Amount received (IDR)", { exact: true }).fill("1631000");
+    await expect(save).toBeEnabled();
+    await expect(
+      page.getByText("Implied 1 USD = 16,310 IDR · ECB 16,250 (rate of 30 Oct 2026)")
+    ).toBeVisible();
+
+    await save.click();
+    await expect.poll(() => box.posted !== null).toBe(true);
+    const body = box.posted as unknown as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(["amount", "date", "from_account", "notes", "to_account", "to_amount"]);
+    expect(body.amount).toBe(100);
+    expect(body.to_amount).toBe(1631000);
+    expect(body.to_account).toBe("ZZ45 Bank");
+  });
+
+  for (const mode of ["null", "500", "slow"] as const) {
+    test(`ECB rate ${mode === "slow" ? "checking" : "unavailable"} (${mode})`, async ({ page }) => {
+      await openTransfer(page, {
+        fx: async (route) => {
+          if (mode === "slow") await new Promise((r) => setTimeout(r, 1500));
+          if (mode === "500") {
+            await route.fulfill({ status: 500, body: "{}" });
+            return;
+          }
+          await route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            body: JSON.stringify({ currency: "USD", on: "2026-10-30", rate: null, rate_date: null }),
+          });
+        },
+      });
+      await page.getByLabel("From account", { exact: true }).selectOption({ label: "ZZ45 Wallet" });
+      await page.getByLabel("Amount sent (USD)", { exact: true }).fill("100");
+      await page.getByLabel("Amount received (IDR)", { exact: true }).fill("1631000");
+      if (mode === "slow") {
+        await expect(page.getByText("Implied 1 USD = 16,310 IDR · checking ECB rate…")).toBeVisible();
+        await expect(page.getByRole("button", { name: "Add transfer", exact: true })).toBeEnabled();
+      }
+      await expect(page.getByText("Implied 1 USD = 16,310 IDR · ECB rate unavailable")).toBeVisible({
+        timeout: 8000,
+      });
+      await expect(page.getByRole("button", { name: "Add transfer", exact: true })).toBeEnabled();
+    });
+  }
+
+  test("same-currency transfer is unchanged", async ({ page }) => {
+    const box = await openTransfer(page);
+    const from = page.getByLabel("From account", { exact: true });
+    const to = page.getByLabel("To account", { exact: true });
+    await from.selectOption({ label: "ZZ45 Bank" });
+    await to.selectOption({ label: "ZZ45 Cash" });
+    await expect(page.getByLabel("Amount", { exact: true })).toBeVisible();
+    await expect(page.getByLabel("Amount received (USD)", { exact: false })).toHaveCount(0);
+    await expect(page.getByLabel("Received currency", { exact: true })).toHaveCount(0);
+
+    // Cross, fill the second amount, then back to same-currency: row hides, value dropped.
+    await to.selectOption({ label: "ZZ45 Wallet" });
+    const second = page.getByLabel("Amount received (USD)", { exact: true });
+    await expect(second).toHaveValue("");
+    await second.fill("5");
+    await to.selectOption({ label: "ZZ45 Cash" });
+    await expect(second).toHaveCount(0);
+    await to.selectOption({ label: "ZZ45 Wallet" });
+    await expect(page.getByLabel("Amount received (USD)", { exact: true })).toHaveValue("");
+    await to.selectOption({ label: "ZZ45 Cash" });
+
+    await page.getByLabel("Amount", { exact: true }).fill("25000");
+    await page.getByRole("button", { name: "Add transfer", exact: true }).click();
+    await expect.poll(() => box.posted !== null).toBe(true);
+    const body = box.posted as unknown as Record<string, unknown>;
+    expect(Object.keys(body).sort()).toEqual(["amount", "date", "from_account", "notes", "to_account"]);
+  });
+
+  test("transfer with no other account", async ({ page }) => {
+    await openTransfer(page, { accounts: [{ id: 1, name: "ZZ45 Wallet", currency: "USD" }] });
+    await expect(page.getByText("No other account to transfer to.")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Add transfer", exact: true })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Save & add another" })).toBeDisabled();
+  });
+});
+
+test.describe("Records USD rows (Phase 44 D-13, D-14)", () => {
+  test("USD rows show native, ≈ IDR and the rate", async ({ page }) => {
+    const rows: FixtureTx[] = [
+      ...transactionsFixture(),
+      {
+        id: 401, date: isoAt(3), amount: -12.34, currency: "USD", category: "Food & Drinks",
+        merchant: "ZZ44 Priced", account_id: 3, notes: null,
+        is_transfer: false, transfer_pair_id: null,
+        amount_idr: -200525, fx_rate: 16250, fx_rate_date: "2026-10-30",
+      },
+      {
+        id: 402, date: isoAt(3), amount: -5, currency: "USD", category: "Food & Drinks",
+        merchant: "ZZ44 Unpriced", account_id: 3, notes: null,
+        is_transfer: false, transfer_pair_id: null,
+        amount_idr: null, fx_rate: null, fx_rate_date: null,
+      },
+    ];
+    await mockRecords(page, rows, [...accountsFixture(), { id: 3, name: "ZZ44 Wallet", currency: "USD" }]);
+    await page.goto("/records");
+
+    const priced = page.getByTitle("1 USD = 16,250 IDR · rate of 30 Oct 2026");
+    await expect(priced).toHaveCount(1);
+    await expect(priced).toContainText("-12.34 USD");
+    await expect(priced).toContainText("≈ -200,525");
+
+    const noRate = page.getByText("no rate yet", { exact: true });
+    await expect(noRate).toHaveCount(1);
+    await expect(noRate.locator("xpath=../..")).toContainText("-5.00 USD");
+    await expect(noRate.locator("xpath=../..")).not.toHaveAttribute("title", /.*/);
+
+    // The IDR row is untouched: signed amount only, no secondary line, no title.
+    const idr = page.getByText(signed(-25000), { exact: true });
+    await expect(idr).toHaveCount(1);
+    await expect(idr).not.toHaveAttribute("title", /.*/);
+    await expect(page.getByText("≈")).toHaveCount(1);
+  });
+
+  test("daily net adds IDR values only", async ({ page }) => {
+    const usd = (id: number, day: number, amount: number, idr: number | null, extra: Partial<FixtureTx> = {}): FixtureTx => ({
+      id, date: isoAt(day), amount, currency: "USD", category: "Food & Drinks",
+      merchant: `ZZ44 usd ${id}`, account_id: 3, notes: null,
+      is_transfer: false, transfer_pair_id: null,
+      amount_idr: idr, fx_rate: idr == null ? null : 16250, fx_rate_date: idr == null ? null : "2026-10-30",
+      ...extra,
+    });
+    const idrRow = (id: number, day: number): FixtureTx => ({
+      id, date: isoAt(day), amount: -25000, category: "Food & Drinks",
+      merchant: `ZZ44 idr ${id}`, account_id: 1, notes: null,
+      is_transfer: false, transfer_pair_id: null,
+    });
+    const rows: FixtureTx[] = [
+      idrRow(501, 4), usd(502, 4, -12.34, -200525),
+      idrRow(511, 5), usd(512, 5, -5, null),
+      usd(521, 6, -5, null),
+      usd(531, 7, -25.5, -414375, { is_transfer: true, transfer_pair_id: 777, account_id: 3 }),
+      usd(532, 7, 25.5, 414375, { is_transfer: true, transfer_pair_id: 777, account_id: 4 }),
+    ];
+    await mockRecords(page, rows, [
+      ...accountsFixture(),
+      { id: 3, name: "ZZ44 Wallet", currency: "USD" },
+      { id: 4, name: "ZZ44 Vault", currency: "USD" },
+    ]);
+    await page.goto("/records");
+
+    await expect(page.getByText(`Net ${signed(-225525)}`, { exact: true })).toBeVisible();
+    await expect(page.getByText(/^Net -25,000 · 1 unconverted$/)).toBeVisible();
+    await expect(page.getByText(/^Net — · 1 unconverted$/)).toBeVisible();
+
+    const pair = page.getByText("25.50 USD", { exact: false });
+    await expect(pair).toHaveCount(1);
+    await expect(pair).toContainText("≈ 414,375");
+  });
+});
+
+test.describe("Records cross-currency pair (Phase 45 D-09)", () => {
+  const accts = [
+    { id: 1, name: "ZZ45 Wallet", currency: "USD" },
+    { id: 2, name: "ZZ45 Bank", currency: "IDR" },
+  ];
+  // Synthetic pair on 1996-03-02; the USD leg carries the rate the backend stored.
+  const pair = (usd: Partial<FixtureTx>, usdOut = true): FixtureTx[] => {
+    const usdLeg: FixtureTx = {
+      id: 601, date: "1996-03-02T10:00:00Z", amount: usdOut ? -100 : 100, currency: "USD",
+      category: "Transfer", merchant: null, account_id: 1, notes: null,
+      is_transfer: true, transfer_pair_id: 888,
+      amount_idr: usdOut ? -1625000 : 1625000, fx_rate: 16250, fx_rate_date: "1996-03-01",
+      ...usd,
+    };
+    const idrLeg: FixtureTx = {
+      id: 602, date: "1996-03-02T10:00:00Z", amount: usdOut ? 1631000 : -1631000, category: "Transfer",
+      merchant: null, account_id: 2, notes: null, is_transfer: true, transfer_pair_id: 888,
+    };
+    return [usdLeg, idrLeg];
+  };
+  async function open(page: Page, rows: FixtureTx[]) {
+    const fx: string[] = [];
+    page.on("request", (r) => {
+      if (r.url().includes("/api/fx/rate")) fx.push(r.url());
+    });
+    await mockRecords(page, rows, accts);
+    await page.goto("/records");
+    return fx;
+  }
+
+  test("cross-currency pair shows both amounts and the rate", async ({ page }) => {
+    const fx = await open(page, pair({}));
+    const received = page.getByText("received 1,631,000", { exact: true });
+    await expect(received).toHaveCount(1);
+    await expect(received.locator("xpath=..")).toContainText("100.00 USD");
+    await expect(received.locator("xpath=..")).not.toContainText("≈");
+    await expect(
+      page.getByText("1996-03-02 · Implied 1 USD = 16,310 IDR · ECB 16,250 (rate of 1 Mar 1996)", {
+        exact: true,
+      })
+    ).toHaveCount(1);
+    expect(fx).toEqual([]);
+  });
+
+  test("cross-currency pair without a rate", async ({ page }) => {
+    await open(page, pair({ fx_rate: null, fx_rate_date: null, amount_idr: null }));
+    await expect(
+      page.getByText("1996-03-02 · Implied 1 USD = 16,310 IDR · ECB rate unavailable", { exact: true })
+    ).toHaveCount(1);
+  });
+
+  test("the USD side can be the incoming leg", async ({ page }) => {
+    await open(page, pair({}, false));
+    const received = page.getByText("received 100.00 USD", { exact: true });
+    await expect(received).toHaveCount(1);
+    await expect(received.locator("xpath=..")).toContainText("1,631,000");
+    await expect(
+      page.getByText("1996-03-02 · Implied 1 USD = 16,310 IDR · ECB 16,250 (rate of 1 Mar 1996)", {
+        exact: true,
+      })
+    ).toHaveCount(1);
   });
 });

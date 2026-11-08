@@ -3,7 +3,7 @@ Opt-in golden-question eval for the production agent loop.
 
 What this is: a standalone script, NOT a pytest test and NOT collected by
 default pytest or CI (backend/evals/ sits outside pyproject.toml's
-testpaths). It sends ~21 scripted questions through backend.query.agent_stream
+testpaths). It sends ~26 scripted questions through backend.query.agent_stream
 — the real, production agent loop — driven by whatever real LLM is
 configured via LLM_PROVIDER / the matching model env var. It runs only
 against monai_test, never the live monai database; a module-top guard
@@ -21,6 +21,13 @@ plan_history and they create no threads. Cases 18-20 cover Phase 38 (a
 read-only tool subset, an ordered two-write request, a long summarised thread).
 Case 21 covers Phase 40: an enabled synthetic skill that must be loaded first; the
 skill (env var and app_settings row) exists only around that one case.
+Cases 22-24 cover Phase 45: a USD balance answer that repeats the tool's fx_note, a USD
+write with no currency argument, and a cross-currency transfer with both amounts. They
+seed a USD account, a 1996 USD row and a made-up Friday rate (source 'zzeval').
+Cases 25-26 cover the wording polish: "the last 6 months" resolved by the period itself, and a
+per-month category answer that names every month of the window. Case 13 also checks that each
+recurring line's cadence, confidence and monthly cost reach the answer, and every case fails on
+a whole amount written with a trailing .0.
 
 Usage:
     env -u DATABASE_URL .venv/bin/python -m backend.evals.agent_eval \
@@ -29,7 +36,7 @@ Usage:
     --self-check   run the answer-number parser's asserts only. No DB, no LLM.
     --seed-check   run the DB guard, head check, seed, probes and teardown.
                    No LLM.
-    --case N       run only case N (repeatable). Default: run all 21 cases.
+    --case N       run only case N (repeatable). Default: run all 26 cases.
 
 Exit code 0 means every selected case passed (or, for --self-check /
 --seed-check, that check passed). Exit code 1 otherwise.
@@ -274,6 +281,50 @@ def numbers_ok(answer: str, question: str, trace: list) -> tuple[bool, list[floa
     return (len(unmatched) == 0, unmatched)
 
 
+# A whole amount written with a trailing .0 (POL-02): the tools hand the model whole numbers.
+_TRAILING_DECIMAL_RE = re.compile(r"\d\.0(?!\d)")
+
+
+def _months_named(text: str, months: list[tuple[int, int]]) -> bool:
+    """True when every (year, month) is named in `text` as YYYY-MM, a full month name or a
+    three-letter abbreviation (POL-04)."""
+    low = text.lower()
+    for y, m in months:
+        full, abbr = calendar.month_name[m].lower(), calendar.month_abbr[m].lower()
+        if not (f"{y:04d}-{m:02d}" in text or full in low or re.search(rf"\b{abbr}\b", low)):
+            return False
+    return True
+
+
+_NOT_RETRIEVED_RE = re.compile(r"(?i)not retrieved|not fetched|not available|could not retrieve")
+_YYYY_MM_RE = re.compile(r"\d{4}-\d{2}")
+
+
+def _full_months_ok(text: str, months: list[tuple[int, int]], question: str, trace: list) -> bool:
+    """Case 26: all six months named, nothing 'not retrieved', and every figure from the trace.
+    YYYY-MM tokens are removed before the number check: a bare 2026 has no year cue there."""
+    return (
+        _months_named(text, months)
+        and not _NOT_RETRIEVED_RE.search(text)
+        and numbers_ok(_YYYY_MM_RE.sub(" ", text), question, trace)[0]
+    )
+
+
+def _recurring_fields_ok(text: str, group: dict | None, question: str, trace: list) -> bool:
+    """Case 13: the answer carries the group's label, cadence, confidence and a monthly cost
+    within 1.0 of the tool's est_monthly, and every figure is from the trace (POL-01)."""
+    if not group:
+        return False
+    low = text.lower()
+    return (
+        str(group["label"]).lower() in low
+        and str(group["cadence"]).lower() in low
+        and str(group["confidence"]).lower() in low
+        and any(abs(abs(v) - float(group["est_monthly"])) <= 1.0 for v, _ in extract_numbers(text))
+        and numbers_ok(text, question, trace)[0]
+    )
+
+
 def _self_check() -> None:
     """Pure-function asserts for extract_numbers/numbers_ok. No DB, no LLM —
     `backend.db` must never end up in sys.modules from this path."""
@@ -345,6 +396,30 @@ def _self_check() -> None:
     right = {"tool": "spending_total", "args": {"period": "this_year"}, "result": {"total": 43000.0}}
     wrong = {"tool": "spending_total", "args": {"period": "all_time"}, "result": {"total": 134000.0}}
     assert _check_case(fake_case, {"text": "You spent 43,000", "trace": [right, wrong]})["passed"]
+
+    # POL-02: a trailing .0 on a whole amount fails any case; 12.5 and 1.05 do not.
+    assert _TRAILING_DECIMAL_RE.search("You spent 43000.0 in total")
+    assert not _TRAILING_DECIMAL_RE.search("You spent 43,000 and 12.5 and 1.05")
+    assert not _check_case(fake_case, {"text": "You spent 43,000.0", "trace": [right]})["passed"]
+
+    # POL-04: the six months of a window are all named, in any of three spellings.
+    window = [(1996, 3), (1996, 4), (1996, 5)]
+    assert _months_named("1996-03: a, April: b, May: c", window)
+    assert _months_named("Mar 100, Apr 200, May 300", window)
+    assert not _months_named("March and April only", window)
+    pair = {"result": {"rows": [{"month": "1996-03", "expense": 120000.0}]}}
+    assert _full_months_ok("March, April and May: 120,000 in 1996-03", window, "q", [pair])
+    assert not _full_months_ok("March, April and May: 120,000, May was not retrieved", window, "q", [pair])
+    assert not _full_months_ok("March, April and May: 999,000", window, "q", [pair])
+
+    # POL-01: the recurring answer needs label, cadence, confidence and the monthly cost.
+    grp = {"label": "ZZ Sub", "cadence": "monthly", "confidence": "high", "est_monthly": 250000.0}
+    step = {"tool": "recurring_charges", "result": {"groups": [grp]}}
+    good = "ZZ Sub: monthly, 250,000 a month, high confidence"
+    assert _recurring_fields_ok(good, grp, "q", [step])
+    assert not _recurring_fields_ok("ZZ Sub: monthly, 250,000 a month", grp, "q", [step])
+    assert not _recurring_fields_ok("ZZ Sub: monthly, high confidence", grp, "q", [step])
+    assert not _recurring_fields_ok(good, None, "q", [step])
     assert not _check_case(fake_case, {"text": "You spent 134,000", "trace": [right, wrong]})["passed"]
 
     # Case 21 trace checker (pure). `_period_range` is stubbed so no backend
@@ -414,6 +489,11 @@ def _self_check() -> None:
         g.update(saved)
 
     assert "backend.db" not in sys.modules
+    tr = [{"tool": "account_balances",
+           "result": {"fx_note": "USD converted at 1 USD = 16,100 IDR (rate of 12 Jun 1995)"}}]
+    assert _answer_repeats_fx_note("Rate 16,100 IDR per USD, rate of 12 Jun 1995.", tr)
+    assert not _answer_repeats_fx_note("It is about 200,000 rupiah.", tr)
+    assert not _answer_repeats_fx_note("Rate 16,100 per USD.", tr)
     print("self-check OK")
 
 
@@ -424,6 +504,16 @@ def _self_check() -> None:
 
 MARKER = "ZZEval"
 ACCOUNT = "ZZEval Wallet"
+USD_ACCOUNT = "ZZEval USD Wallet"
+USD_CAT = "ZZEval USD Spend"
+IDR_BANK = "ZZEval IDR Bank"
+EVAL_ACCOUNTS = [ACCOUNT, USD_ACCOUNT, IDR_BANK]
+# Phase 45: a Saturday USD row with only the Friday rate cached, so the flow view converts it
+# from the cache (7-day window) and the eval never reaches the network for it. Made-up values.
+USD_ROW_DATE = datetime.date(1996, 3, 2)
+USD_RATE_DATE = datetime.date(1996, 3, 1)
+USD_RATE = "16250.000000"
+USD_RATE_SOURCE = "zzeval"
 PARENT = "ZZEval Hobbies"
 CHILD = "ZZEval Pottery"
 UNKNOWN = "Yachts"
@@ -438,7 +528,7 @@ EVAL_TICKER = "ZZEVAL"
 SKILLS_FIXTURE = Path(__file__).parent / "skills_fixture"
 SKILL_NAME = "zzeval-monthly-review"
 SKILLS_KEY = "skills_enabled"
-_EVAL_CATS = [PARENT, CHILD, RECUR_CAT]
+_EVAL_CATS = [PARENT, CHILD, RECUR_CAT, USD_CAT]
 
 
 def _seed_rows(today: datetime.date) -> list[tuple[datetime.date, int, str]]:
@@ -549,7 +639,7 @@ def _check_db() -> None:
 # Shared by _purge and _leftovers so the count covers exactly the rows the
 # purge deletes.
 _EVAL_TXN_WHERE = (
-    "account_id IN (SELECT id FROM accounts WHERE name = :acct) "
+    "account_id IN (SELECT id FROM accounts WHERE name = ANY(:accts)) "
     "OR category_id IN (SELECT id FROM categories WHERE name = ANY(:cats))"
 )
 
@@ -566,7 +656,7 @@ def _purge(proposal_ids: list[str]) -> None:
         )
         c.execute(
             sa_text("DELETE FROM transactions WHERE " + _EVAL_TXN_WHERE),
-            {"acct": ACCOUNT, "cats": _EVAL_CATS},
+            {"accts": EVAL_ACCOUNTS, "cats": _EVAL_CATS},
         )
         c.execute(
             sa_text("DELETE FROM platforms WHERE name = :name"), {"name": EVAL_PLATFORM}
@@ -575,7 +665,12 @@ def _purge(proposal_ids: list[str]) -> None:
         c.execute(sa_text("DELETE FROM categories WHERE name = :name"), {"name": CHILD})
         c.execute(sa_text("DELETE FROM categories WHERE name = :name"), {"name": PARENT})
         c.execute(sa_text("DELETE FROM categories WHERE name = :name"), {"name": RECUR_CAT})
-        c.execute(sa_text("DELETE FROM accounts WHERE name = :name"), {"name": ACCOUNT})
+        c.execute(sa_text("DELETE FROM categories WHERE name = :name"), {"name": USD_CAT})
+        c.execute(sa_text("DELETE FROM accounts WHERE name = ANY(:accts)"), {"accts": EVAL_ACCOUNTS})
+        c.execute(
+            sa_text("DELETE FROM fx_rate_cache WHERE source = :src AND rate_date = :d"),
+            {"src": USD_RATE_SOURCE, "d": USD_RATE_DATE},
+        )
         # Phase 40: the scoped-skill row (normally already gone via _fixture_skill).
         c.execute(sa_text("DELETE FROM app_settings WHERE key = :sk"), {"sk": SKILLS_KEY})
         # Guard (research C6): the eval creates no threads (D-22a), but drop any
@@ -635,6 +730,40 @@ def _seed() -> None:
                 ),
                 {"d": d, "amt": amount, "cat": CHILD, "cid": child_id, "m": merchant, "aid": account_id},
             )
+        # Phase 45: the USD account, its category, one Saturday expense and the Friday rate.
+        usd_id = c.execute(
+            sa_text(
+                "INSERT INTO accounts (name, type, currency) "
+                "VALUES (:name, 'liquid', 'USD') RETURNING id"
+            ),
+            {"name": USD_ACCOUNT},
+        ).scalar()
+        c.execute(
+            sa_text("INSERT INTO accounts (name, type, currency) VALUES (:name, 'liquid', 'IDR')"),
+            {"name": IDR_BANK},
+        )
+        usd_cat_id = c.execute(
+            sa_text(
+                "INSERT INTO categories (name, parent_id, kind, is_system) "
+                "VALUES (:name, NULL, 'expense', false) RETURNING id"
+            ),
+            {"name": USD_CAT},
+        ).scalar()
+        c.execute(
+            sa_text(
+                "INSERT INTO transactions "
+                "(date, amount, currency, category, category_id, merchant, account_id, is_transfer) "
+                "VALUES (:d, -12.50, 'USD', :cat, :cid, 'ZZEval USD Cafe', :aid, false)"
+            ),
+            {"d": USD_ROW_DATE, "cat": USD_CAT, "cid": usd_cat_id, "aid": usd_id},
+        )
+        c.execute(
+            sa_text(
+                "INSERT INTO fx_rate_cache (rate_date, base_currency, quote_currency, rate, source) "
+                "VALUES (:d, 'USD', 'IDR', :r, :src) ON CONFLICT DO NOTHING"
+            ),
+            {"d": USD_RATE_DATE, "r": USD_RATE, "src": USD_RATE_SOURCE},
+        )
         recur_id = c.execute(
             sa_text(
                 "INSERT INTO categories (name, parent_id, kind, is_system) "
@@ -679,7 +808,8 @@ def _leftovers(proposal_ids: list[str]) -> int:
         n = c.execute(
             sa_text(
                 "SELECT "
-                "(SELECT count(*) FROM accounts WHERE name = :acct) + "
+                "(SELECT count(*) FROM accounts WHERE name = ANY(:accts)) + "
+                "(SELECT count(*) FROM fx_rate_cache WHERE source = :src AND rate_date = :rd) + "
                 "(SELECT count(*) FROM categories WHERE name = ANY(:cats)) + "
                 "(SELECT count(*) FROM transactions WHERE " + _EVAL_TXN_WHERE + ") + "
                 "(SELECT count(*) FROM portfolio_events WHERE ticker = :tick) + "
@@ -689,7 +819,7 @@ def _leftovers(proposal_ids: list[str]) -> int:
                 "(SELECT count(*) FROM proposals WHERE status IN ('pending', 'expired') AND "
                 "id = ANY(CAST(:ids AS uuid[])))"
             ),
-            {"acct": ACCOUNT, "cats": _EVAL_CATS, "tick": EVAL_TICKER, "plat": EVAL_PLATFORM,
+            {"accts": EVAL_ACCOUNTS, "src": USD_RATE_SOURCE, "rd": USD_RATE_DATE, "cats": _EVAL_CATS, "tick": EVAL_TICKER, "plat": EVAL_PLATFORM,
              "tp": MARKER + "%", "sk": SKILLS_KEY, "ids": [pid for pid in proposal_ids if pid]},
         ).scalar()
     return int(n or 0)
@@ -914,6 +1044,9 @@ def _do_seed_check() -> int:
 # The 21 golden cases (21 is the Phase 40 skill case).
 # ---------------------------------------------------------------------------
 
+CASE_13_QUESTION = "What are my recurring charges?"
+CASE_26_QUESTION = "What were my top spending categories in each of the last 6 months?"
+
 
 def _period_range(period: str, start: str | None = None, end: str | None = None):
     from backend.tools import resolve_period
@@ -1030,6 +1163,90 @@ def _args_two_proposals(trace, payload):
     if amounts != {25000.0, 60000.0}:
         return False
     return len(payload.get("proposals") or []) == 2
+
+
+_NOTE_RATE_RE = re.compile(r"1 USD = ([\d,]+) IDR \(rate of (\d{1,2}) (\w{3}) (\d{4})")
+
+
+def _answer_repeats_fx_note(text: str, trace: list) -> bool:
+    """Case 22: the answer carries the whole-IDR rate and the rate's date exactly as the
+    tool's own fx_note gave them (derived from the trace, since the live spot varies).
+    Thousands separators are stripped from the answer, so '16,100' and '16100' both match."""
+    notes = [
+        (s.get("result") or {}).get("fx_note") for s in trace
+        if s.get("tool") == "account_balances" and isinstance(s.get("result"), dict)
+    ]
+    m = next((_NOTE_RATE_RE.search(n) for n in notes if n and _NOTE_RATE_RE.search(n)), None)
+    if m is None:
+        return False
+    rate, day, mon, year = m.groups()
+    flat = re.sub(r"(?<=\d)[,.](?=\d{3}\b)", "", text)
+    low = text.lower()
+    return rate.replace(",", "") in flat and year in text and mon.lower() in low and re.search(rf"\b{day}\b", text) is not None
+
+
+def _answer_recurring_fields(text: str, trace: list) -> bool:
+    """Case 13: the seeded group's line fields reach the answer (POL-01)."""
+    group = next(
+        (g for s in trace if s.get("tool") == "recurring_charges" and isinstance(s.get("result"), dict)
+         for g in s["result"].get("groups") or []
+         if str(g.get("label", "")).lower() == RECUR_MERCHANT.lower()),
+        None,
+    )
+    return _recurring_fields_ok(text, group, CASE_13_QUESTION, trace)
+
+
+def _answer_names_full_months(text: str, trace: list) -> bool:
+    """Case 26: each of the six full months before this one is named (POL-04)."""
+    today = _query_today()
+    months = [tuple(map(int, _month_before(today, k)[0].split("-")[:2])) for k in range(1, 7)]
+    return _full_months_ok(text, months, CASE_26_QUESTION, trace)
+
+
+def _stored_row(step: dict) -> dict | None:
+    """The first row's `after` of the proposal a propose_* step created, read back from
+    the DB by its id (what would be confirmed), or None."""
+    from sqlalchemy import text as sa_text
+    from backend.db import engine
+
+    pid = (step.get("result") or {}).get("proposal_id")
+    if not pid:
+        return None
+    with engine.connect() as c:
+        payload = c.execute(
+            sa_text("SELECT payload FROM proposals WHERE id = CAST(:i AS uuid)"), {"i": pid}
+        ).scalar()
+    rows = (payload or {}).get("rows") or []
+    return rows[0].get("after") if rows else None
+
+
+def _args_usd_write(trace, payload):
+    """Case 23: one propose_add_transaction, no currency argument, 12.5 magnitude, stored in USD."""
+    steps = _steps_for(trace, ["propose_add_transaction"])
+    if len(steps) != 1:
+        return False
+    args = steps[0].get("args") or {}
+    try:
+        if "currency" in args or abs(float(args.get("amount"))) != 12.5:
+            return False
+    except (TypeError, ValueError):
+        return False
+    return (_stored_row(steps[0]) or {}).get("currency") == "USD"
+
+
+def _args_cross_transfer(trace, payload):
+    """Case 24: one propose_add_transfer, amount 100 and to_amount 1631000, legs USD then IDR."""
+    steps = _steps_for(trace, ["propose_add_transfer"])
+    if len(steps) != 1:
+        return False
+    args = steps[0].get("args") or {}
+    try:
+        if abs(float(args.get("amount"))) != 100.0 or abs(float(args.get("to_amount"))) != 1631000.0:
+            return False
+    except (TypeError, ValueError):
+        return False
+    after = _stored_row(steps[0]) or {}
+    return ((after.get("leg_a") or {}).get("currency"), (after.get("leg_b") or {}).get("currency")) == ("USD", "IDR")
 
 
 def _answer_has_parent_name(text: str) -> bool:
@@ -1272,10 +1489,11 @@ CASES: list[dict] = [
         "answer": "numbers", "needs_number": False,
     },
     {
-        "id": 13, "question": "What are my recurring charges?",
+        "id": 13, "question": CASE_13_QUESTION,
         "tools": ["recurring_charges"], "step_args": _recurring_step,
-        "args_desc": "a recurring_charges step whose groups include ZZEval Streaming and neither decoy",
-        "answer": "numbers", "needs_number": True,
+        "args_desc": "a recurring_charges step whose groups include ZZEval Streaming and neither decoy; "
+                     "answer carries its cadence, confidence and monthly cost",
+        "answer": _answer_recurring_fields, "with_trace": True, "needs_number": True,
     },
     {
         "id": 14, "question": "Compare my spending last month against this month",
@@ -1351,6 +1569,40 @@ CASES: list[dict] = [
         "tools": ["load_skill"], "args": _args_skill_first,
         "args_desc": "load_skill(zzeval-monthly-review) before spending_total(this_month) and monthly_trend; their order is not asserted",
         "answer": "numbers", "needs_number": True, "no_writes": True,
+    },
+    {
+        # D-16: the balance tool returns the conversion note; the model must repeat it.
+        "id": 22, "question": "What's the balance of my ZZEval USD Wallet account in rupiah?",
+        "tools": ["account_balances"],
+        "args_desc": "account_balances called; answer carries the note's rate and date",
+        "answer": _answer_repeats_fx_note, "with_trace": True, "needs_number": True, "no_writes": True,
+    },
+    {
+        "id": 23, "question": "Add a ZZEval USD coffee of 12.5 to my ZZEval USD Wallet account.",
+        "tools": ["propose_add_transaction"], "args": _args_usd_write,
+        "args_desc": "one proposal, no currency argument, amount 12.5, stored after.currency == USD",
+        # The number parser drops figures under 100 (day numbers), so a 12.50 USD amount is checked by text.
+        "answer": lambda text: "usd" in text.lower() and "12.5" in text, "needs_number": False,
+    },
+    {
+        "id": 24,
+        "question": "Move 100 USD from my ZZEval USD Wallet to my ZZEval IDR Bank; the bank received 1631000 rupiah.",
+        "tools": ["propose_add_transfer"], "args": _args_cross_transfer,
+        "args_desc": "one proposal, amount 100, to_amount 1631000, stored legs USD then IDR",
+        "answer": lambda text: "usd" in text.lower(), "needs_number": True,
+    },
+    {
+        "id": 25, "question": "How much did I spend in the last 6 months?",
+        "tools": ["spending_total"],
+        "step_args": lambda s: _resolved_args(s) == _period_range("last_6_months"),
+        "args_desc": "a spending_total step whose resolved range == last_6_months (6 full months before this one)",
+        "answer": "numbers", "needs_number": True,
+    },
+    {
+        "id": 26, "question": CASE_26_QUESTION,
+        "tools": ["monthly_trend", "spending_by_category"],
+        "args_desc": "monthly_trend or spending_by_category called; the answer names each of the 6 full months",
+        "answer": _answer_names_full_months, "with_trace": True, "needs_number": True, "no_writes": True,
     },
 ]
 
@@ -1476,10 +1728,14 @@ def _check_case(case: dict, result: dict) -> dict:
     if case["answer"] == "numbers":
         ok, unmatched = numbers_ok(answer_text, case["question"], number_trace)
     else:
-        ok, unmatched = bool(case["answer"](answer_text)), []
+        check = case["answer"](answer_text, trace) if case.get("with_trace") else case["answer"](answer_text)
+        ok, unmatched = bool(check), []
 
     needs_number_failed = bool(case.get("needs_number")) and not _has_number(answer_text)
     if needs_number_failed:
+        ok = False
+    trailing = _TRAILING_DECIMAL_RE.search(answer_text)
+    if trailing:  # POL-02: a whole amount must not be written with a .0
         ok = False
 
     if case.get("no_writes") and any(str(s.get("tool", "")).startswith("propose_") for s in trace):
@@ -1491,6 +1747,7 @@ def _check_case(case: dict, result: dict) -> dict:
         "id": case["id"], "question": case["question"],
         "tool_ok": tool_ok, "args_ok": args_ok, "args_na": args_na,
         "numbers_ok": ok, "numbers_na": numbers_na,
+        "trailing_decimal": answer_text[max(0, trailing.start() - 12):trailing.end() + 4] if trailing else None,
         "passed": passed, "unmatched": unmatched,
         "needs_number_failed": needs_number_failed,
         "trace": trace, "text": answer_text, "error": error,
@@ -1563,6 +1820,8 @@ def _print_detail(case: dict, r: dict) -> None:
         print("  answer echoes a history marker")
     if r["unmatched"]:
         print(f"  unmatched numbers: {r['unmatched']}")
+    if r.get("trailing_decimal"):
+        print(f"  trailing .0 on a whole amount: {r['trailing_decimal']!r}")
     if r["needs_number_failed"]:
         print("  missing-number: case needs a figure in the answer but none survived extraction")
     print(f"  answer text (first 300 chars): {r['text'][:300]!r}")
@@ -1594,7 +1853,7 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         type=int,
         default=None,
-        help="run only this case id (repeatable). Default: run all 21 cases.",
+        help="run only this case id (repeatable). Default: run all 26 cases.",
     )
     args = parser.parse_args(argv)
 

@@ -10,6 +10,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import ProposalDiff from "../components/ProposalDiff";
+import TransferLine from "../components/TransferLine";
 import { extractDetail } from "../lib/api";
 import { INBOX_SURFACE_HEADER } from "../lib/approverAllowlist";
 import {
@@ -21,10 +22,8 @@ import {
   cardTitle,
   duplicateChipText,
   fmtAbsolute,
-  fmtMoney,
   fmtRowDate,
   fmtSigned,
-  fmtUnsigned,
   hhmm,
   invariantBadge,
   isLocked,
@@ -47,7 +46,8 @@ import {
   type HeldCard,
   type ProposalRow,
 } from "../lib/inbox";
-import { btn, btnGhost, card as cardStyle, dangerBtn, tokens } from "../styles";
+import { fmtAmountSigned } from "../lib/money";
+import { btn, btnGhost, card as cardStyle, dangerBtn, input, tokens } from "../styles";
 
 type Busy = null | "approve" | "reject" | number;
 
@@ -62,12 +62,11 @@ type Props = {
   onSettle: (id: string, phase: CardPhase) => void;
   onRows: (id: string, rows: ProposalRow[]) => void;
   announce: (msg: string) => void;
+  categories: string[];
 };
 
 const c = tokens.color;
 const text = (v: unknown): string => (v === null || v === undefined ? "" : String(v));
-// No date means the backend stamps the day it applies the proposal (IN-05).
-const onDate = (v: unknown): string => (v ? fmtRowDate(v) : "the approval date");
 
 const smallBtn: React.CSSProperties = {
   ...btnGhost,
@@ -162,6 +161,7 @@ export default function InboxCard({
   onSettle,
   onRows,
   announce,
+  categories,
 }: Props) {
   const p = card.proposal;
   const id = p.id;
@@ -303,6 +303,28 @@ export default function InboxCard({
     });
   }
 
+  async function setCategory(i: number, value: string | null) {
+    if (blocked) return;
+    await act(i, async () => {
+      const r = await fetch(`/api/proposals/${id}/rows/${i}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...INBOX_SURFACE_HEADER },
+        body: JSON.stringify({ category: value }),
+      });
+      if (!r.ok) return fail(r);
+      // The UI only sends names from the server's own list (or null), so the sent value is what is stored.
+      onRows(
+        id,
+        rows.map((row, k) => {
+          if (k !== i) return row;
+          const { category_suggested: _drop, ...rest } = row; // the server drops it too
+          return { ...rest, after: { ...row.after, category: value } };
+        })
+      );
+      announce(`Row ${i + 1} category set to ${value ?? "Uncategorized"}.`);
+    });
+  }
+
   async function copyCode(code: string) {
     try {
       await navigator.clipboard.writeText(code);
@@ -371,9 +393,6 @@ export default function InboxCard({
 
   const transfer = rows[0]?.after as
     | { leg_a?: Record<string, unknown>; leg_b?: Record<string, unknown> }
-    | undefined;
-  const investTransfer = rows[0]?.after as
-    | { cash_leg?: Record<string, unknown>; event?: Record<string, unknown> }
     | undefined;
   const flagsOf = (r: ProposalRow | undefined) => r?.duplicates ?? [];
 
@@ -528,7 +547,38 @@ export default function InboxCard({
                       </td>
                       <td className="inbox-c-account" style={{ ...cell, color: tone }}>{text(a.account)}</td>
                       <td className="inbox-c-category" style={{ ...cell, color: text(a.category) ? tone : c.muted3 }}>
-                        {text(a.category) || "Uncategorized"}
+                        {live ? (
+                          <>
+                          <select
+                            style={{ ...input, padding: "4px 8px", width: "auto", color: "inherit", ...gated(blocked) }}
+                            aria-label={`Category for row ${i + 1}: ${text(a.merchant) || "no merchant"}`}
+                            aria-disabled={blocked}
+                            aria-describedby={
+                              [row.category_suggested === true ? `inbox-sugg-${id}-${i}` : undefined, blockedDescribedBy]
+                                .filter(Boolean)
+                                .join(" ") || undefined
+                            }
+                            value={text(a.category)}
+                            onChange={(e) => void setCategory(i, e.target.value || null)}
+                          >
+                            <option value="">Uncategorized</option>
+                            {[...categories, ...(text(a.category) && !categories.includes(text(a.category)) ? [text(a.category)] : [])].map((n) => (
+                              <option key={n} value={n}>{n}</option>
+                            ))}
+                          </select>
+                          {row.category_suggested === true && (
+                            <span
+                              id={`inbox-sugg-${id}-${i}`}
+                              style={{ ...neutralChip, marginLeft: 8 }}
+                              title="Picked from past transactions at this merchant. Approving keeps it."
+                            >
+                              Suggested
+                            </span>
+                          )}
+                          </>
+                        ) : (
+                          text(a.category) || "Uncategorized"
+                        )}
                       </td>
                       <td
                         className="inbox-c-amount"
@@ -540,7 +590,7 @@ export default function InboxCard({
                           ...struck,
                         }}
                       >
-                        {fmtSigned(a.amount)}
+                        {text(a.currency) === "USD" ? fmtAmountSigned(Number(a.amount), "USD") : fmtSigned(a.amount)}
                       </td>
                       <td className="inbox-c-skip" style={cell}>
                         {live && (
@@ -600,10 +650,7 @@ export default function InboxCard({
           </>
         ) : op === "add_transfer" ? (
           <>
-            <div style={{ fontSize: 14, color: c.ink }}>
-              Transfer {fmtUnsigned(transfer?.leg_a?.amount)} from {text(transfer?.leg_a?.account)} to{" "}
-              {text(transfer?.leg_b?.account)} on {onDate(transfer?.leg_a?.date)}
-            </div>
+            <TransferLine legA={transfer?.leg_a} legB={transfer?.leg_b} showRate />
             {flagsOf(rows[0]).length > 0 && (
               <div style={{ marginTop: 8 }}>
                 <DuplicateFlags flags={flagsOf(rows[0])} selfId={id} onPageIds={onPageIds} />
@@ -614,20 +661,6 @@ export default function InboxCard({
           <div style={{ fontSize: 14, color: c.ink }}>
             Set account #{text(rows[0]?.account_id)} balance to {fmtAbsolute(rows[0]?.target_balance)}
           </div>
-        ) : op === "add_investment_transfer" ? (
-          <>
-            <div style={{ fontSize: 14, color: c.ink }}>
-              Move {fmtMoney(investTransfer?.cash_leg?.amount, investTransfer?.cash_leg?.currency)}{" "}
-              {text(investTransfer?.cash_leg?.currency)} from{" "}
-              {text(investTransfer?.cash_leg?.account)} to platform #{text(investTransfer?.event?.platform_id)} on{" "}
-              {onDate(investTransfer?.cash_leg?.date)}
-            </div>
-            {text(investTransfer?.cash_leg?.notes) !== "" && (
-              <div style={{ fontSize: 12, color: c.muted3, marginTop: 4 }}>
-                {text(investTransfer?.cash_leg?.notes)}
-              </div>
-            )}
-          </>
         ) : (
           <ProposalDiff
             rows={rows.map(({ duplicates: _d, skip: _s, ...diffRow }) => diffRow)}

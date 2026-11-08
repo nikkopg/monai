@@ -28,6 +28,8 @@ export type ProposalRow = {
   target_balance?: string;
   duplicates?: DuplicateFlag[];
   skip?: boolean;
+  /** Upload rows whose category came from the owner's merchant history; the owner's edit clears it. */
+  category_suggested?: boolean;
 };
 
 /** payload.attachment on a channel "upload" proposal (backend/mcp_writes.py); built by code, never by the model. */
@@ -108,7 +110,6 @@ const FIXED_LABEL: Record<string, string> = {
   add_holding: "Add holding",
   edit_holding: "Edit holding",
   delete_holding: "Delete holding",
-  add_investment_transfer: "Move cash to investments",
   add_funded_buy: "Record funded buy",
   add_funded_sell: "Record funded sell",
   add_balance_adjustment: "Adjust balance",

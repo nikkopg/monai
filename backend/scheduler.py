@@ -2,10 +2,12 @@
 In-process daily scheduler (D-13/D-14, Phase 39 D-07).
 
 The stack's first always-on background component: an `AsyncIOScheduler` started
-in the FastAPI lifespan (backend/main.py). Two daily jobs: the snapshot job
-refreshes all prices then writes one `portfolio_value_history` row per holding
-(history cannot be backfilled, D-13, so collection must start now), and the
-attachment purge clears raw upload bytes older than 7 days.
+in the FastAPI lifespan (backend/main.py). Three daily jobs: the FX warm job
+(00:30, before the snapshot) caches yesterday's USD->IDR rate in one range
+call (Phase 42 D-23); the snapshot job refreshes all prices then writes one
+`portfolio_value_history` row per holding (history cannot be backfilled, D-13,
+so collection must start now); the attachment purge clears raw upload bytes
+older than 7 days.
 
 APScheduler hardening (T-05-06-DOS, 05-RESEARCH.md Pattern 3 + Pitfall 3):
 `misfire_grace_time=3600` + `coalesce=True` avoid a thundering catch-up after
@@ -40,6 +42,22 @@ def daily_portfolio_snapshot_job() -> None:
         db.commit()
 
 
+def daily_fx_warm_job() -> None:
+    """Sync job: cache the last week of USD->IDR rates (one range call, D-23).
+
+    Never raises — a vendor outage is a log line, not a crashed job.
+    """
+    from backend.db import get_session_sync
+    from backend.fx import warm_recent_rates
+
+    try:
+        with get_session_sync() as db:
+            n = warm_recent_rates(db)
+        logger.info("fx warm: %d rate(s) stored", n)
+    except Exception:
+        logger.exception("fx warm failed")
+
+
 def daily_attachment_purge_job() -> None:
     """Sync job: NULL the raw bytes of attachments past the retention window."""
     from backend.attachments import purge_expired
@@ -51,13 +69,22 @@ def daily_attachment_purge_job() -> None:
 
 
 def build_scheduler() -> AsyncIOScheduler:
-    """Build the AsyncIOScheduler with the daily snapshot and purge jobs registered.
+    """Build the AsyncIOScheduler with the daily FX warm, snapshot and purge jobs registered.
 
     Returns an un-started scheduler; the caller (the FastAPI lifespan) owns
     start()/shutdown(). 01:00 Asia/Jakarta is a low-traffic window (D-14 leaves
     the time to Claude's discretion).
     """
     scheduler = AsyncIOScheduler(timezone="Asia/Jakarta")
+    scheduler.add_job(
+        daily_fx_warm_job,
+        trigger=CronTrigger(hour=0, minute=30, timezone="Asia/Jakarta"),
+        id="daily_fx_warm",
+        replace_existing=True,
+        misfire_grace_time=3600,
+        coalesce=True,
+        max_instances=1,
+    )
     scheduler.add_job(
         daily_portfolio_snapshot_job,
         trigger=CronTrigger(hour=1, minute=0, timezone="Asia/Jakarta"),

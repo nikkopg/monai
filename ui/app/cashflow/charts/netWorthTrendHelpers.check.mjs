@@ -67,18 +67,18 @@ const BOTH_GAPPED_MONTHS = [
 const today1Y = [
   ...BOTH_GAPPED_MONTHS.map((m) =>
     row(m, {
-      liquid: { gap_reason: "no_opening_anchor" },
+      liquid: { gap_reason: "fx_unavailable" },
       investment: { gap_reason: "no_investment_tracking_before_launch" },
       gap: "both_halves_gapped",
     })
   ),
   row("2026-07", {
-    liquid: { gap_reason: "no_opening_anchor" },
+    liquid: { gap_reason: "fx_unavailable" },
     investment: { total: 41234567.49, honest: true, as_of_date: "2026-07-31" },
     gap: "liquid_half_gapped",
   }),
   row("2026-08", {
-    liquid: { gap_reason: "no_opening_anchor" },
+    liquid: { gap_reason: "fx_unavailable" },
     investment: { total: 45678901.23, honest: true, as_of_date: "2026-08-29" },
     gap: "liquid_half_gapped",
   }),
@@ -119,7 +119,7 @@ assert.deepEqual(RANGE_MONTHS, { "1Y": 12, "3Y": 36, All: 600 });
 
   const preLedgerAfterReal = [
     row("2025-01", {
-      liquid: { gap_reason: "no_opening_anchor" },
+      liquid: { gap_reason: "fx_unavailable" },
       investment: { gap_reason: "no_investment_tracking_before_launch" },
       gap: "both_halves_gapped",
     }),
@@ -154,7 +154,7 @@ assert.deepEqual(RANGE_MONTHS, { "1Y": 12, "3Y": 36, All: 600 });
   const carryTest = [
     row("2026-01", { liquid: { total: 100, honest: true }, investment: { total: 100, honest: true }, total: 100, honest: true }),
     row("2026-02", {
-      liquid: { gap_reason: "no_opening_anchor" },
+      liquid: { gap_reason: "fx_unavailable" },
       investment: { gap_reason: "no_investment_tracking_before_launch" },
       gap: "both_halves_gapped",
     }),
@@ -164,7 +164,7 @@ assert.deepEqual(RANGE_MONTHS, { "1Y": 12, "3Y": 36, All: 600 });
 
   const dishonestNonNull = [
     row("2026-01", {
-      liquid: { total: 500, honest: false, gap_reason: "no_opening_anchor" },
+      liquid: { total: 500, honest: false, gap_reason: "fx_unavailable" },
       investment: { total: 500, honest: false, gap_reason: "fx_unavailable" },
       total: null,
       honest: false,
@@ -180,8 +180,6 @@ assert.deepEqual(RANGE_MONTHS, { "1Y": 12, "3Y": 36, All: 600 });
 {
   const EXPECTED_REASONS = {
     pre_ledger: "before the ledger existed for these accounts",
-    no_opening_anchor: "liquid accounts have no opening balance anchor for these months",
-    no_closing_anchor: "liquid accounts have no closing balance anchor for these months",
     no_investment_tracking_before_launch: "investment tracking hadn't started yet",
     synthetic_opening_only: "only a synthetic opening balance exists for the investment side, not a verified one",
     fx_unavailable: "the historical FX rate could not be verified for these months",
@@ -189,9 +187,8 @@ assert.deepEqual(RANGE_MONTHS, { "1Y": 12, "3Y": 36, All: 600 });
     negative_running_quantity: "the replayed position quantity went negative, which can't be honest",
     no_snapshot_for_month: "no daily portfolio snapshot exists for this month",
     snapshot_missing_position: "the snapshot is missing a position that should be held",
-    parity_mismatch: "the liquid and investment totals didn't reconcile for this month",
   };
-  assert.equal(Object.keys(REASON_SENTENCES).length, 11);
+  assert.equal(Object.keys(REASON_SENTENCES).length, 8);
   for (const [code, sentence] of Object.entries(EXPECTED_REASONS)) {
     assert.ok(code in REASON_SENTENCES, `missing reason code: ${code}`);
     assert.equal(reasonSentence(code), sentence);
@@ -219,16 +216,16 @@ assert.deepEqual(RANGE_MONTHS, { "1Y": 12, "3Y": 36, All: 600 });
   ]);
   assert.deepEqual(tooltipLines(jul, "total", false), [
     "Jul 2026",
-    "No data — liquid accounts have no opening balance anchor for these months",
+    "No data — the historical FX rate could not be verified for these months",
   ]);
   assert.deepEqual(tooltipLines(jul, "split", false), [
     "Jul 2026",
-    "Liquid: No data — liquid accounts have no opening balance anchor for these months",
+    "Liquid: No data — the historical FX rate could not be verified for these months",
     "Investment: 41,234,567",
   ]);
   assert.deepEqual(tooltipLines(octBoth, "total", false), [
     "Oct 2025",
-    "No data — liquid accounts have no opening balance anchor for these months; investment tracking hadn't started yet",
+    "No data — the historical FX rate could not be verified for these months; investment tracking hadn't started yet",
   ]);
 
   const allTooltipOutputs = [
@@ -240,22 +237,10 @@ assert.deepEqual(RANGE_MONTHS, { "1Y": 12, "3Y": 36, All: 600 });
   ];
   assert.ok(!allTooltipOutputs.some((line) => line.includes("Add a back-dated")));
 
-  // rowGapCodes: liquid first, then investment; empty when both honest; falls
-  // back to the composed code (parity_mismatch) when both halves are null.
-  assert.deepEqual(rowGapCodes(octBoth), ["no_opening_anchor", "no_investment_tracking_before_launch"]);
-  assert.deepEqual(rowGapCodes(jul), ["no_opening_anchor"]);
+  // rowGapCodes: liquid first, then investment; empty when both honest.
+  assert.deepEqual(rowGapCodes(octBoth), ["fx_unavailable", "no_investment_tracking_before_launch"]);
+  assert.deepEqual(rowGapCodes(jul), ["fx_unavailable"]);
   assert.deepEqual(rowGapCodes(sep), []);
-  assert.deepEqual(
-    rowGapCodes({
-      month: "2026-09",
-      total: null,
-      honest: false,
-      gap_reason: "parity_mismatch",
-      liquid: { total: 100, by_account: {}, honest: true, gap_reason: null },
-      investment: { total: 100, by_position: {}, honest: true, gap_reason: null, valuation_basis: null, as_of_date: null },
-    }),
-    ["parity_mismatch"]
-  );
 }
 
 // --- 11. Labels: UTC-stable formatting ---------------------------------------
@@ -268,7 +253,7 @@ assert.equal(fmtExact(-750000), "-750,000");
 // archival1Y: the live-shaped post-23.1 1Y fixture (synthetic values). Months before 2026-07 carry the investment
 // half "at cost" (deposits basis, the old Investements running balance);
 // 2026-07 onward are honest snapshot months. Liquid stays
-// "ledger_plus_corrections" throughout except the newest (live-anchored) row.
+// "ledger_plus_corrections" for every non-gap month.
 const ARCHIVAL_EARLY_MONTHS = [
   "2025-10", "2025-11", "2025-12",
   "2026-01", "2026-02", "2026-03", "2026-04", "2026-05",

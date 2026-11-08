@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { card, input, btn, label } from "../styles";
+import { card, input, btn, label, tokens } from "../styles";
 import { extractDetail } from "../lib/api";
 import RowMenu from "../components/RowMenu";
 import ConfirmDialog from "./ConfirmDialog";
@@ -20,8 +20,9 @@ import AdjustBalanceModal from "./AdjustBalanceModal";
 // ---------------------------------------------------------------------------
 
 // current_balance is required — the parent (cashflow/page.tsx) always passes
-// the richer per-account balance rows from GET /cashflow/summary, which the
-// AdjustBalanceModal delta preview needs (period_net is simply ignored here).
+// the richer per-account balance rows from GET /cashflow/summary (period_net is
+// simply ignored here). It is the IDR value, null for a USD account with no
+// rate; the AdjustBalanceModal works against native_balance instead (D-08).
 // `type` (WR-04) distinguishes liquid vs investment accounts. GET
 // /cashflow/summary returns account_balances() unfiltered, so investment-type
 // rows arrive here too — an Adjustment written against them never reaches
@@ -30,9 +31,16 @@ import AdjustBalanceModal from "./AdjustBalanceModal";
 export type Account = {
   id: number;
   name: string;
-  current_balance: number;
+  current_balance: number | null;
   type: string;
+  currency?: string | null; // absent means IDR
+  native_balance?: number;
+  fx_rate?: number | null;
+  fx_as_of?: string | null;
+  fx_stale?: boolean;
 };
+
+const ccy = (a: Account) => a.currency ?? "IDR";
 
 type Props = {
   accounts: Account[];
@@ -45,10 +53,14 @@ type DeleteFlowState =
   | { stage: "reassign"; account: Account; affectedCount: number; targetId: string };
 
 export default function AccountManager({ accounts, onChanged }: Props) {
+  // D-06: records can only move into an account of the same currency.
+  const reassignCandidates = (account: Account) =>
+    accounts.filter((a) => a.id !== account.id && ccy(a) === ccy(account));
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState("");
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
+  const [newCurrency, setNewCurrency] = useState("IDR");
   const [error, setError] = useState<string | null>(null);
   const [deleteFlow, setDeleteFlow] = useState<DeleteFlowState>({ stage: "idle" });
   const [adjustingAccount, setAdjustingAccount] = useState<Account | null>(null);
@@ -60,10 +72,11 @@ export default function AccountManager({ accounts, onChanged }: Props) {
       const r = await fetch("/api/accounts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newName, type: "liquid" }),
+        body: JSON.stringify({ name: newName, type: "liquid", currency: newCurrency }),
       });
       if (r.ok) {
         setNewName("");
+        setNewCurrency("IDR");
         setAdding(false);
         onChanged();
       } else {
@@ -115,12 +128,12 @@ export default function AccountManager({ accounts, onChanged }: Props) {
       if (r.status === 422) {
         const errBody = await r.json().catch(() => ({}));
         const affectedCount = errBody?.detail?.affected_count ?? 0;
-        const otherAccounts = accounts.filter((a) => a.id !== account.id);
+        const candidates = reassignCandidates(account);
         setDeleteFlow({
           stage: "reassign",
           account,
           affectedCount,
-          targetId: otherAccounts[0] ? String(otherAccounts[0].id) : "",
+          targetId: candidates[0] ? String(candidates[0].id) : "",
         });
         return;
       }
@@ -140,6 +153,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
   async function confirmReassignDelete() {
     if (deleteFlow.stage !== "reassign") return;
     const { account, targetId } = deleteFlow;
+    if (targetId === "") return;
     setError(null);
     try {
       const r = await fetch(
@@ -181,6 +195,21 @@ export default function AccountManager({ accounts, onChanged }: Props) {
                 ) : (
                   a.name
                 )}
+                <span
+                  style={{
+                    marginLeft: 8,
+                    padding: "4px 8px",
+                    background: tokens.color.tintNeutral,
+                    color: tokens.color.muted3,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    borderRadius: tokens.radius.pill,
+                    whiteSpace: "nowrap",
+                    flexShrink: 0,
+                  }}
+                >
+                  {a.currency ?? "IDR"}
+                </span>
               </td>
               <td style={{ padding: "8px 4px", textAlign: "right", whiteSpace: "nowrap" }}>
                 {editingId === a.id ? (
@@ -247,6 +276,15 @@ export default function AccountManager({ accounts, onChanged }: Props) {
               onChange={(e) => setNewName(e.target.value)}
               required
             />
+            <select
+              style={{ ...input, width: 96 }}
+              aria-label="Account currency"
+              value={newCurrency}
+              onChange={(e) => setNewCurrency(e.target.value)}
+            >
+              <option value="IDR">IDR</option>
+              <option value="USD">USD</option>
+            </select>
             <button style={btn} type="submit">
               Add account
             </button>
@@ -261,7 +299,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
                 cursor: "pointer",
               }}
             >
-              Cancel
+              Discard new account
             </button>
           </form>
         ) : (
@@ -278,7 +316,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
       {deleteFlow.stage === "confirm" && (
         <ConfirmDialog
           message="Delete this account? This can't be undone."
-          confirmLabel="Delete"
+          confirmLabel="Delete account"
           onCancel={() => setDeleteFlow({ stage: "idle" })}
           onConfirm={() => confirmDelete(deleteFlow.account)}
         />
@@ -290,22 +328,28 @@ export default function AccountManager({ accounts, onChanged }: Props) {
           confirmLabel="Reassign & delete"
           onCancel={() => setDeleteFlow({ stage: "idle" })}
           onConfirm={confirmReassignDelete}
+          confirmDisabled={deleteFlow.targetId === ""}
         >
-          <select
-            style={input}
-            value={deleteFlow.targetId}
-            onChange={(e) =>
-              setDeleteFlow({ ...deleteFlow, targetId: e.target.value })
-            }
-          >
-            {accounts
-              .filter((a) => a.id !== deleteFlow.account.id)
-              .map((a) => (
+          {deleteFlow.targetId === "" ? (
+            <p style={{ fontSize: 12, margin: 0, color: tokens.color.terracottaText }}>
+              No other {ccy(deleteFlow.account)} account to move these records to.
+            </p>
+          ) : (
+            <select
+              style={input}
+              aria-label="Destination account"
+              value={deleteFlow.targetId}
+              onChange={(e) =>
+                setDeleteFlow({ ...deleteFlow, targetId: e.target.value })
+              }
+            >
+              {reassignCandidates(deleteFlow.account).map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name}
                 </option>
               ))}
-          </select>
+            </select>
+          )}
         </ConfirmDialog>
       )}
 
