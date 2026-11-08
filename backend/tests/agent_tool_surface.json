@@ -1005,7 +1005,7 @@
     "name": "propose_add_transfer"
   },
   {
-    "description": "propose_add_funded_buy(source_account_name: str, platform_id: int, ticker: str, quantity: float, price: float, cash_amount: float, event_currency: str | None = None, date: str | None = None, notes: str | None = None, asset_type: str | None = None) -> dict\nPropose a funded buy: debits source_account_name and records a\n'buy' portfolio event. cash_amount, quantity, and price must be\nunsigned positive magnitudes — the primitive owns the debit sign.\ncash_amount is in the source account's currency (there is no cash\ncurrency argument); price is in event_currency, which defaults to the\nexisting position's currency. platform_id is an int — use find_platforms\nfirst to resolve a platform name to its id. Returns a proposal for user\nconfirmation — never moves money directly.",
+    "description": "propose_add_funded_buy(source_account_name: str, platform_id: int, ticker: str, quantity: float, price: float, cash_amount: float, event_currency: str | None = None, date: str | None = None, notes: str | None = None, asset_type: str | None = None, fee: float | None = None, fee_kind: str | None = None) -> dict\nPropose a funded buy: debits source_account_name and records a\n'buy' portfolio event. cash_amount, quantity, and price must be\nunsigned positive magnitudes — the primitive owns the debit sign.\ncash_amount is in the source account's currency (there is no cash\ncurrency argument); price is in event_currency, which defaults to the\nexisting position's currency. platform_id is an int — use find_platforms\nfirst to resolve a platform name to its id. quantity is the filled amount.\nfee is optional. Use fee_kind \"coin\" when the exchange took the fee out of\nthe coin received: the fee is in coin units and monai stores the net. Use\n\"cash\" when it was paid in the position's currency; cash_amount then\nincludes it. A fee paid in a third coin is its value with fee_kind \"cash\"\nand a cash_amount of what the account actually paid. Returns a proposal\nfor user confirmation — never moves money directly.",
     "fn_schema": {
       "properties": {
         "asset_type": {
@@ -1047,6 +1047,30 @@
           ],
           "default": null,
           "title": "Event Currency"
+        },
+        "fee": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fee"
+        },
+        "fee_kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fee Kind"
         },
         "notes": {
           "anyOf": [
@@ -1095,7 +1119,7 @@
     "name": "propose_add_funded_buy"
   },
   {
-    "description": "propose_add_funded_sell(source_account_name: str, platform_id: int, ticker: str, quantity: float, price: float, cash_amount: float, event_currency: str | None = None, date: str | None = None, notes: str | None = None, asset_type: str | None = None) -> dict\nPropose a funded sell: credits source_account_name and records a\n'sell' portfolio event. cash_amount, quantity, and price must be\nunsigned positive magnitudes — the primitive owns the credit sign.\ncash_amount is in the source account's currency (there is no cash\ncurrency argument); price is in event_currency, which defaults to the\nexisting position's currency. platform_id is an int — use find_platforms\nfirst to resolve a platform name to its id. Returns a proposal for user\nconfirmation — never moves money directly.",
+    "description": "propose_add_funded_sell(source_account_name: str, platform_id: int, ticker: str, quantity: float, price: float, cash_amount: float, event_currency: str | None = None, date: str | None = None, notes: str | None = None, asset_type: str | None = None, fee: float | None = None, fee_kind: str | None = None) -> dict\nPropose a funded sell: credits source_account_name and records a\n'sell' portfolio event. cash_amount, quantity, and price must be\nunsigned positive magnitudes — the primitive owns the credit sign.\ncash_amount is in the source account's currency (there is no cash\ncurrency argument); price is in event_currency, which defaults to the\nexisting position's currency. platform_id is an int — use find_platforms\nfirst to resolve a platform name to its id. quantity is the amount sold.\nfee is optional. Use fee_kind \"coin\" when the fee came out of the coin on\ntop of the quantity sold (fee in coin units); \"cash\" when it came off the\nproceeds, and cash_amount is then net of it. Returns a proposal for user\nconfirmation — never moves money directly.",
     "fn_schema": {
       "properties": {
         "asset_type": {
@@ -1137,6 +1161,30 @@
           ],
           "default": null,
           "title": "Event Currency"
+        },
+        "fee": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fee"
+        },
+        "fee_kind": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fee Kind"
         },
         "notes": {
           "anyOf": [
