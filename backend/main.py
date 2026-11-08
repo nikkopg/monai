@@ -466,8 +466,12 @@ def list_platforms(db: Session = Depends(get_session)):
 @app.post("/platforms", response_model=PlatformOut, status_code=201, dependencies=[Depends(require_api_key)])
 def create_platform(payload: PlatformCreate, db: Session = Depends(get_session)):
     """Create an investment platform (INV-01). Routed through apply_add_platform (audited)."""
-    plat = apply_add_platform(db, payload.model_dump(mode="json"))
-    db.commit()
+    try:
+        plat = apply_add_platform(db, payload.model_dump(mode="json"))
+        db.commit()
+    except ValueError as e:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(e))
     db.refresh(plat)
     from backend.query import reset_engine
     reset_engine()
@@ -480,7 +484,7 @@ def update_platform(platform_id: int, payload: PlatformUpdate, db: Session = Dep
     plat = db.get(Platform, platform_id)
     if plat is None:
         raise HTTPException(status_code=404, detail=f"Platform {platform_id} not found")
-    before = {"id": plat.id, "name": plat.name, "kind": plat.kind}
+    before = {"id": plat.id, "name": plat.name, "kind": plat.kind, "currency": plat.currency}
     try:
         apply_edit_platform(db, platform_id, payload.model_dump(mode="json", exclude_none=True), before)
     except ValueError as e:

@@ -82,6 +82,8 @@ class Platform(Base):
         String(128), unique=True, index=True, nullable=False
     )
     kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Starting currency for a NEW ticker in the buy/sell form only; converts nothing.
+    currency: Mapped[str] = mapped_column(String(8), server_default="IDR", nullable=False)
 
 
 class Category(Base):
@@ -512,7 +514,7 @@ class PortfolioEvent(Base):
     ticker: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
     event_type: Mapped[str] = mapped_column(String(16), nullable=False)
     quantity: Mapped[Decimal] = mapped_column(Numeric(28, 8), nullable=False)
-    price: Mapped[Decimal] = mapped_column(Numeric(18, 2), nullable=False)
+    price: Mapped[Decimal] = mapped_column(Numeric(28, 12), nullable=False)
     platform_id: Mapped[int] = mapped_column(
         ForeignKey("platforms.id"), nullable=False, index=True
     )

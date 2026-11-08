@@ -171,6 +171,7 @@ class AccountUpdate(BaseModel):
 class PlatformCreate(BaseModel):
     name: str
     kind: str | None = None
+    currency: str | None = "IDR"
 
 
 class PlatformUpdate(BaseModel):
@@ -178,6 +179,7 @@ class PlatformUpdate(BaseModel):
 
     name: str | None = None
     kind: str | None = None
+    currency: str | None = None
 
 
 class PlatformOut(BaseModel):
@@ -186,6 +188,7 @@ class PlatformOut(BaseModel):
     id: int
     name: str
     kind: str | None
+    currency: str
 
 
 # ---------------------------------------------------------------------------
@@ -233,6 +236,7 @@ class PortfolioEventOut(BaseModel):
     # magnitude, filled only by GET /portfolio-events.
     transaction_id: int | None = None
     cash_amount: MoneyDecimal | None = None
+    currency: str | None = None
 
 
 class PortfolioEventUpdate(BaseModel):

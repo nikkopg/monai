@@ -477,11 +477,11 @@ def apply_add_funded_sell(db: Session, after: dict) -> dict:
     return {"transaction": tx, "portfolio_event": ev, "closed_position": closed}
 
 
-def _account_currency(value) -> str:
+def _account_currency(value, label: str = "Account") -> str:
     """Trim + upper; null/blank -> IDR; anything outside ACCOUNT_CURRENCIES is refused (D-01)."""
     currency = (value or "").strip().upper() or "IDR"
     if currency not in ACCOUNT_CURRENCIES:
-        raise ValueError("Account currency must be one of " + ", ".join(ACCOUNT_CURRENCIES))
+        raise ValueError(f"{label} currency must be one of " + ", ".join(ACCOUNT_CURRENCIES))
     return currency
 
 
@@ -588,15 +588,17 @@ def apply_delete_account(db: Session, acc_id: int, before: dict | None, reassign
 
 
 def apply_add_platform(db: Session, after: dict) -> Platform:
-    """Insert a new investment platform (D-12)."""
+    """Insert a new investment platform (D-12). Currency IDR or USD; blank -> IDR."""
+    currency = _account_currency(after.get("currency"), "Platform")
     plat = Platform(
         name=after["name"],
         kind=after.get("kind"),
+        currency=currency,
     )
     db.add(plat)
     db.flush()  # LOAD-BEARING: populates plat.id before the AuditLog row below
     db.add(AuditLog(entity="platform", entity_id=plat.id, operation="add",
-                    before=None, after=after))
+                    before=None, after={**after, "currency": currency}))
     return plat
 
 
@@ -605,10 +607,16 @@ def apply_edit_platform(db: Session, platform_id: int, after: dict, before: dict
     plat = db.get(Platform, platform_id)
     if plat is None:
         raise ValueError(f"Platform {platform_id} not found during confirm")
+    # Blank means "unchanged". A platform's currency is a default for new tickers only:
+    # it never touches holdings or events.
+    new_currency = _account_currency(after["currency"], "Platform") if (after.get("currency") or "").strip() else None
     if after.get("name") is not None:
         plat.name = after["name"]
     if after.get("kind") is not None:
         plat.kind = after["kind"]
+    if new_currency is not None:
+        plat.currency = new_currency
+        after = {**after, "currency": new_currency}
     db.add(AuditLog(entity="platform", entity_id=platform_id, operation="edit",
                     before=before, after=after))
     return plat
