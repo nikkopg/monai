@@ -213,6 +213,30 @@ test.describe("Event price currency (quick 261108-bkz)", () => {
   });
 });
 
+test.describe("Event fee line (quick 261108-gdf)", () => {
+  test("each fee shows under its quantity with the right formatter; fee-less rows show none", async ({ page }) => {
+    await mockPlatformDetail(page);
+    await page.route("**/api/portfolio-events*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          { id: 701, date: "2026-07-20", ticker: "ZZETH", event_type: "buy", quantity: 1.998, price: 30000, fee: 0.002, fee_kind: "coin", filled_quantity: 2 },
+          { id: 702, date: "2026-07-19", ticker: "ZZUSD", event_type: "buy", quantity: 5, price: 0.18982345, currency: "USD", fee: 0.0123, fee_kind: "cash" },
+          { id: 703, date: "2026-07-18", ticker: "ZZIDR", event_type: "sell", quantity: 1, price: 3170, fee: 1500, fee_kind: "cash" },
+          { id: 704, date: "2026-07-17", ticker: "ZZNOFEE", event_type: "buy", quantity: 1, price: 10 },
+        ]),
+      });
+    });
+    await page.goto("/investments/1");
+    await page.getByRole("button", { name: "Buy & Sell", exact: true }).click();
+    await expect(page.getByText("fee 0.002 ZZETH", { exact: true })).toBeVisible();
+    await expect(page.getByText("fee 0.0123 USD", { exact: true })).toBeVisible();
+    await expect(page.getByText("fee 1,500 IDR", { exact: true })).toBeVisible();
+    await expect(page.getByText(/^fee /)).toHaveCount(3);
+  });
+});
+
 test.describe("Platform detail states (Component 13)", () => {
   test("a 404 detail response shows 'Platform not found' with the back-link still present", async ({
     page,

@@ -570,3 +570,142 @@ test.describe("funded buy/sell (XFER-03)", () => {
     ).toBeVisible();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Quick 261108-gdf: a trade fee on funded buys and sells. Synthetic ZZ45 values.
+// ---------------------------------------------------------------------------
+
+function feeInput(page: Page) {
+  return page.getByLabel(/^Fee \(/);
+}
+function feeKindSelect(page: Page) {
+  return page.getByLabel("Fee kind", { exact: true });
+}
+
+test.describe("trade fee (quick 261108-gdf)", () => {
+  async function ready(page: Page, holdings: unknown[] = []) {
+    await mockPlatformDetail(page, holdings);
+    await mockPlatformsList(page);
+    await mockAccounts(page);
+    await mockPortfolioEvents(page);
+  }
+
+  test("the fee fields appear for a funded Buy or Sell and never for a Dividend", async ({ page }) => {
+    await ready(page);
+    await openFundedModal(page);
+    await expect(feeInput(page)).toHaveCount(0); // no account yet: not funded
+    await fundingSelect(page).selectOption({ label: "BCA" });
+    await expect(feeInput(page)).toBeVisible();
+    await expect(feeKindSelect(page)).toBeVisible();
+    await eventTypeSelect(page).selectOption({ label: "Sell" });
+    await expect(feeInput(page)).toBeVisible();
+    await eventTypeSelect(page).selectOption({ label: "Dividend" });
+    await expect(feeInput(page)).toHaveCount(0);
+    await expect(feeKindSelect(page)).toHaveCount(0);
+  });
+
+  test("the kind defaults to coin for a crypto buy and cash otherwise, until picked", async ({ page }) => {
+    await ready(page);
+    await openFundedModal(page);
+    await fundingSelect(page).selectOption({ label: "BCA" });
+    await expect(feeKindSelect(page)).toHaveValue("coin");
+    await page.getByPlaceholder("BBCA").fill("ZZ45E");
+    await expect(page.getByLabel("Fee (ZZ45E)", { exact: true })).toBeVisible();
+    await eventTypeSelect(page).selectOption({ label: "Sell" });
+    await expect(feeKindSelect(page)).toHaveValue("cash");
+    await eventTypeSelect(page).selectOption({ label: "Buy" });
+    await page.locator('label:text-is("Asset type") + select').selectOption("idx_stock");
+    await expect(feeKindSelect(page)).toHaveValue("cash");
+    await expect(page.getByLabel("Fee (IDR)", { exact: true })).toBeVisible();
+    await feeKindSelect(page).selectOption("coin");
+    await page.locator('label:text-is("Asset type") + select').selectOption("crypto");
+    await feeKindSelect(page).selectOption("cash");
+    await page.locator('label:text-is("Asset type") + select').selectOption("idx_stock");
+    await expect(feeKindSelect(page)).toHaveValue("cash"); // the pick wins
+  });
+
+  test("the cash amount pre-fills with a cash fee added on a buy and taken off a sell", async ({ page }) => {
+    await ready(page);
+    await openFundedModal(page);
+    await fundingSelect(page).selectOption({ label: "ZZ45 Wallet" }); // a USD account
+    await quantityInput(page).fill("2");
+    await priceInput(page, "USD").fill("100");
+    await expect(cashAmountInput(page, "USD")).toHaveValue("200");
+    await feeKindSelect(page).selectOption("cash");
+    await feeInput(page).fill("1.5");
+    await expect(cashAmountInput(page, "USD")).toHaveValue("201.5");
+    await feeKindSelect(page).selectOption("coin");
+    await expect(cashAmountInput(page, "USD")).toHaveValue("200");
+    await feeKindSelect(page).selectOption("cash");
+    await eventTypeSelect(page).selectOption({ label: "Sell" });
+    await expect(cashAmountInput(page, "USD")).toHaveValue("198.5");
+  });
+
+  test("a coin fee shows the stored movement and posts fee and fee_kind; no fee posts neither", async ({ page }) => {
+    await ready(page);
+    const posted: Record<string, unknown>[] = [];
+    await mockFundedBuy(page, (b) => posted.push(b));
+    await mockFundedSell(page, (b) => posted.push(b));
+    await openFundedModal(page);
+    await fundingSelect(page).selectOption({ label: "BCA" });
+    await page.getByPlaceholder("BBCA").fill("ETH");
+    await quantityInput(page).fill("2");
+    await priceInput(page).fill("30000");
+    await feeInput(page).fill("0.002");
+    await expect(page.getByText("Debits BCA Rp 60,000, +1.998 ETH")).toBeVisible();
+    await page.getByRole("button", { name: "Log funded Buy", exact: true }).click();
+    await expect.poll(() => posted.length).toBe(1);
+    expect(posted[0]).toMatchObject({ quantity: 2, cash_amount: 60000, fee: 0.002, fee_kind: "coin" });
+
+    await openFundedModal(page);
+    await fundingSelect(page).selectOption({ label: "BCA" });
+    await eventTypeSelect(page).selectOption({ label: "Sell" });
+    await page.getByPlaceholder("BBCA").fill("ETH");
+    await quantityInput(page).fill("2");
+    await priceInput(page).fill("30000");
+    await feeKindSelect(page).selectOption("coin");
+    await feeInput(page).fill("0.002");
+    await expect(page.getByText("Credits BCA Rp 60,000, −2.002 ETH")).toBeVisible();
+    await feeInput(page).fill("");
+    await page.getByRole("button", { name: "Log funded Sell", exact: true }).click();
+    await expect.poll(() => posted.length).toBe(2);
+    expect(posted[1]).not.toHaveProperty("fee");
+    expect(posted[1]).not.toHaveProperty("fee_kind");
+  });
+
+  test("editing a coin-fee buy shows the filled quantity and sends it back with the fee", async ({ page }) => {
+    await mockPlatformDetail(page);
+    await mockPlatformsList(page);
+    await mockAccounts(page);
+    await page.route("**/api/portfolio-events*", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          {
+            id: 501, date: "2026-07-20", ticker: "ZZ45E", event_type: "buy", quantity: 1.998, price: 30000,
+            transaction_id: 9, cash_amount: 60000, currency: "IDR",
+            fee: 0.002, fee_kind: "coin", filled_quantity: 2,
+          },
+        ]),
+      });
+    });
+    const puts: Record<string, unknown>[] = [];
+    await page.route("**/api/portfolio-events/501", async (route) => {
+      puts.push(route.request().postDataJSON());
+      await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ id: 501 }) });
+    });
+    await page.goto("/investments/5");
+    await page.getByRole("button", { name: "Buy & Sell", exact: true }).click();
+    await page.getByRole("button", { name: "Event options: buy of ZZ45E on 2026-07-20" }).click();
+    await page.getByRole("menuitem", { name: "Edit" }).click();
+
+    await expect(quantityInput(page)).toHaveValue("2");
+    await expect(feeInput(page)).toHaveValue("0.002");
+    await expect(feeKindSelect(page)).toHaveValue("coin");
+    await expect(page.getByText("cash amount is not recalculated", { exact: false })).toBeVisible();
+    await page.getByRole("button", { name: "Save changes", exact: true }).click();
+    await expect.poll(() => puts.length).toBe(1);
+    expect(puts[0]).toMatchObject({ quantity: 2, fee: 0.002, fee_kind: "coin", cash_amount: 60000 });
+  });
+});

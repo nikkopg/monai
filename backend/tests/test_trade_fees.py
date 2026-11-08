@@ -302,3 +302,61 @@ def test_the_fee_never_touches_a_cash_leg_it_was_not_sent_with(client, api_key, 
     before = zz45.tx_rows(usd)[0].amount
     assert _put(client, api_key, eid, {"fee": 0.01}).status_code == 200
     assert zz45.tx_rows(usd)[0].amount == before
+
+
+# --- chat: propose, then confirm --------------------------------------------------------
+
+
+def _propose(zz45, fn, account, plat, **kw):
+    from backend import tools
+    res = getattr(tools, fn)(account, plat, "ZZ45T", kw.pop("quantity", 2), kw.pop("price", 100),
+                             kw.pop("cash_amount", 200), date=_ISO_DAY, **kw)
+    zz45.proposal_ids.append(int(res["proposal_id"]))
+    return res
+
+
+def _confirm(client, api_key, res):
+    return _post(client, api_key, f"/proposals/{res['proposal_id']}/confirm", {"token": res["proposal_token"]})
+
+
+def test_chat_coin_fee_buy_proposes_with_the_fee_and_confirms_net(client, api_key, zz45):
+    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    zz45.rate(_ISO_DAY)
+    res = _propose(zz45, "propose_add_funded_buy", usd, plat, fee=0.002, fee_kind="coin")
+    assert res["after"]["fee"] == 0.002 and res["after"]["fee_kind"] == "coin"
+    assert "fee" in res["summary"] and "0.002" in res["summary"]
+    assert _confirm(client, api_key, res).status_code == 200
+    (ev,) = _events(zz45, plat)
+    assert ev.quantity == Decimal("1.998") and ev.fee == Decimal("0.002") and ev.fee_kind == "coin"
+    assert zz45.tx_rows(usd)[0].amount == Decimal("-200")
+
+
+def test_chat_coin_fee_sell_confirms_on_top_of_the_quantity(client, api_key, zz45):
+    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    zz45.rate(_ISO_DAY)
+    _seed_event(zz45, plat, "ZZ45T", "buy", 5, 100, "USD")
+    res = _propose(zz45, "propose_add_funded_sell", usd, plat, quantity=1, price=120, cash_amount=120,
+                   fee=0.01, fee_kind="coin")
+    assert _confirm(client, api_key, res).status_code == 200
+    sell = [e for e in _events(zz45, plat) if e.event_type == "sell"][0]
+    assert sell.quantity == Decimal("1.01") and sell.fee_kind == "coin"
+
+
+def test_chat_without_a_fee_behaves_as_before(client, api_key, zz45):
+    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    zz45.rate(_ISO_DAY)
+    res = _propose(zz45, "propose_add_funded_buy", usd, plat)
+    assert res["after"]["fee"] is None and res["after"]["fee_kind"] is None
+    assert _confirm(client, api_key, res).status_code == 200
+    (ev,) = _events(zz45, plat)
+    assert ev.quantity == Decimal("2") and ev.fee is None and ev.fee_kind is None
+
+
+def test_chat_unknown_fee_kind_proposes_then_the_confirm_is_refused(client, api_key, zz45):
+    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    zz45.rate(_ISO_DAY)
+    res = _propose(zz45, "propose_add_funded_buy", usd, plat, fee=0.5, fee_kind="zzcoin")
+    assert "error" not in res
+    resp = _confirm(client, api_key, res)
+    assert resp.status_code == 422, resp.text
+    assert zz45.tx_rows(usd) == [] and _events(zz45, plat) == []
