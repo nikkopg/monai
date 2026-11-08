@@ -23,6 +23,7 @@ from sqlalchemy.orm import sessionmaker
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 REV_020 = "c4f2a8e61d93"
+REV_021 = "e3b7a91c5d42"
 TOL = Decimal("0.00000001")
 FLOOR = date(2026, 2, 7)
 SCRATCH_PREFIX = "monai_test_closezero"
@@ -225,7 +226,7 @@ def test_boot_ignores_zero_rows():
         mp.setattr("logging.config.fileConfig", lambda *a, **k: None)
         try:
             cfg, command = _cfg(s.url)
-            command.upgrade(cfg, "head")  # no flag, no environment variable
+            command.upgrade(cfg, REV_021)  # no flag, no environment variable
         finally:
             mp.undo()
         after = _dump(s.engine)
@@ -237,6 +238,51 @@ def test_boot_ignores_zero_rows():
 def test_021_is_table_only():
     tree = ast.parse((REPO_ROOT / "alembic" / "versions" / "021_closed_positions.py").read_text())
     for node in ast.walk(tree):
+        assert not isinstance(node, ast.Raise)
+        if isinstance(node, ast.Attribute):
+            assert node.attr not in ("environ", "getenv", "execute")
+        if isinstance(node, ast.Import):
+            assert not any(a.name.split(".")[0] == "backend" for a in node.names)
+        if isinstance(node, ast.ImportFrom):
+            assert (node.module or "").split(".")[0] != "backend"
+
+
+def _strip(dump: dict, table: str, col: str) -> list[str]:
+    return sorted(json.dumps({k: v for k, v in json.loads(r).items() if k != col}, sort_keys=True) for r in dump[table])
+
+
+def test_022_keeps_every_value():
+    with _Scratch("r022", REV_021) as s:
+        _seed(s.engine)
+        with s.engine.begin() as c:
+            c.execute(text("INSERT INTO platforms (name, kind) VALUES ('zzcz-other', 'broker')"))
+        before = _dump(s.engine)
+        with s.engine.connect() as c:
+            prices = {r[0]: r[1] for r in c.execute(text("SELECT id, price FROM portfolio_events"))}
+        mp = pytest.MonkeyPatch()
+        mp.setattr("logging.config.fileConfig", lambda *a, **k: None)
+        try:
+            cfg, command = _cfg(s.url)
+            command.upgrade(cfg, "head")
+        finally:
+            mp.undo()
+        after = _dump(s.engine)
+        with s.engine.connect() as c:
+            new_prices = {r[0]: r[1] for r in c.execute(text("SELECT id, price FROM portfolio_events"))}
+            currencies = [r[0] for r in c.execute(text("SELECT currency FROM platforms"))]
+        assert prices and new_prices == prices
+        assert currencies and set(currencies) == {"IDR"}
+        for t in before:
+            if t in ("alembic_version", "portfolio_events", "platforms"):
+                continue
+            assert after[t] == before[t], t
+        assert _strip(after, "portfolio_events", "price") == _strip(before, "portfolio_events", "price")
+        assert _strip(after, "platforms", "currency") == _strip(before, "platforms", "currency")
+
+
+def test_022_alters_types_only():
+    path = next((REPO_ROOT / "alembic" / "versions").glob("022_*.py"))
+    for node in ast.walk(ast.parse(path.read_text())):
         assert not isinstance(node, ast.Raise)
         if isinstance(node, ast.Attribute):
             assert node.attr not in ("environ", "getenv", "execute")

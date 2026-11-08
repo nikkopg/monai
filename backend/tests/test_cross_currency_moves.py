@@ -55,6 +55,7 @@ def _purge(db, proposal_ids=()) -> None:
         f"(SELECT id FROM transactions WHERE account_id IN {acc})",
         f"DELETE FROM audit_log WHERE entity = 'holding' AND entity_id IN "
         f"(SELECT id FROM holdings WHERE platform_id IN {plat})",
+        f"DELETE FROM audit_log WHERE entity = 'platform' AND entity_id IN {plat}",
         f"DELETE FROM portfolio_events WHERE platform_id IN {plat} OR source_account_id IN {acc}",
         f"DELETE FROM holdings WHERE platform_id IN {plat}",
         f"DELETE FROM transactions WHERE account_id IN {acc}",
@@ -444,3 +445,70 @@ def test_no_rate_refuses_the_position_write_and_saves_nothing(client, api_key, z
     assert [e.id for e in _events(zz45, plat)] == events
     assert zz45.tx_rows(usd) == []
     assert _holding(zz45, plat, "CASH").quantity == Decimal("150.00")
+
+
+# ---------------------------------------------------------------------------
+# Quick 261108-bkz: 12-decimal USD prices and a platform currency
+# ---------------------------------------------------------------------------
+
+def test_usd_price_keeps_twelve_decimals_through_the_api(client, api_key, zz45):
+    usd, plat = zz45.account("usd", "USD"), zz45.platform()
+    zz45.rate(_ISO_DAY)
+    resp = _funded(client, api_key, "buy", source_account_name=usd, platform_id=plat,
+                   price="0.123456789012", quantity=1, cash_amount="0.12")
+    assert resp.status_code == 201, resp.text
+    (event,) = _events(zz45, plat)
+    assert event.price == Decimal("0.123456789012")
+    (row,) = client.get(f"/portfolio-events?platform_id={plat}", headers={"MONAI_API_KEY": api_key}).json()
+    assert row["price"] == 0.123456789012 and row["currency"] == "USD"
+
+
+def _platform_api(client, api_key, method, path, body):
+    return getattr(client, method)(path, json=body, headers={"MONAI_API_KEY": api_key})
+
+
+def _plat_row(zz45, name):
+    from backend.models import Platform
+    zz45.db.expire_all()
+    return zz45.db.query(Platform).filter(Platform.name == name).one_or_none()
+
+
+def test_platform_currency_create_defaults_normalizes_and_refuses(client, api_key, zz45):
+    n = uuid.uuid4().hex[:6]
+    r = _platform_api(client, api_key, "post", "/platforms", {"name": f"zz45-a-{n}"})
+    assert r.status_code == 201 and r.json()["currency"] == "IDR", r.text
+    r = _platform_api(client, api_key, "post", "/platforms", {"name": f"zz45-b-{n}", "currency": "usd"})
+    assert r.status_code == 201 and r.json()["currency"] == "USD", r.text
+    r = _platform_api(client, api_key, "post", "/platforms", {"name": f"zz45-c-{n}", "currency": "EUR"})
+    assert r.status_code == 422, r.text
+    assert _plat_row(zz45, f"zz45-c-{n}") is None
+
+
+def test_platform_currency_edit_audits_and_refuses(client, api_key, zz45):
+    from backend.models import AuditLog
+    plat = zz45.platform()
+    zz45.db.expire_all()
+    r = _platform_api(client, api_key, "put", f"/platforms/{plat}", {"currency": "USD"})
+    assert r.status_code == 200 and r.json()["currency"] == "USD", r.text
+    audit = zz45.db.query(AuditLog).filter(
+        AuditLog.entity == "platform", AuditLog.entity_id == plat, AuditLog.operation == "edit").one()
+    assert audit.after["currency"] == "USD"
+    r = _platform_api(client, api_key, "put", f"/platforms/{plat}", {"kind": "wallet"})
+    assert r.status_code == 200 and r.json()["currency"] == "USD"  # absent -> unchanged
+    r = _platform_api(client, api_key, "put", f"/platforms/{plat}", {"currency": "EUR"})
+    assert r.status_code == 422, r.text
+    assert _platform_api(client, api_key, "put", f"/platforms/{plat}", {}).json()["currency"] == "USD"
+
+
+def test_changing_platform_currency_converts_nothing(client, api_key, zz45):
+    idr, plat = zz45.account("idr", "IDR"), zz45.platform()
+    _seed_event(zz45, plat, "ZZ45T", "buy", 2, 100, "IDR")
+    h0 = (_holding(zz45, plat, "ZZ45T").currency, _holding(zz45, plat, "ZZ45T").avg_cost)
+    e0 = [(e.id, e.price, e.currency, e.quantity) for e in _events(zz45, plat)]
+    assert _platform_api(client, api_key, "put", f"/platforms/{plat}", {"currency": "USD"}).status_code == 200
+    h = _holding(zz45, plat, "ZZ45T")
+    assert (h.currency, h.avg_cost) == h0
+    assert [(e.id, e.price, e.currency, e.quantity) for e in _events(zz45, plat)] == e0
+    resp = _funded(client, api_key, "buy", source_account_name=idr, platform_id=plat, cash_amount=50)
+    assert resp.status_code == 201, resp.text
+    assert _events(zz45, plat)[-1].currency == "IDR"
