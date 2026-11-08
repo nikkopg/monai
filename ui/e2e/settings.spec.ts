@@ -277,3 +277,60 @@ test.describe("AccountManager currency (Phase 44)", () => {
     await expect(page.getByText("Adjustment: +Rp 500,000", { exact: true })).toBeVisible();
   });
 });
+
+// Category edit and merge (moved here from cashflow-crud.spec.ts when the
+// manager left Cashflow). Synthetic data; every write is fulfilled by the test.
+test.describe("CategoryManager writes", () => {
+  const node = (id: number, name: string, tx_count = 0) => ({
+    id, name, parent_id: null, kind: "expense", color: null, effective_color: null,
+    icon: null, is_system: false, tx_count, children: [],
+  });
+
+  const mockGets = async (page: Page) => {
+    await page.route("**/api/categories", (route) =>
+      route.request().method() === "GET"
+        ? route.fulfill({ json: [node(1, "ZZTest Food", 3), node(2, "ZZTest Transport")] })
+        : route.fallback()
+    );
+    await page.route("**/api/cashflow/summary**", (route) => route.fulfill({ json: { accounts: [] } }));
+  };
+
+  test("Edit renames the category with PUT /api/categories/{id}", async ({ page }) => {
+    await mockGets(page);
+    let body: Record<string, unknown> | null = null;
+    await page.route("**/api/categories/1", (route) => {
+      if (route.request().method() !== "PUT") return route.fulfill({ status: 500, json: { detail: "blocked in test" } });
+      body = route.request().postDataJSON();
+      return route.fulfill({ json: { id: 1, name: "ZZTest Meals" } });
+    });
+    await page.goto("/settings");
+
+    await page.getByRole("button", { name: "Category options: ZZTest Food", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    await page.locator("input[value='ZZTest Food']").fill("ZZTest Meals");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+
+    await expect.poll(() => body?.name).toBe("ZZTest Meals");
+  });
+
+  test("Merge into… confirms with the affected count before posting", async ({ page }) => {
+    await mockGets(page);
+    let body: Record<string, unknown> | null = null;
+    await page.route("**/api/categories/merge", (route) => {
+      body = route.request().postDataJSON();
+      return route.fulfill({ json: { from_name: "ZZTest Food", into_name: "ZZTest Transport", affected_count: 3 } });
+    });
+    await page.goto("/settings");
+
+    await page.getByRole("button", { name: "Category options: ZZTest Food", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Merge into…", exact: true }).click();
+    await page.getByRole("button", { name: "Merge categories", exact: true }).click();
+    await expect(
+      page.getByText('Merge "ZZTest Food" into "ZZTest Transport"? 3 transactions will be updated. This can\'t be undone.')
+    ).toBeVisible();
+    expect(body).toBeNull();
+    await page.getByRole("button", { name: "Merge", exact: true }).click();
+
+    await expect.poll(() => body).not.toBeNull();
+  });
+});

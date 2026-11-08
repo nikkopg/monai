@@ -31,10 +31,10 @@ test.describe("route rendering", () => {
     ).toBeVisible();
   });
 
-  test("/cashflow renders the recent transactions section", async ({ page }) => {
+  test("/cashflow renders the Cashflow heading", async ({ page }) => {
     const res = await page.goto("/cashflow");
     expect(res?.status()).toBeLessThan(400);
-    await expect(page.getByText("Recent transactions")).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Cashflow" })).toBeVisible();
   });
 
   test("/investments renders the Investments heading", async ({ page }) => {

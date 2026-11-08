@@ -362,6 +362,24 @@ test.describe("Row options menu (quick 261011-mgj)", () => {
     ).toBeHidden();
     await expect(opts).toBeFocused();
   });
+
+  test("confirming a row Delete sends DELETE for that record", async ({ page }) => {
+    await mockRecords(page);
+    let deleted = false;
+    await page.route("**/api/transactions/301", async (route) => {
+      if (route.request().method() !== "DELETE") return route.fallback();
+      deleted = true;
+      await route.fulfill({ json: { status: "deleted" } });
+    });
+    await page.goto("/records");
+    const tx = transactionsFixture().find((t) => t.id === 301)!;
+    await page
+      .getByRole("button", { name: `Record options: ${tx.merchant} on ${tx.date.slice(0, 10)}`, exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
+    await page.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect.poll(() => deleted).toBe(true);
+  });
 });
 
 // Phase 37-07 — chat source chips open Records pre-filtered (D-14/D-14a/D-14b).
