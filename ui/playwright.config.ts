@@ -39,7 +39,10 @@ export default defineConfig({
   },
   webServer: {
     command: `npx next dev -H 127.0.0.1 -p ${PORT}`,
-    url: baseURL,
+    // Unauthenticated /api answers 401 (accepted as "up") without reaching the
+    // backend. "/" now redirects, and Playwright follows the dev server's
+    // absolute redirect to localhost, which is not bound.
+    url: `${baseURL}/api/ping`,
     env: { MONAI_UI_PASSWORD: UI_PASSWORD },
     // Never reuse a foreign server in CI; locally, reuse only a server we
     // ourselves started on this dedicated port. Run with CI=1 so a server that
