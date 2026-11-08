@@ -842,6 +842,24 @@ def _refuse_oversell(db: Session, ev: PortfolioEvent) -> None:
         )
 
 
+def _ledger_negative(db: Session, ticker: str, platform_id: int) -> bool:
+    """True when the position's running quantity drops below zero at any point."""
+    events = db.query(PortfolioEvent).filter(
+        PortfolioEvent.ticker == ticker, PortfolioEvent.platform_id == platform_id
+    ).order_by(PortfolioEvent.date, PortfolioEvent.id).all()
+    return any(q < 0 for q in _running_quantities(events))
+
+
+def _refuse_new_negative(db: Session, ticker: str, platform_id: int, was_negative: bool) -> None:
+    """Refuse an edit or delete that takes the ledger below zero (ValueError -> 422).
+
+    Only a change that CAUSES it is refused: a ledger already negative from old data stays
+    editable, so it can be repaired. Call after flushing the change, before recompute.
+    """
+    if not was_negative and _ledger_negative(db, ticker, platform_id):
+        raise ValueError(f"That change would take {ticker} below zero in the ledger; nothing was saved")
+
+
 def close_blocker(holding: Holding, events) -> str | None:
     """Why a flat position must NOT be closed, or None when it may be (Q1, Q2, Q7).
 
@@ -1064,6 +1082,7 @@ def apply_edit_portfolio_event(
     ev = _load_editable_event(db, event_id)
     old_ticker = ev.ticker
     new_ticker = after.get("ticker") or old_ticker
+    was_negative = {t: _ledger_negative(db, t, ev.platform_id) for t in {old_ticker, new_ticker}}
     new_type = after.get("event_type") or ev.event_type
     funded = ev.transaction_id is not None
     if funded and new_type == "dividend":
@@ -1112,6 +1131,8 @@ def apply_edit_portfolio_event(
     db.add(AuditLog(entity="portfolio_event", entity_id=ev.id, operation="edit",
                     before=before, after=_portfolio_event_snapshot(ev)))
     db.flush()  # LOAD-BEARING: autoflush=False, recompute's SELECT must see the edited rows
+    for t in was_negative:
+        _refuse_new_negative(db, t, ev.platform_id, was_negative[t])
     _recompute_or_refuse(db, ev.ticker, ev.platform_id)
     if new_ticker != old_ticker:
         _recompute_or_refuse(db, old_ticker, ev.platform_id)
@@ -1143,6 +1164,7 @@ def apply_delete_portfolio_event(db: Session, event_id: int, before: dict | None
     """
     ev = _load_editable_event(db, event_id, _DELETABLE_EVENT_TYPES)
     ticker, platform_id, tx_id = ev.ticker, ev.platform_id, ev.transaction_id
+    was_negative = _ledger_negative(db, ticker, platform_id)
     deleted_tx_id = None
     if tx_id is not None:
         tx = db.get(Transaction, tx_id)
@@ -1154,6 +1176,7 @@ def apply_delete_portfolio_event(db: Session, event_id: int, before: dict | None
     db.add(AuditLog(entity="portfolio_event", entity_id=event_id, operation="delete",
                     before=before, after=None))
     db.flush()  # LOAD-BEARING: autoflush=False, recompute's SELECT must not see the deleted rows
+    _refuse_new_negative(db, ticker, platform_id, was_negative)
     _recompute_or_refuse(db, ticker, platform_id)
     return deleted_tx_id
 

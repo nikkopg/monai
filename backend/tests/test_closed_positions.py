@@ -408,6 +408,38 @@ def test_oversell_refused(authed, db):
     assert _holding(db, tk, plat).quantity == Decimal("10")
 
 
+def _by_type(db, ticker, etype):
+    return next(e for e in _events(db, ticker) if e.event_type == etype)
+
+
+def test_edit_cannot_take_the_ledger_below_zero(authed, db):
+    acc, plat, tk = _account(db), _platform(db), f"{T}K8"
+    _funded(authed, "buy", acc, plat, tk, 10, 100, 1000, "2024-03-01")
+    _funded(authed, "sell", acc, plat, tk, 4, 120, 480, "2024-03-05")
+    sell, buy = _by_type(db, tk, "sell"), _by_type(db, tk, "buy")
+
+    r = authed.put(f"/portfolio-events/{sell.id}", json={"quantity": 15})  # sell more than held
+    assert r.status_code == 422 and "nothing was saved" in r.text
+    r = authed.put(f"/portfolio-events/{buy.id}", json={"quantity": 2})  # buy shrinks under the sell
+    assert r.status_code == 422 and "nothing was saved" in r.text
+    r = authed.put(f"/portfolio-events/{buy.id}", json={"date": "2024-03-09"})  # buy moves after the sell
+    assert r.status_code == 422 and "nothing was saved" in r.text
+
+    assert _holding(db, tk, plat).quantity == Decimal("6")
+    assert sorted(e.quantity for e in _events(db, tk)) == [Decimal("4"), Decimal("10")]
+
+
+def test_delete_cannot_take_the_ledger_below_zero(authed, db):
+    acc, plat, tk = _account(db), _platform(db), f"{T}K9"
+    _funded(authed, "buy", acc, plat, tk, 10, 100, 1000, "2024-03-01")
+    _funded(authed, "sell", acc, plat, tk, 4, 120, 480, "2024-03-05")
+    buy = _by_type(db, tk, "buy")
+
+    r = authed.delete(f"/portfolio-events/{buy.id}")
+    assert r.status_code == 422 and "nothing was saved" in r.text
+    assert _holding(db, tk, plat).quantity == Decimal("6") and len(_events(db, tk)) == 2
+
+
 def test_negative_ledger_never_closes(authed, db):
     plat, tk = _platform(db), f"{T}K7"
     sell = _prim_event(db, plat, tk, "sell", 5, 150, "2024-01-01")
@@ -726,6 +758,7 @@ def test_unfunded_event_keeps_its_type(authed, db):
     assert r.status_code == 422, r.text
     assert authed.put(f"/portfolio-events/{ev.id}", json={"quantity": 6}).status_code == 200
     funded_tk = f"{T}R6"
+    _funded(authed, "buy", acc, plat, funded_tk, 20, 100, 2000, "2024-02-01")  # held, so the switched sell stays covered
     buy = _funded(authed, "buy", acc, plat, funded_tk, 10, 100, 1000, "2024-03-01").json()
     assert authed.put(f"/portfolio-events/{buy['portfolio_event_id']}", json={"event_type": "sell"}).status_code == 200
 

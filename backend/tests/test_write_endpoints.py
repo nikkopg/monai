@@ -933,8 +933,18 @@ def test_o3y_funded_event_edit_delete_moves_cash_leg(client, api_key, db_session
     plat_id = _make_platform(db_session, "zzo3y-plat-funded")
     _cleanup_ticker(db_session, ticker)
     hdr = {"MONAI_API_KEY": api_key}
-    ev_id = tx_id = None
+    ev_id = tx_id = held_ev = held_tx = None
     try:
+        # A prior holding, so switching the edited event to a sell stays covered.
+        r = client.post(
+            "/portfolio-events/funded-buy",
+            json={"source_account_name": name, "platform_id": plat_id, "ticker": ticker,
+                  "quantity": 20, "price": 100000, "cash_amount": 2000000,
+                  "cash_currency": "IDR", "event_currency": "IDR", "date": "2024-03-01"},
+            headers=hdr,
+        )
+        assert r.status_code == 201, r.text
+        held_ev, held_tx = r.json()["portfolio_event_id"], r.json()["transaction_id"]
         r = client.post(
             "/portfolio-events/funded-buy",
             json={"source_account_name": name, "platform_id": plat_id, "ticker": ticker,
@@ -970,7 +980,7 @@ def test_o3y_funded_event_edit_delete_moves_cash_leg(client, api_key, db_session
         db_session.expire_all()
         assert db_session.get(PortfolioEvent, ev_id) is None
         assert db_session.get(Transaction, tx_id) is None
-        assert _o3y_holding(db_session, ticker, plat_id).quantity == Decimal("0")
+        assert _o3y_holding(db_session, ticker, plat_id).quantity == Decimal("20")
         assert db_session.query(AuditLog).filter(
             AuditLog.entity == "portfolio_event", AuditLog.entity_id == ev_id, AuditLog.operation == "delete"
         ).count() == 1
@@ -979,7 +989,7 @@ def test_o3y_funded_event_edit_delete_moves_cash_leg(client, api_key, db_session
         ).count() == 1
     finally:
         db_session.rollback()
-        _cleanup_o3y_audit(db_session, [ev_id] if ev_id else [], [tx_id] if tx_id else [])
+        _cleanup_o3y_audit(db_session, [e for e in (ev_id, held_ev) if e], [t for t in (tx_id, held_tx) if t])
         _cleanup_ticker(db_session, ticker)
         _cleanup_account(db_session, name)
         _cleanup_platform(db_session, plat_id)
