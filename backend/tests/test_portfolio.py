@@ -936,3 +936,196 @@ def test_buy_on_eventless_nonzero_holding_sums_with_an_opening_lot(db_session):
         assert [(e.event_type, e.quantity) for e in evs] == [("buy", Decimal("500")), ("buy", Decimal("100"))]
     finally:
         _cleanup_ticker(db_session, t)
+
+
+# ---------------------------------------------------------------------------
+# Quick 261108-d2c — USD positions shown in USD (display only). The two page
+# routes ask portfolio_summary for usd_view; everything else is unchanged.
+# ---------------------------------------------------------------------------
+
+_USD_VIEW_DAY_RATES = {1: "15000", 2: "16000", 3: "18000"}
+
+
+def _usd_view_stubs(monkeypatch, spot=None):
+    """Stub both FX paths so no test can reach the network. `spot` is the
+    spot_stale_ok result, or None to raise FxUnavailable."""
+    from decimal import Decimal
+    from backend import portfolio as portfolio_mod
+
+    def fake_get_rate(base, quote, as_of, db):
+        if base == quote:
+            return Decimal("1")
+        if (as_of.year, as_of.month) == (2024, 1) and as_of.day in _USD_VIEW_DAY_RATES:
+            return Decimal(_USD_VIEW_DAY_RATES[as_of.day])
+        return Decimal("20000")
+
+    def fake_spot(currency, db):
+        if spot is None:
+            raise portfolio_mod.fx.FxUnavailable("no rate")
+        return spot
+
+    monkeypatch.setattr(portfolio_mod.fx, "get_rate", fake_get_rate)
+    monkeypatch.setattr(portfolio_mod.fx, "spot_stale_ok", fake_spot)
+
+
+def _usd_view_position(db, plat, t):
+    """USD position: buy 10 @ 2, buy 10 @ 4, sell 5 @ 5 (native USD); manual
+    IDR price 100000. Native avg cost 3; IDR avg cost 47000."""
+    from backend import portfolio as portfolio_mod
+    from backend.writes import apply_set_price
+
+    _add_event_ccy(db, t, "buy", 10, 2, 1, plat, "USD")
+    _add_event_ccy(db, t, "buy", 10, 4, 2, plat, "USD")
+    _add_event_ccy(db, t, "sell", 5, 5, 3, plat, "USD")
+    portfolio_mod.recompute_holding_from_events(db, t, plat)
+    db.commit()
+    apply_set_price(db, t, 100000, source="manual")
+    db.commit()
+
+
+def _usd_view_row(summary, t):
+    return next(h for g in summary["groups"] for h in g["holdings"] if h["ticker"] == t)
+
+
+def test_usd_view_values_from_own_trades_and_today_rate(db_session, monkeypatch):
+    """L3/L4: USD avg cost is the average-cost rule on the native USD prices
+    (3, not IDR 47000 / today's rate 2.35); price and value are IDR / rate."""
+    import datetime as _dt
+    from decimal import Decimal
+    from backend import portfolio as portfolio_mod
+
+    plat = _make_platform(db_session, "zz-d2c-usd-view")
+    t, idr_t = _random_ticker(), _random_ticker()
+    _usd_view_stubs(monkeypatch, spot=(Decimal("20000"), _dt.date(2026, 1, 2), False))
+    try:
+        _usd_view_position(db_session, plat, t)
+        _add_event_ccy(db_session, idr_t, "buy", 2, 1000, 1, plat, "IDR")
+        portfolio_mod.recompute_holding_from_events(db_session, idr_t, plat)
+        db_session.commit()
+
+        row = _usd_view_row(portfolio_mod.portfolio_summary(db_session, usd_view=True), t)
+        assert row["currency"] == "USD"
+        assert row["usd_avg_cost"] == Decimal("3")
+        assert row["usd_current_price"] == Decimal("5")
+        assert row["usd_current_value"] == Decimal("75")
+        assert row["usd_unrealized_pnl"] == Decimal("30")
+        assert row["usd_rate"] == Decimal("20000")
+        assert row["usd_rate_date"] == "2026-01-02"
+        # Existing IDR fields untouched.
+        assert row["avg_cost"] == Decimal("47000")
+        assert row["current_value"] == Decimal("1500000")
+        assert row["unrealized_pnl"] == Decimal("795000")
+        assert row["realized_pnl"] == Decimal("215000")
+
+        summary = portfolio_mod.portfolio_summary(db_session, usd_view=True)
+        idr_row = _usd_view_row(summary, idr_t)
+        assert not [k for k in idr_row if k.startswith("usd_")]
+        default_row = _usd_view_row(portfolio_mod.portfolio_summary(db_session), t)
+        assert not [k for k in default_row if k.startswith("usd_")]
+    finally:
+        _cleanup_prices(db_session, t)
+        _cleanup_ticker(db_session, t)
+        _cleanup_ticker(db_session, idr_t)
+
+
+def test_usd_view_no_rate_leaves_idr_only(db_session, monkeypatch):
+    """L4: no spot rate means every usd_ value is None (never guessed) and the
+    IDR fields are unchanged."""
+    from decimal import Decimal
+    from backend import portfolio as portfolio_mod
+
+    plat = _make_platform(db_session, "zz-d2c-usd-view")
+    t = _random_ticker()
+    _usd_view_stubs(monkeypatch, spot=None)
+    try:
+        _usd_view_position(db_session, plat, t)
+        row = _usd_view_row(portfolio_mod.portfolio_summary(db_session, usd_view=True), t)
+        for key in ("usd_rate", "usd_rate_date", "usd_avg_cost", "usd_current_price",
+                    "usd_current_value", "usd_unrealized_pnl"):
+            assert key in row and row[key] is None, key
+        assert row["avg_cost"] == Decimal("47000")
+        assert row["current_value"] == Decimal("1500000")
+        assert row["unrealized_pnl"] == Decimal("795000")
+        assert row["realized_pnl"] == Decimal("215000")
+    finally:
+        _cleanup_prices(db_session, t)
+        _cleanup_ticker(db_session, t)
+
+
+def test_usd_view_omits_avg_cost_not_from_own_usd_trades(db_session, monkeypatch):
+    """L5: no events, events in another currency, or a hand-edited quantity
+    leave usd_avg_cost and usd_unrealized_pnl None; price and value remain."""
+    import datetime as _dt
+    from decimal import Decimal
+    from backend import portfolio as portfolio_mod
+    from backend.models import Holding
+    from backend.writes import apply_set_price
+
+    plat = _make_platform(db_session, "zz-d2c-usd-view")
+    no_events, mixed, edited = _random_ticker(), _random_ticker(), _random_ticker()
+    _usd_view_stubs(monkeypatch, spot=(Decimal("20000"), _dt.date(2026, 1, 2), False))
+    tickers = (no_events, mixed, edited)
+    try:
+        db_session.add(Holding(
+            ticker=no_events, quantity=Decimal("4"), avg_cost=Decimal("50000"),
+            currency="USD", platform_id=plat, asset_type="crypto",
+        ))
+        db_session.commit()
+
+        _add_event_ccy(db_session, mixed, "buy", 3, 2, 1, plat, "USD")
+        _add_event_ccy(db_session, mixed, "buy", 3, 40000, 2, plat, "IDR")
+        portfolio_mod.recompute_holding_from_events(db_session, mixed, plat)
+        db_session.commit()
+
+        _usd_view_position(db_session, plat, edited)
+        db_session.query(Holding).filter(
+            Holding.ticker == edited, Holding.platform_id == plat
+        ).update({"quantity": Decimal("9")})
+        db_session.commit()
+
+        for t in (no_events, mixed):
+            apply_set_price(db_session, t, 100000, source="manual")
+        db_session.commit()
+
+        summary = portfolio_mod.portfolio_summary(db_session, usd_view=True)
+        for t in tickers:
+            row = _usd_view_row(summary, t)
+            assert row["currency"] == "USD", t
+            assert row["usd_avg_cost"] is None, t
+            assert row["usd_unrealized_pnl"] is None, t
+            assert row["usd_current_price"] == Decimal("5"), t
+            assert row["usd_current_value"] == row["quantity"] * Decimal("5"), t
+    finally:
+        for t in tickers:
+            _cleanup_prices(db_session, t)
+            _cleanup_ticker(db_session, t)
+
+
+def test_usd_view_reaches_both_routes(client, db_session, authed, monkeypatch):
+    """The investments summary and the platform detail both carry the usd_
+    fields; refresh_all_prices is stubbed so the test stays offline."""
+    import datetime as _dt
+    from decimal import Decimal
+    from backend import prices as prices_mod
+
+    plat = _make_platform(db_session, "zz-d2c-usd-view")
+    t = _random_ticker()
+    _usd_view_stubs(monkeypatch, spot=(Decimal("20000"), _dt.date(2026, 1, 2), False))
+    monkeypatch.setattr(prices_mod, "refresh_all_prices", lambda *a, **k: {})
+    try:
+        _usd_view_position(db_session, plat, t)
+
+        summary = client.get("/investments/summary")
+        assert summary.status_code == 200, summary.text
+        row = next(h for g in summary.json()["groups"] for h in g["holdings"] if h["ticker"] == t)
+        assert Decimal(str(row["usd_current_value"])) == Decimal("75")
+        assert Decimal(str(row["usd_avg_cost"])) == Decimal("3")
+
+        detail = client.get(f"/platforms/{plat}/detail")
+        assert detail.status_code == 200, detail.text
+        row = next(h for h in detail.json()["holdings"] if h["ticker"] == t)
+        assert Decimal(str(row["usd_current_value"])) == Decimal("75")
+        assert Decimal(str(row["usd_avg_cost"])) == Decimal("3")
+    finally:
+        _cleanup_prices(db_session, t)
+        _cleanup_ticker(db_session, t)
