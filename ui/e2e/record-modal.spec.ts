@@ -17,7 +17,12 @@ import { test, expect, type Page, type Route } from "@playwright/test";
 
 // The modal opens from Records ("+ Add record", or a row's options menu →
 // Edit); every GET it needs is mocked so nothing reaches a live backend.
-const TODAY = new Date().toISOString().slice(0, 10) + "T10:00:00Z";
+// Noon on the local day, so the row lands in "Today" at any hour of the run.
+const TODAY = (() => {
+  const d = new Date();
+  d.setHours(12, 0, 0, 0);
+  return d.toISOString();
+})();
 
 function txFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return [

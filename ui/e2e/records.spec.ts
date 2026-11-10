@@ -29,18 +29,23 @@ const money = (n: number) => new Intl.NumberFormat("en-US").format(Math.round(n)
 const signed = (n: number) =>
   new Intl.NumberFormat("en-US", { signDisplay: "always" }).format(Math.round(n));
 
-function isoAt(daysAgo: number): string {
+// Noon on the LOCAL day: the page groups by the viewer's clock, so a UTC-day
+// date read as "Yesterday" whenever the run fell before the UTC midnight
+// (00:00-07:00 WIB). Local noon stays on the same calendar day in ISO for any
+// zone within ±12h, so `date.slice(0, 10)` labels still match.
+function localNoon(daysAgo: number): Date {
   const d = new Date();
-  d.setUTCHours(10, 0, 0, 0);
-  d.setUTCDate(d.getUTCDate() - daysAgo);
-  return d.toISOString();
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() - daysAgo);
+  return d;
+}
+
+function isoAt(daysAgo: number): string {
+  return localNoon(daysAgo).toISOString();
 }
 
 function weekdayLabel(daysAgo: number): string {
-  const d = new Date();
-  d.setUTCHours(10, 0, 0, 0);
-  d.setUTCDate(d.getUTCDate() - daysAgo);
-  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  return localNoon(daysAgo).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
 
 function accountsFixture() {
