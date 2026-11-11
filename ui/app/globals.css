@@ -238,3 +238,11 @@ input, select, button, textarea {
 @media (max-width: 900px) {
   .cf-hero { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Cashflow lower row: cards wrap at 300px, but once the panel reaches its
+   full 1240px the three stay side by side even with the sidebar open, with
+   Income & spending wider for its donut legend. */
+.cf-lower { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+@media (min-width: 1280px) {
+  .cf-lower { grid-template-columns: minmax(0, 4fr) minmax(0, 3fr) minmax(0, 3fr); }
+}

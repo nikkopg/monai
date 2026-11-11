@@ -441,12 +441,13 @@ export default function CashflowPage() {
             </div>
           )}
 
-          {/* Income & spending + liquid accounts + investment platforms */}
+          {/* Income & spending + liquid accounts + investment platforms.
+              Columns in globals.css (.cf-lower): wrapping cards, three
+              across on wide windows with the first wider. */}
           <div
+            className="cf-lower"
             style={{
               display: "grid",
-              gridTemplateColumns:
-                "repeat(auto-fit, minmax(min(100%, 300px), 1fr))",
               gap: 18,
               marginBottom: 18,
               alignItems: "start",
