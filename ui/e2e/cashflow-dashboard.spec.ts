@@ -26,9 +26,19 @@ function summaryFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     totals: { income: 5_000_000, expense: 2_000_000, net: 3_000_000 },
     by_category: [
-      ["Food & Drinks", 1_200_000],
-      ["Transport", 500_000],
-      ["Shopping", 300_000],
+      {
+        id: 1,
+        name: "Food & Drinks",
+        color: "#d8b26a",
+        icon: null,
+        total: 1_200_000, // pii-ok synthetic
+        children: [
+          { id: 11, name: "Groceries", color: "#d8b26a", icon: null, total: 700_000 }, // pii-ok synthetic
+          { id: 12, name: "Restaurants", color: "#d8b26a", icon: null, total: 500_000 }, // pii-ok synthetic
+        ],
+      },
+      { id: 2, name: "Transport", color: "#8fae9c", icon: null, total: 500_000, children: [] }, // pii-ok synthetic
+      { id: 3, name: "Shopping", color: "#b5503f", icon: null, total: 300_000, children: [] }, // pii-ok synthetic
     ],
     accounts: [
       { id: 1, name: "Cash", current_balance: 4_000_000, period_net: 1_500_000 },
@@ -254,10 +264,10 @@ test.describe("Income & spending card", () => {
 });
 
 // ---------------------------------------------------------------------------
-// UAT gap 2: the Spending by category legend must stay inside its card. All
-// names and amounts below are synthetic.
+// UAT gap 2: the "Where it went" legend must stay inside its card. All names
+// and amounts below are synthetic.
 // ---------------------------------------------------------------------------
-const layoutCategories = [
+const layoutCategories = ([
   ["Telecommunications", 12_345_678],
   ["Transportation", 9_876_543],
   ["Entertainment", 7_654_321],
@@ -265,7 +275,7 @@ const layoutCategories = [
   ["Health & Fitness", 456_789],
   ["Food & Drinks", 234_567],
   ["Shopping", 123_456],
-].map(([name, total], i) => ({
+] as [string, number][]).map(([name, total], i) => ({
   id: i + 1,
   name,
   color: ["#4f8", "#48f", "#f84", "#8f4", "#f48", "#84f", "#ff4"][i],
@@ -288,66 +298,103 @@ const layoutNetWorth = {
   accounts_total: 1,
 };
 
-test.describe("Spending by category card layout", () => {
-  // 1100: two-column grid, narrow card -> legend stacked below the donut.
-  // 420: single column, narrow card -> stacked. 920: single column, wide
-  // card (mid-band, clear of the ~1035px grid breakpoint) -> legend beside
-  // the 150px donut (150 + 22 gap = 172). 1440: max-width cap, the layout
-  // most desktops get -> side-by-side with a ~209px legend. 320: below the
-  // 340px floor, where only the narrowed page gutters keep amounts inside.
+test.describe("Income & spending legend layout", () => {
+  // The legend sits beside the 88px donut once the card's content box fits the
+  // donut, the 14px gap and the legend's 150px basis (252px), else it drops
+  // below. Content widths measured: 1100 -> 281 (beside: three columns of
+  // ~300px cards, the legend is far narrower than the old 180px basis), 420 ->
+  // 179 and 320 -> 135 (stacked; 320 is below the 340px floor, where only the
+  // narrowed page gutters keep amounts inside), 920 -> 451 and 1440 -> 380
+  // (beside, the latter the max-width cap most desktops get).
   const cases: [number, "stacked" | "side-by-side"][] = [
-    [1100, "stacked"],
+    [1100, "side-by-side"],
     [420, "stacked"],
     [320, "stacked"],
     [920, "side-by-side"],
     [1440, "side-by-side"],
   ];
+  const top = [...layoutCategories].sort((a, b) => b.total - a.total);
+  const names = [...top.slice(0, 5).map((c) => c.name), "Others"];
+  const othersTotal = top.slice(5).reduce((sum, c) => sum + c.total, 0);
+  const sum = top.reduce((t, c) => t + c.total, 0);
+
   for (const [width, layout] of cases) {
-    test(`legend amounts stay inside the card at ${width}px (${layout})`, async ({ page }) => {
+    test(`legend stays inside the card at ${width}px (${layout})`, async ({ page }) => {
       await mockSummary(page, layoutSummary);
       await page.route("**/api/net-worth**", (route) => route.fulfill({ json: layoutNetWorth }));
       await page.setViewportSize({ width, height: 900 });
       await page.goto("/cashflow");
-      const card = page.getByText("Spending by category", { exact: true }).locator("xpath=..");
-      await expect(card.getByText("12,345,678")).toBeVisible(); // pii-ok: mocked fixture
+      const card = incomeSpending(page);
+      const list = card.getByRole("list", { name: "Where it went" });
+      await expect(list.getByText("12,345,678")).toBeVisible(); // pii-ok: mocked fixture
       const m = await card.evaluate((el) => {
         const r = el.getBoundingClientRect();
         const cs = getComputedStyle(el);
         const left = r.left + parseFloat(cs.paddingLeft) + parseFloat(cs.borderLeftWidth);
         const right = r.right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth);
-        const amounts = Array.from(el.querySelectorAll("span")).filter((s) => /\d/.test(s.textContent ?? ""));
-        const names = Array.from(el.querySelectorAll("span[title]"));
+        const ul = el.querySelector('ul[aria-label="Where it went"]')!;
+        const rows = Array.from(ul.children).map((li) => Array.from(li.querySelectorAll("span")));
         return {
           left,
           right,
-          count: amounts.length,
-          amountRights: amounts.map((s) => s.getBoundingClientRect().right),
-          legendLeft: amounts[0]?.parentElement?.parentElement?.getBoundingClientRect().left ?? NaN,
-          // Lines each name occupies (distinct rect tops; an ellipsis adds a
-          // rect on the same line). A mid-word split shows as 2+.
-          names: names.map((s) => {
+          legendLeft: ul.getBoundingClientRect().left,
+          rows: rows.map(([, name, amount, share]) => {
+            // Lines the name occupies (distinct rect tops; an ellipsis adds a
+            // rect on the same line). A mid-word split shows as 2+.
             const range = document.createRange();
-            range.selectNodeContents(s);
+            range.selectNodeContents(name);
             const lines = new Set(Array.from(range.getClientRects(), (q) => Math.round(q.top))).size;
-            return { text: s.textContent, title: s.getAttribute("title"), lines };
+            return {
+              text: name.textContent,
+              title: name.getAttribute("title"),
+              lines,
+              amount: amount.textContent,
+              amountRight: amount.getBoundingClientRect().right,
+              share: share.textContent,
+              shareRight: share.getBoundingClientRect().right,
+            };
           }),
         };
       });
-      expect(m.count).toBe(layoutCategories.length);
-      for (const right of m.amountRights) expect(right).toBeLessThanOrEqual(m.right + 0.5);
-      // Every name keeps its full text in the tooltip; single words never split.
-      expect(m.names.map((n) => n.title)).toEqual(layoutCategories.map((c) => c.name));
-      for (const n of m.names) {
-        expect(n.text).toBe(n.title);
-        if (!n.text?.includes(" ")) expect(n.lines, n.text ?? "").toBe(1);
+      expect(m.rows).toHaveLength(6);
+      const others = m.rows[5];
+      expect(others.title).toBe("Others");
+      expect(others.amount).toBe("358,023"); // pii-ok: mocked fixture, 234,567 + 123,456
+      expect(others.share).toBe(`${Math.round((othersTotal / sum) * 100)}%`);
+      for (const row of m.rows) {
+        expect(row.amountRight).toBeLessThanOrEqual(m.right + 0.5);
+        expect(row.shareRight).toBeLessThanOrEqual(m.right + 0.5);
+        // Every name keeps its full text in the tooltip; single words never split.
+        expect(row.text).toBe(row.title);
+        if (!row.text?.includes(" ")) expect(row.lines, row.text ?? "").toBe(1);
       }
+      expect(m.rows.map((row) => row.title)).toEqual(names);
       if (layout === "stacked") {
         expect(Math.abs(m.legendLeft - m.left)).toBeLessThanOrEqual(1);
       } else {
-        expect(m.legendLeft - m.left).toBeGreaterThanOrEqual(171);
+        expect(m.legendLeft - m.left).toBeGreaterThanOrEqual(88 + 14 - 1);
       }
     });
   }
+
+  test("clicking a slice with subcategories drills in and Back returns", async ({ page }) => {
+    await mockSummary(page);
+    await page.goto("/cashflow");
+    const card = incomeSpending(page);
+    const list = card.getByRole("list", { name: "Where it went" });
+    await expect(list.getByText("Food & Drinks", { exact: true })).toBeVisible();
+
+    // A plain click can land in the donut hole: the centre of a ring slice's box is often empty.
+    await card.locator(".recharts-pie-sector path").first().dispatchEvent("click");
+    await expect(card.getByRole("button", { name: "‹ Back" })).toBeVisible();
+    await expect(list.getByText("Groceries", { exact: true })).toBeVisible();
+    await expect(list.getByText("Restaurants", { exact: true })).toBeVisible();
+    await expect(list.getByText("Transport", { exact: true })).toHaveCount(0);
+
+    await card.getByRole("button", { name: "‹ Back" }).click();
+    await expect(list.getByText("Transport", { exact: true })).toBeVisible();
+    await expect(list.getByText("Groceries", { exact: true })).toHaveCount(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

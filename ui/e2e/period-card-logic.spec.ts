@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { changeBadge, periodWindow, spendBar } from "../app/cashflow/periodCard";
+import { changeBadge, periodWindow, spendBar, topCategories } from "../app/cashflow/periodCard";
 
 // Browserless: pure period maths for the Cashflow "Income & spending" card (no
 // page, no server). All values synthetic; dates built from local Date constructors.
@@ -122,5 +122,32 @@ test.describe("spendBar", () => {
   test("no income, no bar", () => {
     expect(spendBar(0, 1_000_000)).toBeNull();
     expect(spendBar(-5, 1)).toBeNull();
+  });
+});
+
+test.describe("topCategories", () => {
+  const rows = (totals: number[]) =>
+    totals.map((total, i) => ({ id: i + 1, name: `Cat ${i + 1}`, color: "#abc", icon: null, total, children: [] }));
+
+  test("folds the tail past five into Others", () => {
+    const out = topCategories(rows([10, 70, 50, 40, 30, 20, 30])); // sum 250
+    expect(out.map((r) => r.name)).toEqual(["Cat 2", "Cat 3", "Cat 4", "Cat 5", "Cat 7", "Others"]);
+    expect(out[5]).toEqual({ id: -1, name: "Others", color: "#c8c1b5", icon: null, children: [], total: 30, share: 12 });
+    expect(out.map((r) => r.share)).toEqual([28, 20, 16, 12, 12, 12]);
+  });
+
+  test("six rows all stay named", () => {
+    const out = topCategories(rows([6, 5, 4, 3, 2, 1]));
+    expect(out.map((r) => r.name)).toEqual(["Cat 1", "Cat 2", "Cat 3", "Cat 4", "Cat 5", "Cat 6"]);
+  });
+
+  test("short, empty and zero-sum input", () => {
+    expect(topCategories(rows([1, 3, 2])).map((r) => [r.name, r.share])).toEqual([
+      ["Cat 2", 50],
+      ["Cat 3", 33],
+      ["Cat 1", 17],
+    ]);
+    expect(topCategories([])).toEqual([]);
+    expect(topCategories(rows([0, 0])).map((r) => r.share)).toEqual([0, 0]);
   });
 });

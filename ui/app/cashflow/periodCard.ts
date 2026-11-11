@@ -141,3 +141,30 @@ export function spendBar(income: number, expense: number): { spent: number; widt
     kept: spent > 100 ? `${spent - 100}% over` : `${100 - spent}% kept`,
   };
 }
+
+const OTHERS_GREY = "#c8c1b5";
+
+/**
+ * The donut slices and legend rows: rows sorted by total, the top n kept and
+ * the rest folded into one grey "Others" row, each with its rounded share of
+ * the whole. Exactly n+1 rows all stay named: folding a single row would only
+ * hide its name.
+ */
+// ponytail: the backend caps root groups at 10 (_spending_by_category limit), so
+// Others covers groups 6-10 only, the same cap the donut already had; raise the
+// limit there to widen it.
+export function topCategories<T extends { id: number; name: string; color: string | null; icon: string | null; total: number }>(
+  rows: T[],
+  n = 5
+): (T & { share: number })[] {
+  const sorted = [...rows].sort((a, b) => b.total - a.total);
+  const all = sorted.reduce((sum, r) => sum + r.total, 0);
+  const share = (total: number) => (all === 0 ? 0 : Math.round((total / all) * 100));
+  const kept = sorted.length > n + 1 ? sorted.slice(0, n) : sorted;
+  const rest = sorted.slice(kept.length);
+  const shown = kept.map((r) => ({ ...r, share: share(r.total) }));
+  if (rest.length === 0) return shown;
+  const total = rest.reduce((sum, r) => sum + r.total, 0);
+  const others = { id: -1, name: "Others", color: OTHERS_GREY, icon: null, children: [], total, share: share(total) };
+  return [...shown, others as unknown as T & { share: number }];
+}

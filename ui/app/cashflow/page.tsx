@@ -591,71 +591,10 @@ export default function CashflowPage() {
               >
                 Where it went
               </div>
-              <div
-                style={{
-                  display: "flex",
-                  flexWrap: "wrap",
-                  alignItems: "center",
-                  gap: 22,
-                }}
-              >
-                <CategoryDonut data={categoryData} />
-                <div
-                  style={{
-                    flex: "1 1 180px",
-                    minWidth: 0,
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 9,
-                  }}
-                >
-                  {categoryData.map((c) => (
-                    <div
-                      key={c.id}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 10,
-                        fontSize: 13,
-                      }}
-                    >
-                      <span
-                        style={{
-                          width: 9,
-                          height: 9,
-                          borderRadius: 3,
-                          background: c.color ?? tokens.color.muted,
-                          flexShrink: 0,
-                        }}
-                      />
-                      {/* Wrap at spaces; a single word too long for the line
-                          ends in an ellipsis instead of splitting mid-word
-                          (hyphens:auto has no dictionary in headless
-                          Chromium). Full name stays in the tooltip. */}
-                      <span
-                        title={c.name || undefined}
-                        style={{
-                          flex: 1,
-                          minWidth: 0,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                      >
-                        {c.name || "—"}
-                      </span>
-                      <span
-                        style={{
-                          color: tokens.color.muted,
-                          fontVariantNumeric: "tabular-nums",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {fmtAmount(c.total, "IDR")}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <CategoryDonut
+                key={`${kind}:${win.start}`}
+                data={categoryData}
+              />
             </section>
 
               <div style={{ ...card, marginBottom: 0 }}>
