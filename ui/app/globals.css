@@ -246,3 +246,38 @@ input, select, button, textarea {
 @media (min-width: 1280px) {
   .cf-lower { grid-template-columns: minmax(0, 4fr) minmax(0, 3fr) minmax(0, 3fr); }
 }
+
+/* RollingNumber: each digit is a 0–9 strip (::before, so the digits never
+   enter the DOM text) shifted by --d tenths of its height. The box takes the
+   width of its own target digit (an invisible ::after copy), so spacing and
+   letter-spacing match plain text in fonts without tabular figures; the strip
+   is centred over it and clipped only vertically. */
+.roll { display: inline-flex; font-variant-numeric: tabular-nums; }
+.roll-digit,
+.roll-char {
+  display: inline-block;
+  height: 1.15em;
+  line-height: 1.15;
+  vertical-align: top;
+}
+.roll-char { overflow: hidden; }
+.roll-char::before { content: attr(data-c); }
+.roll-digit {
+  position: relative;
+  overflow-x: visible;
+  overflow-y: clip;
+}
+.roll-digit::after { content: attr(data-d); visibility: hidden; }
+.roll-digit::before {
+  content: "0\A 1\A 2\A 3\A 4\A 5\A 6\A 7\A 8\A 9";
+  white-space: pre;
+  position: absolute;
+  top: 0;
+  left: 50%;
+  text-align: center;
+  transform: translate(-50%, calc(var(--d, 0) * -10%));
+  transition: transform 0.8s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .roll-digit::before { transition: none; }
+}

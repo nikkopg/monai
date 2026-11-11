@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import { tokens, card } from "../styles";
 import Pills from "../components/Pills";
-import CountUp from "../components/CountUp";
+import RollingNumber from "../components/RollingNumber";
 import CategoryDonut from "./charts/CategoryDonut";
 import TrendChart from "./charts/TrendChart";
 import NetWorthTrendChart from "./charts/NetWorthTrendChart";
@@ -290,7 +290,7 @@ export default function CashflowPage() {
                       fontVariantNumeric: "tabular-nums",
                     }}
                   >
-                    <CountUp value={netWorthData?.total ?? 0} format={(n) => fmtAmount(n, "IDR")} />
+                    <RollingNumber value={netWorthData?.total ?? 0} format={(n) => fmtAmount(n, "IDR")} />
                   </div>
                 )}
                 {netWorthData && !netWorthError && (
@@ -522,13 +522,13 @@ export default function CashflowPage() {
               <FigRow
                 label="Income"
                 badge={badge(summary.totals.income, prevTotals?.income, true)}
-                value={<CountUp value={summary.totals.income} format={(n) => fmtAmount(n, "IDR")} />}
+                value={<RollingNumber value={summary.totals.income} format={(n) => fmtAmount(n, "IDR")} />}
                 color={tokens.color.green}
               />
               <FigRow
                 label="Expenses"
                 badge={badge(summary.totals.expense, prevTotals?.expense, false)}
-                value={<CountUp value={summary.totals.expense} format={(n) => fmtAmount(n, "IDR")} />}
+                value={<RollingNumber value={summary.totals.expense} format={(n) => fmtAmount(n, "IDR")} />}
                 color={tokens.color.terracotta}
               />
               {bar && (
@@ -577,7 +577,7 @@ export default function CashflowPage() {
                 net
                 label="Net saved"
                 badge={badge(summary.totals.net, prevTotals?.net, true)}
-                value={<CountUp value={summary.totals.net} format={(n) => fmtAmountSigned(n, "IDR")} />}
+                value={<RollingNumber value={summary.totals.net} format={(n) => fmtAmountSigned(n, "IDR")} />}
                 color={tokens.color.ink}
               />
 
