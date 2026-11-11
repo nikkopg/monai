@@ -168,12 +168,15 @@ export default function NetWorthTrendChart({
           display: "flex",
           justifyContent: "space-between",
           alignItems: hero ? "flex-start" : "center",
-          gap: 16,
+          // Wrap, so in a narrow card the pills drop below the total instead
+          // of running past the card's edge.
+          flexWrap: "wrap",
+          gap: hero ? "10px 16px" : 16,
           marginBottom: 6,
         }}
       >
         {hero ? header : <div style={{ fontSize: 14, fontWeight: 600 }}>Net worth trend</div>}
-        <div style={{ display: "flex", gap: hero ? 8 : 10, flexShrink: 0 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: hero ? 8 : 10 }}>
           <Pills options={RANGE_OPTIONS} value={range} onChange={setRange} dark={hero} />
           <Pills options={MODE_OPTIONS} value={mode} onChange={setMode} dark={hero} />
         </div>
