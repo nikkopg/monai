@@ -46,20 +46,30 @@ function summaryFixture(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-async function mockSummary(page: Page, body: unknown = summaryFixture()) {
-  const requestedPeriods: string[] = [];
+// Records `period` and the "start_date..end_date" of every summary request. A
+// request whose range is in `byRange` gets that body; any other gets `body`.
+async function mockSummary(
+  page: Page,
+  body: unknown = summaryFixture(),
+  byRange: Record<string, unknown> = {}
+) {
+  const periods: string[] = [];
+  const ranges: string[] = [];
   await page.route("**/api/cashflow/summary**", async (route) => {
     const url = new URL(route.request().url());
-    const period = url.searchParams.get("period") || "";
-    requestedPeriods.push(period);
+    const range = `${url.searchParams.get("start_date")}..${url.searchParams.get("end_date")}`;
+    periods.push(url.searchParams.get("period") || "");
+    ranges.push(range);
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify(body),
+      body: JSON.stringify(byRange[range] ?? body),
     });
   });
-  return requestedPeriods;
+  return { periods, ranges };
 }
+
+const incomeSpending = (page: Page) => page.getByRole("region", { name: "Income & spending" });
 
 test.describe("/cashflow dashboard", () => {
   test("renders the page heading and the three summary figure captions", async ({
@@ -71,47 +81,175 @@ test.describe("/cashflow dashboard", () => {
     await expect(
       page.getByRole("heading", { name: "Cashflow" })
     ).toBeVisible();
-    // Stat-card captions are <div>s; scope to div so the trend legend's
-    // <span>Income/Expenses don't trip strict mode.
-    await expect(
-      page.locator("div").filter({ hasText: /^Income$/ })
-    ).toBeVisible();
-    await expect(
-      page.locator("div").filter({ hasText: /^Expenses$/ })
-    ).toBeVisible();
-    await expect(
-      page.locator("div").filter({ hasText: /^Net saved$/ })
-    ).toBeVisible();
+    const card = incomeSpending(page);
+    await expect(card.getByText("Income", { exact: true })).toBeVisible();
+    await expect(card.getByText("Expenses", { exact: true })).toBeVisible();
+    await expect(card.getByText("Net saved", { exact: true })).toBeVisible();
   });
 
   test("renders at least one chart svg", async ({ page }) => {
     await mockSummary(page);
     await page.goto("/cashflow");
 
-    await expect(page.getByText("Spending by category")).toBeVisible();
-    const chartsRow = page
-      .getByText("Spending by category")
-      .locator("xpath=ancestor::main");
-    await expect(chartsRow.locator("svg").first()).toBeVisible();
+    await expect(incomeSpending(page).locator("svg").first()).toBeVisible();
   });
 
-  test("clicking a different period pill issues a new summary request", async ({
+  test("the period buttons issue custom-range requests for the window and the one before", async ({
     page,
   }) => {
-    const requestedPeriods = await mockSummary(page);
+    await page.clock.setFixedTime(new Date(2026, 10, 11, 12));
+    const { periods, ranges } = await mockSummary(page);
     await page.goto("/cashflow");
 
-    // Wait for the initial load (default period).
-    await expect(
-      page.locator("div").filter({ hasText: /^Income$/ })
-    ).toBeVisible();
-    expect(requestedPeriods).toContain("this_month");
+    const month = incomeSpending(page).getByRole("button", { name: "Month", exact: true });
+    await expect(month).toHaveAttribute("aria-pressed", "true");
+    await expect.poll(() => ranges).toContain("2026-11-01..2026-11-11");
+    expect(ranges).toContain("2026-10-01..2026-10-11");
+    expect(new Set(periods)).toEqual(new Set(["custom"]));
 
-    await page.getByRole("button", { name: "Year", exact: true }).click();
+    await incomeSpending(page).getByRole("button", { name: "Year", exact: true }).click();
 
-    await expect
-      .poll(() => requestedPeriods.includes("this_year"))
-      .toBe(true);
+    await expect.poll(() => ranges).toContain("2026-01-01..2026-11-11");
+    expect(ranges).toContain("2025-01-01..2025-11-11");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The Income & spending card: pills, stepper, change badges and spend bar.
+// Synthetic figures; the browser clock is fixed to local noon on 11 Nov 2026.
+// ---------------------------------------------------------------------------
+const totals = (income: number, expense: number) => ({ income, expense, net: income - expense });
+const rangeBodies = {
+  "2026-11-01..2026-11-11": summaryFixture({ totals: totals(9_500_000, 4_210_000) }), // pii-ok synthetic
+  "2026-10-01..2026-10-11": summaryFixture({ totals: totals(8_500_000, 4_600_000) }), // pii-ok synthetic
+  "2026-10-01..2026-10-31": summaryFixture({ totals: totals(8_000_000, 5_200_000) }), // pii-ok synthetic
+  "2026-09-01..2026-09-30": summaryFixture({ totals: totals(10_000_000, 4_000_000) }), // pii-ok synthetic
+};
+
+const GREEN = "rgb(47, 111, 79)";
+const BAD = "rgb(166, 70, 54)";
+
+test.describe("Income & spending card", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.clock.setFixedTime(new Date(2026, 10, 11, 12));
+  });
+
+  // The change badge sitting right after a row's label word.
+  const badge = (page: Page, label: string) =>
+    incomeSpending(page).getByText(label, { exact: true }).locator("xpath=..").locator("span[title]");
+
+  test("renders the figures, badges, bar and stepper", async ({ page }) => {
+    await mockSummary(page, summaryFixture(), rangeBodies);
+    await page.goto("/cashflow");
+    const card = incomeSpending(page);
+
+    await expect(card.getByText("9,500,000", { exact: true })).toBeVisible();
+    await expect(card.getByText("4,210,000", { exact: true })).toBeVisible();
+    await expect(card.getByText("+5,290,000", { exact: true })).toBeVisible();
+
+    const income = badge(page, "Income");
+    const expenses = badge(page, "Expenses");
+    const net = badge(page, "Net saved");
+    await expect(income).toHaveText("+12%");
+    await expect(expenses).toHaveText("−8%");
+    await expect(net).toHaveText("+36%");
+    for (const b of [income, expenses, net]) await expect(b).toHaveCSS("color", GREEN);
+    await expect(income).toHaveAttribute("title", "Up 12% vs 1–11 Oct (8,500,000)");
+    await expect(expenses).toHaveAttribute("title", "Down 8% vs 1–11 Oct (4,600,000)");
+    await expect(net).toHaveAttribute("title", "Up 36% vs 1–11 Oct (3,900,000)");
+    await expect(income.locator("i")).toHaveCSS("border-bottom-width", "6px");
+    await expect(expenses.locator("i")).toHaveCSS("border-top-width", "6px");
+    await expect(net.locator("i")).toHaveCSS("border-bottom-width", "6px");
+
+    await expect(card.getByRole("img", { name: "Spent 44% of income" })).toBeVisible();
+    await expect(card.getByText("56% kept", { exact: true })).toBeVisible();
+
+    await expect(card.getByText("Nov 2026", { exact: true })).toBeVisible();
+    await expect(card.getByText("1–11 Nov · vs 1–11 Oct", { exact: true })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Next month" })).toBeDisabled();
+
+    // The card holds the only period picker on the page.
+    const pills = /^(Week|Month|Year)$/;
+    await expect(page.getByRole("button", { name: pills })).toHaveCount(3);
+    await expect(card.getByRole("button", { name: pills })).toHaveCount(3);
+  });
+
+  test("the stepper moves to the previous month and back", async ({ page }) => {
+    const { ranges } = await mockSummary(page, summaryFixture(), rangeBodies);
+    await page.goto("/cashflow");
+    const card = incomeSpending(page);
+    await expect(card.getByText("Nov 2026", { exact: true })).toBeVisible();
+
+    await card.getByRole("button", { name: "Previous month" }).click();
+    await expect.poll(() => ranges).toContain("2026-10-01..2026-10-31");
+    expect(ranges).toContain("2026-09-01..2026-09-30");
+    await expect(card.getByText("Oct 2026", { exact: true })).toBeVisible();
+    await expect(card.getByText("1–31 Oct · vs 1–30 Sep", { exact: true })).toBeVisible();
+    await expect(card.getByText("8,000,000", { exact: true })).toBeVisible();
+
+    await expect(badge(page, "Income")).toHaveText("−20%");
+    await expect(badge(page, "Expenses")).toHaveText("+30%");
+    await expect(badge(page, "Net saved")).toHaveText("−53%");
+    for (const label of ["Income", "Expenses", "Net saved"]) {
+      await expect(badge(page, label)).toHaveCSS("color", BAD);
+    }
+    await expect(badge(page, "Income").locator("i")).toHaveCSS("border-top-width", "6px");
+    await expect(badge(page, "Expenses").locator("i")).toHaveCSS("border-bottom-width", "6px");
+    await expect(card.getByRole("img", { name: "Spent 65% of income" })).toBeVisible();
+    await expect(card.getByText("35% kept", { exact: true })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Next month" })).toBeEnabled();
+
+    await card.getByRole("button", { name: "Next month" }).click();
+    await expect(card.getByText("Nov 2026", { exact: true })).toBeVisible();
+    await expect(card.getByText("9,500,000", { exact: true })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Next month" })).toBeDisabled();
+  });
+
+  test("a period with no income hides the spend bar", async ({ page }) => {
+    await mockSummary(page, summaryFixture(), {
+      ...rangeBodies,
+      "2026-11-01..2026-11-11": summaryFixture({ totals: { income: 0, expense: 1_000_000, net: -1_000_000 } }), // pii-ok synthetic
+    });
+    await page.goto("/cashflow");
+    const card = incomeSpending(page);
+
+    await expect(card.getByText("1,000,000", { exact: true }).first()).toBeVisible();
+    await expect(card.getByRole("img", { name: /Spent/ })).toHaveCount(0);
+    await expect(card.getByText(/kept/)).toHaveCount(0);
+    await expect(badge(page, "Income")).toHaveText("−100%");
+    await expect(badge(page, "Income")).toHaveCSS("color", BAD);
+  });
+
+  test("the period pills are the shared Pills markup", async ({ page }) => {
+    const { ranges } = await mockSummary(page, summaryFixture(), rangeBodies);
+    await page.goto("/cashflow");
+    const mine = incomeSpending(page).getByRole("button", { name: /^(Week|Month|Year)$/ });
+    const theirs = page
+      .getByRole("region", { name: "Net worth trend" })
+      .getByRole("button", { name: "1Y", exact: true });
+
+    for (const b of [mine.first(), theirs]) {
+      await expect(b).toHaveAttribute("type", "button");
+      await expect(b).toHaveAttribute("aria-pressed", /true|false/);
+      await expect(b).toHaveCSS("border-radius", "999px");
+      const parent = b.locator("xpath=..");
+      expect(await parent.evaluate((el) => el.tagName)).toBe("DIV");
+      await expect(parent).toHaveCSS("display", "flex");
+      await expect(parent).toHaveCSS("border-radius", "999px");
+    }
+
+    const [week, month, year] = ["Week", "Month", "Year"].map((n) =>
+      incomeSpending(page).getByRole("button", { name: n, exact: true })
+    );
+    await expect(month).toHaveAttribute("aria-pressed", "true");
+    await expect(week).toHaveAttribute("aria-pressed", "false");
+    await expect(year).toHaveAttribute("aria-pressed", "false");
+
+    await week.click();
+    await expect(week).toHaveAttribute("aria-pressed", "true");
+    await expect(month).toHaveAttribute("aria-pressed", "false");
+    await expect.poll(() => ranges).toContain("2026-11-09..2026-11-11");
+    expect(ranges).toContain("2026-11-02..2026-11-04");
   });
 });
 

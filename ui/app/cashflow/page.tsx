@@ -1,14 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { tokens, card } from "../styles";
+import Pills from "../components/Pills";
 import CategoryDonut from "./charts/CategoryDonut";
 import TrendChart from "./charts/TrendChart";
 import NetWorthTrendChart from "./charts/NetWorthTrendChart";
 import CsvUpload from "./CsvUpload";
 import { fmtRowDate } from "../lib/inbox";
 import { fmtAmount, fmtAmountSigned, rateHover } from "../lib/money";
+import {
+  PERIOD_KINDS,
+  changeBadge,
+  periodWindow,
+  spendBar,
+  type Badge,
+  type PeriodKind,
+} from "./periodCard";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -80,48 +89,55 @@ type NetWorth = {
   fx_note?: string | null;
 };
 
-type Period = "this_week" | "this_month" | "last_month" | "this_year";
-
-const PERIOD_OPTIONS: { value: Period; label: string; phrase: string }[] = [
-  { value: "this_week", label: "Week", phrase: "this week" },
-  { value: "this_month", label: "Month", phrase: "this month" },
-  { value: "last_month", label: "Last", phrase: "last month" },
-  { value: "this_year", label: "Year", phrase: "this year" },
-];
-
 // ---------------------------------------------------------------------------
 // Cashflow page — v1.1 "paper" redesign of the Phase 4 dashboard. Read-only
 // dashboards (GET /cashflow/summary + /net-worth) plus management surfaces
 // (AccountManager, CsvUpload). Adding/editing/deleting transactions now lives on
 // the Records page; every write here still refetches summary + net worth via
-// refreshAll (Pattern 5) so nothing needs a reload.
+// refreshAll (Pattern 5) so nothing needs a reload. The Week / Month / Year
+// picker and its ‹ › stepper live in the "Income & spending" card, the only
+// thing that follows them: each period fetches the summary for its window and
+// for the same elapsed span of the previous period (the change badges).
 // ---------------------------------------------------------------------------
 
 export default function CashflowPage() {
-  const [period, setPeriod] = useState<Period>("this_month");
+  const [kind, setKind] = useState<PeriodKind>("month");
+  const [offset, setOffset] = useState(0);
   const [summary, setSummary] = useState<CashflowSummary | null>(null);
+  const [prevTotals, setPrevTotals] = useState<CashflowSummary["totals"] | null>(null);
   const [summaryError, setSummaryError] = useState<string | null>(null);
+  // Out-of-order guard: only the latest request may write state, so a slow
+  // earlier period never shows under a later period's label.
+  const latest = useRef(0);
 
-  const [netWorthData, setNetWorthData] = useState<NetWorth | null>(null);
-  const [netWorthError, setNetWorthError] = useState<string | null>(null);
+  const win = periodWindow(kind, offset, new Date());
 
-  async function loadSummary(p: Period) {
-    try {
-      const r = await fetch(`/api/cashflow/summary?period=${p}`);
-      if (r.ok) {
-        setSummary(await r.json());
-        setSummaryError(null);
-      } else {
-        setSummaryError(
-          "Couldn't load the dashboard — check the backend is running and reload the page."
-        );
+  async function loadSummary(w: { start: string; end: string; prevStart: string; prevEnd: string }) {
+    const id = ++latest.current;
+    const get = async (a: string, b: string): Promise<CashflowSummary | null> => {
+      try {
+        const r = await fetch(`/api/cashflow/summary?period=custom&start_date=${a}&end_date=${b}`);
+        return r.ok ? await r.json() : null;
+      } catch {
+        return null;
       }
-    } catch {
+    };
+    const [cur, prev] = await Promise.all([get(w.start, w.end), get(w.prevStart, w.prevEnd)]);
+    if (id !== latest.current) return;
+    // A failed previous-period fetch only hides the badges.
+    setPrevTotals(prev?.totals ?? null);
+    if (cur) {
+      setSummary(cur);
+      setSummaryError(null);
+    } else {
       setSummaryError(
         "Couldn't load the dashboard — check the backend is running and reload the page."
       );
     }
   }
+
+  const [netWorthData, setNetWorthData] = useState<NetWorth | null>(null);
+  const [netWorthError, setNetWorthError] = useState<string | null>(null);
 
   // GET /net-worth — not period-scoped (a point-in-time snapshot), so it's
   // fetched once on mount and refreshed by refreshAll after writes, unlike
@@ -152,7 +168,7 @@ export default function CashflowPage() {
   // updates with no page reload. (Adding/editing transactions now lives on the
   // Records page; the Cashflow page is read-only dashboards + management cards.)
   async function refreshAll() {
-    await Promise.all([loadSummary(period), loadNetWorth()]);
+    await Promise.all([loadSummary(win), loadNetWorth()]);
   }
 
   useEffect(() => {
@@ -160,8 +176,9 @@ export default function CashflowPage() {
   }, []);
 
   useEffect(() => {
-    loadSummary(period);
-  }, [period]);
+    loadSummary(win);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [win.start, win.end]);
 
   // ---- formatting ----------------------------------------------------------
   // Money goes through ../lib/money (fmtAmount / fmtAmountSigned): IDR as plain
@@ -178,11 +195,10 @@ export default function CashflowPage() {
   // ---- derived -------------------------------------------------------------
   const categoryData = summary?.by_category ?? [];
   const trendData = summary?.trend ?? [];
-  const hasActivity =
-    !!summary &&
-    (summary.totals.income !== 0 ||
-      summary.totals.expense !== 0 ||
-      categoryData.length > 0);
+  const bar = summary ? spendBar(summary.totals.income, summary.totals.expense) : null;
+  // Change badge vs the previous period; none while that fetch is missing.
+  const badge = (curr: number, prev: number | undefined, goodWhenUp: boolean) =>
+    prev === undefined ? null : changeBadge(curr, prev, goodWhenUp, win.prevSpan);
 
   // ---------------------------------------------------------------------------
   // Render
@@ -190,7 +206,7 @@ export default function CashflowPage() {
 
   return (
     <div className="tab-in" style={{ padding: "28px 44px 44px" }}>
-      {/* Header + period control */}
+      {/* Header */}
       <div
         style={{
           display: "flex",
@@ -222,40 +238,6 @@ export default function CashflowPage() {
           >
             Cashflow
           </h1>
-        </div>
-        <div
-          style={{
-            display: "flex",
-            gap: 6,
-            background: "#efece4",
-            border: `1px solid ${tokens.color.border2}`,
-            borderRadius: 999,
-            padding: 4,
-          }}
-        >
-          {PERIOD_OPTIONS.map((opt) => {
-            const active = period === opt.value;
-            return (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => setPeriod(opt.value)}
-                style={{
-                  border: "none",
-                  borderRadius: 999,
-                  padding: "7px 15px",
-                  fontSize: 13,
-                  fontWeight: active ? 600 : 500,
-                  cursor: "pointer",
-                  color: active ? tokens.color.inkText : tokens.color.muted,
-                  background: active ? tokens.color.ink : "transparent",
-                  transition: "all .2s ease",
-                }}
-              >
-                {opt.label}
-              </button>
-            );
-          })}
         </div>
       </div>
 
@@ -459,122 +441,222 @@ export default function CashflowPage() {
             </div>
           )}
 
-          {/* Stat cards */}
+          {/* Income & spending + liquid accounts + investment platforms */}
           <div
             style={{
               display: "grid",
               gridTemplateColumns:
-                "repeat(auto-fit, minmax(min(100%, 200px), 1fr))",
+                "repeat(auto-fit, minmax(min(100%, 300px), 1fr))",
               gap: 18,
               marginBottom: 18,
+              alignItems: "start",
             }}
           >
-            <div style={statCard}>
-              <div style={statLabel}>Income</div>
-              <div style={{ ...statValue, color: tokens.color.green }}>
-                {fmtAmount(summary.totals.income, "IDR")}
-              </div>
-            </div>
-            <div style={statCard}>
-              <div style={statLabel}>Expenses</div>
-              <div style={{ ...statValue, color: tokens.color.terracotta }}>
-                {fmtAmount(summary.totals.expense, "IDR")}
-              </div>
-            </div>
-            <div style={statCard}>
-              <div style={statLabel}>Net saved</div>
-              <div style={{ ...statValue, color: tokens.color.ink }}>
-                {fmtAmountSigned(summary.totals.net, "IDR")}
-              </div>
-            </div>
-          </div>
-
-          {(hasActivity ||
-            (netWorthData &&
-              (netWorthData.liquid_accounts.length > 0 ||
-                netWorthData.investment_groups.length > 0))) && (
-            /* Category + liquid accounts + investment platforms */
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns:
-                  "repeat(auto-fit, minmax(min(100%, 300px), 1fr))",
-                gap: 18,
-                marginBottom: 18,
-              }}
+            <section
+              aria-label="Income & spending"
+              style={{ ...card, marginBottom: 0 }}
             >
-              <div style={{ ...card, marginBottom: 0 }}>
-                <div
-                  style={{ fontSize: 14, fontWeight: 600, marginBottom: 14 }}
-                >
-                  Spending by category
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: 8,
+                  marginBottom: 12,
+                }}
+              >
+                <div style={{ fontSize: 14, fontWeight: 600 }}>
+                  Income &amp; spending
                 </div>
-                <div
-                  style={{
-                    display: "flex",
-                    flexWrap: "wrap",
-                    alignItems: "center",
-                    gap: 22,
+                <Pills
+                  small
+                  label="Period"
+                  options={PERIOD_KINDS}
+                  value={kind}
+                  onChange={(k) => {
+                    setKind(k);
+                    setOffset(0);
                   }}
+                />
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  background: tokens.color.panel,
+                  borderRadius: 12,
+                  padding: 6,
+                  marginBottom: 12,
+                }}
+              >
+                <button
+                  type="button"
+                  aria-label={`Previous ${kind}`}
+                  onClick={() => setOffset(offset - 1)}
+                  style={stepBtn}
                 >
-                  <CategoryDonut data={categoryData} />
-                  <div
-                    style={{
-                      flex: "1 1 180px",
-                      minWidth: 0,
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 9,
-                    }}
-                  >
-                    {categoryData.map((c) => (
-                      <div
-                        key={c.id}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 10,
-                          fontSize: 13,
-                        }}
-                      >
-                        <span
-                          style={{
-                            width: 9,
-                            height: 9,
-                            borderRadius: 3,
-                            background: c.color ?? tokens.color.muted,
-                            flexShrink: 0,
-                          }}
-                        />
-                        {/* Wrap at spaces; a single word too long for the line
-                            ends in an ellipsis instead of splitting mid-word
-                            (hyphens:auto has no dictionary in headless
-                            Chromium). Full name stays in the tooltip. */}
-                        <span
-                          title={c.name || undefined}
-                          style={{
-                            flex: 1,
-                            minWidth: 0,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                          }}
-                        >
-                          {c.name || "—"}
-                        </span>
-                        <span
-                          style={{
-                            color: tokens.color.muted,
-                            fontVariantNumeric: "tabular-nums",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {fmtAmount(c.total, "IDR")}
-                        </span>
-                      </div>
-                    ))}
+                  ‹
+                </button>
+                <div style={{ textAlign: "center", lineHeight: 1.3 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{win.title}</div>
+                  <div style={{ fontSize: 11, color: tokens.color.muted3 }}>
+                    {win.span} · vs {win.prevSpan}
                   </div>
                 </div>
+                <button
+                  type="button"
+                  aria-label={`Next ${kind}`}
+                  disabled={offset === 0}
+                  onClick={() => setOffset(offset + 1)}
+                  style={stepBtn}
+                >
+                  ›
+                </button>
               </div>
+
+              <FigRow
+                label="Income"
+                badge={badge(summary.totals.income, prevTotals?.income, true)}
+                value={fmtAmount(summary.totals.income, "IDR")}
+                color={tokens.color.green}
+              />
+              <FigRow
+                label="Expenses"
+                badge={badge(summary.totals.expense, prevTotals?.expense, false)}
+                value={fmtAmount(summary.totals.expense, "IDR")}
+                color={tokens.color.terracotta}
+              />
+              {bar && (
+                <>
+                  <div
+                    role="img"
+                    aria-label={`Spent ${bar.spent}% of income`}
+                    style={{
+                      height: 8,
+                      borderRadius: 999,
+                      overflow: "hidden",
+                      background: tokens.color.borderInner,
+                      margin: "10px 0 4px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${bar.width}%`,
+                        height: "100%",
+                        background: tokens.color.terracotta,
+                      }}
+                    />
+                  </div>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      fontSize: 11,
+                      color: tokens.color.muted3,
+                    }}
+                  >
+                    <span>Spent {bar.spent}% of income</span>
+                    <span
+                      style={
+                        bar.spent > 100
+                          ? { color: tokens.color.terracottaText }
+                          : undefined
+                      }
+                    >
+                      {bar.kept}
+                    </span>
+                  </div>
+                </>
+              )}
+              <FigRow
+                net
+                label="Net saved"
+                badge={badge(summary.totals.net, prevTotals?.net, true)}
+                value={fmtAmountSigned(summary.totals.net, "IDR")}
+                color={tokens.color.ink}
+              />
+
+              <div
+                style={{
+                  height: 1,
+                  background: tokens.color.borderInner,
+                  margin: "16px 0",
+                }}
+              />
+              <div
+                style={{ fontSize: 12, color: tokens.color.muted3, marginBottom: 10 }}
+              >
+                Where it went
+              </div>
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  gap: 22,
+                }}
+              >
+                <CategoryDonut data={categoryData} />
+                <div
+                  style={{
+                    flex: "1 1 180px",
+                    minWidth: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 9,
+                  }}
+                >
+                  {categoryData.map((c) => (
+                    <div
+                      key={c.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        fontSize: 13,
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 9,
+                          height: 9,
+                          borderRadius: 3,
+                          background: c.color ?? tokens.color.muted,
+                          flexShrink: 0,
+                        }}
+                      />
+                      {/* Wrap at spaces; a single word too long for the line
+                          ends in an ellipsis instead of splitting mid-word
+                          (hyphens:auto has no dictionary in headless
+                          Chromium). Full name stays in the tooltip. */}
+                      <span
+                        title={c.name || undefined}
+                        style={{
+                          flex: 1,
+                          minWidth: 0,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {c.name || "—"}
+                      </span>
+                      <span
+                        style={{
+                          color: tokens.color.muted,
+                          fontVariantNumeric: "tabular-nums",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {fmtAmount(c.total, "IDR")}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
 
               <div style={{ ...card, marginBottom: 0 }}>
                 <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
@@ -761,7 +843,6 @@ export default function CashflowPage() {
                 )}
               </div>
             </div>
-          )}
         </>
       )}
 
@@ -779,19 +860,94 @@ const notice: React.CSSProperties = {
   fontSize: 12,
   lineHeight: 1.5,
 };
-const statCard: React.CSSProperties = {
+const stepBtn: React.CSSProperties = {
+  border: "none",
   background: tokens.color.card,
-  border: `1px solid ${tokens.color.border}`,
-  borderRadius: 16,
-  padding: "16px 22px",
+  width: 28,
+  height: 28,
+  borderRadius: 8,
+  color: tokens.color.muted3,
+  fontSize: 15,
+  cursor: "pointer",
 };
-const statLabel: React.CSSProperties = {
-  fontSize: 13,
-  color: tokens.color.muted,
-  marginBottom: 6,
+
+const badgeColor = {
+  good: tokens.color.green,
+  bad: tokens.color.terracottaText,
+  flat: tokens.color.muted3,
 };
-const statValue: React.CSSProperties = {
-  fontSize: 28,
-  fontWeight: 600,
-  fontVariantNumeric: "tabular-nums",
-};
+
+// One Income / Expenses / Net saved line: label word, change badge, amount.
+function FigRow({
+  label,
+  badge,
+  value,
+  color,
+  net = false,
+}: {
+  label: string;
+  badge: Badge | null;
+  value: string;
+  color: string;
+  net?: boolean;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        alignItems: "baseline",
+        padding: "6px 0",
+        fontVariantNumeric: "tabular-nums",
+        ...(net
+          ? {
+              borderTop: `1px solid ${tokens.color.borderInner}`,
+              marginTop: 4,
+              paddingTop: 10,
+            }
+          : null),
+      }}
+    >
+      <span
+        style={{
+          fontSize: 13,
+          color: tokens.color.muted3,
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 8,
+        }}
+      >
+        <span>{label}</span>
+        {badge && (
+          <span
+            title={badge.title}
+            style={{
+              fontSize: 11,
+              fontWeight: 600,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 3,
+              color: badgeColor[badge.tone],
+            }}
+          >
+            {badge.dir && (
+              <i
+                aria-hidden="true"
+                style={{
+                  width: 0,
+                  height: 0,
+                  borderLeft: "4px solid transparent",
+                  borderRight: "4px solid transparent",
+                  [badge.dir === "up" ? "borderBottom" : "borderTop"]:
+                    "6px solid currentColor",
+                }}
+              />
+            )}
+            {badge.text}
+          </span>
+        )}
+      </span>
+      <span style={{ fontSize: net ? 24 : 18, fontWeight: 600, color }}>{value}</span>
+    </div>
+  );
+}

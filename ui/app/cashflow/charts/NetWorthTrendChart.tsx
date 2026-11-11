@@ -12,6 +12,7 @@ import {
 } from "recharts";
 
 import { tokens, card } from "../../styles";
+import Pills from "../../components/Pills";
 import {
   visibleRows,
   toPlotPoints,
@@ -68,58 +69,6 @@ const MODE_OPTIONS: { value: Mode; label: string }[] = [
   { value: "total", label: "Total" },
   { value: "split", label: "Split" },
 ];
-
-function Pills<T extends string>({
-  options,
-  value,
-  onChange,
-  dark = false,
-}: {
-  options: { value: T; label: string }[];
-  value: T;
-  onChange: (v: T) => void;
-  dark?: boolean;
-}) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        gap: dark ? 2 : 6,
-        background: dark ? "rgba(242,239,232,.08)" : "#efece4",
-        border: dark ? "none" : `1px solid ${tokens.color.border2}`,
-        borderRadius: 999,
-        padding: dark ? 3 : 4,
-      }}
-    >
-      {options.map((opt) => {
-        const active = value === opt.value;
-        return (
-          <button
-            key={opt.value}
-            type="button"
-            aria-pressed={active}
-            onClick={() => onChange(opt.value)}
-            style={{
-              border: "none",
-              borderRadius: 999,
-              padding: dark ? "4px 10px" : "7px 15px",
-              fontSize: dark ? 12 : 13,
-              fontWeight: active ? 600 : 500,
-              cursor: "pointer",
-              color: dark
-                ? active ? tokens.color.ink : tokens.color.inkTextMuted
-                : active ? tokens.color.inkText : tokens.color.muted,
-              background: active ? (dark ? tokens.color.inkText : tokens.color.ink) : "transparent",
-              transition: "all .2s ease",
-            }}
-          >
-            {opt.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 function NetWorthTooltip({
   mode,
