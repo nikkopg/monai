@@ -237,9 +237,9 @@ function summaryFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     totals: { income: 5_000_000, expense: 2_000_000, net: 3_000_000 },
     by_category: [
-      ["Food & Drinks", 1_200_000],
-      ["Transport", 500_000],
-      ["Shopping", 300_000],
+      { id: 1, name: "Food & Drinks", color: null, icon: null, total: 1_200_000, children: [] }, // pii-ok synthetic
+      { id: 2, name: "Transport", color: null, icon: null, total: 500_000, children: [] }, // pii-ok synthetic
+      { id: 3, name: "Shopping", color: null, icon: null, total: 300_000, children: [] }, // pii-ok synthetic
     ],
     accounts: [
       { id: 1, name: "Cash", current_balance: 4_000_000, period_net: 1_500_000 },

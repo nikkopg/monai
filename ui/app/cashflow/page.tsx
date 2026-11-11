@@ -836,6 +836,7 @@ function FigRow({
         display: "flex",
         justifyContent: "space-between",
         alignItems: "baseline",
+        gap: 8,
         padding: "6px 0",
         fontVariantNumeric: "tabular-nums",
         ...(net
