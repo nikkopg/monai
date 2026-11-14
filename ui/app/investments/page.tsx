@@ -282,6 +282,8 @@ export default function InvestmentsPage() {
                   color: tokens.color.inkText,
                   borderRadius: 18,
                   padding: "26px 28px",
+                  display: "flex",
+                  flexDirection: "column",
                 }}
               >
                 <div
@@ -304,46 +306,53 @@ export default function InvestmentsPage() {
                 >
                   {fmtPlain(summary.total_value)}
                 </div>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    marginTop: 22,
-                  }}
-                >
-                  <span
+                {[
+                  {
+                    value: summary.total_unrealized_pnl,
+                    label: `unrealized (${pct(summary.total_unrealized_pnl, costBasis)})`,
+                  },
+                  { value: summary.total_realized_pnl, label: "realized" },
+                ].map((p, i) => (
+                  <div
+                    key={p.label}
                     style={{
-                      display: "inline-flex",
+                      display: "flex",
                       alignItems: "center",
-                      gap: 5,
-                      background: tokens.color.chipGreenBg,
-                      color:
-                        summary.total_unrealized_pnl < 0
-                          ? "#e6a99c"
-                          : tokens.color.chipGreenText,
-                      fontSize: 13,
-                      fontWeight: 600,
-                      padding: "4px 10px",
-                      borderRadius: 999,
-                      fontVariantNumeric: "tabular-nums",
+                      gap: 8,
+                      marginTop: i === 0 ? 22 : 8,
                     }}
                   >
-                    {summary.total_unrealized_pnl < 0 ? "▼" : "▲"}{" "}
-                    {fmtSigned(summary.total_unrealized_pnl)}
-                  </span>
-                  <span
-                    style={{ fontSize: 13, color: tokens.color.inkTextMuted }}
-                  >
-                    unrealized ({pct(summary.total_unrealized_pnl, costBasis)})
-                  </span>
-                </div>
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 5,
+                        background: tokens.color.chipGreenBg,
+                        color:
+                          p.value < 0 ? "#e6a99c" : tokens.color.chipGreenText,
+                        fontSize: 13,
+                        fontWeight: 600,
+                        padding: "4px 10px",
+                        borderRadius: 999,
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    >
+                      {fmtSigned(p.value)}
+                    </span>
+                    <span
+                      style={{ fontSize: 13, color: tokens.color.inkTextMuted }}
+                    >
+                      {p.label}
+                    </span>
+                  </div>
+                ))}
                 <div
                   style={{
                     display: "flex",
                     justifyContent: "space-between",
                     alignItems: "center",
-                    marginTop: 20,
+                    marginTop: "auto",
+                    paddingTop: 20,
                     fontSize: 12,
                     color: tokens.color.inkTextMuted,
                   }}
@@ -422,11 +431,20 @@ export default function InvestmentsPage() {
                     })}
                   </div>
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 22 }}>
-                  <AllocationPieChart data={allocationData} />
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                    gap: 22,
+                  }}
+                >
+                  <div style={{ flex: "1 1 160px", minWidth: 0 }}>
+                    <AllocationPieChart data={allocationData} />
+                  </div>
                   <div
                     style={{
-                      flex: 1,
+                      flex: "0 0 auto",
                       display: "flex",
                       flexDirection: "column",
                       gap: 10,
@@ -456,7 +474,13 @@ export default function InvestmentsPage() {
                               flexShrink: 0,
                             }}
                           />
-                          <span style={{ flex: 1, fontWeight: 500 }}>
+                          <span
+                            style={{
+                              flex: 1,
+                              fontWeight: 500,
+                              whiteSpace: "nowrap",
+                            }}
+                          >
                             {s.label}
                           </span>
                           <span style={{ color: muted }}>
@@ -468,40 +492,6 @@ export default function InvestmentsPage() {
                       );
                     })}
                   </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Unrealized / Realized P&L */}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns:
-                  "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
-                gap: 18,
-                marginBottom: 18,
-              }}
-            >
-              <div style={statCard}>
-                <div style={statLabel}>Unrealized P&amp;L</div>
-                <div
-                  style={{
-                    ...statValue,
-                    color: pnlColor(summary.total_unrealized_pnl),
-                  }}
-                >
-                  {fmtSigned(summary.total_unrealized_pnl)}
-                </div>
-              </div>
-              <div style={statCard}>
-                <div style={statLabel}>Realized P&amp;L</div>
-                <div
-                  style={{
-                    ...statValue,
-                    color: pnlColor(summary.total_realized_pnl),
-                  }}
-                >
-                  {fmtSigned(summary.total_realized_pnl)}
                 </div>
               </div>
             </div>
@@ -920,22 +910,6 @@ export default function InvestmentsPage() {
   );
 }
 
-const statCard: React.CSSProperties = {
-  background: tokens.color.card,
-  border: `1px solid ${tokens.color.border}`,
-  borderRadius: 16,
-  padding: "20px 22px",
-};
-const statLabel: React.CSSProperties = {
-  fontSize: 13,
-  color: tokens.color.muted3,
-  marginBottom: 8,
-};
-const statValue: React.CSSProperties = {
-  fontSize: 24,
-  fontWeight: 600,
-  fontVariantNumeric: "tabular-nums",
-};
 const rowAction: React.CSSProperties = {
   background: "transparent",
   color: tokens.color.muted3,

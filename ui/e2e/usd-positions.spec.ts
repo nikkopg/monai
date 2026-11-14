@@ -116,6 +116,7 @@ async function mockInvestmentsPage(page: Page, holdings: unknown[]) {
         asset_type_groups: [
           { asset_type: "crypto", total_value: 1500000 },
           { asset_type: "gold", total_value: 12000 },
+          { asset_type: "mutual_fund", total_value: 12000 },
         ],
         total_value: 1512000,
         total_unrealized_pnl: 797000,
@@ -280,5 +281,18 @@ test.describe("USD positions on the Investments page", () => {
         .map((el) => `${el.tagName} ${(el.textContent ?? "").slice(0, 20)}`)
     );
     expect(overflowing).toEqual([]);
+  });
+
+  test("hero shows unrealized and realized P&L once; legend labels stay on one line", async ({ page }) => {
+    await mockInvestmentsPage(page, [usdHolding, idrHolding]);
+    await page.goto("/investments");
+    await expect(page.getByText("+797,000", { exact: true })).toBeVisible();
+    await expect(page.getByText("+215,000", { exact: true })).toBeVisible();
+    await expect(page.getByText("realized", { exact: true })).toBeVisible();
+    await expect(page.getByText("Unrealized P&L", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Realized P&L", { exact: true })).toHaveCount(0);
+    await expect(page.getByText(/[\u25B2\u25BC]/)).toHaveCount(0);
+    const box = await page.getByText("Mutual funds", { exact: true }).boundingBox();
+    expect(box!.height).toBeLessThan(20);
   });
 });
