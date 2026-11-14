@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 
 // ---------------------------------------------------------------------------
 // Phase 4 Plan 05 — Cashflow CRUD spec (CASH-04/05/06/07/08). Only CSV import
-// still lives on Cashflow: transaction add/edit/delete moved to Records
+// is left here, and it now lives on Settings: transaction add/edit/delete moved to Records
 // (record-modal.spec.ts, records.spec.ts), accounts and categories to Settings
 // (settings.spec.ts, balance-adjust.spec.ts).
 //
@@ -64,7 +64,7 @@ test.describe("CSV upload", () => {
       });
     });
 
-    await page.goto("/cashflow");
+    await page.goto("/settings");
     await expect(page.getByText("Import CSV", { exact: true })).toBeVisible();
 
     await page.setInputFiles("input[type='file']", {

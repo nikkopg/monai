@@ -7,6 +7,7 @@ import CategoryManager from "./CategoryManager";
 import SkillsCard from "./SkillsCard";
 import ExternalMcpCard from "./ExternalMcpCard";
 import AccountManager, { type Account } from "../cashflow/AccountManager";
+import CsvUpload from "../cashflow/CsvUpload";
 
 // ---------------------------------------------------------------------------
 // Settings page — v1.1 "paper" redesign. Same three independently-saveable
@@ -363,6 +364,10 @@ export default function SettingsPage() {
       {/* Card: Accounts — balances, rename/delete, adjust balance (moved from
           the Cashflow page). AccountManager renders its own card section. */}
       <AccountManager accounts={accounts} onChanged={loadAccounts} />
+
+      {/* Card: Import CSV (moved from the Cashflow page); an import changes
+          balances, so the accounts above reload. */}
+      <CsvUpload onImported={loadAccounts} />
 
       {/* Card: Skills (Phase 40) */}
       <SkillsCard />

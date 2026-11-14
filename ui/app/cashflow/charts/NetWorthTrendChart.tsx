@@ -123,9 +123,8 @@ export default function NetWorthTrendChart({
   const [cache, setCache] = useState<Partial<Record<Range, { rows: NetWorthRow[] }>>>({});
   const [error, setError] = useState<string | null>(null);
 
-  // ponytail: this cache is never invalidated by writes elsewhere on the page
-  // (e.g. a CSV import), only by a full page reload. Upgrade path: source a
-  // refresh key from refreshAll if a write-then-see-it-here gap ever matters.
+  // The Cashflow page has no writes of its own (CSV import lives in Settings),
+  // so this cache only needs to last for the page's mount.
   useEffect(() => {
     if (cache[range]) return;
     setError(null);

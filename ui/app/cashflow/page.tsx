@@ -8,7 +8,6 @@ import RollingNumber from "../components/RollingNumber";
 import CategoryDonut from "./charts/CategoryDonut";
 import TrendChart, { type ChartPoint } from "./charts/TrendChart";
 import NetWorthTrendChart from "./charts/NetWorthTrendChart";
-import CsvUpload from "./CsvUpload";
 import HoldingsCard from "./HoldingsCard";
 import type { AccountBalance, InvestmentGroup } from "./holdings";
 import { fmtAmount, fmtAmountSigned } from "../lib/money";
@@ -66,10 +65,8 @@ type NetWorth = {
 
 // ---------------------------------------------------------------------------
 // Cashflow page — v1.1 "paper" redesign of the Phase 4 dashboard. Read-only
-// dashboards (GET /cashflow/summary + /net-worth) plus management surfaces
-// (AccountManager, CsvUpload). Adding/editing/deleting transactions now lives on
-// the Records page; every write here still refetches summary + net worth via
-// refreshAll (Pattern 5) so nothing needs a reload. The Week / Month / Year
+// dashboards (GET /cashflow/summary + /net-worth). Transactions are added and
+// edited on Records; accounts, categories and CSV import live in Settings. The Week / Month / Year
 // picker and its ‹ › stepper live in the "Cashflow" card, the only thing
 // that follows them: the figures, the change badges and the six-period chart.
 // ---------------------------------------------------------------------------
@@ -91,7 +88,7 @@ export default function CashflowPage() {
   // One cached load per selection feeds the figures, the change badges and the
   // six chart bars. The backend returns a full summary per window, so each bar
   // costs one call and the chart reads only its totals. The cache (key
-  // "start..end", cleared on refreshAll, failures never kept) keeps a pill
+  // "start..end", lives for the page's mount, failures never kept) keeps a pill
   // switch to at most 7 calls (six frame windows + the same-elapsed comparison
   // window) and a step or bar click inside the frame to none.
   // ponytail: a backend totals-series query would make this one request.
@@ -158,8 +155,7 @@ export default function CashflowPage() {
   const [netWorthError, setNetWorthError] = useState<string | null>(null);
 
   // GET /net-worth — not period-scoped (a point-in-time snapshot), so it's
-  // fetched once on mount and refreshed by refreshAll after writes, unlike
-  // loadSummary which reruns per selected period.
+  // fetched once on mount, unlike loadSummary which reruns per selected period.
   async function loadNetWorth() {
     try {
       const r = await fetch("/api/net-worth");
@@ -180,14 +176,6 @@ export default function CashflowPage() {
         "Couldn't load the dashboard — check the backend is running and reload the page."
       );
     }
-  }
-
-  // Refetch the summary and net worth after every write so the dashboard
-  // updates with no page reload. (Adding/editing transactions now lives on the
-  // Records page; the Cashflow page is read-only dashboards + management cards.)
-  async function refreshAll() {
-    cache.current.clear();
-    await Promise.all([loadSummary(frame, offset, kind), loadNetWorth()]);
   }
 
   useEffect(() => {
@@ -532,10 +520,6 @@ export default function CashflowPage() {
             </div>
         </>
       )}
-
-      {/* Secondary management surfaces (re-themed in Phase 10). Category AND
-          account management now live in Settings (D-16, plan 11-06 + this task). */}
-      <CsvUpload onImported={refreshAll} />
     </div>
   );
 }
