@@ -42,6 +42,7 @@ const fmtSigned = (n: number) =>
 function pillStyle(active: boolean): React.CSSProperties {
   return {
     padding: "4px 12px",
+    minHeight: 32,
     borderRadius: 6,
     fontSize: 12,
     border: `1px solid ${tokens.color.border}`,
@@ -83,6 +84,7 @@ export default function ValueHistoryChart({
             <button
               key={r}
               type="button"
+              className="coarse-tap"
               style={pillStyle(range === r)}
               onClick={() => onRangeChange(r)}
             >
@@ -95,6 +97,7 @@ export default function ValueHistoryChart({
       <div style={{ display: "flex", gap: 4, marginTop: 8, marginBottom: 16 }}>
         <button
           type="button"
+          className="coarse-tap"
           style={pillStyle(view === "value")}
           onClick={() => setView("value")}
         >
@@ -102,6 +105,7 @@ export default function ValueHistoryChart({
         </button>
         <button
           type="button"
+          className="coarse-tap"
           style={pillStyle(view === "pnl")}
           onClick={() => setView("pnl")}
         >

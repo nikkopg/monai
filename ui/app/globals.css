@@ -234,7 +234,8 @@ input, select, button, textarea {
 
 /* Tool steps (37-05). */
 @media (pointer: coarse) {
-  .coarse-tap { min-height: 44px; }
+  /* !important: investments controls set an inline minHeight 32 that would win. */
+  .coarse-tap { min-height: 44px !important; }
 }
 /* Sign-in button hover: literal tokens.color.greenDark (inline styles cannot hover). */
 .login-submit:hover { background: #23543c !important; }

@@ -295,4 +295,19 @@ test.describe("USD positions on the Investments page", () => {
     const box = await page.getByText("Mutual funds", { exact: true }).boundingBox();
     expect(box!.height).toBeLessThan(20);
   });
+
+  test("controls are at least 32px tall", async ({ page }) => {
+    await mockInvestmentsPage(page, [usdHolding, idrHolding]);
+    await page.goto("/investments");
+    await expect(row(page, "ZZUSD")).toBeVisible();
+    const controls = [
+      ...["Refresh prices", "Asset type", "Platform", "1M", "All", "Value", "P&L", "Add holding directly", "Holding options: ZZUSD"].map(
+        (name) => page.getByRole("button", { name, exact: true })
+      ),
+      page.getByRole("link", { name: "ZZ Exchange", exact: true }),
+    ];
+    for (const c of controls) {
+      expect((await c.boundingBox())!.height).toBeGreaterThanOrEqual(32);
+    }
+  });
 });

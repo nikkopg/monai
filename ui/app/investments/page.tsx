@@ -362,7 +362,9 @@ export default function InvestmentsPage() {
                     type="button"
                     onClick={refreshPrices}
                     disabled={refreshing}
+                    className="coarse-tap"
                     style={{
+                      minHeight: 32,
                       background: "rgba(242,239,232,.1)",
                       color: tokens.color.inkText,
                       border: "none",
@@ -412,7 +414,9 @@ export default function InvestmentsPage() {
                           key={opt.key}
                           type="button"
                           onClick={() => setAllocationGroupBy(opt.key)}
+                          className="coarse-tap"
                           style={{
+                            minHeight: 32,
                             padding: "5px 12px",
                             borderRadius: 999,
                             fontSize: 12,
@@ -522,7 +526,9 @@ export default function InvestmentsPage() {
                   setEditingHolding(null);
                   setOverrideOpen(true);
                 }}
+                className="coarse-tap"
                 style={{
+                  minHeight: 32,
                   background: "transparent",
                   color: muted,
                   border: "none",
@@ -607,7 +613,11 @@ export default function InvestmentsPage() {
                       ) : (
                         <Link
                           href={`/investments/${g.platform_id}`}
+                          className="coarse-tap"
                           style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            minHeight: 32,
                             fontSize: 14,
                             fontWeight: 600,
                             color: tokens.color.ink,
