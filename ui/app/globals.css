@@ -253,7 +253,7 @@ input, select, button, textarea {
   line-height: 1.15;
   vertical-align: top;
 }
-.roll-char { overflow: hidden; }
+.roll-char { overflow: hidden; white-space: pre; } /* pre keeps the space in "3.2K USD" */
 .roll-char::before { content: attr(data-c); }
 .roll-digit {
   position: relative;

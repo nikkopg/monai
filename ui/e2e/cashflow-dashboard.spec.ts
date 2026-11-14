@@ -488,6 +488,9 @@ test.describe("Cashflow card legend layout", () => {
   // 179 and 320 -> 135 (stacked; 320 is below the 340px floor, where only the
   // narrowed page gutters keep amounts inside), 920 -> 451 and 1440 -> 380
   // (beside, the latter the max-width cap most desktops get).
+  // Note (Holdings card): the lower row is now two cards, so the widths above
+  // (measured with three columns) are larger; the layout assertions below are
+  // width-independent and unchanged.
   const cases: [number, "stacked" | "side-by-side"][] = [
     [1100, "side-by-side"],
     [420, "stacked"],

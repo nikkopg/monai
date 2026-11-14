@@ -244,6 +244,15 @@ test.describe("Holdings card", () => {
     await expect(holdings(page)).toBeVisible();
   });
 
+  test("on a wide window the Holdings and Cashflow cards are the same width, and Holdings is never shorter", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const a = (await page.getByRole("region", { name: "Cashflow", exact: true }).boundingBox())!;
+    const b = (await holdings(page).boundingBox())!;
+    expect(Math.abs(a.width - b.width)).toBeLessThan(1);
+    // Equal when Cashflow is taller than the 520px floor (this fixture has no spend rows).
+    expect(b.height).toBeGreaterThanOrEqual(a.height - 1);
+  });
+
   test("main view: two rows, a total in the donut centre", async ({ page }) => {
     const card = holdings(page);
     await expect(card.getByRole("img", { name: "Total 10.1M" })).toBeVisible();

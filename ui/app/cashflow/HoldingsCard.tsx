@@ -115,6 +115,7 @@ export default function HoldingsCard({ data }: { data: HoldingsData }) {
         // contain:size stops this card from growing the row, so the Cashflow
         // card sets the height; 520 is the height when the cards stack.
         contain: "size",
+        boxSizing: "border-box", // so minHeight counts the padding
         minHeight: 520,
       }}
     >
