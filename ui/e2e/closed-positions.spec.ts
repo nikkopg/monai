@@ -84,6 +84,22 @@ test.describe("closed positions list", () => {
     await expect(list.getByText("-40,000", { exact: true })).toBeVisible();
   });
 
+  test("section titles share one h2 style and history has one surface", async ({ page }) => {
+    await mockPage(page, rowsFixture());
+    await page.goto("/investments");
+    await expect(page.getByRole("heading", { level: 2 })).toHaveCount(4);
+    for (const name of ["Allocation", "Portfolio history", "Closed positions", "Platforms"]) {
+      const h = page.getByRole("heading", { level: 2, name, exact: true });
+      await expect(h).toBeVisible();
+      await expect(h).toHaveCSS("font-size", "14px");
+      await expect(h).toHaveCSS("font-weight", "600");
+    }
+    const surface = page
+      .getByRole("heading", { name: "Portfolio history", exact: true })
+      .locator("xpath=ancestor::section[1]");
+    await expect(surface).toHaveCSS("border-top-width", "0px");
+  });
+
   test("renders nothing when there are no closed positions", async ({ page }) => {
     await mockPage(page, []);
     await page.goto("/investments");

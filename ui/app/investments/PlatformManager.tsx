@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 
-import { tokens, card, input, btn, label } from "../styles";
+import { tokens, card, input, btn } from "../styles";
+import { sectionTitle } from "./sectionStyles";
 import RowMenu from "../components/RowMenu";
 import ConfirmDialog from "../cashflow/ConfirmDialog";
 import { extractDetail } from "../lib/api";
@@ -166,7 +167,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
 
   return (
     <section style={card}>
-      <label style={label}>Platforms</label>
+      <h2 style={{ ...sectionTitle, marginBottom: 12 }}>Platforms</h2>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <tbody>
           {platforms.map((p) => (

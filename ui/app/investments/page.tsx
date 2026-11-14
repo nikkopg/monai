@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 
 import { tokens, card, btn, btnDark, chartColors } from "../styles";
+import { sectionTitle } from "./sectionStyles";
 import PlatformManager, { type Platform } from "./PlatformManager";
 import ClosedPositions, { type ClosedPosition } from "./ClosedPositions";
 import { extractDetail } from "../lib/api";
@@ -377,7 +378,7 @@ export default function InvestmentsPage() {
                     marginBottom: 14,
                   }}
                 >
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>Allocation</div>
+                  <h2 style={sectionTitle}>Allocation</h2>
                   <div
                     style={{
                       display: "flex",

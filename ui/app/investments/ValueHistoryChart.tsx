@@ -10,14 +10,15 @@ import {
 } from "recharts";
 
 import { tokens } from "../styles";
+import { sectionTitle } from "./sectionStyles";
 
 // ---------------------------------------------------------------------------
 // Portfolio value / P&L history (VZ-02, INVX-01). Styled to match the cashflow
 // TrendChart (ui/app/cashflow/charts/TrendChart.tsx): tokens (not hardcoded
 // hex), no CartesianGrid / YAxis, borderless X-axis, monotone line at
-// strokeWidth 2.4, matching tooltip, 170px height. Keeps its own card chrome +
-// range/view controls (the trend chart's card + legend live in the cashflow
-// page; this chart is self-contained on the investments page).
+// strokeWidth 2.4, matching tooltip, 170px height. Card chrome comes from the
+// caller (page.tsx wraps it in `card`), like AllocationPieChart; the chart keeps
+// its own title and range/view controls.
 // Fetches GET /api/investments/history (open read). Explicit-height wrapper is
 // load-bearing (Recharts blank-render pitfall, 04-RESEARCH.md).
 // ---------------------------------------------------------------------------
@@ -65,15 +66,7 @@ export default function ValueHistoryChart({
   const pnlColor = latestPnl >= 0 ? tokens.color.green : tokens.color.terracotta;
 
   return (
-    <section
-      style={{
-        background: tokens.color.card,
-        border: `1px solid ${tokens.color.border}`,
-        borderRadius: 8,
-        padding: 24,
-        marginBottom: 24,
-      }}
-    >
+    <section>
       <div
         style={{
           display: "flex",
@@ -82,7 +75,7 @@ export default function ValueHistoryChart({
           marginBottom: 16,
         }}
       >
-        <span style={{ fontSize: 20, fontWeight: 600 }}>Portfolio history</span>
+        <h2 style={sectionTitle}>Portfolio history</h2>
         <div style={{ display: "flex", gap: 4 }}>
           {RANGES.map((r) => (
             <button

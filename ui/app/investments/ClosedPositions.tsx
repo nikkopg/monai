@@ -9,6 +9,7 @@ import { useState } from "react";
 
 import { tokens, card, input, btn } from "../styles";
 import { extractDetail } from "../lib/api";
+import { sectionTitle } from "./sectionStyles";
 
 export type ClosedPosition = {
   id: number;
@@ -87,7 +88,7 @@ export default function ClosedPositions({
 
   return (
     <div data-testid="closed-positions" style={{ ...card, marginTop: 24 }}>
-      <h2 style={{ fontSize: 16, margin: "0 0 12px" }}>Closed positions</h2>
+      <h2 style={{ ...sectionTitle, marginBottom: 12 }}>Closed positions</h2>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
         <thead>
           <tr style={{ textAlign: "left", color: tokens.color.muted3 }}>
