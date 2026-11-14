@@ -6,7 +6,8 @@ from datetime import date as _date  # a `date: date | None = None` field would s
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
+from fastapi.encoders import jsonable_encoder
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_serializer, field_validator
 
 # ---------------------------------------------------------------------------
 # Shared money type
@@ -416,8 +417,8 @@ class PortfolioSummary(BaseModel):
     """Composed GET /investments/summary payload (D-05, INV-06).
 
     Built from a plain dict (portfolio.portfolio_summary), not an ORM row.
-    Money fields inside `groups` are already Decimal; the dict passthrough keeps
-    them serialized as JSON numbers via portfolio.py's own shaping.
+    Money fields inside `groups` are Decimal; the JSON serializer below turns
+    them into numbers (None stays null), python-mode dumps keep Decimals.
     """
 
     groups: list  # [{platform_id, platform_name, kind, subtotal, holdings:[...]}]
@@ -426,6 +427,12 @@ class PortfolioSummary(BaseModel):
     total_unrealized_pnl: MoneyDecimal
     total_realized_pnl: MoneyDecimal
     as_of: str
+
+    # Untyped lists would emit their Decimals as strings; jsonable_encoder is the
+    # same encoding /platforms/{id}/detail applies to these dicts (Decimal -> number, None -> null).
+    @field_serializer("groups", "asset_type_groups", when_used="json")
+    def _groups_as_json(self, value: list):
+        return jsonable_encoder(value)
 
 
 class ValueHistoryPointOut(BaseModel):
