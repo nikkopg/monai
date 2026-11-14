@@ -113,7 +113,10 @@ async function mockInvestmentsPage(page: Page, holdings: unknown[]) {
         groups: [
           { platform_id: 1, platform_name: "ZZ Exchange", kind: "crypto app", subtotal: 1512000, holdings },
         ],
-        asset_type_groups: [],
+        asset_type_groups: [
+          { asset_type: "crypto", total_value: 1500000 },
+          { asset_type: "gold", total_value: 12000 },
+        ],
         total_value: 1512000,
         total_unrealized_pnl: 797000,
         total_realized_pnl: 215000,
@@ -216,6 +219,12 @@ test.describe("USD positions on the Investments page", () => {
     await mockInvestmentsPage(page, [usdHolding, noRateHolding, idrHolding]);
     await page.goto("/investments");
     await expect(row(page, "ZZUSD")).toBeVisible();
+
+    // chartColors[0] and chartColors[1]: the colours the pie uses for slices 0 and 1
+    const swatch = (label: string) =>
+      page.getByText(label, { exact: true }).locator("xpath=preceding-sibling::span[1]");
+    await expect(swatch("Crypto")).toHaveCSS("background-color", "rgb(47, 111, 79)");
+    await expect(swatch("Gold")).toHaveCSS("background-color", "rgb(90, 143, 115)");
 
     const price = lines(page, "ZZUSD", I.price);
     await expect(price.top).toHaveText("5.00 USD");
