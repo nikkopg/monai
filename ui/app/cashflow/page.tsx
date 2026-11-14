@@ -9,8 +9,9 @@ import CategoryDonut from "./charts/CategoryDonut";
 import TrendChart, { type ChartPoint } from "./charts/TrendChart";
 import NetWorthTrendChart from "./charts/NetWorthTrendChart";
 import CsvUpload from "./CsvUpload";
-import { fmtRowDate } from "../lib/inbox";
-import { fmtAmount, fmtAmountSigned, rateHover } from "../lib/money";
+import HoldingsCard from "./HoldingsCard";
+import type { AccountBalance, InvestmentGroup } from "./holdings";
+import { fmtAmount, fmtAmountSigned } from "../lib/money";
 import {
   PERIOD_KINDS,
   changeBadge,
@@ -23,23 +24,6 @@ import {
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
-
-type AccountBalance = {
-  id: number;
-  name: string;
-  type: string;
-  // Phase 43 payload: a USD row carries its native balance and rate; current_balance
-  // (the IDR value) is null when no rate is within range.
-  current_balance: number | null;
-  period_net: number | null;
-  currency?: string;
-  native_balance?: number;
-  fx_rate?: number | null;
-  fx_as_of?: string | null;
-  fx_stale?: boolean;
-  fx_note?: string | null;
-  period_net_unconverted?: boolean;
-};
 
 // GET /cashflow/summary (backend/schemas.py:CashflowSummary, D-08). by_category
 // is a hierarchy rollup (CAT-04, 11-07): each top-level group carries its own
@@ -67,13 +51,6 @@ type CashflowSummary = {
 // computed — liquid = account_balances() filtered to type='liquid', investment
 // = portfolio_summary groups. Never re-derived client-side (fixes the old
 // client-side double-count over ALL account rows).
-type InvestmentGroup = {
-  platform_id: number;
-  platform_name: string;
-  kind: string;
-  subtotal: number;
-  holdings: unknown[];
-};
 type NetWorth = {
   total: number;
   liquid_total: number;
@@ -225,14 +202,6 @@ export default function CashflowPage() {
   // ---- formatting ----------------------------------------------------------
   // Money goes through ../lib/money (fmtAmount / fmtAmountSigned): IDR as plain
   // grouped digits, USD as two decimals plus a code.
-  const initials = (name: string) =>
-    name
-      .split(/\s+/)
-      .map((w) => w[0])
-      .filter(Boolean)
-      .slice(0, 2)
-      .join("")
-      .toUpperCase();
 
   // ---- derived -------------------------------------------------------------
   const categoryData = summary?.by_category ?? [];
@@ -390,9 +359,8 @@ export default function CashflowPage() {
             </div>
           )}
 
-          {/* Cashflow + liquid accounts + investment platforms.
-              Columns in globals.css (.cf-lower): wrapping cards, three
-              across on wide windows with the first wider. */}
+          {/* Cashflow + Holdings. Columns in globals.css (.cf-lower): wrapping
+              cards, two equal columns on wide windows. */}
           <div
             className="cf-lower"
             style={{
@@ -560,190 +528,7 @@ export default function CashflowPage() {
               />
             </section>
 
-              <div style={{ ...card, marginBottom: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
-                  Liquid accounts
-                </div>
-                {(netWorthData?.liquid_accounts.length ?? 0) === 0 ? (
-                  <div style={{ paddingTop: 10 }}>
-                    <div
-                      style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}
-                    >
-                      No liquid accounts yet.
-                    </div>
-                    <div style={{ color: tokens.color.muted, fontSize: 14 }}>
-                      Add one below to start tracking cash balances.
-                    </div>
-                  </div>
-                ) : (
-                  netWorthData!.liquid_accounts.map((a) => (
-                    <div
-                      key={a.id}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 12,
-                        padding: "11px 0",
-                        borderTop: `1px solid ${tokens.color.borderInner}`,
-                      }}
-                    >
-                      <span
-                        style={{
-                          width: 34,
-                          height: 34,
-                          borderRadius: 10,
-                          background: tokens.color.sidebar,
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontSize: 13,
-                          fontWeight: 600,
-                          color: tokens.color.muted3,
-                        }}
-                      >
-                        {initials(a.name)}
-                      </span>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 14, fontWeight: 500 }}>
-                          {a.name}
-                        </div>
-                      </div>
-                      {(a.currency ?? "IDR") === "IDR" ? (
-                        <div style={{ textAlign: "right" }}>
-                          <div
-                            style={{
-                              fontSize: 14,
-                              fontWeight: 600,
-                              fontVariantNumeric: "tabular-nums",
-                              color:
-                                (a.current_balance ?? 0) < 0
-                                  ? tokens.color.terracotta
-                                  : tokens.color.ink,
-                            }}
-                          >
-                            {fmtAmount(a.current_balance, "IDR")}
-                          </div>
-                        </div>
-                      ) : (
-                        <div
-                          style={{ textAlign: "right" }}
-                          title={
-                            a.current_balance === null
-                              ? undefined
-                              : rateHover(a.fx_rate, a.fx_as_of)
-                          }
-                        >
-                          <div
-                            style={{
-                              fontSize: 14,
-                              fontWeight: 600,
-                              fontVariantNumeric: "tabular-nums",
-                              color:
-                                (a.native_balance ?? 0) < 0
-                                  ? tokens.color.terracotta
-                                  : tokens.color.ink,
-                            }}
-                          >
-                            {fmtAmount(a.native_balance, "USD")}
-                          </div>
-                          <div
-                            style={{
-                              marginTop: 4,
-                              fontSize: 12,
-                              fontWeight: 400,
-                              color: tokens.color.muted3,
-                              fontVariantNumeric: "tabular-nums",
-                            }}
-                          >
-                            {a.current_balance === null ? (
-                              <span style={{ color: tokens.color.terracottaText }}>
-                                IDR value unavailable
-                              </span>
-                            ) : (
-                              <>≈ {fmtAmount(a.current_balance, "IDR")}</>
-                            )}
-                          </div>
-                          {a.fx_stale && (
-                            <div
-                              style={{
-                                marginTop: 4,
-                                fontSize: 12,
-                                color: tokens.color.muted3,
-                              }}
-                            >
-                              stale, rate of {fmtRowDate(a.fx_as_of)}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ))
-                )}
-              </div>
-
-              <div style={{ ...card, marginBottom: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
-                  Investment platforms
-                </div>
-                {(netWorthData?.investment_groups.length ?? 0) === 0 ? (
-                  <div style={{ paddingTop: 10 }}>
-                    <div
-                      style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}
-                    >
-                      No investment platforms yet.
-                    </div>
-                    <div style={{ color: tokens.color.muted, fontSize: 14 }}>
-                      Add a platform and a holding on the Investments page to
-                      see it here.
-                    </div>
-                  </div>
-                ) : (
-                  netWorthData!.investment_groups.map((g) => (
-                    <div
-                      key={g.platform_id}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 12,
-                        padding: "11px 0",
-                        borderTop: `1px solid ${tokens.color.borderInner}`,
-                      }}
-                    >
-                      <span
-                        style={{
-                          width: 34,
-                          height: 34,
-                          borderRadius: 10,
-                          background: tokens.color.sidebar,
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          fontSize: 13,
-                          fontWeight: 600,
-                          color: tokens.color.muted3,
-                        }}
-                      >
-                        {initials(g.platform_name)}
-                      </span>
-                      <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 14, fontWeight: 500 }}>
-                          {g.platform_name}
-                        </div>
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 14,
-                          fontWeight: 600,
-                          fontVariantNumeric: "tabular-nums",
-                          color: tokens.color.ink,
-                        }}
-                      >
-                        {fmtAmount(g.subtotal, "IDR")}
-                      </div>
-                    </div>
-                  ))
-                )}
-              </div>
+            {netWorthData && <HoldingsCard data={netWorthData} />}
             </div>
         </>
       )}

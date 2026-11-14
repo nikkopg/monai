@@ -90,16 +90,22 @@ async function noHorizontalScroll(page: Page) {
 }
 
 test.describe("Phase 44 — USD accounts", () => {
-  test("Cashflow shows the USD balance first, ≈ IDR second, rate on hover", async ({ page }) => {
+  test("Cashflow Holdings shows the IDR value with native USD beneath, and native USD in the USD view", async ({ page }) => {
     await mockAll(page);
     await page.goto("/cashflow");
-    const usd = page.getByText("-1,234,567.89 USD").first();
-    await expect(usd).toBeVisible();
-    const cell = usd.locator("..");
-    await expect(cell).toContainText("≈ -20,123,456,789"); // pii-ok synthetic
-    await expect(cell).toHaveAttribute("title", "1 USD = 16,300 IDR · rate of 30 Oct 2026");
+    const card = page.getByRole("region", { name: "Holdings", exact: true });
+    await card.getByRole("button", { name: /^Liquid/ }).click();
+    const row = card.getByText(LONG_NAME, { exact: true }).locator("xpath=../..");
+    await expect(row.getByText("-1,234,567.89 USD")).toBeVisible();
+    await expect(row.getByText("-20,123,456,789", { exact: true })).toHaveAttribute( // pii-ok synthetic
+      "title",
+      "1 USD = 16,300 IDR · rate of 30 Oct 2026"
+    );
     // IDR account unchanged: plain en-US, no code.
-    await expect(page.getByText("2,500,000", { exact: true }).first()).toBeVisible();
+    await expect(card.getByText("2,500,000", { exact: true })).toBeVisible();
+
+    await card.getByRole("button", { name: "USD", exact: true }).click();
+    await expect(row.getByText("-1,234,567.89 USD", { exact: true })).toBeVisible();
   });
 
   test("Records shows USD rows natively and an IDR-only daily net", async ({ page }) => {
@@ -128,13 +134,15 @@ test.describe("Phase 44 — USD accounts", () => {
     await page.goto("/cashflow");
     await expect(page.getByRole("heading", { name: "Cashflow" })).toBeVisible();
     await expect(page.getByText(/ USD|≈|unconverted|stale/)).toHaveCount(0);
-    await expect(page.getByText("-1,234,567.89 USD").first()).toBeVisible({ timeout: 10_000 });
+    await page.getByRole("button", { name: /^Liquid/ }).click({ timeout: 10_000 });
+    await expect(page.getByText("-1,234,567.89 USD").first()).toBeVisible();
   });
 
-  test("375px: a large USD amount and its ≈ IDR line fit without horizontal scroll", async ({ page }) => {
+  test("375px: a large USD amount and its IDR value fit without horizontal scroll", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
     await mockAll(page);
     await page.goto("/cashflow");
+    await page.getByRole("button", { name: /^Liquid/ }).click();
     await expect(page.getByText("-1,234,567.89 USD").first()).toBeVisible();
     await noHorizontalScroll(page);
     await page.goto("/records");

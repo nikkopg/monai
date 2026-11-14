@@ -232,12 +232,12 @@ input, select, button, textarea {
 .action-wrap:hover .action-tooltip,
 .action-wrap:focus-within .action-tooltip { display: block; }
 
-/* Cashflow lower row: cards wrap at 300px, but once the panel reaches its
-   full 1240px the three stay side by side even with the sidebar open, with
-   Cashflow wider for its donut legend. */
+/* Cashflow lower row: the two cards (Cashflow, Holdings) wrap at 300px, but
+   once the panel reaches its full 1240px they stay side by side even with the
+   sidebar open, at equal widths. */
 .cf-lower { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
 @media (min-width: 1280px) {
-  .cf-lower { grid-template-columns: minmax(0, 4fr) minmax(0, 3fr) minmax(0, 3fr); }
+  .cf-lower { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
 
 /* RollingNumber: each digit is a 0–9 strip (::before, so the digits never

@@ -611,7 +611,16 @@ const usdWallet = {
 };
 
 test.describe("USD balances (Phase 44)", () => {
-  test("USD balance shows native, ≈ IDR and the rate", async ({ page }) => {
+  // The Holdings card replaced the liquid-accounts list: Liquid is one click in,
+  // and its IDR view shows each USD account's native balance as the subline.
+  const openLiquid = async (page: Page) => {
+    await page.goto("/cashflow");
+    const card = page.getByRole("region", { name: "Holdings", exact: true });
+    await card.getByRole("button", { name: /^Liquid/ }).click();
+    return card;
+  };
+
+  test("USD balance shows the IDR value, native USD beneath and the rate", async ({ page }) => {
     await mockSummary(page);
     await mockNetWorth(
       page,
@@ -622,20 +631,20 @@ test.describe("USD balances (Phase 44)", () => {
         ],
       })
     );
-    await page.goto("/cashflow");
+    const card = await openLiquid(page);
 
-    const wallet = page.getByText("ZZ44 Wallet", { exact: true }).locator("xpath=../..");
+    const wallet = card.getByText("ZZ44 Wallet", { exact: true }).locator("xpath=../..");
     await expect(wallet.getByText("-12.34 USD", { exact: true })).toBeVisible();
-    await expect(wallet.getByText("≈ -200,525", { exact: true })).toBeVisible();
-    await expect(wallet.locator("[title]")).toHaveAttribute(
+    await expect(wallet.getByText("-200,525", { exact: true })).toHaveAttribute(
       "title",
       "1 USD = 16,250 IDR · rate of 30 Oct 2026"
     );
+    // A negative balance has no slice, so no share.
+    await expect(wallet.getByText("—", { exact: true })).toBeVisible();
 
-    const cash = page.getByText("ZZ44 Cash", { exact: true }).locator("xpath=../..");
+    const cash = card.getByText("ZZ44 Cash", { exact: true }).locator("xpath=../..");
     await expect(cash.getByText("4,000,000", { exact: true })).toBeVisible();
-    await expect(cash).not.toContainText("≈");
-    await expect(cash.locator("[title]")).toHaveCount(0);
+    await expect(cash.locator("[title]")).toHaveCount(1); // only the name's own tooltip
   });
 
   test("stale rate is a visible label", async ({ page }) => {
@@ -648,8 +657,8 @@ test.describe("USD balances (Phase 44)", () => {
         ],
       })
     );
-    await page.goto("/cashflow");
-    await expect(page.getByText("stale, rate of 27 Oct 2026", { exact: true })).toBeVisible();
+    const card = await openLiquid(page);
+    await expect(card.getByText("stale, rate of 27 Oct 2026", { exact: true })).toBeVisible();
   });
 
   test("missing rate is never 0", async ({ page }) => {
@@ -660,12 +669,14 @@ test.describe("USD balances (Phase 44)", () => {
         liquid_accounts: [{ ...usdWallet, current_balance: null, fx_rate: null, fx_as_of: null }],
       })
     );
-    await page.goto("/cashflow");
-    const wallet = page.getByText("ZZ44 Wallet", { exact: true }).locator("xpath=../..");
+    const card = await openLiquid(page);
+    const wallet = card.getByText("ZZ44 Wallet", { exact: true }).locator("xpath=../..");
     await expect(wallet.getByText("-12.34 USD", { exact: true })).toBeVisible();
-    await expect(wallet.getByText("IDR value unavailable", { exact: true })).toBeVisible();
-    await expect(wallet).not.toContainText("≈");
-    await expect(wallet.locator("[title]")).toHaveCount(0);
+    await expect(wallet.getByText("—", { exact: true }).first()).toHaveAttribute(
+      "title",
+      "IDR value unavailable: no USD→IDR rate, so this account is left out of the total"
+    );
+    await expect(wallet.getByText("0", { exact: true })).toHaveCount(0);
   });
 
   test("unconverted notice sits above the cards and keeps the IDR totals", async ({ page }) => {
