@@ -99,15 +99,17 @@ const badgeColor = (t: string) => {
   for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) >>> 0;
   return BADGE_COLORS[h % BADGE_COLORS.length];
 };
+// Fills where ink text out-contrasts white.
+const BADGE_INK = new Set<string>([tokens.color.gold, tokens.color.sage, tokens.color.sageLight]);
 
-const muted = tokens.color.muted;
+const muted = tokens.color.muted3;
 
 // USD figure on top, the IDR figure in small muted text underneath (copied
 // from the platform page, like the other helpers above).
 const withIdr = (primary: string, idrText: string, title?: string) => (
   <>
     <span style={{ display: "block" }}>{primary}</span>
-    <span style={{ display: "block", fontSize: 11, color: muted }} title={title}>
+    <span style={{ display: "block", fontSize: 12, color: muted }} title={title}>
       {idrText}
     </span>
   </>
@@ -233,7 +235,7 @@ export default function InvestmentsPage() {
             fontSize: 12,
             letterSpacing: ".12em",
             textTransform: "uppercase",
-            color: tokens.color.muted2,
+            color: tokens.color.muted3,
             marginBottom: 6,
           }}
         >
@@ -408,7 +410,7 @@ export default function InvestmentsPage() {
                             background: active ? tokens.color.ink : "transparent",
                             color: active
                               ? tokens.color.inkText
-                              : tokens.color.muted,
+                              : tokens.color.muted3,
                           }}
                         >
                           {opt.label}
@@ -658,7 +660,7 @@ export default function InvestmentsPage() {
                         style={{
                           display: "flex",
                           fontSize: 12,
-                          color: tokens.color.muted2,
+                          color: tokens.color.muted3,
                           padding: "8px 0",
                           borderBottom: `1px solid ${tokens.color.borderInner}`,
                         }}
@@ -699,11 +701,11 @@ export default function InvestmentsPage() {
                                   height: 32,
                                   borderRadius: 9,
                                   background: badgeColor(h.ticker),
-                                  color: "#fff",
+                                  color: BADGE_INK.has(badgeColor(h.ticker)) ? tokens.color.ink : "#fff",
                                   display: "inline-flex",
                                   alignItems: "center",
                                   justifyContent: "center",
-                                  fontSize: 11,
+                                  fontSize: 12,
                                   fontWeight: 700,
                                   flexShrink: 0,
                                 }}
@@ -722,7 +724,7 @@ export default function InvestmentsPage() {
                                   isStale={h.is_stale}
                                 />
                                 {h.currency === "USD" && h.usd_rate == null && (
-                                  <span style={{ display: "block", fontSize: 11, color: muted }}>
+                                  <span style={{ display: "block", fontSize: 12, color: muted }}>
                                     No USD rate, shown in IDR
                                   </span>
                                 )}
@@ -902,7 +904,7 @@ const statCard: React.CSSProperties = {
 };
 const statLabel: React.CSSProperties = {
   fontSize: 13,
-  color: tokens.color.muted,
+  color: tokens.color.muted3,
   marginBottom: 8,
 };
 const statValue: React.CSSProperties = {
@@ -912,7 +914,7 @@ const statValue: React.CSSProperties = {
 };
 const rowAction: React.CSSProperties = {
   background: "transparent",
-  color: tokens.color.muted2,
+  color: tokens.color.muted3,
   border: "none",
   cursor: "pointer",
   fontSize: 12,

@@ -32,7 +32,7 @@ type Range = "1M" | "3M" | "6M" | "All";
 type View = "value" | "pnl";
 
 const RANGES: Range[] = ["1M", "3M", "6M", "All"];
-const tickStyle = { fill: tokens.color.muted2, fontSize: 11 };
+const tickStyle = { fill: tokens.color.muted3, fontSize: 12 };
 
 const fmtPlain = (n: number) => new Intl.NumberFormat("en-US").format(n);
 const fmtSigned = (n: number) =>
@@ -45,7 +45,7 @@ function pillStyle(active: boolean): React.CSSProperties {
     fontSize: 12,
     border: `1px solid ${tokens.color.border}`,
     background: active ? tokens.color.green : "transparent",
-    color: active ? "white" : tokens.color.muted,
+    color: active ? "white" : tokens.color.muted3,
     cursor: "pointer",
   };
 }
@@ -115,7 +115,7 @@ export default function ValueHistoryChart({
       </div>
 
       {data.length < 2 ? (
-        <p style={{ fontSize: 14, color: tokens.color.muted, margin: 0 }}>
+        <p style={{ fontSize: 14, color: tokens.color.muted3, margin: 0 }}>
           Not enough history yet — check back after a few days of price
           snapshots.
         </p>
