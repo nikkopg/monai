@@ -1117,15 +1117,54 @@ def test_usd_view_reaches_both_routes(client, db_session, authed, monkeypatch):
 
         summary = client.get("/investments/summary")
         assert summary.status_code == 200, summary.text
-        row = next(h for g in summary.json()["groups"] for h in g["holdings"] if h["ticker"] == t)
+        grp = next(g for g in summary.json()["groups"] if any(h["ticker"] == t for h in g["holdings"]))
+        row = next(h for h in grp["holdings"] if h["ticker"] == t)
         assert Decimal(str(row["usd_current_value"])) == Decimal("75")
         assert Decimal(str(row["usd_avg_cost"])) == Decimal("3")
+        for k in _USD_NUMBER_KEYS:
+            assert _is_json_number(row[k]), f"summary {k} serialized as {row[k]!r}"
+        assert _is_json_number(grp["subtotal"]), f"summary subtotal serialized as {grp['subtotal']!r}"
 
         detail = client.get(f"/platforms/{plat}/detail")
         assert detail.status_code == 200, detail.text
         row = next(h for h in detail.json()["holdings"] if h["ticker"] == t)
         assert Decimal(str(row["usd_current_value"])) == Decimal("75")
         assert Decimal(str(row["usd_avg_cost"])) == Decimal("3")
+        for k in _USD_NUMBER_KEYS:
+            assert _is_json_number(row[k]), f"detail {k} serialized as {row[k]!r}"
     finally:
         _cleanup_prices(db_session, t)
         _cleanup_ticker(db_session, t)
+
+
+_USD_NUMBER_KEYS = (
+    "quantity", "avg_cost", "current_price", "current_value",
+    "usd_avg_cost", "usd_current_price", "usd_current_value",
+)
+
+
+def _is_json_number(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def test_portfolio_summary_json_keeps_numbers_and_nulls():
+    """Untyped group lists must still serialize Decimals as numbers and None as null."""
+    import json
+    from decimal import Decimal
+    from backend.schemas import PortfolioSummary
+
+    ps = PortfolioSummary(
+        groups=[{
+            "platform_id": 1, "platform_name": "Synthetic", "kind": "broker",
+            "subtotal": Decimal("3.75"),
+            "holdings": [{"ticker": "ZZTEST", "quantity": Decimal("1.5"), "current_price": None}],
+        }],
+        asset_type_groups=[{"asset_type": "crypto", "total_value": Decimal("2.50")}],
+        total_value=Decimal("0"), total_unrealized_pnl=Decimal("0"),
+        total_realized_pnl=Decimal("0"), as_of="2026-01-01",
+    )
+    out = json.loads(ps.model_dump_json())
+    h = out["groups"][0]["holdings"][0]
+    assert h["current_price"] is None
+    assert h["quantity"] == 1.5
+    assert out["asset_type_groups"][0]["total_value"] == 2.5
