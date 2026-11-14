@@ -1,6 +1,6 @@
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 
-import { chartColors } from "../styles";
+import { chartColors, tokens } from "../styles";
 
 // ---------------------------------------------------------------------------
 // VZ-01 allocation pie (Phase 7 Plan 03) — structural clone of the Phase-4
@@ -18,7 +18,7 @@ import { chartColors } from "../styles";
 
 export type AllocationSlice = { label: string; value: number };
 
-const muted = "#8b8474";
+const muted = tokens.color.muted3;
 
 export default function AllocationPieChart({
   data,

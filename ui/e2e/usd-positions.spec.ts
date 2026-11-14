@@ -167,6 +167,9 @@ test.describe("USD positions on the platform page", () => {
     await expect(price.top).toHaveText("5.00 USD");
     await expect(price.under).toHaveText("100,000 IDR");
     await expect(price.under).toHaveAttribute("title", RATE_TITLE);
+    await expect(price.under).toHaveCSS("color", "rgb(111, 104, 87)");
+    await expect(price.under).toHaveCSS("font-size", "12px");
+    await expect(row(page, "ZZIDR").getByText("ZZID", { exact: true })).toHaveCSS("color", "rgb(35, 32, 27)");
 
     const value = lines(page, "ZZUSD", P.value);
     await expect(value.top).toHaveText("75.00 USD");

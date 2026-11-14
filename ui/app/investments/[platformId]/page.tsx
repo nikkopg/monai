@@ -100,6 +100,8 @@ const badgeColor = (t: string) => {
   for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) >>> 0;
   return BADGE_COLORS[h % BADGE_COLORS.length];
 };
+// Fills where ink text out-contrasts white.
+const BADGE_INK = new Set<string>([tokens.color.gold, tokens.color.sage, tokens.color.sageLight]);
 
 // event_type -> Title-cased label + Color-table-mapped hue (green
 // buy/deposit, terracotta sell/withdrawal, ink otherwise).
@@ -123,13 +125,13 @@ function sideColor(eventType: string): string {
   return tokens.color.ink;
 }
 
-const muted = tokens.color.muted;
+const muted = tokens.color.muted3;
 
 // USD figure on top, the IDR figure in small muted text underneath.
 const withIdr = (primary: string, idrText: string, title?: string) => (
   <>
     <span style={{ display: "block" }}>{primary}</span>
-    <span style={{ display: "block", fontSize: 11, color: muted }} title={title}>
+    <span style={{ display: "block", fontSize: 12, color: muted }} title={title}>
       {idrText}
     </span>
   </>
@@ -240,7 +242,7 @@ export default function PlatformDetailPage() {
       href="/investments"
       style={{
         fontSize: 12,
-        color: tokens.color.muted2,
+        color: tokens.color.muted3,
         marginBottom: 12,
         display: "inline-block",
         textDecoration: "none",
@@ -286,7 +288,7 @@ export default function PlatformDetailPage() {
                   fontSize: 12,
                   letterSpacing: ".12em",
                   textTransform: "uppercase",
-                  color: tokens.color.muted2,
+                  color: tokens.color.muted3,
                   marginBottom: 6,
                 }}
               >
@@ -371,7 +373,7 @@ export default function PlatformDetailPage() {
                     fontSize: 14,
                     fontWeight: active ? 600 : 500,
                     cursor: "pointer",
-                    color: active ? tokens.color.ink : tokens.color.muted,
+                    color: active ? tokens.color.ink : tokens.color.muted3,
                     background: active ? "#fff" : "transparent",
                     boxShadow: active ? "0 1px 2px rgba(40,34,24,.12)" : "none",
                     transition: "all .2s ease",
@@ -435,11 +437,11 @@ export default function PlatformDetailPage() {
                             height: 32,
                             borderRadius: 9,
                             background: badgeColor(h.ticker),
-                            color: "#fff",
+                            color: BADGE_INK.has(badgeColor(h.ticker)) ? tokens.color.ink : "#fff",
                             display: "inline-flex",
                             alignItems: "center",
                             justifyContent: "center",
-                            fontSize: 11,
+                            fontSize: 12,
                             fontWeight: 700,
                             flexShrink: 0,
                           }}
@@ -449,7 +451,7 @@ export default function PlatformDetailPage() {
                         <span style={{ minWidth: 0 }}>
                           <span style={{ fontWeight: 500, display: "block" }}>{h.ticker}</span>
                           {h.currency === "USD" && h.usd_rate == null && (
-                            <span style={{ display: "block", fontSize: 11, color: muted }}>
+                            <span style={{ display: "block", fontSize: 12, color: muted }}>
                               No USD rate, shown in IDR
                             </span>
                           )}
@@ -587,7 +589,7 @@ export default function PlatformDetailPage() {
                           height: 24,
                           borderRadius: 7,
                           background: badgeColor(e.ticker),
-                          color: "#fff",
+                          color: BADGE_INK.has(badgeColor(e.ticker)) ? tokens.color.ink : "#fff",
                           display: "inline-flex",
                           alignItems: "center",
                           justifyContent: "center",
@@ -615,7 +617,7 @@ export default function PlatformDetailPage() {
                     >
                       {fmtQty(e.quantity, null)}
                       {e.fee ? (
-                        <span style={{ display: "block", fontSize: 11 }}>
+                        <span style={{ display: "block", fontSize: 12 }}>
                           {e.fee_kind === "coin"
                             ? `fee ${fmtQty(e.fee, "crypto")} ${e.ticker}`
                             : `fee ${e.currency === "USD" ? fmtUsdPrice(e.fee) : `${fmtAmount(e.fee)} IDR`}`}
@@ -715,7 +717,7 @@ const statCard: React.CSSProperties = {
 };
 const statLabel: React.CSSProperties = {
   fontSize: 13,
-  color: tokens.color.muted,
+  color: tokens.color.muted3,
   marginBottom: 8,
 };
 const statValue: React.CSSProperties = {
@@ -726,7 +728,7 @@ const statValue: React.CSSProperties = {
 const tableHeaderRow: React.CSSProperties = {
   display: "flex",
   fontSize: 12,
-  color: tokens.color.muted2,
+  color: tokens.color.muted3,
   padding: "8px 0",
   borderBottom: `1px solid ${tokens.color.borderInner}`,
 };

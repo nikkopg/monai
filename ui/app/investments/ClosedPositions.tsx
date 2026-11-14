@@ -30,7 +30,7 @@ const textBtn: React.CSSProperties = {
   padding: "4px 8px",
   fontSize: 13,
   cursor: "pointer",
-  color: tokens.color.muted,
+  color: tokens.color.muted3,
 };
 
 export default function ClosedPositions({
@@ -90,7 +90,7 @@ export default function ClosedPositions({
       <h2 style={{ fontSize: 16, margin: "0 0 12px" }}>Closed positions</h2>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
         <thead>
-          <tr style={{ textAlign: "left", color: tokens.color.muted }}>
+          <tr style={{ textAlign: "left", color: tokens.color.muted3 }}>
             <th>Ticker</th>
             <th>Platform</th>
             <th style={{ textAlign: "right" }}>Realized P&amp;L (IDR)</th>

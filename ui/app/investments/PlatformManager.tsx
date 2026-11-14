@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import { card, input, btn, label } from "../styles";
+import { tokens, card, input, btn, label } from "../styles";
 import RowMenu from "../components/RowMenu";
 import ConfirmDialog from "../cashflow/ConfirmDialog";
 import { extractDetail } from "../lib/api";
@@ -200,7 +200,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
                   <>
                     {p.name}
                     {p.kind && (
-                      <span style={{ color: "#8b8474", fontSize: 12, marginLeft: 8 }}>
+                      <span style={{ color: tokens.color.muted3, fontSize: 12, marginLeft: 8 }}>
                         {p.kind}
                       </span>
                     )}
@@ -222,7 +222,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
                       onClick={() => setEditingId(null)}
                       style={{
                         background: "transparent",
-                        color: "#8b8474",
+                        color: tokens.color.muted3,
                         border: "none",
                         fontSize: 12,
                         cursor: "pointer",
@@ -259,7 +259,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
       </table>
 
       {platforms.length === 0 && !adding && (
-        <div style={{ color: "#8b8474", fontSize: 13, marginTop: 8 }}>
+        <div style={{ color: tokens.color.muted3, fontSize: 13, marginTop: 8 }}>
           No platforms yet. Add a platform (e.g. your brokerage or crypto app) to
           start grouping holdings — or log a holding first and assign a platform
           later.
@@ -300,7 +300,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
               onClick={() => setAdding(false)}
               style={{
                 background: "transparent",
-                color: "#8b8474",
+                color: tokens.color.muted3,
                 border: "none",
                 fontSize: 12,
                 cursor: "pointer",
@@ -352,7 +352,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
               ))}
           </select>
           {reassignTargetName && (
-            <p style={{ color: "#8b8474", fontSize: 12, margin: "8px 0 0" }}>
+            <p style={{ color: tokens.color.muted3, fontSize: 12, margin: "8px 0 0" }}>
               Reassign {deleteFlow.affectedCount} holdings to &quot;{reassignTargetName}&quot;
               and delete &quot;{deleteFlow.platform.name}&quot;?
             </p>
