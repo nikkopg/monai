@@ -6,7 +6,7 @@ import { tokens, card } from "../styles";
 import Pills from "../components/Pills";
 import RollingNumber from "../components/RollingNumber";
 import CategoryDonut from "./charts/CategoryDonut";
-import TrendChart from "./charts/TrendChart";
+import TrendChart, { type ChartPoint } from "./charts/TrendChart";
 import NetWorthTrendChart from "./charts/NetWorthTrendChart";
 import CsvUpload from "./CsvUpload";
 import { fmtRowDate } from "../lib/inbox";
@@ -14,7 +14,7 @@ import { fmtAmount, fmtAmountSigned, rateHover } from "../lib/money";
 import {
   PERIOD_KINDS,
   changeBadge,
-  periodWindow,
+  chartWindows,
   spendBar,
   type Badge,
   type PeriodKind,
@@ -41,8 +41,6 @@ type AccountBalance = {
   period_net_unconverted?: boolean;
 };
 
-type TrendPoint = { month: string; income: number; expense: number };
-
 // GET /cashflow/summary (backend/schemas.py:CashflowSummary, D-08). by_category
 // is a hierarchy rollup (CAT-04, 11-07): each top-level group carries its own
 // identity color/icon plus a subcategory breakdown under children.
@@ -60,7 +58,6 @@ type CashflowSummary = {
   totals: { income: number; expense: number; net: number };
   by_category: CategoryRollup[];
   accounts: AccountBalance[];
-  trend: TrendPoint[];
   // Phase 43: USD rows with no usable rate are left out of the IDR totals.
   unconverted_count?: number;
   unconverted_usd?: number;
@@ -96,9 +93,8 @@ type NetWorth = {
 // (AccountManager, CsvUpload). Adding/editing/deleting transactions now lives on
 // the Records page; every write here still refetches summary + net worth via
 // refreshAll (Pattern 5) so nothing needs a reload. The Week / Month / Year
-// picker and its ‹ › stepper live in the "Income & spending" card, the only
-// thing that follows them: each period fetches the summary for its window and
-// for the same elapsed span of the previous period (the change badges).
+// picker and its ‹ › stepper live in the "Cashflow" card, the only thing
+// that follows them: the figures, the change badges and the six-period chart.
 // ---------------------------------------------------------------------------
 
 export default function CashflowPage() {
@@ -111,24 +107,68 @@ export default function CashflowPage() {
   // earlier period never shows under a later period's label.
   const latest = useRef(0);
 
-  const win = periodWindow(kind, offset, new Date());
+  const frame = chartWindows(kind, offset, new Date());
+  const win = frame.find((w) => w.offset === offset)!;
+  const [chart, setChart] = useState<{ kind: PeriodKind; points: ChartPoint[] } | null>(null);
 
-  async function loadSummary(w: { start: string; end: string; prevStart: string; prevEnd: string }) {
+  // One cached load per selection feeds the figures, the change badges and the
+  // six chart bars. The backend returns a full summary per window, so each bar
+  // costs one call and the chart reads only its totals. The cache (key
+  // "start..end", cleared on refreshAll, failures never kept) keeps a pill
+  // switch to at most 7 calls (six frame windows + the same-elapsed comparison
+  // window) and a step or bar click inside the frame to none.
+  // ponytail: a backend totals-series query would make this one request.
+  const cache = useRef(new Map<string, Promise<CashflowSummary | null>>());
+
+  function get(a: string, b: string): Promise<CashflowSummary | null> {
+    const key = `${a}..${b}`;
+    let p = cache.current.get(key);
+    if (!p) {
+      p = (async () => {
+        try {
+          const r = await fetch(`/api/cashflow/summary?period=custom&start_date=${a}&end_date=${b}`);
+          return r.ok ? ((await r.json()) as CashflowSummary) : null;
+        } catch {
+          return null;
+        }
+      })();
+      const mine = p;
+      cache.current.set(key, mine);
+      mine.then((v) => {
+        if (v === null && cache.current.get(key) === mine) cache.current.delete(key);
+      });
+    }
+    return p;
+  }
+
+  async function loadSummary(w: typeof frame, sel: number, k: PeriodKind) {
     const id = ++latest.current;
-    const get = async (a: string, b: string): Promise<CashflowSummary | null> => {
-      try {
-        const r = await fetch(`/api/cashflow/summary?period=custom&start_date=${a}&end_date=${b}`);
-        return r.ok ? await r.json() : null;
-      } catch {
-        return null;
-      }
-    };
-    const [cur, prev] = await Promise.all([get(w.start, w.end), get(w.prevStart, w.prevEnd)]);
+    const cur = w.find((x) => x.offset === sel)!;
+    const [prev, ...bodies] = await Promise.all([
+      get(cur.prevStart, cur.prevEnd),
+      ...w.map((x) => get(x.start, x.end)),
+    ]);
     if (id !== latest.current) return;
     // A failed previous-period fetch only hides the badges.
     setPrevTotals(prev?.totals ?? null);
-    if (cur) {
-      setSummary(cur);
+    const body = bodies[w.findIndex((x) => x.offset === sel)];
+    // A failed window is never drawn as a zero bar: the chart goes, the figures stay.
+    setChart(
+      bodies.every(Boolean)
+        ? {
+            kind: k,
+            points: w.map((x, i) => ({
+              offset: x.offset,
+              title: x.title,
+              short: x.short,
+              income: bodies[i]!.totals.income,
+              expense: bodies[i]!.totals.expense,
+            })),
+          }
+        : null
+    );
+    if (body) {
+      setSummary(body);
       setSummaryError(null);
     } else {
       setSummaryError(
@@ -169,7 +209,8 @@ export default function CashflowPage() {
   // updates with no page reload. (Adding/editing transactions now lives on the
   // Records page; the Cashflow page is read-only dashboards + management cards.)
   async function refreshAll() {
-    await Promise.all([loadSummary(win), loadNetWorth()]);
+    cache.current.clear();
+    await Promise.all([loadSummary(frame, offset, kind), loadNetWorth()]);
   }
 
   useEffect(() => {
@@ -177,9 +218,9 @@ export default function CashflowPage() {
   }, []);
 
   useEffect(() => {
-    loadSummary(win);
+    loadSummary(frame, offset, kind);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [win.start, win.end]);
+  }, [kind, win.start, win.end]);
 
   // ---- formatting ----------------------------------------------------------
   // Money goes through ../lib/money (fmtAmount / fmtAmountSigned): IDR as plain
@@ -195,7 +236,6 @@ export default function CashflowPage() {
 
   // ---- derived -------------------------------------------------------------
   const categoryData = summary?.by_category ?? [];
-  const trendData = summary?.trend ?? [];
   const bar = summary ? spendBar(summary.totals.income, summary.totals.expense) : null;
   // Change badge vs the previous period; none while that fetch is missing.
   const badge = (curr: number, prev: number | undefined, goodWhenUp: boolean) =>
@@ -250,156 +290,64 @@ export default function CashflowPage() {
 
       {summary && !summaryError && (
         <>
-          {/* Hero: net worth (with its trend) + 6-month trend. Columns in
-              globals.css (.cf-hero) so they can stack on narrow windows. */}
-          <div className="cf-hero" style={{ display: "grid", gap: 18, marginBottom: 18 }}>
-            <div
-              style={{
-                background: tokens.color.ink,
-                color: tokens.color.inkText,
-                borderRadius: 18,
-                padding: "22px 28px 18px",
-                display: "flex",
-                flexDirection: "column",
-              }}
-            >
-              <NetWorthTrendChart
-                hero
-                header={
-              <div>
-                <div
-                  style={{
-                    fontSize: 13,
-                    color: tokens.color.inkTextMuted,
-                    marginBottom: 10,
-                  }}
-                >
-                  Net worth
-                </div>
-                {netWorthError ? (
-                  <div style={{ fontSize: 14, color: "#e6a99c" }}>
-                    {netWorthError}
-                  </div>
-                ) : (
-                  <div
-                    style={{
-                      fontFamily: tokens.font.serif,
-                      fontSize: 52,
-                      lineHeight: 1,
-                      letterSpacing: "-1px",
-                      fontVariantNumeric: "tabular-nums",
-                    }}
-                  >
-                    <RollingNumber value={netWorthData?.total ?? 0} format={(n) => fmtAmount(n, "IDR")} />
-                  </div>
-                )}
-                {netWorthData && !netWorthError && (
-                  <div
-                    style={{
-                      marginTop: 12,
-                      fontSize: 12,
-                      color: tokens.color.inkTextMuted,
-                      fontVariantNumeric: "tabular-nums",
-                    }}
-                  >
-                    Liquid {fmtAmount(netWorthData.liquid_total, "IDR")} ·
-                    Investment {fmtAmount(netWorthData.investment_total, "IDR")}
-                  </div>
-                )}
-              </div>
-                }
-              />
-            </div>
-
-            <div
-              style={{
-                background: tokens.color.card,
-                border: `1px solid ${tokens.color.border}`,
-                borderRadius: 18,
-                // Same bottom padding as the net worth card and the chart
-                // pinned to the bottom, so both cards' month labels line up.
-                padding: "22px 24px 18px",
-                display: "flex",
-                flexDirection: "column",
-              }}
-            >
+          {/* Net worth (with its trend) spans the whole top row. */}
+          <div
+            style={{
+              background: tokens.color.ink,
+              color: tokens.color.inkText,
+              borderRadius: 18,
+              padding: "22px 28px 18px",
+              marginBottom: 18,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <NetWorthTrendChart
+              hero
+              header={
+            <div>
               <div
                 style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  marginBottom: 6,
+                  fontSize: 13,
+                  color: tokens.color.inkTextMuted,
+                  marginBottom: 10,
                 }}
               >
-                <div style={{ fontSize: 14, fontWeight: 600 }}>
-                  Cash flow, last 6 months
+                Net worth
+              </div>
+              {netWorthError ? (
+                <div style={{ fontSize: 14, color: "#e6a99c" }}>
+                  {netWorthError}
                 </div>
+              ) : (
                 <div
                   style={{
-                    display: "flex",
-                    gap: 16,
-                    fontSize: 12,
-                    color: tokens.color.muted,
+                    fontFamily: tokens.font.serif,
+                    fontSize: 52,
+                    lineHeight: 1,
+                    letterSpacing: "-1px",
+                    fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                    }}
-                  >
-                    <span
-                      style={{
-                        width: 10,
-                        height: 10,
-                        borderRadius: 3,
-                        background: tokens.color.green,
-                        display: "inline-block",
-                      }}
-                    />
-                    Income
-                  </span>
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                    }}
-                  >
-                    <span
-                      style={{
-                        width: 10,
-                        height: 10,
-                        borderRadius: 3,
-                        background: tokens.color.terracotta,
-                        display: "inline-block",
-                      }}
-                    />
-                    Expenses
-                  </span>
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 6,
-                    }}
-                  >
-                    <span
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: "50%",
-                        background: tokens.color.ink,
-                        display: "inline-block",
-                      }}
-                    />
-                    Net
-                  </span>
+                  <RollingNumber value={netWorthData?.total ?? 0} format={(n) => fmtAmount(n, "IDR")} />
                 </div>
-              </div>
-              <TrendChart data={trendData} />
+              )}
+              {netWorthData && !netWorthError && (
+                <div
+                  style={{
+                    marginTop: 12,
+                    fontSize: 12,
+                    color: tokens.color.inkTextMuted,
+                    fontVariantNumeric: "tabular-nums",
+                  }}
+                >
+                  Liquid {fmtAmount(netWorthData.liquid_total, "IDR")} ·
+                  Investment {fmtAmount(netWorthData.investment_total, "IDR")}
+                </div>
+              )}
             </div>
+              }
+            />
           </div>
 
           {/* Net-worth notice — Phase 43 strings verbatim (D-14) */}
@@ -442,7 +390,7 @@ export default function CashflowPage() {
             </div>
           )}
 
-          {/* Income & spending + liquid accounts + investment platforms.
+          {/* Cashflow + liquid accounts + investment platforms.
               Columns in globals.css (.cf-lower): wrapping cards, three
               across on wide windows with the first wider. */}
           <div
@@ -455,7 +403,7 @@ export default function CashflowPage() {
             }}
           >
             <section
-              aria-label="Income & spending"
+              aria-label="Cashflow"
               style={{ ...card, marginBottom: 0 }}
             >
               <div
@@ -468,9 +416,7 @@ export default function CashflowPage() {
                   marginBottom: 12,
                 }}
               >
-                <div style={{ fontSize: 14, fontWeight: 600 }}>
-                  Income &amp; spending
-                </div>
+                <div style={{ fontSize: 14, fontWeight: 600 }}>Cashflow</div>
                 <Pills
                   small
                   label="Period"
@@ -518,6 +464,21 @@ export default function CashflowPage() {
                   ›
                 </button>
               </div>
+
+              {chart ? (
+                <div style={{ marginBottom: 10 }}>
+                  <TrendChart
+                    points={chart.points}
+                    selected={offset}
+                    onSelect={setOffset}
+                    label={`Cash flow by ${chart.kind}`}
+                  />
+                </div>
+              ) : (
+                <div style={{ marginBottom: 10, fontSize: 12, color: tokens.color.muted3 }}>
+                  Couldn&apos;t load the chart.
+                </div>
+              )}
 
               <FigRow
                 label="Income"

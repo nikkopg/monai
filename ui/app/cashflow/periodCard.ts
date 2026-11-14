@@ -1,4 +1,4 @@
-// Pure helpers for the Cashflow "Income & spending" card: which date window the
+// Pure helpers for the Cashflow card: which date window the
 // Week / Month / Year stepper shows, the same-elapsed-span window it is compared
 // against, the change badge and the spent bar. No React; dates are local Date
 // objects (never toISOString, which shifts to UTC) and every range is ISO with
@@ -19,6 +19,7 @@ export type PeriodWindow = {
   prevStart: string;
   prevEnd: string;
   title: string;
+  short: string; // the chart label under a bar: "Nov", "9 Nov", "2026"
   span: string;
   prevSpan: string;
   inProgress: boolean;
@@ -55,7 +56,7 @@ export function periodWindow(kind: PeriodKind, offset: number, today: Date): Per
   const now = new Date(y, m, d);
   const inProgress = offset === 0;
   let start: Date, full: Date, prevStart: Date, prevFull: Date, prevElapsed: Date;
-  let title: string;
+  let title: string, short: string;
 
   if (kind === "month") {
     start = new Date(y, m + offset, 1);
@@ -64,6 +65,7 @@ export function periodWindow(kind: PeriodKind, offset: number, today: Date): Per
     prevFull = new Date(y, m + offset, 0);
     prevElapsed = new Date(y, m + offset - 1, Math.min(d, prevFull.getDate()));
     title = `${monthName.format(start)} ${start.getFullYear()}`;
+    short = monthName.format(start);
   } else if (kind === "week") {
     const sinceMonday = (today.getDay() + 6) % 7;
     const monday = d - sinceMonday + 7 * offset;
@@ -73,6 +75,7 @@ export function periodWindow(kind: PeriodKind, offset: number, today: Date): Per
     prevFull = new Date(y, m, monday - 1);
     prevElapsed = new Date(y, m, monday - 7 + sinceMonday);
     title = fmtSpan(start, full, null);
+    short = `${start.getDate()} ${monthName.format(start)}`;
   } else {
     start = new Date(y + offset, 0, 1);
     full = new Date(y + offset, 11, 31);
@@ -80,6 +83,7 @@ export function periodWindow(kind: PeriodKind, offset: number, today: Date): Per
     prevFull = new Date(y + offset - 1, 11, 31);
     prevElapsed = new Date(y + offset - 1, m, Math.min(d, daysIn(y + offset - 1, m)));
     title = String(start.getFullYear());
+    short = title;
   }
 
   const end = inProgress ? now : full;
@@ -91,10 +95,31 @@ export function periodWindow(kind: PeriodKind, offset: number, today: Date): Per
     prevStart: iso(prevStart),
     prevEnd: iso(prevEnd),
     title,
+    short,
     span: fmtSpan(start, end, ref),
     prevSpan: fmtSpan(prevStart, prevEnd, ref),
     inProgress,
   };
+}
+
+/**
+ * The six windows the Cashflow chart draws for `selected`, each a periodWindow
+ * plus its offset. The frame ends at the latest period by default
+ * (min(0, selected + 5)), so the highlight can move left and right with the
+ * steppers; it slides back only when the selection steps past the oldest bar,
+ * leaving the selected bar at the left edge. The in-progress window keeps the
+ * figures' start-to-today range.
+ */
+export function chartWindows(
+  kind: PeriodKind,
+  selected: number,
+  today: Date
+): (PeriodWindow & { offset: number })[] {
+  const end = Math.min(0, selected + 5);
+  return Array.from({ length: 6 }, (_, i) => {
+    const offset = end - 5 + i;
+    return { offset, ...periodWindow(kind, offset, today) };
+  });
 }
 
 export type Badge = {

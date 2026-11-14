@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
-import { changeBadge, periodWindow, spendBar, topCategories } from "../app/cashflow/periodCard";
+import { changeBadge, chartWindows, periodWindow, spendBar, topCategories } from "../app/cashflow/periodCard";
 
-// Browserless: pure period maths for the Cashflow "Income & spending" card (no
+// Browserless: pure period maths for the Cashflow card (no
 // page, no server). All values synthetic; dates built from local Date constructors.
 
 const NOV11 = new Date(2026, 10, 11); // a Wednesday
@@ -16,12 +16,12 @@ test.describe("periodWindow", () => {
     const cur = win("month", 0);
     expect(cur.range).toBe("2026-11-01..2026-11-11");
     expect(cur.prev).toBe("2026-10-01..2026-10-11");
-    expect(cur.w).toMatchObject({ title: "Nov 2026", span: "1–11 Nov", prevSpan: "1–11 Oct", inProgress: true });
+    expect(cur.w).toMatchObject({ title: "Nov 2026", short: "Nov", span: "1–11 Nov", prevSpan: "1–11 Oct", inProgress: true });
 
     const past = win("month", -1);
     expect(past.range).toBe("2026-10-01..2026-10-31");
     expect(past.prev).toBe("2026-09-01..2026-09-30");
-    expect(past.w).toMatchObject({ title: "Oct 2026", span: "1–31 Oct", prevSpan: "1–30 Sep", inProgress: false });
+    expect(past.w).toMatchObject({ title: "Oct 2026", short: "Oct", span: "1–31 Oct", prevSpan: "1–30 Sep", inProgress: false });
     expect(win("month", -12).range).toBe("2025-11-01..2025-11-30");
   });
 
@@ -38,12 +38,13 @@ test.describe("periodWindow", () => {
     const cur = win("week", 0);
     expect(cur.range).toBe("2026-11-09..2026-11-11");
     expect(cur.prev).toBe("2026-11-02..2026-11-04");
-    expect(cur.w).toMatchObject({ title: "9–15 Nov 2026", span: "9–11 Nov", prevSpan: "2–4 Nov" });
+    expect(cur.w).toMatchObject({ title: "9–15 Nov 2026", short: "9 Nov", span: "9–11 Nov", prevSpan: "2–4 Nov" });
 
     const past = win("week", -1);
     expect(past.range).toBe("2026-11-02..2026-11-08");
     expect(past.prev).toBe("2026-10-26..2026-11-01");
     expect(past.w.prevSpan).toBe("26 Oct–1 Nov");
+    expect(past.w.short).toBe("2 Nov");
   });
 
   test("week across a year boundary names both years", () => {
@@ -61,13 +62,58 @@ test.describe("periodWindow", () => {
     const cur = win("year", 0);
     expect(cur.range).toBe("2026-01-01..2026-11-11");
     expect(cur.prev).toBe("2025-01-01..2025-11-11");
-    expect(cur.w).toMatchObject({ title: "2026", span: "1 Jan–11 Nov", prevSpan: "1 Jan–11 Nov 2025" });
+    expect(cur.w).toMatchObject({ title: "2026", short: "2026", span: "1 Jan–11 Nov", prevSpan: "1 Jan–11 Nov 2025" });
     expect(win("year", 0, new Date(2028, 1, 29)).prev).toBe("2027-01-01..2027-02-28");
 
     const past = win("year", -1);
     expect(past.range).toBe("2025-01-01..2025-12-31");
     expect(past.prev).toBe("2024-01-01..2024-12-31");
-    expect(past.w).toMatchObject({ title: "2025", prevSpan: "1 Jan–31 Dec 2024" });
+    expect(past.w).toMatchObject({ title: "2025", short: "2025", prevSpan: "1 Jan–31 Dec 2024" });
+  });
+});
+
+test.describe("chartWindows", () => {
+  const frame = (kind: "week" | "month" | "year", selected: number) => chartWindows(kind, selected, NOV11);
+  const range = (w: { start: string; end: string }) => `${w.start}..${w.end}`;
+
+  test("month: the latest six periods, in progress last", () => {
+    const f = frame("month", 0);
+    expect(f.map((w) => w.offset)).toEqual([-5, -4, -3, -2, -1, 0]);
+    expect(f.map((w) => w.short)).toEqual(["Jun", "Jul", "Aug", "Sep", "Oct", "Nov"]);
+    expect(range(f[0])).toBe("2026-06-01..2026-06-30");
+    expect(range(f[5])).toBe("2026-11-01..2026-11-11");
+  });
+
+  test("a selection inside the frame keeps the latest frame", () => {
+    expect(frame("month", -3).map((w) => w.offset)).toEqual([-5, -4, -3, -2, -1, 0]);
+  });
+
+  test("stepping past the oldest bar slides the frame, the selection at its left edge", () => {
+    const f = frame("month", -7);
+    expect(f.map((w) => w.offset)).toEqual([-7, -6, -5, -4, -3, -2]);
+    expect(range(f[0])).toBe("2026-04-01..2026-04-30");
+    expect(range(f[5])).toBe("2026-09-01..2026-09-30");
+  });
+
+  test("week and year", () => {
+    const w = frame("week", 0);
+    expect(w.map((x) => x.short)).toEqual(["5 Oct", "12 Oct", "19 Oct", "26 Oct", "2 Nov", "9 Nov"]);
+    expect(range(w[0])).toBe("2026-10-05..2026-10-11");
+    expect(range(w[5])).toBe("2026-11-09..2026-11-11");
+    const y = frame("year", 0);
+    expect(y.map((x) => x.short)).toEqual(["2021", "2022", "2023", "2024", "2025", "2026"]);
+    expect(range(y[0])).toBe("2021-01-01..2021-12-31");
+    expect(range(y[5])).toBe("2026-01-01..2026-11-11");
+  });
+
+  test("every entry equals periodWindow for its offset", () => {
+    for (const kind of ["week", "month", "year"] as const) {
+      for (const sel of [0, -2, -9]) {
+        for (const { offset, ...rest } of frame(kind, sel)) {
+          expect(rest).toEqual(periodWindow(kind, offset, NOV11));
+        }
+      }
+    }
   });
 });
 

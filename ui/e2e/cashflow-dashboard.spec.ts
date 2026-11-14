@@ -79,7 +79,7 @@ async function mockSummary(
   return { periods, ranges };
 }
 
-const incomeSpending = (page: Page) => page.getByRole("region", { name: "Income & spending" });
+const cashflowCard = (page: Page) => page.getByRole("region", { name: "Cashflow", exact: true });
 
 test.describe("/cashflow dashboard", () => {
   test("renders the page heading and the three summary figure captions", async ({
@@ -91,7 +91,7 @@ test.describe("/cashflow dashboard", () => {
     await expect(
       page.getByRole("heading", { name: "Cashflow" })
     ).toBeVisible();
-    const card = incomeSpending(page);
+    const card = cashflowCard(page);
     await expect(card.getByText("Income", { exact: true })).toBeVisible();
     await expect(card.getByText("Expenses", { exact: true })).toBeVisible();
     await expect(card.getByText("Net saved", { exact: true })).toBeVisible();
@@ -101,7 +101,7 @@ test.describe("/cashflow dashboard", () => {
     await mockSummary(page);
     await page.goto("/cashflow");
 
-    await expect(incomeSpending(page).locator("svg").first()).toBeVisible();
+    await expect(cashflowCard(page).locator("svg").first()).toBeVisible();
   });
 
   test("the period buttons issue custom-range requests for the window and the one before", async ({
@@ -111,13 +111,13 @@ test.describe("/cashflow dashboard", () => {
     const { periods, ranges } = await mockSummary(page);
     await page.goto("/cashflow");
 
-    const month = incomeSpending(page).getByRole("button", { name: "Month", exact: true });
+    const month = cashflowCard(page).getByRole("button", { name: "Month", exact: true });
     await expect(month).toHaveAttribute("aria-pressed", "true");
     await expect.poll(() => ranges).toContain("2026-11-01..2026-11-11");
     expect(ranges).toContain("2026-10-01..2026-10-11");
     expect(new Set(periods)).toEqual(new Set(["custom"]));
 
-    await incomeSpending(page).getByRole("button", { name: "Year", exact: true }).click();
+    await cashflowCard(page).getByRole("button", { name: "Year", exact: true }).click();
 
     await expect.poll(() => ranges).toContain("2026-01-01..2026-11-11");
     expect(ranges).toContain("2025-01-01..2025-11-11");
@@ -125,7 +125,7 @@ test.describe("/cashflow dashboard", () => {
 });
 
 // ---------------------------------------------------------------------------
-// The Income & spending card: pills, stepper, change badges and spend bar.
+// The Cashflow card: pills, in-card chart, stepper, change badges and spend bar.
 // Synthetic figures; the browser clock is fixed to local noon on 11 Nov 2026.
 // ---------------------------------------------------------------------------
 const totals = (income: number, expense: number) => ({ income, expense, net: income - expense });
@@ -135,23 +135,30 @@ const rangeBodies = {
   "2026-10-01..2026-10-31": summaryFixture({ totals: totals(8_000_000, 5_200_000) }), // pii-ok synthetic
   "2026-09-01..2026-09-30": summaryFixture({ totals: totals(10_000_000, 4_000_000) }), // pii-ok synthetic
 };
+// Every other window of the Jun..Nov month frame, so the chart has six bars.
+const frameBodies = {
+  ...rangeBodies,
+  "2026-06-01..2026-06-30": summaryFixture({ totals: totals(7_000_000, 3_000_000) }), // pii-ok synthetic
+  "2026-07-01..2026-07-31": summaryFixture({ totals: totals(7_500_000, 3_500_000) }), // pii-ok synthetic
+  "2026-08-01..2026-08-31": summaryFixture({ totals: totals(8_200_000, 3_900_000) }), // pii-ok synthetic
+};
 
 const GREEN = "rgb(47, 111, 79)";
 const BAD = "rgb(166, 70, 54)";
 
-test.describe("Income & spending card", () => {
+test.describe("Cashflow card", () => {
   test.beforeEach(async ({ page }) => {
     await page.clock.setFixedTime(new Date(2026, 10, 11, 12));
   });
 
   // The change badge sitting right after a row's label word.
   const badge = (page: Page, label: string) =>
-    incomeSpending(page).getByText(label, { exact: true }).locator("xpath=..").locator("span[title]");
+    cashflowCard(page).getByText(label, { exact: true }).locator("xpath=..").locator("span[title]");
 
   test("renders the figures, badges, bar and stepper", async ({ page }) => {
     await mockSummary(page, summaryFixture(), rangeBodies);
     await page.goto("/cashflow");
-    const card = incomeSpending(page);
+    const card = cashflowCard(page);
 
     await expect(card.getByText("9,500,000", { exact: true })).toBeVisible();
     await expect(card.getByText("4,210,000", { exact: true })).toBeVisible();
@@ -187,7 +194,7 @@ test.describe("Income & spending card", () => {
   test("the stepper moves to the previous month and back", async ({ page }) => {
     const { ranges } = await mockSummary(page, summaryFixture(), rangeBodies);
     await page.goto("/cashflow");
-    const card = incomeSpending(page);
+    const card = cashflowCard(page);
     await expect(card.getByText("Nov 2026", { exact: true })).toBeVisible();
 
     await card.getByRole("button", { name: "Previous month" }).click();
@@ -221,7 +228,7 @@ test.describe("Income & spending card", () => {
       "2026-11-01..2026-11-11": summaryFixture({ totals: { income: 0, expense: 1_000_000, net: -1_000_000 } }), // pii-ok synthetic
     });
     await page.goto("/cashflow");
-    const card = incomeSpending(page);
+    const card = cashflowCard(page);
 
     await expect(card.getByText("1,000,000", { exact: true }).first()).toBeVisible();
     await expect(card.getByRole("img", { name: /Spent/ })).toHaveCount(0);
@@ -230,10 +237,83 @@ test.describe("Income & spending card", () => {
     await expect(badge(page, "Income")).toHaveCSS("color", BAD);
   });
 
+  test("the chart sits in the card between the stepper and the Income row", async ({ page }) => {
+    const { ranges } = await mockSummary(page, summaryFixture(), frameBodies);
+    await page.goto("/cashflow");
+    const card = cashflowCard(page);
+    const group = card.getByRole("group", { name: "Cash flow by month" });
+    await expect(group.getByRole("button")).toHaveText(["Jun", "Jul", "Aug", "Sep", "Oct", "Nov"]);
+    for (const r of [
+      "2026-06-01..2026-06-30", "2026-07-01..2026-07-31", "2026-08-01..2026-08-31",
+      "2026-09-01..2026-09-30", "2026-10-01..2026-10-31", "2026-11-01..2026-11-11",
+    ]) expect(ranges).toContain(r);
+
+    const title = await card.getByText("Nov 2026", { exact: true }).boundingBox();
+    const chart = await group.locator("xpath=..").locator(".recharts-wrapper").boundingBox();
+    const income = await card.getByText("Income", { exact: true }).boundingBox();
+    expect(chart!.y).toBeGreaterThanOrEqual(title!.y + title!.height);
+    expect(chart!.y + chart!.height).toBeLessThanOrEqual(income!.y);
+    expect(chart!.height).toBeLessThanOrEqual(90);
+    // the old separate card is gone and the card holds the only period pills
+    await expect(page.getByText("Cash flow, last 6 months")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /^(Week|Month|Year)$/ })).toHaveCount(3);
+  });
+
+  test("the pills switch the chart between weeks, months and years", async ({ page }) => {
+    const { ranges } = await mockSummary(page, summaryFixture(), frameBodies);
+    await page.goto("/cashflow");
+    const card = cashflowCard(page);
+
+    await card.getByRole("button", { name: "Week", exact: true }).click();
+    await expect(card.getByRole("group", { name: "Cash flow by week" }).getByRole("button")).toHaveText([
+      "5 Oct", "12 Oct", "19 Oct", "26 Oct", "2 Nov", "9 Nov",
+    ]);
+    expect(ranges).toContain("2026-10-05..2026-10-11");
+    expect(ranges).toContain("2026-11-02..2026-11-08");
+
+    await card.getByRole("button", { name: "Year", exact: true }).click();
+    await expect(card.getByRole("group", { name: "Cash flow by year" }).getByRole("button")).toHaveText([
+      "2021", "2022", "2023", "2024", "2025", "2026",
+    ]);
+    expect(ranges).toContain("2021-01-01..2021-12-31");
+    expect(ranges).toContain("2025-01-01..2025-12-31");
+  });
+
+  test("request cost: seven ranges per load, none for a step inside the frame", async ({ page }) => {
+    const { ranges } = await mockSummary(page, summaryFixture(), frameBodies);
+    await page.goto("/cashflow");
+    const card = cashflowCard(page);
+    await expect(card.getByRole("group", { name: "Cash flow by month" })).toBeVisible();
+    expect(new Set(ranges).size).toBe(7);
+    expect(ranges).toContain("2026-10-01..2026-10-11");
+
+    const before = ranges.length;
+    await card.getByRole("button", { name: "Previous month" }).click();
+    await expect(card.getByText("Oct 2026", { exact: true })).toBeVisible();
+    await expect(card.getByText("8,000,000", { exact: true })).toBeVisible();
+    expect(ranges.length).toBe(before);
+  });
+
+  test("a failed window shows a note, never a zero bar", async ({ page }) => {
+    await mockSummary(page, summaryFixture(), frameBodies);
+    await page.route("**/api/cashflow/summary**", (route) => {
+      const url = new URL(route.request().url());
+      if (url.searchParams.get("start_date") === "2026-07-01" && url.searchParams.get("end_date") === "2026-07-31") {
+        return route.fulfill({ status: 500, body: "boom" });
+      }
+      return route.fallback();
+    });
+    await page.goto("/cashflow");
+    const card = cashflowCard(page);
+    await expect(card.getByText("Couldn't load the chart.")).toBeVisible();
+    await expect(card.getByRole("group", { name: /Cash flow by/ })).toHaveCount(0);
+    await expect(card.getByText("9,500,000", { exact: true })).toBeVisible();
+  });
+
   test("the period pills are the shared Pills markup", async ({ page }) => {
     const { ranges } = await mockSummary(page, summaryFixture(), rangeBodies);
     await page.goto("/cashflow");
-    const mine = incomeSpending(page).getByRole("button", { name: /^(Week|Month|Year)$/ });
+    const mine = cashflowCard(page).getByRole("button", { name: /^(Week|Month|Year)$/ });
     const theirs = page
       .getByRole("region", { name: "Net worth trend" })
       .getByRole("button", { name: "1Y", exact: true });
@@ -249,7 +329,7 @@ test.describe("Income & spending card", () => {
     }
 
     const [week, month, year] = ["Week", "Month", "Year"].map((n) =>
-      incomeSpending(page).getByRole("button", { name: n, exact: true })
+      cashflowCard(page).getByRole("button", { name: n, exact: true })
     );
     await expect(month).toHaveAttribute("aria-pressed", "true");
     await expect(week).toHaveAttribute("aria-pressed", "false");
@@ -298,7 +378,7 @@ const layoutNetWorth = {
   accounts_total: 1,
 };
 
-test.describe("Income & spending legend layout", () => {
+test.describe("Cashflow card legend layout", () => {
   // The legend sits beside the 88px donut once the card's content box fits the
   // donut, the 14px gap and the legend's 150px basis (252px), else it drops
   // below. Content widths measured: 1100 -> 281 (beside: three columns of
@@ -324,7 +404,7 @@ test.describe("Income & spending legend layout", () => {
       await page.route("**/api/net-worth**", (route) => route.fulfill({ json: layoutNetWorth }));
       await page.setViewportSize({ width, height: 900 });
       await page.goto("/cashflow");
-      const card = incomeSpending(page);
+      const card = cashflowCard(page);
       const list = card.getByRole("list", { name: "Where it went" });
       await expect(list.getByText("12,345,678")).toBeVisible(); // pii-ok: mocked fixture
       const m = await card.evaluate((el) => {
@@ -380,7 +460,7 @@ test.describe("Income & spending legend layout", () => {
   test("clicking a slice with subcategories drills in and Back returns", async ({ page }) => {
     await mockSummary(page);
     await page.goto("/cashflow");
-    const card = incomeSpending(page);
+    const card = cashflowCard(page);
     const list = card.getByRole("list", { name: "Where it went" });
     await expect(list.getByText("Food & Drinks", { exact: true })).toBeVisible();
 
