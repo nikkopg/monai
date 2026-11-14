@@ -72,6 +72,11 @@ async function mockPage(page: Page, rows: Row[]) {
   });
 }
 
+async function choose(page: Page, ticker: string, item: string) {
+  await page.getByRole("button", { name: `Closed position options: ${ticker}`, exact: true }).click();
+  await page.getByRole("menuitem", { name: item, exact: true }).click();
+}
+
 test.describe("closed positions list", () => {
   test("renders ticker, platform and signed realized value", async ({ page }) => {
     await mockPage(page, rowsFixture());
@@ -82,6 +87,11 @@ test.describe("closed positions list", () => {
     await expect(list.getByText("Plat A", { exact: true })).toHaveCount(2);
     await expect(list.getByText("+125,000", { exact: true })).toBeVisible();
     await expect(list.getByText("-40,000", { exact: true })).toBeVisible();
+    const th = list.getByRole("columnheader", { name: "Ticker", exact: true });
+    await expect(th).toHaveCSS("font-size", "12px");
+    await expect(th).toHaveCSS("font-weight", "400");
+    await expect(th).toHaveCSS("color", "rgb(111, 104, 87)");
+    await expect(list.getByRole("button", { name: "Closed position options: ZZ1", exact: true })).toBeVisible();
   });
 
   test("section titles share one h2 style and history has one surface", async ({ page }) => {
@@ -116,7 +126,7 @@ test.describe("closed positions list", () => {
       }
     });
     await page.goto("/investments");
-    await page.getByRole("button", { name: "Edit ZZ1" }).click();
+    await choose(page, "ZZ1", "Edit");
     await page.getByLabel("Realized P&L for ZZ1").fill("99000");
     await page.getByLabel("Close date for ZZ1").fill("2026-03-05");
     await page.getByRole("button", { name: "Save ZZ1" }).click();
@@ -143,7 +153,7 @@ test.describe("closed positions list", () => {
       await route.fallback();
     });
     await page.goto("/investments");
-    await page.getByRole("button", { name: "Edit ZZ1" }).click();
+    await choose(page, "ZZ1", "Edit");
     await page.getByLabel("Realized P&L for ZZ1").fill("1");
     await page.getByRole("button", { name: "Save ZZ1" }).click();
     await expect(page.getByText(/some backend message/)).toBeVisible();
@@ -161,7 +171,7 @@ test.describe("closed positions list", () => {
       await d.accept();
     });
     await page.goto("/investments");
-    await page.getByRole("button", { name: "Delete ZZ2" }).click();
+    await choose(page, "ZZ2", "Delete");
 
     await expect.poll(() => deleted).toBeTruthy();
     expect(message).toMatch(/realized P&L leaves the total/i);
@@ -178,7 +188,7 @@ test.describe("closed positions list", () => {
     });
     page.on("dialog", (d) => d.dismiss());
     await page.goto("/investments");
-    await page.getByRole("button", { name: "Delete ZZ2" }).click();
+    await choose(page, "ZZ2", "Delete");
     await expect(page.getByText("ZZ2", { exact: true })).toBeVisible();
     expect(deleted).toBe(false);
   });

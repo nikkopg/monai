@@ -9,7 +9,8 @@ import { useState } from "react";
 
 import { tokens, card, input, btn } from "../styles";
 import { extractDetail } from "../lib/api";
-import { sectionTitle } from "./sectionStyles";
+import RowMenu from "../components/RowMenu";
+import { sectionTitle, columnHeader } from "./sectionStyles";
 
 export type ClosedPosition = {
   id: number;
@@ -91,12 +92,12 @@ export default function ClosedPositions({
       <h2 style={{ ...sectionTitle, marginBottom: 12 }}>Closed positions</h2>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
         <thead>
-          <tr style={{ textAlign: "left", color: tokens.color.muted3 }}>
-            <th>Ticker</th>
-            <th>Platform</th>
-            <th style={{ textAlign: "right" }}>Realized P&amp;L (IDR)</th>
-            <th style={{ textAlign: "right" }}>Closed</th>
-            <th />
+          <tr style={{ textAlign: "left" }}>
+            <th style={columnHeader}>Ticker</th>
+            <th style={columnHeader}>Platform</th>
+            <th style={{ ...columnHeader, textAlign: "right" }}>Realized P&amp;L (IDR)</th>
+            <th style={{ ...columnHeader, textAlign: "right" }}>Closed</th>
+            <th style={columnHeader} />
           </tr>
         </thead>
         <tbody>
@@ -154,25 +155,25 @@ export default function ClosedPositions({
                 </td>
                 <td style={{ textAlign: "right" }}>{r.close_date}</td>
                 <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                  <button
-                    style={textBtn}
-                    aria-label={`Edit ${r.ticker}`}
-                    onClick={() => {
-                      setEditingId(r.id);
-                      setPnl(String(r.realized_pnl));
-                      setDate(r.close_date);
-                      setError(null);
-                    }}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    style={{ ...textBtn, color: tokens.color.terracottaText }}
-                    aria-label={`Delete ${r.ticker}`}
-                    onClick={() => remove(r)}
-                  >
-                    Delete
-                  </button>
+                  <RowMenu
+                    label={`Closed position options: ${r.ticker}`}
+                    items={[
+                      {
+                        label: "Edit",
+                        onSelect: () => {
+                          setEditingId(r.id);
+                          setPnl(String(r.realized_pnl));
+                          setDate(r.close_date);
+                          setError(null);
+                        },
+                      },
+                      {
+                        label: "Delete",
+                        destructive: true,
+                        onSelect: () => remove(r),
+                      },
+                    ]}
+                  />
                 </td>
               </tr>
             )

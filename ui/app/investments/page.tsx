@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 
 import { tokens, card, btn, btnDark, chartColors } from "../styles";
-import { sectionTitle } from "./sectionStyles";
+import { sectionTitle, columnHeader } from "./sectionStyles";
 import PlatformManager, { type Platform } from "./PlatformManager";
 import ClosedPositions, { type ClosedPosition } from "./ClosedPositions";
 import { extractDetail } from "../lib/api";
@@ -658,13 +658,7 @@ export default function InvestmentsPage() {
                   ) : (
                     <>
                       <div
-                        style={{
-                          display: "flex",
-                          fontSize: 12,
-                          color: tokens.color.muted3,
-                          padding: "8px 0",
-                          borderBottom: `1px solid ${tokens.color.borderInner}`,
-                        }}
+                        style={{ display: "flex", ...columnHeader }}
                       >
                         <span style={{ flex: 2 }}>Asset</span>
                         <span style={{ flex: 1, textAlign: "right" }}>Units</span>
