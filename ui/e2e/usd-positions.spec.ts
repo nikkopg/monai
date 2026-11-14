@@ -258,4 +258,27 @@ test.describe("USD positions on the Investments page", () => {
     await expect(idr.locator("> span").nth(I.value)).toHaveText("12,000");
     await expect(idr.locator("> span").nth(I.ret)).toHaveText("+20.0%");
   });
+
+  test("375px: holdings keep Value, Return and ⋯ on screen; Units × Price moves under the row", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await mockInvestmentsPage(page, [usdHolding, noRateHolding, idrHolding]);
+    await page.goto("/investments");
+    await expect(row(page, "ZZUSD")).toBeVisible();
+    await expect(lines(page, "ZZUSD", I.value).cell).toBeVisible();
+    await expect(page.getByText("Units", { exact: true })).toBeHidden();
+    await expect(row(page, "ZZIDR").getByText("10 × 1,200", { exact: true })).toBeVisible();
+
+    const total = page.getByText("1,512,000", { exact: true }).first();
+    expect(await total.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+
+    const overflowing = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("main *"))
+        .filter((el) => {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.right > window.innerWidth + 1;
+        })
+        .map((el) => `${el.tagName} ${(el.textContent ?? "").slice(0, 20)}`)
+    );
+    expect(overflowing).toEqual([]);
+  });
 });

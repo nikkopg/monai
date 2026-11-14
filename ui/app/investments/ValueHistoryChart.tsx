@@ -72,11 +72,13 @@ export default function ValueHistoryChart({
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center",
+          flexWrap: "wrap",
+          gap: 8,
           marginBottom: 16,
         }}
       >
         <h2 style={sectionTitle}>Portfolio history</h2>
-        <div style={{ display: "flex", gap: 4 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
           {RANGES.map((r) => (
             <button
               key={r}

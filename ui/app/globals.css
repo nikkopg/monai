@@ -48,6 +48,29 @@
   }
 }
 
+/* Investments on phones (261114-rcv F3). At 560px the sidebar becomes the icon
+   rail, leaving main about 272px wide at 375. Holdings rows drop the Units and
+   Price columns and the ticker badge; "Units x Price" shows as a line under the
+   row instead. */
+.inv-sub {
+  display: none;
+}
+@media (max-width: 560px) {
+  .inv-page {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+  .inv-wide {
+    display: none !important;
+  }
+  .inv-row {
+    flex-wrap: wrap;
+  }
+  .inv-sub {
+    display: block;
+  }
+}
+
 /* Phase 33 Inbox. Hex values are literal copies of ui/app/styles.ts tokens
    because CSS cannot import styles.ts: #2f6f4f green, #6f6857 muted3,
    #f0ece3 hairline. */

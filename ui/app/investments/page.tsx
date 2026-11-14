@@ -229,7 +229,7 @@ export default function InvestmentsPage() {
     : 0;
 
   return (
-    <div className="tab-in" style={{ padding: "40px 44px 60px" }}>
+    <div className="tab-in inv-page" style={{ padding: "40px 44px 60px" }}>
       <div style={{ marginBottom: 28 }}>
         <div
           style={{
@@ -296,7 +296,7 @@ export default function InvestmentsPage() {
                 <div
                   style={{
                     fontFamily: tokens.font.serif,
-                    fontSize: 52,
+                    fontSize: "clamp(28px, 8vw, 52px)",
                     lineHeight: 1,
                     letterSpacing: "-1px",
                     fontVariantNumeric: "tabular-nums",
@@ -375,6 +375,8 @@ export default function InvestmentsPage() {
                     display: "flex",
                     justifyContent: "space-between",
                     alignItems: "center",
+                    flexWrap: "wrap",
+                    gap: 8,
                     marginBottom: 14,
                   }}
                 >
@@ -661,8 +663,8 @@ export default function InvestmentsPage() {
                         style={{ display: "flex", ...columnHeader }}
                       >
                         <span style={{ flex: 2 }}>Asset</span>
-                        <span style={{ flex: 1, textAlign: "right" }}>Units</span>
-                        <span style={{ flex: 1.2, textAlign: "right" }}>Price</span>
+                        <span className="inv-wide" style={{ flex: 1, textAlign: "right" }}>Units</span>
+                        <span className="inv-wide" style={{ flex: 1.2, textAlign: "right" }}>Price</span>
                         <span style={{ flex: 1.2, textAlign: "right" }}>Value</span>
                         <span style={{ flex: 1.2, textAlign: "right" }}>Return</span>
                         <span style={{ flex: 1.4, textAlign: "right" }} />
@@ -673,6 +675,7 @@ export default function InvestmentsPage() {
                         return (
                           <div
                             key={h.id}
+                            className="inv-row"
                             style={{
                               display: "flex",
                               alignItems: "center",
@@ -691,6 +694,7 @@ export default function InvestmentsPage() {
                               }}
                             >
                               <span
+                                className="inv-wide"
                                 style={{
                                   width: 32,
                                   height: 32,
@@ -709,7 +713,13 @@ export default function InvestmentsPage() {
                               </span>
                               <span style={{ minWidth: 0 }}>
                                 <span
-                                  style={{ fontWeight: 500, display: "block" }}
+                                  style={{
+                                    fontWeight: 500,
+                                    display: "block",
+                                    overflow: "hidden",
+                                    textOverflow: "ellipsis",
+                                    whiteSpace: "nowrap",
+                                  }}
                                 >
                                   {h.ticker}
                                 </span>
@@ -726,6 +736,7 @@ export default function InvestmentsPage() {
                               </span>
                             </span>
                             <span
+                              className="inv-wide"
                               style={{
                                 flex: 1,
                                 textAlign: "right",
@@ -736,6 +747,7 @@ export default function InvestmentsPage() {
                               {fmtQty(h.quantity, h.asset_type)}
                             </span>
                             <span
+                              className="inv-wide"
                               style={{
                                 flex: 1.2,
                                 textAlign: "right",
@@ -838,6 +850,23 @@ export default function InvestmentsPage() {
                                   },
                                 ]}
                               />
+                            </span>
+                            <span
+                              className="inv-sub"
+                              style={{
+                                flexBasis: "100%",
+                                fontSize: 12,
+                                color: muted,
+                                fontVariantNumeric: "tabular-nums",
+                              }}
+                            >
+                              {`${fmtQty(h.quantity, h.asset_type)} × ${
+                                h.usd_current_price != null
+                                  ? fmtUsdPrice(h.usd_current_price, 8)
+                                  : h.current_price != null
+                                    ? fmtPlain(h.current_price)
+                                    : "—"
+                              }`}
                             </span>
                           </div>
                         );
