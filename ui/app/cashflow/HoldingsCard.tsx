@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { PieChart, Pie, Cell } from "recharts";
 
@@ -9,7 +11,9 @@ import RollingNumber from "../components/RollingNumber";
 import {
   fmtShort,
   liquidRows,
+  categoryRows,
   mainRows,
+  platformRows,
   type Ccy,
   type HoldingRow,
   type HoldingsData,
@@ -32,6 +36,11 @@ const CCY_OPTIONS = [
   { value: "USD" as const, label: "USD" },
 ];
 
+const BY_OPTIONS = [
+  { value: "platform" as const, label: "Platform" },
+  { value: "category" as const, label: "Category" },
+];
+
 const crumb: React.CSSProperties = {
   border: "none",
   background: "none",
@@ -45,6 +54,8 @@ const crumb: React.CSSProperties = {
 export default function HoldingsCard({ data }: { data: HoldingsData }) {
   const [view, setView] = useState<View>("main");
   const [ccy, setCcy] = useState<Ccy>("IDR");
+  const [by, setBy] = useState<"platform" | "category">("platform");
+  const router = useRouter();
   const [hovered, setHovered] = useState<string | null>(null);
 
   const go = (v: View) => {
@@ -67,15 +78,22 @@ export default function HoldingsCard({ data }: { data: HoldingsData }) {
     centreCcy = ccy;
     if (rows.length === 0) empty = ["No liquid accounts yet.", "Add one in Settings › Accounts."];
   } else {
-    rows = [];
+    rows = by === "platform" ? platformRows(data.investment_groups) : categoryRows(data.investment_groups);
     centreLabel = "Investment";
     centre = data.investment_total;
+    if (data.investment_groups.length === 0) {
+      empty = [
+        "No investment platforms yet.",
+        "Add a platform and a holding on the Investments page to see it here.",
+      ];
+    }
   }
 
   const centreText = fmtShort(centre, centreCcy);
   const slices = rows.filter((r) => r.value != null && r.value > 0);
   const onSlice = (r: HoldingRow) => {
     if (r.drill) go(r.drill);
+    else if (r.href) router.push(r.href);
   };
 
   // Gated like NetWorthTrendChart: the automated pane is "hidden" and never fires
@@ -120,6 +138,12 @@ export default function HoldingsCard({ data }: { data: HoldingsData }) {
         </div>
       )}
 
+      {view === "investment" && (
+        <div style={{ display: "flex", justifyContent: "center", margin: "-4px 0 6px" }}>
+          <Pills small label="Investment grouping" options={BY_OPTIONS} value={by} onChange={setBy} />
+        </div>
+      )}
+
       <div
         role="img"
         aria-label={`${centreLabel} ${centreText}`}
@@ -127,7 +151,7 @@ export default function HoldingsCard({ data }: { data: HoldingsData }) {
       >
         <PieChart width={SIZE} height={SIZE} accessibilityLayer={false}>
           <Pie
-            key={`${view}:${ccy}`}
+            key={`${view}:${ccy}:${by}`}
             data={slices.length ? slices : [{ key: "none", value: 1, color: tokens.color.border2 }]}
             dataKey="value"
             nameKey="name"
@@ -211,7 +235,7 @@ function Row({
   setHovered: (k: string | null) => void;
   onDrill: (r: HoldingRow) => void;
 }) {
-  const interactive = !!row.drill;
+  const interactive = !!(row.drill || row.href);
   const style: React.CSSProperties = {
     width: "100%",
     display: "flex",
@@ -284,6 +308,14 @@ function Row({
     </>
   );
   const hover = { onMouseEnter: () => setHovered(row.key), onMouseLeave: () => setHovered(null) };
+  // A platform row navigates, so it is a real link; drill rows are buttons.
+  if (row.href) {
+    return (
+      <Link href={row.href} style={{ ...style, textDecoration: "none" }} {...hover}>
+        {body}
+      </Link>
+    );
+  }
   return interactive ? (
     <button type="button" onClick={() => onDrill(row)} style={style} {...hover}>
       {body}

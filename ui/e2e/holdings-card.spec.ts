@@ -5,9 +5,12 @@ import {
   GREENS,
   NO_RATE_IDR,
   NO_RATE_USD,
+  assetLabel,
+  categoryRows,
   fmtShort,
   liquidRows,
   mainRows,
+  platformRows,
   type AccountBalance,
   type InvestmentGroup,
 } from "../app/cashflow/holdings";
@@ -120,6 +123,51 @@ test.describe("holdings logic", () => {
     });
     expect(one[0].sub).toBe("1 account");
     expect(one[1]).toMatchObject({ sub: "1 platform", share: "—" });
+  });
+
+  test("assetLabel", () => {
+    expect(["crypto", "idx_stock", "mutual_fund", "gold", "cash"].map(assetLabel)).toEqual([
+      "Crypto", "Stocks", "Mutual funds", "Gold", "Cash",
+    ]);
+    for (const t of ["other", null, undefined, "zz_unknown"]) expect(assetLabel(t)).toBe("Other");
+  });
+
+  const holding = (asset_type: string | null, current_value: number | string | null) => ({ asset_type, current_value });
+  const GROUPS_LOGIC: InvestmentGroup[] = [
+    {
+      platform_id: 7, platform_name: "ZZ Broker", kind: "broker",
+      subtotal: "3000000", // a JSON string, as Decimals can arrive
+      holdings: [holding("idx_stock", 2_000_000), holding("mutual_fund", 1_000_000)], // pii-ok synthetic
+    },
+    {
+      platform_id: 8, platform_name: "ZZ Coins", kind: "crypto",
+      subtotal: 1_500_000, // pii-ok synthetic
+      holdings: [holding("crypto", 1_000_000), holding("idx_stock", 500_000), holding("crypto", null)], // pii-ok synthetic
+    },
+  ];
+
+  test("platformRows", () => {
+    const [broker, coins] = platformRows(GROUPS_LOGIC);
+    expect(broker).toMatchObject({
+      name: "ZZ Broker", amount: "3,000,000", sub: "2 categories", href: "/investments/7", share: "67%", color: GOLDS[0],
+    });
+    // The null-valued holding is not counted as a category.
+    expect(coins).toMatchObject({
+      name: "ZZ Coins", amount: "1,500,000", sub: "2 categories", href: "/investments/8", share: "33%", color: GOLDS[1],
+    });
+    const orphan = platformRows([{ ...GROUPS_LOGIC[0], platform_id: null as unknown as number }]);
+    expect(orphan[0].href).toBeUndefined();
+  });
+
+  test("categoryRows sums asset types across platforms and skips null values", () => {
+    const rows = categoryRows(GROUPS_LOGIC);
+    expect(rows.map((r) => [r.name, r.amount, r.sub])).toEqual([
+      ["Stocks", "2,500,000", "ZZ Broker, ZZ Coins"],
+      ["Mutual funds", "1,000,000", "ZZ Broker"], // ties keep first-seen order
+      ["Crypto", "1,000,000", "ZZ Coins"],
+    ]);
+    expect(rows.every((r) => r.href === undefined && r.drill === undefined)).toBe(true);
+    expect(categoryRows([{ ...GROUPS_LOGIC[0], holdings: [holding(null, 100)] }])[0].name).toBe("Other");
   });
 });
 
@@ -254,4 +302,72 @@ test.describe("Holdings card", () => {
     );
     expect(opacities).toEqual(["1", "0.35"]);
   });
+
+  test("Investment drill: Platform rows, Category rows, the centre never changes", async ({ page }) => {
+    const card = holdings(page);
+    await card.getByRole("button", { name: /^Investment/ }).click();
+    await expect(card.getByRole("button", { name: "‹ Holdings" })).toBeVisible();
+    await expect(card.getByRole("img", { name: "Investment 4.5M" })).toBeVisible();
+    await expect(card.getByRole("button", { name: "Platform", exact: true })).toHaveAttribute("aria-pressed", "true");
+    const broker = card.getByRole("link", { name: /ZZ Broker/ });
+    await expect(broker).toContainText("3,000,000");
+    await expect(broker).toContainText("2 categories");
+    await expect(broker).toContainText("67%");
+    await expect(card.getByRole("link", { name: /ZZ Coins/ })).toContainText("33%");
+
+    await card.getByRole("button", { name: "Category", exact: true }).click();
+    await expect(card.getByRole("img", { name: "Investment 4.5M" })).toBeVisible();
+    await expect(card.getByRole("link")).toHaveCount(0);
+    for (const t of ["Stocks", "2,500,000", "ZZ Broker, ZZ Coins", "Crypto", "Mutual funds"]) {
+      await expect(card.getByText(t, { exact: true }).first()).toBeVisible();
+    }
+  });
+
+  test("a platform row opens its page", async ({ page }) => {
+    const card = holdings(page);
+    await card.getByRole("button", { name: /^Investment/ }).click();
+    await card.getByRole("link", { name: /ZZ Broker/ }).click();
+    await expect(page).toHaveURL(/\/investments\/7$/);
+  });
+
+  test("the Investment slice drills in, then a platform slice opens its page", async ({ page }) => {
+    const card = holdings(page);
+    await clickRing(page, mid([5_625_000, 4_500_000], 1)); // pii-ok synthetic
+    await expect(card.getByRole("img", { name: "Investment 4.5M" })).toBeVisible();
+    await clickRing(page, mid([3_000_000, 1_500_000], 1)); // pii-ok synthetic
+    await expect(page).toHaveURL(/\/investments\/8$/);
+  });
+
+  test("Liquid keeps USD and Investment keeps Category across back and forth", async ({ page }) => {
+    const card = holdings(page);
+    await card.getByRole("button", { name: /^Liquid/ }).click();
+    await card.getByRole("button", { name: "USD", exact: true }).click();
+    await card.getByRole("button", { name: "‹ Holdings" }).click();
+    await card.getByRole("button", { name: /^Investment/ }).click();
+    await card.getByRole("button", { name: "Category", exact: true }).click();
+    await card.getByRole("button", { name: "‹ Holdings" }).click();
+
+    await card.getByRole("button", { name: /^Liquid/ }).click();
+    await expect(card.getByRole("button", { name: "USD", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await card.getByRole("button", { name: "‹ Holdings" }).click();
+    await card.getByRole("button", { name: /^Investment/ }).click();
+    await expect(card.getByRole("button", { name: "Category", exact: true })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("no platforms: the empty message, and no list", async ({ page }) => {
+    await page.unroute("**/api/net-worth");
+    await page.route("**/api/net-worth", (route) =>
+      route.fulfill({ json: { ...NET_WORTH, investment_total: 0, investment_groups: [] } })
+    );
+    await page.reload();
+    await holdings(page).getByRole("button", { name: /^Investment/ }).click();
+    await expect(holdings(page).getByText("No investment platforms yet.")).toBeVisible();
+  });
+});
+
+// Without reduced motion (and in a visible tab) the donut animates; it must still draw.
+test("the donut draws its sectors with animation on", async ({ page }) => {
+  await mockAll(page);
+  await page.goto("/cashflow");
+  await expect(holdings(page).locator(".recharts-pie-sector")).toHaveCount(2);
 });

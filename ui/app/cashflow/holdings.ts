@@ -216,3 +216,79 @@ export function liquidRows(
     centre: ccy === "IDR" ? liquidTotal : rate == null ? null : usdCentre,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Investment
+// ---------------------------------------------------------------------------
+
+// Category = the EXISTING holdings.asset_type field through a fixed label map
+// (HoldingModal's crypto / idx_stock / mutual_fund / other, plus the gold and
+// legacy cash values seen in code). Anything else, or null, is "Other". No
+// per-ticker guessing and no backend change.
+const ASSET_LABELS: Record<string, string> = {
+  crypto: "Crypto",
+  idx_stock: "Stocks",
+  mutual_fund: "Mutual funds",
+  gold: "Gold",
+  cash: "Cash",
+};
+
+export function assetLabel(t: string | null | undefined): string {
+  return (t != null && ASSET_LABELS[t]) || "Other";
+}
+
+/** One row per platform, from the server's subtotal; rows open /investments/{id}. */
+export function platformRows(groups: InvestmentGroup[]): HoldingRow[] {
+  return finish(
+    groups.map((g): Seed => {
+      const value = toNum(g.subtotal);
+      const cats = new Set(
+        g.holdings
+          .filter((h) => {
+            const v = toNum(h.current_value);
+            return v != null && v !== 0;
+          })
+          .map((h) => assetLabel(h.asset_type))
+      );
+      return {
+        key: `p${g.platform_id ?? g.platform_name}`,
+        name: g.platform_name,
+        sub: plural(cats.size, "category", "categories"),
+        value,
+        amount: fmtAmount(value, "IDR"),
+        negative: value != null && value < 0,
+        href: Number.isFinite(g.platform_id) ? `/investments/${g.platform_id}` : undefined,
+      };
+    }),
+    GOLDS,
+    true
+  );
+}
+
+/** Holdings summed by asset type across platforms; a null value is skipped, never counted as 0. */
+export function categoryRows(groups: InvestmentGroup[]): HoldingRow[] {
+  const sums = new Map<string, { value: number; platforms: string[] }>();
+  for (const g of groups) {
+    for (const h of g.holdings) {
+      const v = toNum(h.current_value);
+      if (v == null) continue;
+      const label = assetLabel(h.asset_type);
+      const e = sums.get(label) ?? { value: 0, platforms: [] };
+      e.value += v;
+      if (!e.platforms.includes(g.platform_name)) e.platforms.push(g.platform_name);
+      sums.set(label, e);
+    }
+  }
+  return finish(
+    Array.from(sums).map(([name, e]): Seed => ({
+      key: name,
+      name,
+      sub: e.platforms.join(", "),
+      value: e.value,
+      amount: fmtAmount(e.value, "IDR"),
+      negative: e.value < 0,
+    })),
+    GOLDS,
+    true
+  );
+}
