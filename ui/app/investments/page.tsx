@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 
-import { tokens, card, btn, btnDark } from "../styles";
+import { tokens, card, btn, btnDark, chartColors } from "../styles";
 import PlatformManager, { type Platform } from "./PlatformManager";
 import ClosedPositions, { type ClosedPosition } from "./ClosedPositions";
 import { extractDetail } from "../lib/api";
@@ -449,7 +449,7 @@ export default function InvestmentsPage() {
                               width: 9,
                               height: 9,
                               borderRadius: 3,
-                              background: BADGE_COLORS[i % BADGE_COLORS.length],
+                              background: chartColors[i % chartColors.length],
                               flexShrink: 0,
                             }}
                           />
