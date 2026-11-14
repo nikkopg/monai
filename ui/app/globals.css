@@ -51,7 +51,12 @@
 /* Investments on phones (261114-rcv F3). At 560px the sidebar becomes the icon
    rail, leaving main about 272px wide at 375. Holdings rows drop the Units and
    Price columns and the ticker badge; "Units x Price" shows as a line under the
-   row instead. */
+   row instead. Each row stacks into four lines: ticker + the menu, staleness,
+   Value left / Return right, units x price. Children are addressed by DOM
+   position: 1 Asset, 2 Units, 3 Price, 4 Value, 5 Return, 6 menu cell,
+   7 sub-line (the order the usd-positions spec's `> span` indexes pin).
+   Calibration: the 18px menu-cell height is the measured ticker line height
+   (14px Hanken Grotesk); re-measure it if the ticker font changes. */
 .inv-sub {
   display: none;
 }
@@ -65,9 +70,34 @@
   }
   .inv-row {
     flex-wrap: wrap;
+    column-gap: 16px;
+    row-gap: 6px;
+  }
+  /* The large basis leaves room for only the menu on line 1, so Value wraps.
+     Longhands: the build drops !important from a flex shorthand holding calc(). */
+  .inv-row > :nth-child(1) {
+    flex-grow: 1 !important;
+    flex-basis: calc(100% - 64px) !important;
+  }
+  .inv-row > :nth-child(4) {
+    order: 1;
+    flex: 1 1 0 !important;
+    text-align: left !important;
+  }
+  .inv-row > :nth-child(5) {
+    order: 1;
+    flex: 1 1 0 !important;
+  }
+  /* Ticker-line tall, so the 36/44px button centres on the ticker. */
+  .inv-row > :nth-child(6) {
+    flex: 0 0 auto !important;
+    align-self: flex-start;
+    height: 18px;
+    align-items: center;
   }
   .inv-sub {
     display: block;
+    order: 2;
   }
 }
 

@@ -660,6 +660,7 @@ export default function InvestmentsPage() {
                   ) : (
                     <>
                       <div
+                        className="inv-wide"
                         style={{ display: "flex", ...columnHeader }}
                       >
                         <span style={{ flex: 2 }}>Asset</span>

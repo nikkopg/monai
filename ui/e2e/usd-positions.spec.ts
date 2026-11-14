@@ -151,6 +151,23 @@ function lines(page: Page, ticker: string, column: number) {
   return { top: cell.locator("> span").nth(0), under: cell.locator("> span").nth(1), cell };
 }
 
+type Box = { x: number; y: number; width: number; height: number };
+// Strict axis-aligned rectangle intersection (touching edges do not overlap).
+function overlaps(a: Box, b: Box) {
+  return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+}
+
+// The four boxes a holdings row is judged by: Value, Return, staleness line, ticker.
+async function rowBoxes(page: Page, t: string) {
+  const [value, ret, stale, ticker] = await Promise.all([
+    lines(page, t, I.value).cell.boundingBox(),
+    lines(page, t, I.ret).cell.boundingBox(),
+    row(page, t).getByText(/^Price as of/).boundingBox(),
+    row(page, t).getByText(t, { exact: true }).boundingBox(),
+  ]);
+  return { value: value!, ret: ret!, stale: stale!, ticker: ticker! };
+}
+
 // Platform page columns: Asset, Units, Avg cost, Price, Value, Realized, Unrealized.
 const P = { avg: 2, price: 3, value: 4, realized: 5, unrealized: 6 };
 // Investments page columns: Asset, Units, Price, Value, Return.
@@ -281,6 +298,32 @@ test.describe("USD positions on the Investments page", () => {
         .map((el) => `${el.tagName} ${(el.textContent ?? "").slice(0, 20)}`)
     );
     expect(overflowing).toEqual([]);
+
+    // The column header row is gone; each row stacks instead.
+    await expect(page.getByText("Return", { exact: true })).toBeHidden();
+    for (const t of ["ZZUSD", "ZZIDR"]) {
+      const { value, ret, stale, ticker } = await rowBoxes(page, t);
+      expect(ret.x - (value.x + value.width)).toBeGreaterThanOrEqual(8);
+      expect(overlaps(value, stale)).toBe(false);
+      expect(overlaps(value, ret)).toBe(false);
+      for (const b of [value, ret]) {
+        expect(b.x).toBeGreaterThanOrEqual(0);
+        expect(b.x + b.width).toBeLessThanOrEqual(375);
+      }
+      expect(ticker.width).toBeGreaterThanOrEqual(120);
+    }
+  });
+
+  test("1440px: each holdings row stays on one line", async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await mockInvestmentsPage(page, [usdHolding, idrHolding]);
+    await page.goto("/investments");
+    await expect(page.getByText("Return", { exact: true })).toBeVisible();
+    for (const t of ["ZZUSD", "ZZIDR"]) {
+      const { value, ret, ticker } = await rowBoxes(page, t);
+      expect(Math.abs(value.y - ret.y)).toBeLessThanOrEqual(2);
+      expect(value.y).toBeLessThan(ticker.y + ticker.height);
+    }
   });
 
   test("hero shows unrealized and realized P&L once; legend labels stay on one line", async ({ page }) => {
