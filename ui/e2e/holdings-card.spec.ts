@@ -28,7 +28,9 @@ const acct = (o: Partial<AccountBalance> & Pick<AccountBalance, "id" | "name">):
   ...o,
 });
 
-const ZZ_BANK = acct({ id: 1, name: "ZZ Bank", current_balance: 4_000_000, currency: "IDR" }); // pii-ok synthetic
+// Like the real API (backend/tools.py), an IDR row carries fx_rate 1.0; the USD
+// rate must never be taken from it.
+const ZZ_BANK = acct({ id: 1, name: "ZZ Bank", current_balance: 4_000_000, currency: "IDR", fx_rate: 1 }); // pii-ok synthetic
 const ZZ_WALLET = acct({
   id: 2,
   name: "ZZ Wallet",

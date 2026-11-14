@@ -164,8 +164,10 @@ export function liquidRows(
   ccy: Ccy,
   liquidTotal: number
 ): { rows: HoldingRow[]; centre: number | null } {
-  // The only USD rate the page has: each USD row's own fx_rate.
-  const rateAcct = accounts.find((a) => Number.isFinite(a.fx_rate));
+  // The only USD rate the page has: a USD row's own fx_rate. IDR rows carry
+  // fx_rate 1.0 from the API, so taking any row's rate divided by 1 and showed
+  // rupiah labelled as USD.
+  const rateAcct = accounts.find((a) => a.currency === "USD" && Number.isFinite(a.fx_rate));
   const rate = rateAcct?.fx_rate ?? null;
   let usdCentre = 0;
 
