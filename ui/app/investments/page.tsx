@@ -8,6 +8,7 @@ import PlatformManager, { type Platform } from "./PlatformManager";
 import ClosedPositions, { type ClosedPosition } from "./ClosedPositions";
 import { extractDetail } from "../lib/api";
 import { fmtAmount, fmtUsdPrice, rateHover } from "../lib/money";
+import { assetLabel } from "../cashflow/holdings";
 import HoldingModal from "./HoldingModal";
 import HoldingOverrideModal from "./HoldingOverrideModal";
 import PriceOverrideDialog from "./PriceOverrideDialog";
@@ -210,7 +211,7 @@ export default function InvestmentsPage() {
   const allocationData: AllocationSlice[] =
     allocationGroupBy === "asset_type"
       ? (summary?.asset_type_groups ?? []).map((g) => ({
-          label: g.asset_type ?? "Other",
+          label: assetLabel(g.asset_type),
           value: Number(g.total_value),
         }))
       : activeGroups

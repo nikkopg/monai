@@ -6,6 +6,7 @@ import { card, input, btn, label, tokens } from "../styles";
 import { extractDetail, fmtPlain } from "../lib/api";
 import { fmtAmount } from "../lib/money";
 import type { PlatformOption } from "./page";
+import { assetLabel } from "../cashflow/holdings";
 
 // ---------------------------------------------------------------------------
 // HoldingModal — buy/sell/dividend event entry (D-01, primary INV-01 path).
@@ -408,7 +409,7 @@ export default function HoldingModal({
               >
                 {ASSET_TYPES.map((t) => (
                   <option key={t} value={t}>
-                    {t}
+                    {assetLabel(t)}
                   </option>
                 ))}
               </select>
