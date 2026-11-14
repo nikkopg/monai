@@ -310,6 +310,108 @@ test.describe("Cashflow card", () => {
     await expect(card.getByText("9,500,000", { exact: true })).toBeVisible();
   });
 
+  // ---- the selected period -------------------------------------------------
+  const bars = (page: Page) => cashflowCard(page).locator('path.recharts-rectangle[name="Income"], path.recharts-rectangle[name="Expenses"]');
+  const labelBtn = (page: Page, name: string) =>
+    cashflowCard(page).getByRole("group", { name: /Cash flow by/ }).getByRole("button", { name, exact: true });
+  const opacities = (page: Page) => bars(page).evaluateAll((els) => els.map((e) => e.getAttribute("fill-opacity")));
+  const areaX = (page: Page) =>
+    cashflowCard(page).locator(".recharts-reference-area-rect").evaluate((e) => Number(e.getAttribute("x")));
+
+  test("the selected period is highlighted and ‹ › move the highlight", async ({ page }) => {
+    await mockSummary(page, summaryFixture(), frameBodies);
+    await page.goto("/cashflow");
+    const card = cashflowCard(page);
+    await expect(card.getByRole("group", { name: "Cash flow by month" })).toBeVisible();
+
+    await expect(labelBtn(page, "Nov 2026")).toHaveAttribute("aria-pressed", "true");
+    await expect(labelBtn(page, "Nov 2026")).toHaveCSS("font-weight", "700");
+    for (const m of ["Jun", "Jul", "Aug", "Sep", "Oct"]) {
+      await expect(labelBtn(page, `${m} 2026`)).toHaveAttribute("aria-pressed", "false");
+      await expect(labelBtn(page, `${m} 2026`)).toHaveCSS("font-weight", "400");
+    }
+    const ops = await opacities(page);
+    expect(ops.filter((o) => o === "1")).toHaveLength(2);
+    expect(ops.filter((o) => o === "0.35")).toHaveLength(10);
+    await expect(card.locator(".recharts-reference-area-rect")).toHaveCount(1);
+    await expect(card.locator(".recharts-reference-area-rect")).toHaveAttribute("fill", "#f0ece3");
+
+    const before = await areaX(page);
+    await card.getByRole("button", { name: "Previous month" }).click();
+    await expect(labelBtn(page, "Oct 2026")).toHaveAttribute("aria-pressed", "true");
+    await expect(labelBtn(page, "Nov 2026")).toHaveAttribute("aria-pressed", "false");
+    await expect(card.locator('path.recharts-rectangle[name="Income"][offset="-1"]')).toHaveAttribute("fill-opacity", "1");
+    expect(await areaX(page)).toBeLessThan(before);
+
+    await card.getByRole("button", { name: "Next month" }).click();
+    await expect(labelBtn(page, "Nov 2026")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("clicking a bar selects its period", async ({ page }) => {
+    await mockSummary(page, summaryFixture(), frameBodies);
+    await page.goto("/cashflow");
+    const card = cashflowCard(page);
+    await expect(card.getByText("Nov 2026", { exact: true })).toBeVisible();
+
+    await card.locator('path.recharts-rectangle[name="Income"][offset="-2"]').click({ position: { x: 9, y: 4 } }); // clear of the net dot
+    await expect(card.getByText("1–30 Sep · vs 1–31 Aug", { exact: true })).toBeVisible();
+    await expect(card.getByText("10,000,000", { exact: true })).toBeVisible(); // pii-ok synthetic
+    await expect(labelBtn(page, "Sep 2026")).toHaveAttribute("aria-pressed", "true");
+    await expect(card.getByRole("button", { name: "Next month" })).toBeEnabled();
+  });
+
+  test("Enter and Space on a label button select its period", async ({ page }) => {
+    await mockSummary(page, summaryFixture(), frameBodies);
+    await page.goto("/cashflow");
+    const card = cashflowCard(page);
+    await expect(card.getByText("Nov 2026", { exact: true })).toBeVisible();
+
+    await labelBtn(page, "Aug 2026").focus();
+    await page.keyboard.press("Enter");
+    await expect(card.getByText("Aug 2026", { exact: true })).toBeVisible();
+    await expect(labelBtn(page, "Aug 2026")).toHaveAttribute("aria-pressed", "true");
+
+    await labelBtn(page, "Jul 2026").focus();
+    await page.keyboard.press("Space");
+    await expect(card.getByText("Jul 2026", { exact: true })).toBeVisible();
+    await expect(labelBtn(page, "Jul 2026")).toHaveAttribute("aria-pressed", "true");
+  });
+
+  test("hovering a bar shows the exact figures", async ({ page }) => {
+    await mockSummary(page, summaryFixture(), frameBodies);
+    await page.goto("/cashflow");
+    const card = cashflowCard(page);
+    await expect(card.getByRole("group", { name: "Cash flow by month" })).toBeVisible();
+    await card.locator('path.recharts-rectangle[name="Income"][offset="0"]').hover({ position: { x: 9, y: 4 } }); // clear of the net dot
+    await expect(page.getByText("Income 9,500,000", { exact: true })).toBeVisible();
+    await expect(page.getByText("Expenses 4,210,000", { exact: true })).toBeVisible();
+    await expect(page.getByText("Net +5,290,000", { exact: true })).toBeVisible();
+  });
+
+  test("a year with no history is not drawn", async ({ page }) => {
+    const empty = summaryFixture({ totals: totals(0, 0) });
+    await mockSummary(page, summaryFixture(), {
+      "2021-01-01..2021-12-31": empty,
+      "2022-01-01..2022-12-31": empty,
+      "2023-01-01..2023-12-31": empty,
+      "2024-01-01..2024-12-31": empty,
+    });
+    await page.goto("/cashflow");
+    const card = cashflowCard(page);
+    await card.getByRole("button", { name: "Year", exact: true }).click();
+    const group = card.getByRole("group", { name: "Cash flow by year" });
+    await expect(group.getByRole("button")).toHaveText(["2025", "2026"]);
+  });
+
+  test("net worth spans the whole top row on a wide window", async ({ page }) => {
+    await mockSummary(page, summaryFixture(), frameBodies);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/cashflow");
+    const nw = await page.getByRole("region", { name: "Net worth trend" }).boundingBox();
+    const row = await page.locator(".cf-lower").boundingBox();
+    expect(nw!.width).toBeGreaterThanOrEqual(row!.width * 0.9);
+  });
+
   test("the period pills are the shared Pills markup", async ({ page }) => {
     const { ranges } = await mockSummary(page, summaryFixture(), rangeBodies);
     await page.goto("/cashflow");

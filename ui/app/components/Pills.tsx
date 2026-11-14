@@ -3,7 +3,7 @@
 import { tokens } from "../styles";
 
 // Pill segmented control shared by the Cashflow net worth card (1Y/3Y/All,
-// Total/Split) and the Income & spending card (Week/Month/Year). `dark` is for
+// Total/Split) and the Cashflow card (Week/Month/Year). `dark` is for
 // the ink hero card; `small` is the light palette at the compact dark sizes;
 // `label` names the group for assistive tech.
 export default function Pills<T extends string>({

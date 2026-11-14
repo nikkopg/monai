@@ -1,9 +1,11 @@
 import {
   ComposedChart,
   Bar,
+  Cell,
   Line,
   XAxis,
   YAxis,
+  ReferenceArea,
   ReferenceLine,
   Tooltip,
   ResponsiveContainer,
@@ -76,43 +78,84 @@ export default function TrendChart({
   onSelect: (offset: number) => void;
   label: string;
 }) {
-  const data: FlowPoint[] = points.map((d) => ({
+  // Years before any activity are not drawn; the selected bar and everything
+  // after it always are.
+  const first = points.findIndex((d) => d.offset >= selected || d.income !== 0 || d.expense !== 0);
+  const shown = first < 0 ? points : points.slice(first);
+  const data: FlowPoint[] = shown.map((d) => ({
     ...d,
     out: -d.expense,
     net: d.income - d.expense,
   }));
+  const fade = (d: ChartPoint) => (d.offset === selected ? 1 : 0.35);
+  // A bar knows its own point, so a click with no tooltip yet (touch, keyboard-less
+  // automation) still selects it.
+  const pick = (d: { payload?: unknown }) => {
+    const p = d.payload as FlowPoint | undefined;
+    if (p) onSelect(p.offset);
+  };
+  const selectedPoint = data.find((d) => d.offset === selected);
 
   return (
     <div>
-      <div style={{ width: "100%", height: 85 }}>
+      <div style={{ width: "100%", height: 85, cursor: "pointer" }}>
         <ResponsiveContainer>
           <ComposedChart
             data={data}
             stackOffset="sign"
             barCategoryGap="30%"
             margin={{ top: 4, right: 0, left: 0, bottom: 0 }}
+            onClick={(e) => {
+              // null before the tooltip has activated (a click with no prior move)
+              const i = e?.activeTooltipIndex;
+              const p = i == null ? undefined : data[Number(i)];
+              if (p) onSelect(p.offset);
+            }}
           >
             <XAxis dataKey="title" hide />
             <YAxis hide domain={["dataMin", "dataMax"]} />
             <Tooltip cursor={{ fill: tokens.color.borderInner }} content={<CashFlowTooltip />} />
+            {selectedPoint && (
+              <ReferenceArea x1={selectedPoint.title} x2={selectedPoint.title} fill={tokens.color.borderInner} fillOpacity={1} />
+            )}
             <ReferenceLine y={0} stroke={tokens.color.border2} />
             {/* Both bars use [5, 5, 0, 0]: recharts draws a negative bar flipped,
                 so those corners land on the bottom end of the expense bar. */}
-            <Bar dataKey="income" name="Income" stackId="flow" fill={tokens.color.green} radius={[5, 5, 0, 0]} maxBarSize={18} />
-            <Bar dataKey="out" name="Expenses" stackId="flow" fill={tokens.color.terracotta} radius={[5, 5, 0, 0]} maxBarSize={18} />
+            <Bar dataKey="income" name="Income" stackId="flow" fill={tokens.color.green} radius={[5, 5, 0, 0]} maxBarSize={18} isAnimationActive={false} onClick={pick}>
+              {data.map((d) => (
+                <Cell key={d.offset} fillOpacity={fade(d)} />
+              ))}
+            </Bar>
+            <Bar dataKey="out" name="Expenses" stackId="flow" fill={tokens.color.terracotta} radius={[5, 5, 0, 0]} maxBarSize={18} isAnimationActive={false} onClick={pick}>
+              {data.map((d) => (
+                <Cell key={d.offset} fillOpacity={fade(d)} />
+              ))}
+            </Bar>
             <Line
               dataKey="net"
               name="Net"
               stroke="none"
-              dot={{ r: 4, fill: tokens.color.ink, stroke: tokens.color.card, strokeWidth: 2 }}
+              dot={({ cx, cy, payload }: { cx?: number; cy?: number; payload?: FlowPoint }) => (
+                <circle
+                  key={payload?.offset}
+                  cx={cx}
+                  cy={cy}
+                  r={4}
+                  fill={tokens.color.ink}
+                  stroke={tokens.color.card}
+                  strokeWidth={2}
+                  opacity={payload ? fade(payload) : 1}
+                />
+              )}
               activeDot={{ r: 5 }}
+              isAnimationActive={false}
               legendType="none"
             />
           </ComposedChart>
         </ResponsiveContainer>
       </div>
       <div role="group" aria-label={label} style={{ display: "flex" }}>
-        {points.map((p) => (
+        {shown.map((p) => (
           <button
             key={p.offset}
             type="button"
@@ -131,7 +174,8 @@ export default function TrendChart({
               overflow: "hidden",
               textOverflow: "ellipsis",
               cursor: "pointer",
-              color: tokens.color.muted3,
+              color: p.offset === selected ? tokens.color.ink : tokens.color.muted3,
+              fontWeight: p.offset === selected ? 700 : 400,
             }}
           >
             {p.short}
