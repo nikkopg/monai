@@ -552,3 +552,23 @@ test.describe("P5 chat (261115-oax)", () => {
     }
   });
 });
+
+// ===========================================================================
+// P6 — Investments cards
+// ===========================================================================
+
+test.describe("P6 investments (261115-oax)", () => {
+  test("P6: Investments cards are tight and nothing crosses at 375", async ({ page }) => {
+    await mockInvestments(page);
+    await page.goto("/investments");
+    const holdings = page.locator('section[aria-labelledby="holdings-title"]');
+    const alloc = page.locator('section[aria-labelledby="allocation-title"]');
+    await expect(holdings.getByText("ZZCOIN").first()).toBeAttached();
+    for (const card of [holdings, alloc]) {
+      expect(await card.evaluate((el) => getComputedStyle(el).paddingLeft)).toBe("16px");
+      expect(await crossings(card)).toEqual([]);
+    }
+    const total = alloc.getByText("Total", { exact: true });
+    expect(await total.evaluate((el) => getComputedStyle(el).fontSize)).toBe("12px");
+  });
+});

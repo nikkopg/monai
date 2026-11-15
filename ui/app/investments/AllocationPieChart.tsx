@@ -62,7 +62,7 @@ export default function AllocationPieChart({
           fontVariantNumeric: "tabular-nums",
         }}
       >
-        <span style={{ fontSize: 11, color: muted }}>Total</span>
+        <span style={{ fontSize: 12, color: muted }}>Total</span>
         <span style={{ fontSize: 17, fontWeight: 600 }}>
           <RollingNumber value={total} format={(n) => fmtShort(n, "IDR")} />
         </span>

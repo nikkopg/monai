@@ -598,6 +598,7 @@ export default function InvestmentsPage() {
               </section>
 
               <section
+                className="card-tight"
                 aria-labelledby="allocation-title"
                 style={{
                   ...card,
@@ -733,7 +734,7 @@ export default function InvestmentsPage() {
 
             {/* One Holdings card: Open / Closed views, grouped by the shared grouping */}
             <section
-              className="inv-holdings"
+              className="inv-holdings card-tight"
               aria-labelledby="holdings-title"
               style={{ ...card, marginBottom: 18 }}
             >
