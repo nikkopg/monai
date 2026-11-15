@@ -103,8 +103,8 @@ test.describe("closed positions list", () => {
   test("section titles share one h2 style", async ({ page }) => {
     await mockPage(page, rowsFixture());
     await page.goto("/investments");
-    await expect(page.getByRole("heading", { level: 2 })).toHaveCount(3);
-    for (const name of ["Allocation", "Holdings", "Platforms"]) {
+    await expect(page.getByRole("heading", { level: 2 })).toHaveCount(2);
+    for (const name of ["Allocation", "Holdings"]) {
       const h = page.getByRole("heading", { level: 2, name, exact: true });
       await expect(h).toBeVisible();
       await expect(h).toHaveCSS("font-size", "14px");

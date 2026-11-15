@@ -8,6 +8,7 @@ import SkillsCard from "./SkillsCard";
 import ExternalMcpCard from "./ExternalMcpCard";
 import AccountManager, { type Account } from "../cashflow/AccountManager";
 import CsvUpload from "../cashflow/CsvUpload";
+import PlatformManager, { type Platform } from "../investments/PlatformManager";
 
 // ---------------------------------------------------------------------------
 // Settings page — v1.1 "paper" redesign. Same three independently-saveable
@@ -94,6 +95,22 @@ export default function SettingsPage() {
 
   useEffect(() => {
     loadAccounts();
+  }, []);
+
+  // Platforms manager (moved here from the Investments page).
+  const [platforms, setPlatforms] = useState<Platform[]>([]);
+
+  async function loadPlatforms() {
+    try {
+      const r = await fetch("/api/platforms");
+      if (r.ok) setPlatforms(await r.json());
+    } catch {
+      // non-fatal — the Platforms card just renders empty if this fails
+    }
+  }
+
+  useEffect(() => {
+    loadPlatforms();
   }, []);
 
   useEffect(() => {
@@ -368,6 +385,10 @@ export default function SettingsPage() {
       {/* Card: Import CSV (moved from the Cashflow page); an import changes
           balances, so the accounts above reload. */}
       <CsvUpload onImported={loadAccounts} />
+
+      {/* Card: Platforms (moved from the Investments page); add/edit/delete
+          reload the list. PlatformManager renders its own card section. */}
+      <PlatformManager platforms={platforms} onChanged={loadPlatforms} />
 
       {/* Card: Skills (Phase 40) */}
       <SkillsCard />

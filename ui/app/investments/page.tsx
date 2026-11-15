@@ -2,10 +2,11 @@
 
 import { Fragment, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { tokens, card, btnDark, chartColors, notice } from "../styles";
 import { sectionTitle, columnHeader, groupRow } from "./sectionStyles";
-import PlatformManager, { type Platform } from "./PlatformManager";
+import { type Platform } from "./PlatformManager";
 import ClosedPositions, { type ClosedPosition } from "./ClosedPositions";
 import { extractDetail } from "../lib/api";
 import { fmtAmount, fmtUsdPrice, rateHover } from "../lib/money";
@@ -23,8 +24,10 @@ import AllocationPieChart, { type AllocationSlice } from "./AllocationPieChart";
 // Investments page — v1.1 "paper" redesign of the keystone portfolio view.
 // Same data (GET /api/platforms + /api/investments/summary + /history) and the
 // full feature set (price refresh, P&L, allocation asset-type/platform toggle,
-// value history, platform-grouped holdings, set-price/edit/delete, modals,
-// PlatformManager). Only presentation changed.
+// set-price/edit/delete, modals). Layout (quick 261115-bi5): a dark hero that
+// holds the value history, Allocation, a rate/stale note strip, and one
+// Holdings card (Open/Closed views, grouped by the grouping shared with
+// Allocation). The PlatformManager now lives on Settings (#platforms).
 // ---------------------------------------------------------------------------
 
 export type PlatformOption = { id: number; name: string; currency?: string };
@@ -176,6 +179,7 @@ const withIdr = (primary: string, idrText: string, title?: string) => (
 );
 
 export default function InvestmentsPage() {
+  const router = useRouter();
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [closed, setClosed] = useState<ClosedPosition[]>([]);
@@ -644,6 +648,10 @@ export default function InvestmentsPage() {
                           setOverrideOpen(true);
                         },
                       },
+                      {
+                        label: "Manage platforms",
+                        onSelect: () => router.push("/settings#platforms"),
+                      },
                     ]}
                   />
                 </div>
@@ -658,7 +666,7 @@ export default function InvestmentsPage() {
                   </div>
                   <p style={{ fontSize: 14, color: muted, margin: 0 }}>
                     Log your first buy to start tracking a position, or add a
-                    platform first if you hold assets across more than one app.
+                    platform in Settings first if you hold assets across more than one app.
                   </p>
                 </div>
               ) : (
@@ -935,8 +943,6 @@ export default function InvestmentsPage() {
                 </>
               )}
             </section>
-
-            <PlatformManager platforms={platforms} onChanged={load} />
           </>
         )
       )}

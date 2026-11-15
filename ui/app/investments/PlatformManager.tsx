@@ -10,6 +10,7 @@ import { extractDetail } from "../lib/api";
 
 // ---------------------------------------------------------------------------
 // PlatformManager — list platforms with inline edit + delete (D-12).
+// Rendered on the Settings page (section id "platforms"), not on Investments.
 // Direct structural mirror of ../cashflow/AccountManager.tsx; the only
 // entity-shape difference is the optional `kind` label alongside `name`.
 // Delete flow:
@@ -166,7 +167,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
       : "";
 
   return (
-    <section style={card}>
+    <section id="platforms" style={card}>
       <h2 style={{ ...sectionTitle, marginBottom: 12 }}>Platforms</h2>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
         <tbody>
