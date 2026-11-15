@@ -65,4 +65,12 @@ test("redirects keep the host the browser used (reverse proxy)", async ({ page }
   const gate = await page.request.get("/cashflow", { headers: via, maxRedirects: 0 });
   expect(gate.status()).toBe(307);
   expect(gate.headers()["location"]).toBe("https://box.example.ts.net/login?next=%2Fcashflow");
+
+  const basic = "Basic " + Buffer.from("monai:" + UI_PASSWORD).toString("base64");
+  const signedIn = await page.request.get("/login?next=%2Frecords", {
+    headers: { ...via, Authorization: basic },
+    maxRedirects: 0,
+  });
+  expect(signedIn.status()).toBe(307);
+  expect(signedIn.headers()["location"]).toBe("https://box.example.ts.net/records");
 });
