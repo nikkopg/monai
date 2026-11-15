@@ -814,7 +814,7 @@ test.describe("phone width, 375px (261115-msv)", () => {
         const tops = new Set(
           Array.from(roll.querySelectorAll(".roll-digit, .roll-char"), (d) => Math.round(d.getBoundingClientRect().top))
         );
-        const card = roll.closest(".cf-card")!;
+        const card = roll.closest(".card-tight")!;
         const r = card.getBoundingClientRect();
         const cs = getComputedStyle(card);
         const right = r.right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth);

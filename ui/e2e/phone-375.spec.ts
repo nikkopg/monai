@@ -1,0 +1,244 @@
+import { test, expect, type Locator, type Page } from "@playwright/test";
+
+import { cspViolations, watchCsp } from "./csp-fixture";
+
+// 375px checks from the 2026-11-15 other-pages audit, route-mocked, synthetic
+// values only (261115-oax). A fixed overlay is 375 wide and `main` leaves cards
+// about 238px, so these assert on geometry: nothing crosses its card, amounts
+// stay on one line, inputs stay readable.
+
+test.use({ viewport: { width: 375, height: 812 }, contextOptions: { reducedMotion: "reduce" } });
+
+test.beforeEach(async ({ page }) => {
+  // Registered first = lowest priority: nothing reaches a backend through the proxy.
+  await page.route("**/api/**", (r) => r.fulfill({ status: 404, json: { detail: "not mocked" } }));
+  await watchCsp(page);
+});
+test.afterEach(async ({ page }) => {
+  expect(await cspViolations(page)).toEqual([]);
+});
+
+// ---------------------------------------------------------------------------
+// Geometry helpers. Each runs in the page and returns plain data.
+// ---------------------------------------------------------------------------
+
+type Box = { x: number; y: number; width: number; height: number };
+
+// Strict axis-aligned rectangle intersection (touching edges do not overlap).
+function overlaps(a: Box, b: Box) {
+  return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+}
+
+// Every descendant element and non-blank text node whose box leaves the root's
+// border box. Skips zero-size boxes, .sr-only, and anything inside a descendant
+// that clips horizontally (it cannot paint past its clipper; the clipper itself
+// is still checked).
+function crossings(loc: Locator): Promise<string[]> {
+  return loc.evaluate((root) => {
+    const box = root.getBoundingClientRect();
+    const out: string[] = [];
+    const clipped = (el: Element | null) => {
+      for (; el && el !== root; el = el.parentElement) {
+        if (getComputedStyle(el).overflowX !== "visible") return true;
+      }
+      return false;
+    };
+    const check = (name: string, r: DOMRect) => {
+      if (r.width === 0 && r.height === 0) return;
+      if (r.left < box.left - 0.5 || r.right > box.right + 0.5)
+        out.push(`${name} [${Math.round(r.left)}, ${Math.round(r.right)}] vs card [${Math.round(box.left)}, ${Math.round(box.right)}]`);
+    };
+    for (const el of Array.from(root.querySelectorAll("*"))) {
+      if (el.closest(".sr-only")) continue;
+      if (clipped(el.parentElement)) continue;
+      check(`${el.tagName.toLowerCase()} "${(el.textContent ?? "").trim().slice(0, 30)}"`, el.getBoundingClientRect());
+    }
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const text = (n.textContent ?? "").trim();
+      const p = n.parentElement;
+      if (!text || !p || p.closest(".sr-only") || clipped(p)) continue;
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      check(`#text "${text.slice(0, 30)}"`, range.getBoundingClientRect());
+    }
+    return out;
+  });
+}
+
+// Distinct rounded line tops of an element's contents (Range technique from cashflow-dashboard.spec.ts).
+function lineCount(loc: Locator): Promise<number> {
+  return loc.evaluate((el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    return new Set(Array.from(range.getClientRects()).filter((r) => r.width > 0).map((r) => Math.round(r.top))).size;
+  });
+}
+
+// Digit-bearing text nodes that wrap onto more than one line.
+function digitTextOneLine(loc: Locator): Promise<string[]> {
+  return loc.evaluate((root) => {
+    const out: string[] = [];
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      const text = n.textContent ?? "";
+      if (!/\d/.test(text)) continue;
+      const range = document.createRange();
+      range.selectNodeContents(n);
+      const tops = new Set(Array.from(range.getClientRects()).filter((r) => r.width > 0).map((r) => Math.round(r.top)));
+      if (tops.size > 1) out.push(text.trim());
+    }
+    return out;
+  });
+}
+
+// Boxes of every rendered (non-zero) direct child of each matching element.
+function childBoxes(loc: Locator): Promise<{ row: number; i: number; box: Box }[]> {
+  return loc.evaluateAll((rows) =>
+    rows.flatMap((row, r) =>
+      Array.from(row.children).flatMap((c, i) => {
+        const b = c.getBoundingClientRect();
+        return b.width > 0 && b.height > 0 ? [{ row: r, i, box: { x: b.x, y: b.y, width: b.width, height: b.height } }] : [];
+      }),
+    ),
+  );
+}
+
+async function noCellOverlap(loc: Locator) {
+  const cells = await childBoxes(loc);
+  const clashes: string[] = [];
+  for (const a of cells)
+    for (const b of cells)
+      if (a.row === b.row && a.i < b.i && overlaps(a.box, b.box)) clashes.push(`row ${a.row}: child ${a.i + 1} overlaps child ${b.i + 1}`);
+  expect(clashes).toEqual([]);
+}
+
+// ---------------------------------------------------------------------------
+// Mocks (Task 3 and Task 6 reuse these).
+// ---------------------------------------------------------------------------
+
+const json = (body: unknown) => ({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
+
+async function mockPlatform(page: Page) {
+  const idr = {
+    id: 21,
+    ticker: "ZZIDR",
+    currency: "IDR",
+    asset_type: "idx_stock",
+    quantity: 12345, // pii-ok synthetic
+    avg_cost: 8765, // pii-ok synthetic
+    current_price: 9876, // pii-ok synthetic
+    current_value: 1234567890, // pii-ok synthetic
+    unrealized_pnl: 123456789, // pii-ok synthetic
+    realized_pnl: -12345678, // pii-ok synthetic
+    platform_id: 7,
+    coingecko_id: null,
+    price_source: "manual",
+    price_fetched_at: "2026-01-02T00:00:00Z",
+    is_stale: false,
+  };
+  const coin = {
+    ...idr,
+    id: 22,
+    ticker: "ZZCOIN",
+    currency: "USD",
+    asset_type: "crypto",
+    quantity: 12345.12345678, // pii-ok synthetic
+    avg_cost: 397000, // pii-ok synthetic
+    current_price: 397234, // pii-ok synthetic
+    current_value: 1234567890, // pii-ok synthetic
+    unrealized_pnl: 123456789, // pii-ok synthetic
+    usd_avg_cost: 0.024074644, // pii-ok synthetic
+    usd_current_price: 0.024074645, // pii-ok synthetic
+    usd_current_value: 74822.24, // pii-ok synthetic
+    usd_unrealized_pnl: 7482.22, // pii-ok synthetic
+    usd_rate: 16500, // pii-ok synthetic
+    usd_rate_date: "2026-01-02",
+  };
+  await page.route("**/api/platforms/*/detail", (r) =>
+    r.fulfill(
+      json({
+        platform_id: 7,
+        platform_name: "ZZ Exchange",
+        kind: "crypto app",
+        subtotal: 1234567890, // pii-ok synthetic
+        closed_realized_pnl: 0,
+        holdings: [idr, coin],
+      }),
+    ),
+  );
+  await page.route("**/api/portfolio-events*", (r) =>
+    r.fulfill(
+      json([
+        {
+          id: 501,
+          date: "2026-07-20T10:00:00Z",
+          ticker: "ZZCOIN",
+          event_type: "buy",
+          quantity: 12345.12345678, // pii-ok synthetic
+          price: 0.024074644, // pii-ok synthetic
+          transaction_id: null,
+          cash_amount: null,
+          currency: "USD",
+          fee: 0.12345678, // pii-ok synthetic
+          fee_kind: "coin",
+        },
+        {
+          id: 502,
+          date: "2026-06-15T10:00:00Z",
+          ticker: "ZZCOIN",
+          event_type: "sell",
+          quantity: 1234.5, // pii-ok synthetic
+          price: 0.024074644, // pii-ok synthetic
+          transaction_id: null,
+          cash_amount: null,
+          currency: "USD",
+        },
+      ]),
+    ),
+  );
+  await page.route("**/api/platforms", (r) => r.fulfill(json([{ id: 7, name: "ZZ Exchange", kind: "crypto app" }])));
+}
+
+// ===========================================================================
+// P1 — platform page
+// ===========================================================================
+
+test.describe("P1 platform page (261115-oax)", () => {
+  test("P1: rows stack inside the card, stats share one box, desktop keeps the table", async ({ page }) => {
+    await mockPlatform(page);
+    await page.goto("/investments/7");
+    await expect(page.getByText("Subtotal", { exact: true })).toBeVisible();
+
+    // Stats: one box no taller than 200px, nothing crossing, each value one line.
+    const stats = page.getByText("Subtotal", { exact: true }).locator("../..");
+    expect((await stats.boundingBox())!.height).toBeLessThanOrEqual(200);
+    expect(await crossings(stats)).toEqual([]);
+    for (const v of await stats.locator("> div > :last-child").all()) expect(await lineCount(v)).toBe(1);
+
+    // PnL tab.
+    const card = page.locator(".plat-table");
+    expect(await crossings(card)).toEqual([]);
+    await noCellOverlap(page.locator(".plat-row"));
+    expect(await digitTextOneLine(card)).toEqual([]);
+
+    // Buy & Sell tab.
+    await page.getByRole("button", { name: "Buy & Sell", exact: true }).click();
+    await expect(page.getByText(/^fee /)).toHaveCount(1);
+    expect(await crossings(card)).toEqual([]);
+    await noCellOverlap(page.locator(".plat-ev"));
+    expect(await digitTextOneLine(card)).toEqual([]);
+    for (const b of await page.getByRole("button", { name: /^Event options/ }).all()) {
+      const bb = (await b.boundingBox())!;
+      const cb = (await card.boundingBox())!;
+      expect(bb.x).toBeGreaterThanOrEqual(cb.x);
+      expect(bb.x + bb.width).toBeLessThanOrEqual(cb.x + cb.width + 0.5);
+    }
+
+    // Desktop keeps the 7-column table; the stacked sub-line stays hidden.
+    await page.getByRole("button", { name: "PnL", exact: true }).click();
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(page.getByText("Avg cost", { exact: true })).toBeVisible();
+    for (const s of await page.locator(".plat-sub").all()) await expect(s).toBeHidden();
+  });
+});

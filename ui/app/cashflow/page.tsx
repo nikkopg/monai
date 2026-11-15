@@ -249,7 +249,7 @@ export default function CashflowPage() {
       {!summary && !summaryError && (
         <Skeleton pulse label="Loading your cashflow">
           <div
-            className="bone-dark cf-card"
+            className="bone-dark card-tight"
             style={{
               background: tokens.color.ink,
               borderRadius: 18,
@@ -286,7 +286,7 @@ export default function CashflowPage() {
             style={{ display: "grid", gap: 18, marginBottom: 18, alignItems: "start" }}
           >
             <div
-              className="cf-card"
+              className="card-tight"
               style={{
                 ...card,
                 marginBottom: 0,
@@ -309,7 +309,7 @@ export default function CashflowPage() {
               <Bone w="100%" h={8} r={999} />
             </div>
             <div
-              className="cf-card"
+              className="card-tight"
               style={{
                 ...card,
                 marginBottom: 0,
@@ -340,7 +340,7 @@ export default function CashflowPage() {
         <div className="fade-in">
           {/* Net worth (with its trend) spans the whole top row. */}
           <div
-            className="cf-card"
+            className="card-tight"
             style={{
               background: tokens.color.ink,
               color: tokens.color.inkText,
@@ -452,7 +452,7 @@ export default function CashflowPage() {
           >
             <section
               aria-label="Cashflow"
-              className="cf-card"
+              className="card-tight"
               style={{ ...card, marginBottom: 0 }}
             >
               <div

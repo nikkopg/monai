@@ -358,6 +358,7 @@ export default function PlatformDetailPage() {
           </div>
 
           <div
+            className="plat-stats"
             style={{
               display: "grid",
               gridTemplateColumns:
@@ -434,7 +435,7 @@ export default function PlatformDetailPage() {
             </div>
           )}
 
-          <div style={card}>
+          <div className="plat-table card-tight" style={card}>
             {tab === "pnl" ? (
               detail.holdings.length === 0 ? (
                 <p style={{ fontSize: 14, color: muted, margin: 0 }}>
@@ -442,7 +443,7 @@ export default function PlatformDetailPage() {
                 </p>
               ) : (
                 <>
-                  <div style={tableHeaderRow}>
+                  <div className="plat-head" style={tableHeaderRow}>
                     <span style={{ flex: 1.4 }}>Ticker</span>
                     <span style={{ flex: 1, textAlign: "right" }}>Qty</span>
                     <span style={{ flex: 1.2, textAlign: "right" }}>
@@ -458,7 +459,7 @@ export default function PlatformDetailPage() {
                     </span>
                   </div>
                   {detail.holdings.map((h) => (
-                    <div key={h.id} style={tableRow}>
+                    <div key={h.id} className="plat-row" style={tableRow}>
                       <span
                         style={{
                           flex: 1.4,
@@ -584,6 +585,18 @@ export default function PlatformDetailPage() {
                             ? fmtSigned(h.unrealized_pnl)
                             : "—"}
                       </span>
+                      <span
+                        className="plat-sub"
+                        style={{
+                          fontSize: 12,
+                          color: muted,
+                          fontVariantNumeric: "tabular-nums",
+                          flexBasis: "100%",
+                        }}
+                      >
+                        {fmtQty(h.quantity, h.asset_type)} ×{" "}
+                        {h.usd_avg_cost != null ? fmtUsdPrice(h.usd_avg_cost, 8) : fmtPlain(h.avg_cost)}
+                      </span>
                     </div>
                   ))}
                 </>
@@ -594,7 +607,7 @@ export default function PlatformDetailPage() {
               </p>
             ) : (
               <>
-                <div style={tableHeaderRow}>
+                <div className="plat-head" style={tableHeaderRow}>
                   <span style={{ flex: 1.2 }}>Date</span>
                   <span style={{ flex: 1 }}>Ticker</span>
                   <span style={{ flex: 1 }}>Side</span>
@@ -603,7 +616,7 @@ export default function PlatformDetailPage() {
                   <span style={{ flex: 1.2, textAlign: "right" }} />
                 </div>
                 {events.map((e) => (
-                  <div key={e.id} style={tableRow}>
+                  <div key={e.id} className="plat-ev" style={tableRow}>
                     <span
                       style={{
                         flex: 1.2,

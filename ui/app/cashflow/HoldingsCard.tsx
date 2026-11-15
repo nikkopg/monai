@@ -106,7 +106,7 @@ export default function HoldingsCard({ data }: { data: HoldingsData }) {
   return (
     <section
       aria-label="Holdings"
-      className="cf-card cf-holdings"
+      className="card-tight cf-holdings"
       style={{
         ...card,
         marginBottom: 0,

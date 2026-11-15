@@ -120,6 +120,143 @@
   }
 }
 
+/* Platform page rows (261115-oax P1). Same idea as .inv-holdings: the layout
+   keys on the table card's content width (container `plat`), threshold 519px
+   like holdings. Children are addressed by DOM position.
+   PnL row (.plat-row): 1 Ticker, 2 Qty, 3 Avg cost, 4 Price, 5 Value,
+   6 Realized, 7 Unrealized, 8 .plat-sub (qty x avg cost, hidden on wide
+   cards). Stacked: ticker line, Value left / Unrealized right, qty x avg cost,
+   Realized with a CSS label (no DOM text duplicated). Qty, Avg cost and Price
+   columns are dropped; the first two live in the sub-line.
+   Event row (.plat-ev): 1 Date, 2 Ticker, 3 Side, 4 Qty, 5 Price, 6 menu cell.
+   Stacked: ticker + menu, then Side / Qty / Price, then Date.
+   Flex overrides use longhands (the build drops !important from a flex
+   shorthand holding calc()). */
+.plat-sub {
+  display: none;
+}
+.plat-table {
+  container-type: inline-size;
+  container-name: plat;
+}
+@container plat (max-width: 519px) {
+  .plat-head {
+    display: none !important;
+  }
+  /* The hidden header leaves the first row's hairline at the top of the card. */
+  .plat-head + .plat-row,
+  .plat-head + .plat-ev {
+    border-top: none !important;
+  }
+  .plat-row,
+  .plat-ev {
+    flex-wrap: wrap;
+    column-gap: 16px;
+    row-gap: 6px;
+  }
+  .plat-row > :nth-child(1) {
+    flex-basis: 100% !important;
+  }
+  .plat-row > :nth-child(2),
+  .plat-row > :nth-child(3),
+  .plat-row > :nth-child(4) {
+    display: none !important;
+  }
+  .plat-row > :nth-child(5),
+  .plat-row > :nth-child(7) {
+    order: 1;
+    flex-grow: 1 !important;
+    flex-shrink: 1 !important;
+    flex-basis: auto !important;
+    white-space: nowrap;
+  }
+  .plat-row > :nth-child(5) {
+    text-align: left !important;
+  }
+  .plat-row > :nth-child(8) {
+    display: block;
+    order: 2;
+    white-space: nowrap;
+  }
+  .plat-row > :nth-child(6) {
+    order: 3;
+    flex-basis: 100% !important;
+    text-align: left !important;
+    white-space: nowrap;
+  }
+  .plat-row > :nth-child(6)::before {
+    content: "Realized ";
+    font-weight: 400;
+    color: #6f6857;
+  }
+  .plat-ev > :nth-child(2) {
+    flex-grow: 1 !important;
+    flex-basis: calc(100% - 64px) !important;
+  }
+  .plat-ev > :nth-child(6) {
+    flex-grow: 0 !important;
+    flex-shrink: 0 !important;
+    flex-basis: auto !important;
+  }
+  .plat-ev > :nth-child(3) {
+    order: 1;
+    flex-grow: 0 !important;
+    flex-shrink: 0 !important;
+    flex-basis: auto !important;
+  }
+  .plat-ev > :nth-child(4),
+  .plat-ev > :nth-child(5) {
+    order: 1;
+    flex-grow: 0 !important;
+    flex-basis: auto !important;
+    white-space: nowrap;
+  }
+  .plat-ev > :nth-child(4) {
+    text-align: left !important;
+  }
+  .plat-ev > :nth-child(5) {
+    margin-left: auto;
+  }
+  .plat-ev > :nth-child(1) {
+    order: 2;
+    flex-basis: 100% !important;
+  }
+}
+/* The three stat tiles become one card of label / value rows on phones
+   (261115-oax P1). Hex values are literal copies of styles.ts tokens: #fff
+   card, #e7e1d5 border, #f0ece3 borderInner. */
+@media (max-width: 560px) {
+  .plat-stats {
+    gap: 0 !important;
+    background: #fff;
+    border: 1px solid #e7e1d5;
+    border-radius: 16px;
+    padding: 4px 16px;
+  }
+  .plat-stats > div {
+    border: none !important;
+    border-radius: 0 !important;
+    background: none !important;
+    padding: 10px 0 !important;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: baseline;
+    column-gap: 12px;
+  }
+  .plat-stats > div + div {
+    border-top: 1px solid #f0ece3 !important;
+  }
+  .plat-stats > div > :first-child {
+    margin-bottom: 0 !important;
+  }
+  .plat-stats > div > :last-child {
+    font-size: 18px !important;
+    white-space: nowrap;
+    margin-left: auto;
+  }
+}
+
 /* Phase 33 Inbox. Hex values are literal copies of ui/app/styles.ts tokens
    because CSS cannot import styles.ts: #2f6f4f green, #6f6857 muted3,
    #f0ece3 hairline. */
@@ -312,9 +449,10 @@ input, select, button, textarea {
 @media (min-width: 1280px) {
   .cf-lower { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
-/* Trims Cashflow's inline card padding on phones (261115-msv F1). */
+/* Trims the inline card padding to 16px on phones. Cashflow, the platform page,
+   Records and Investments share it (261115-msv F1, 261115-oax). */
 @media (max-width: 560px) {
-  .cf-card { padding: 16px !important; }
+  .card-tight { padding: 16px !important; }
   /* The cards always stack below 561px (two 300px columns need more than 600px
      of content), so the Holdings card sizes to its rows. */
   .cf-holdings { contain: none !important; min-height: 0 !important; }
