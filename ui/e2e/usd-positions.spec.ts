@@ -305,7 +305,8 @@ test.describe("USD positions on the Investments page", () => {
     expect(open.x).toBeGreaterThanOrEqual(0);
     expect(open.x + open.width).toBeLessThanOrEqual(375);
 
-    const total = page.getByText("1,512,000", { exact: true }).first();
+    // The text lives in RollingNumber's sr-only span (261115-dvn); measure the hero div around it.
+    const total = page.getByText("1,512,000", { exact: true }).first().locator("xpath=ancestor::div[1]");
     expect(await total.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
 
     const overflowing = await page.evaluate(() =>
@@ -359,6 +360,16 @@ test.describe("USD positions on the Investments page", () => {
     await alloc.getByRole("group", { name: "Allocation grouping" }).getByRole("button", { name: "Asset type" }).click();
     const box = await alloc.getByText("Mutual funds", { exact: true }).boundingBox();
     expect(box!.height).toBeLessThan(20);
+  });
+
+  test("headline figures roll like Cashflow; lists stay static (261115-dvn)", async ({ page }) => {
+    await mockInvestmentsPage(page, [usdHolding, idrHolding]);
+    await page.goto("/investments");
+    const hero = page.getByRole("region", { name: "Portfolio value" });
+    const alloc = page.getByRole("region", { name: "Allocation" });
+    await expect(hero.locator(".roll > .sr-only")).toHaveText(["1,512,000", "+797,000", "+215,000"]);
+    await expect(alloc.locator(".roll > .sr-only")).toHaveText(["1.5M"]);
+    await expect(page.locator(".roll")).toHaveCount(4);
   });
 
   test("hero holds the history chart, its pills and the price footer", async ({ page }) => {

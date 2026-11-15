@@ -1,6 +1,7 @@
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 
 import { tokens } from "../styles";
+import RollingNumber from "../components/RollingNumber";
 import { GOLDS, fmtShort } from "../cashflow/holdings";
 
 // ---------------------------------------------------------------------------
@@ -15,6 +16,7 @@ import { GOLDS, fmtShort } from "../cashflow/holdings";
 // the legend sits below it in page.tsx.
 // Slices use GOLDS, the Holdings card's investment palette, so terracotta (the loss
 // colour) never colours a slice (261115-dlc).
+// The centre total rolls via RollingNumber like the Cashflow Holdings centre; legend amounts stay static (261115-dvn).
 // Explicit-height wrapper is load-bearing — see Pitfall 3, 04-RESEARCH.md:
 // ResponsiveContainer renders blank inside a grid/flex parent with no
 // resolvable height. Placement/toggle chrome polish deferred to
@@ -62,7 +64,7 @@ export default function AllocationPieChart({
       >
         <span style={{ fontSize: 11, color: muted }}>Total</span>
         <span style={{ fontSize: 17, fontWeight: 600 }}>
-          {fmtShort(total, "IDR")}
+          <RollingNumber value={total} format={(n) => fmtShort(n, "IDR")} />
         </span>
       </div>
       <ResponsiveContainer>

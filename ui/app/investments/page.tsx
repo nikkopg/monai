@@ -15,6 +15,7 @@ import HoldingModal from "./HoldingModal";
 import HoldingOverrideModal from "./HoldingOverrideModal";
 import PriceOverrideDialog from "./PriceOverrideDialog";
 import Pills from "../components/Pills";
+import RollingNumber from "../components/RollingNumber";
 import RowMenu from "../components/RowMenu";
 import StalenessBadge from "./StalenessBadge";
 import ValueHistoryChart, { type HistoryPoint } from "./ValueHistoryChart";
@@ -392,7 +393,7 @@ export default function InvestmentsPage() {
                           fontVariantNumeric: "tabular-nums",
                         }}
                       >
-                        {fmtPlain(summary.total_value)}
+                        <RollingNumber value={summary.total_value} format={fmtPlain} />
                       </div>
                       <div
                         style={{
@@ -407,14 +408,14 @@ export default function InvestmentsPage() {
                         <span>
                           Unrealized{" "}
                           <b style={heroFigure(summary.total_unrealized_pnl)}>
-                            {fmtSigned(summary.total_unrealized_pnl)}
+                            <RollingNumber value={summary.total_unrealized_pnl} format={fmtSigned} />
                           </b>{" "}
                           ({pct(summary.total_unrealized_pnl, costBasis)})
                         </span>
                         <span>
                           Realized{" "}
                           <b style={heroFigure(summary.total_realized_pnl)}>
-                            {fmtSigned(summary.total_realized_pnl)}
+                            <RollingNumber value={summary.total_realized_pnl} format={fmtSigned} />
                           </b>
                         </span>
                       </div>
