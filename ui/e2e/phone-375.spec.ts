@@ -4,8 +4,9 @@ import { cspViolations, watchCsp } from "./csp-fixture";
 import { ids, mockInbox, NOW, proposal, transferProposal, txRow } from "./inbox-fixtures";
 
 // 375px checks from the 2026-11-15 other-pages audit, route-mocked, synthetic
-// values only (261115-oax). A fixed overlay is 375 wide and `main` leaves cards
-// about 238px, so these assert on geometry: nothing crosses its card, amounts
+// values only (261115-oax). A fixed overlay is 375 wide and, with the floating
+// dock replacing the icon rail below 561px (261115-s37), `main` leaves cards
+// about 325px, so these assert on geometry: nothing crosses its card, amounts
 // stay on one line, inputs stay readable.
 
 test.use({ viewport: { width: 375, height: 812 }, contextOptions: { reducedMotion: "reduce" } });
@@ -570,5 +571,107 @@ test.describe("P6 investments (261115-oax)", () => {
     }
     const total = alloc.getByText("Total", { exact: true });
     expect(await total.evaluate((el) => getComputedStyle(el).fontSize)).toBe("12px");
+  });
+});
+
+// ===========================================================================
+// D1 — floating phone dock (261115-s37)
+// ===========================================================================
+
+test.describe("D1 phone dock (261115-s37)", () => {
+  const dockOf = (page: Page) => page.getByRole("navigation", { name: "Main" });
+  const ACTIVE_BG = "rgb(242, 239, 232)";
+  const bg = (loc: Locator) => loc.evaluate((el) => getComputedStyle(el).backgroundColor);
+
+  test("D1: dock geometry, sidebar hidden", async ({ page }) => {
+    await page.goto("/cashflow");
+    const dock = dockOf(page);
+    await expect(dock).toBeVisible();
+    await expect(page.locator(".app-sidebar")).toBeHidden();
+    const items = [...(await dock.getByRole("link").all()), dock.getByRole("button", { name: "More" })];
+    expect(items).toHaveLength(6);
+    for (const it of items) {
+      const b = (await it.boundingBox())!;
+      expect(b.width).toBeGreaterThanOrEqual(44);
+      expect(b.height).toBeGreaterThanOrEqual(44);
+    }
+    const d = (await dock.boundingBox())!;
+    expect(Math.abs(d.x + d.width / 2 - 187.5)).toBeLessThanOrEqual(1);
+    expect(Math.abs(d.y + d.height - 792)).toBeLessThanOrEqual(1);
+  });
+
+  test("D1: the active route is the light circle", async ({ page }) => {
+    await page.goto("/cashflow");
+    const dock = dockOf(page);
+    const names = ["Cashflow", "Records", "Inbox", "Chat", "Investments"];
+    for (const name of names) {
+      await dock.getByRole("link", { name }).click();
+      await expect(page).toHaveURL(new RegExp(`/${name.toLowerCase()}$`));
+      const on = dock.getByRole("link", { name });
+      await expect(on).toHaveAttribute("aria-current", "page");
+      expect(await bg(on)).toBe(ACTIVE_BG);
+      await expect(dock.locator("[aria-current]")).toHaveCount(1);
+    }
+    await dock.getByRole("button", { name: "More" }).click();
+    await page.getByRole("menuitem", { name: "Settings" }).click();
+    await expect(page).toHaveURL(/\/settings$/);
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect(dock.locator("[aria-current]")).toHaveCount(0);
+    expect(await bg(dock.getByRole("button", { name: "More" }))).toBe(ACTIVE_BG);
+  });
+
+  test("D1: the Inbox link keeps its label and badge", async ({ page }) => {
+    await mockInbox(page, { counts: 3 });
+    await page.goto("/cashflow");
+    const link = dockOf(page).getByRole("link", { name: "Inbox, 3 pending" });
+    await expect(link).toBeVisible();
+    await expect(link.locator(".dock-badge")).toBeVisible();
+    await expect(link.locator(".dock-badge")).toHaveText("3");
+  });
+
+  test("D1: the More menu opens, closes and works from the keyboard", async ({ page }) => {
+    await page.goto("/cashflow");
+    const dock = dockOf(page);
+    const more = dock.getByRole("button", { name: "More" });
+    const settings = page.getByRole("menuitem", { name: "Settings" });
+    await expect(more).toHaveAttribute("aria-haspopup", "menu");
+    await expect(more).toHaveAttribute("aria-expanded", "false");
+
+    await more.click();
+    await expect(more).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByRole("menu")).toBeVisible();
+    await expect(settings).toBeFocused();
+    const m = (await page.getByRole("menu").boundingBox())!;
+    expect(m.y + m.height).toBeLessThanOrEqual((await dock.boundingBox())!.y);
+
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect(more).toHaveAttribute("aria-expanded", "false");
+    await expect(more).toBeFocused();
+
+    await more.click();
+    await expect(page.getByRole("menu")).toBeVisible();
+    await page.getByRole("heading", { name: "Cashflow", level: 1 }).click();
+    await expect(page.getByRole("menu")).toHaveCount(0);
+
+    await more.focus();
+    await page.keyboard.press("Enter");
+    await expect(settings).toBeFocused();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/settings$/);
+  });
+
+  test("D1: at 1280 the sidebar is unchanged and the dock is hidden", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/cashflow");
+    await expect(dockOf(page)).toBeHidden();
+    const side = page.locator(".app-sidebar");
+    await expect(side).toBeVisible();
+    // CSS width is 236; the box adds 2x18 padding and a 1px border (content-box).
+    expect(await side.evaluate((el) => getComputedStyle(el).width)).toBe("236px");
+    await expect(page.getByRole("button", { name: "Collapse sidebar" })).toBeVisible();
+    await expect(page.getByText("Local-first")).toBeVisible();
+    const texts = (await page.locator(".app-sidebar nav a").allTextContents()).map((t) => t.trim());
+    expect(texts).toEqual(["Cashflow", "Records", "Inbox", "Chat", "Investments", "Settings"]);
   });
 });

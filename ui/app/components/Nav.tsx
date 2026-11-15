@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { tokens } from "../styles";
@@ -22,6 +22,9 @@ const SIDEBAR_COLLAPSED_KEY = "monai.sidebarCollapsed";
 // v1.1 "paper" redesign: was a sticky top bar, now the mockup's 236px sidebar
 // with serif wordmark, icon+label nav items, a dark active pill, and a
 // local-first status footer card. Nav order matches the mockup (Cashflow first).
+//
+// At 560px and below CSS hides the sidebar and shows the floating pill dock
+// (261115-s37): 5 icon links plus a More menu that holds Settings.
 // ---------------------------------------------------------------------------
 
 const NAV_LINKS = [
@@ -33,7 +36,7 @@ const NAV_LINKS = [
   { href: "/settings", label: "Settings", icon: "settings" },
 ] as const;
 
-type IconName = (typeof NAV_LINKS)[number]["icon"];
+type IconName = (typeof NAV_LINKS)[number]["icon"] | "more";
 
 // Inline stroke icons — geometry lifted from the mockup's icon() paths.
 function Icon({ name }: { name: IconName }) {
@@ -89,6 +92,14 @@ function Icon({ name }: { name: IconName }) {
           <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-2.7 1.1V21a2 2 0 1 1-4 0v-.1a1.6 1.6 0 0 0-2.7-1.1l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.6 1.6 0 0 0 4.6 15H4.5a2 2 0 1 1 0-4h.1a1.6 1.6 0 0 0 1.1-2.7l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.6 1.6 0 0 0 11 4.6V4.5a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 2.7 1.1l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-1.1 2.7z" />
         </svg>
       );
+    case "more":
+      return (
+        <svg {...common}>
+          <circle cx="5" cy="12" r="1.4" />
+          <circle cx="12" cy="12" r="1.4" />
+          <circle cx="19" cy="12" r="1.4" />
+        </svg>
+      );
   }
 }
 
@@ -120,6 +131,200 @@ const menuLabel: React.CSSProperties = {
   color: tokens.color.muted2,
   padding: "0 10px 10px",
 };
+
+// Phone dock item: 48x48 round, light circle with an ink icon when active.
+function dockItemStyle(active: boolean): React.CSSProperties {
+  return {
+    position: "relative",
+    display: "grid",
+    placeItems: "center",
+    width: 48,
+    height: 48,
+    padding: 0,
+    border: "none",
+    borderRadius: tokens.radius.pill,
+    textDecoration: "none",
+    cursor: "pointer",
+    color: active ? tokens.color.ink : tokens.color.inkTextMuted,
+    background: active ? tokens.color.inkText : "transparent",
+  };
+}
+
+// Floating pill dock for phones (261115-s37). The More menu copies RowMenu's
+// behaviour (focus first item, outside mousedown, capture-phase Escape, Tab
+// closes) but opens upward, has an icon trigger and holds a Link.
+function PhoneDock({
+  pathname,
+  isActive,
+  inboxLabel,
+  badge,
+}: {
+  pathname: string;
+  isActive: (href: string) => boolean;
+  inboxLabel: string;
+  badge: string | null;
+}) {
+  const uid = useId();
+  const [moreOpen, setMoreOpen] = useState(false);
+  const wrapRef = useRef<HTMLSpanElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const btnId = `${uid}-more`;
+  const menuId = `${uid}-menu`;
+  const settings = NAV_LINKS.find((l) => l.href === "/settings")!;
+
+  useEffect(() => {
+    if (!moreOpen) return;
+    wrapRef.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+    const onDown = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setMoreOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      setMoreOpen(false);
+      btnRef.current?.focus();
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey, true);
+    };
+  }, [moreOpen]);
+
+  // Close the menu when the route changes.
+  useEffect(() => {
+    setMoreOpen(false);
+  }, [pathname]);
+
+  return (
+    <nav
+      className="app-dock"
+      aria-label="Main"
+      style={{
+        position: "fixed",
+        left: "50%",
+        transform: "translateX(-50%)",
+        bottom: "calc(20px + env(safe-area-inset-bottom))",
+        // above page content, below RowMenu/scrim 10, drawer 20 and modals 100
+        zIndex: 5,
+        gap: 2,
+        padding: 6,
+        background: tokens.color.ink,
+        borderRadius: tokens.radius.pill,
+        boxShadow: "0 8px 24px rgba(35,32,27,.25)",
+      }}
+    >
+      {NAV_LINKS.filter((l) => l.href !== "/settings").map(({ href, label, icon }) => {
+        const active = isActive(href);
+        return (
+          <Link
+            key={href}
+            href={href}
+            className="dock-item"
+            style={dockItemStyle(active)}
+            aria-label={icon === "inbox" ? inboxLabel : label}
+            aria-current={active ? "page" : undefined}
+          >
+            <span aria-hidden style={{ display: "inline-flex", width: 20, height: 20 }}>
+              <Icon name={icon} />
+            </span>
+            {icon === "inbox" && badge !== null && (
+              <span
+                aria-hidden
+                className="dock-badge"
+                style={{
+                  position: "absolute",
+                  top: 3,
+                  right: 3,
+                  minWidth: 18,
+                  height: 18,
+                  padding: "0 5px",
+                  borderRadius: tokens.radius.pill,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  lineHeight: "16px",
+                  textAlign: "center",
+                  fontVariantNumeric: "tabular-nums",
+                  boxSizing: "border-box",
+                  background: tokens.color.tintWarm,
+                  color: tokens.color.ink,
+                  border: `1px solid ${tokens.color.border2}`,
+                }}
+              >
+                {badge}
+              </span>
+            )}
+          </Link>
+        );
+      })}
+      <span ref={wrapRef} style={{ position: "relative", display: "flex" }}>
+        <button
+          ref={btnRef}
+          type="button"
+          id={btnId}
+          className="dock-item"
+          style={dockItemStyle(moreOpen || isActive("/settings"))}
+          aria-label="More"
+          aria-haspopup="menu"
+          aria-expanded={moreOpen}
+          aria-controls={moreOpen ? menuId : undefined}
+          onClick={() => setMoreOpen((o) => !o)}
+        >
+          <span aria-hidden style={{ display: "inline-flex", width: 20, height: 20 }}>
+            <Icon name="more" />
+          </span>
+        </button>
+        {moreOpen && (
+          <div
+            role="menu"
+            id={menuId}
+            aria-labelledby={btnId}
+            style={{
+              position: "absolute",
+              right: 0,
+              bottom: "calc(100% + 10px)",
+              minWidth: 168,
+              padding: 6,
+              background: tokens.color.card,
+              border: `1px solid ${tokens.color.border}`,
+              borderRadius: tokens.radius.md,
+              boxShadow: "0 8px 24px rgba(35,32,27,.15)",
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Tab") setMoreOpen(false);
+            }}
+          >
+            <Link
+              href={settings.href}
+              role="menuitem"
+              tabIndex={-1}
+              className="dock-menu-item"
+              aria-current={isActive(settings.href) ? "page" : undefined}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                minHeight: 44,
+                padding: "10px 12px",
+                borderRadius: tokens.radius.sm,
+                color: tokens.color.ink,
+                fontSize: 14,
+                textDecoration: "none",
+              }}
+            >
+              <span aria-hidden style={{ display: "inline-flex", width: 20, height: 20 }}>
+                <Icon name={settings.icon} />
+              </span>
+              {settings.label}
+            </Link>
+          </div>
+        )}
+      </span>
+    </nav>
+  );
+}
 
 export default function Nav() {
   const pathname = usePathname();
@@ -180,6 +385,7 @@ export default function Nav() {
   }
 
   return (
+    <>
     <aside className="app-sidebar" style={sidebarStyle(collapsed)}>
       <div
         className="brand-word"
@@ -339,5 +545,12 @@ export default function Nav() {
         </div>
       )}
     </aside>
+    <PhoneDock
+      pathname={pathname}
+      isActive={isActive}
+      inboxLabel={navInboxLabel(pending, offline)}
+      badge={badgeText(pending, offline)}
+    />
+    </>
   );
 }

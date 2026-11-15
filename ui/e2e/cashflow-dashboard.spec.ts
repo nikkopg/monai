@@ -493,7 +493,7 @@ test.describe("Cashflow card legend layout", () => {
   // width-independent and unchanged.
   const cases: [number, "stacked" | "side-by-side"][] = [
     [1100, "side-by-side"],
-    [420, "stacked"],
+    [420, "side-by-side"], // the dock gives back the 66px rail, so the legend fits beside the ring (261115-s37)
     [320, "stacked"],
     [920, "side-by-side"],
     [1440, "side-by-side"],

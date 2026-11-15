@@ -108,7 +108,7 @@ test.describe("nav badge", () => {
     const inbox = await host(page, { counts: 0 });
     await expect.poll(() => inbox.hits.counts).toBeGreaterThan(0);
     await page.waitForTimeout(300);
-    const texts = (await page.locator("nav a").allTextContents()).map((t) => t.trim());
+    const texts = (await page.locator(".app-sidebar nav a").allTextContents()).map((t) => t.trim());
     expect(texts).toEqual(["Cashflow", "Records", "Inbox", "Chat", "Investments", "Settings"]);
     await expect(link(page, "Inbox")).toBeVisible();
     await expect(page.locator(".nav-badge")).toHaveCount(0);
@@ -158,8 +158,8 @@ test.describe("nav badge", () => {
     await page.setViewportSize({ width: 500, height: 800 });
     await host(page, { counts: 3 });
     await expect(link(page, "Inbox, 3 pending")).toBeVisible();
-    await expect(page.locator(".nav-badge")).toBeVisible();
-    await expect(page.locator(".nav-badge")).toHaveText("3");
+    await expect(page.locator(".dock-badge")).toBeVisible();
+    await expect(page.locator(".dock-badge")).toHaveText("3");
   });
 });
 

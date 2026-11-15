@@ -1,9 +1,9 @@
 /* v1.1 "paper" redesign — shell responsiveness (UIR-10).
    Most page grids use CSS `auto-fit minmax(...)` inline so they stack on narrow
    viewports without media queries. These rules handle the app shell itself:
-   trim the frame padding on tablets, and collapse the sidebar to an icon rail
-   on phones so the content area stays usable. `!important` is required to win
-   over the inline styles the shell is built with. */
+   trim the frame padding on tablets, and swap the sidebar for the floating
+   dock on phones so the content area stays usable. `!important` is required to
+   win over the inline styles the shell is built with. */
 
 @media (max-width: 760px) {
   .app-frame {
@@ -15,28 +15,27 @@
   }
 }
 
+/* Phone dock (261115-s37): the dock is always in the DOM and CSS picks one of
+   the two navs, so server and client markup match. Its inline style sets no
+   display, so these rules need no !important. */
+.app-dock {
+  display: none;
+}
 @media (max-width: 560px) {
-  .app-sidebar {
-    width: 66px !important;
-    padding: 18px 10px !important;
+  .app-dock {
+    display: flex;
   }
-  .app-sidebar .brand-word,
-  .app-sidebar .menu-label,
-  .app-sidebar .nav-label,
-  .app-sidebar .footer-card {
+  .app-sidebar {
     display: none !important;
   }
-  .app-sidebar .nav-item {
-    justify-content: center !important;
-    padding: 11px 0 !important;
-  }
-  /* Pending badge stays visible on the icon rail (never in the display:none list). */
-  .app-sidebar .nav-badge {
-    position: absolute !important;
-    top: 4px;
-    right: 4px;
-    margin: 0 !important;
-  }
+}
+/* Light focus ring on the dark dock; the global green ring is under 3:1 on ink
+   (261115-s37). The menu link sits on a white card and keeps the green ring. */
+.dock-item:focus-visible {
+  outline-color: #f2efe8;
+}
+.dock-menu-item:hover {
+  background: #f7f5f1;
 }
 
 /* Below 561px (phones) the 44px page gutters leave cards too narrow for an
