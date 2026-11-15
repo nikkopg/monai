@@ -331,12 +331,69 @@ test.describe("USD positions on the Investments page", () => {
     await page.goto("/investments");
     await expect(page.getByText("+797,000", { exact: true })).toBeVisible();
     await expect(page.getByText("+215,000", { exact: true })).toBeVisible();
-    await expect(page.getByText("realized", { exact: true })).toBeVisible();
+    const hero = page.getByRole("region", { name: "Portfolio value" });
+    await expect(hero.getByText(/^Realized/)).toBeVisible();
     await expect(page.getByText("Unrealized P&L", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Realized P&L", { exact: true })).toHaveCount(0);
     await expect(page.getByText(/[\u25B2\u25BC]/)).toHaveCount(0);
     const box = await page.getByText("Mutual funds", { exact: true }).boundingBox();
     expect(box!.height).toBeLessThan(20);
+  });
+
+  test("hero holds the history chart, its pills and the price footer", async ({ page }) => {
+    await mockInvestmentsPage(page, [usdHolding, { ...idrHolding, is_stale: true }]);
+    await page.route("**/api/investments/history**", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          points: [
+            { date: "2026-01-01", total_market_value: 1000000, total_pnl: 0 },
+            { date: "2026-01-02", total_market_value: 1100000, total_pnl: 50000 },
+            { date: "2026-01-03", total_market_value: 1512000, total_pnl: 797000 },
+          ],
+        }),
+      });
+    });
+    await page.goto("/investments");
+    const hero = page.getByRole("region", { name: "Portfolio value" });
+    await expect(hero).toHaveCSS("background-color", "rgb(35, 32, 27)");
+    await expect(hero.getByText("Total value", { exact: true })).toBeVisible();
+    await expect(hero.getByRole("button", { name: "Refresh prices" })).toBeVisible();
+    for (const name of ["1M", "3M", "6M", "All", "Value", "P&L"]) {
+      await expect(hero.getByRole("button", { name, exact: true })).toBeVisible();
+    }
+    await expect(hero.getByRole("button", { name: "3M", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(hero.getByRole("button", { name: "Value", exact: true })).toHaveAttribute("aria-pressed", "true");
+    await expect(hero.locator(".recharts-line-curve")).toHaveCount(1);
+    await expect(hero.locator(".recharts-line-curve")).toHaveAttribute("stroke", "#9fdcb6");
+    await expect(hero.getByText(/^Unrealized/)).toBeVisible();
+    await expect(hero.getByText(/^Realized/)).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Portfolio history" })).toHaveCount(0);
+
+    const strip = page.getByText(/^USD positions converted at 1 USD = 20,000 IDR/);
+    await expect(strip).toBeVisible();
+    await expect(strip).toContainText("1 price is stale");
+  });
+
+  test("1440 puts Allocation at a third beside the hero; 375 stacks it below", async ({ page }) => {
+    await mockInvestmentsPage(page, [usdHolding, idrHolding]);
+    const hero = page.getByRole("region", { name: "Portfolio value" });
+    const alloc = page.getByRole("region", { name: "Allocation" });
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("/investments");
+    await expect(hero).toBeVisible();
+    const h = (await hero.boundingBox())!;
+    const a = (await alloc.boundingBox())!;
+    expect(h.width / a.width).toBeGreaterThan(1.8);
+    expect(h.width / a.width).toBeLessThan(2.2);
+    expect(Math.abs(h.y - a.y)).toBeLessThanOrEqual(1);
+
+    await page.setViewportSize({ width: 375, height: 812 });
+    await expect(hero).toBeVisible();
+    const h2 = (await hero.boundingBox())!;
+    const a2 = (await alloc.boundingBox())!;
+    expect(a2.y).toBeGreaterThanOrEqual(h2.y + h2.height);
   });
 
   test("controls are at least 32px tall", async ({ page }) => {

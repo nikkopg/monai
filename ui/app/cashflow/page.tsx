@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
-import { tokens, card } from "../styles";
+import { tokens, card, notice } from "../styles";
 import Pills from "../components/Pills";
 import RollingNumber from "../components/RollingNumber";
 import CategoryDonut from "./charts/CategoryDonut";
@@ -524,13 +524,6 @@ export default function CashflowPage() {
   );
 }
 
-const notice: React.CSSProperties = {
-  background: tokens.color.tintWarm,
-  borderRadius: tokens.radius.sm,
-  padding: "8px 16px",
-  fontSize: 12,
-  lineHeight: 1.5,
-};
 const stepBtn: React.CSSProperties = {
   border: "none",
   background: tokens.color.card,

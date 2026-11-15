@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 
-import { tokens, card, btn, btnDark, chartColors } from "../styles";
+import { tokens, card, btn, btnDark, chartColors, notice } from "../styles";
 import { sectionTitle, columnHeader } from "./sectionStyles";
 import PlatformManager, { type Platform } from "./PlatformManager";
 import ClosedPositions, { type ClosedPosition } from "./ClosedPositions";
@@ -104,6 +104,13 @@ const badgeColor = (t: string) => {
 const BADGE_INK = new Set<string>([tokens.color.gold, tokens.color.sage, tokens.color.sageLight]);
 
 const muted = tokens.color.muted3;
+
+// Hero P&L figure: bold, red-tinted below zero, on-ink green otherwise.
+const heroFigure = (n: number): React.CSSProperties => ({
+  fontWeight: 600,
+  fontVariantNumeric: "tabular-nums",
+  color: n < 0 ? "#e6a99c" : tokens.color.chipGreenText,
+});
 
 // USD figure on top, the IDR figure in small muted text underneath (copied
 // from the platform page, like the other helpers above).
@@ -224,6 +231,18 @@ export default function InvestmentsPage() {
             value: Number(g.subtotal),
           }));
 
+  // Note strip under the top row: the one USD rate (every USD holding carries
+  // the same one per summary) and how many held prices are stale.
+  const heldRows = activeGroups.flatMap((g) => g.holdings);
+  const rated = heldRows.find((h) => h.usd_rate != null);
+  const rateText = rated && rateHover(rated.usd_rate, rated.usd_rate_date);
+  const staleCount = heldRows.filter((h) => h.is_stale).length;
+  const noteParts = [
+    rateText && `USD positions converted at ${rateText}`,
+    staleCount > 0 &&
+      (staleCount === 1 ? "1 price is stale" : `${staleCount} prices are stale`),
+  ].filter(Boolean) as string[];
+
   const costBasis = summary
     ? summary.total_value - summary.total_unrealized_pnl
     : 0;
@@ -266,93 +285,88 @@ export default function InvestmentsPage() {
       ) : (
         summary && (
           <>
-            {/* Hero: total value + allocation */}
+            {/* Hero (total, P&L, history chart, price footer) + Allocation */}
             <div
               style={{
-                display: "grid",
-                gridTemplateColumns:
-                  "repeat(auto-fit, minmax(min(100%, 300px), 1fr))",
+                display: "flex",
+                flexWrap: "wrap",
                 gap: 18,
                 marginBottom: 18,
               }}
             >
-              <div
+              <section
+                aria-label="Portfolio value"
                 style={{
+                  flex: "2 1 560px",
+                  minWidth: 0,
+                  boxSizing: "border-box",
                   background: tokens.color.ink,
                   color: tokens.color.inkText,
                   borderRadius: 18,
-                  padding: "26px 28px",
+                  padding: "22px 28px 18px",
                   display: "flex",
                   flexDirection: "column",
                 }}
               >
-                <div
-                  style={{
-                    fontSize: 13,
-                    color: tokens.color.inkTextMuted,
-                    marginBottom: 10,
-                  }}
-                >
-                  Total value
-                </div>
-                <div
-                  style={{
-                    fontFamily: tokens.font.serif,
-                    fontSize: "clamp(28px, 8vw, 52px)",
-                    lineHeight: 1,
-                    letterSpacing: "-1px",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {fmtPlain(summary.total_value)}
-                </div>
-                {[
-                  {
-                    value: summary.total_unrealized_pnl,
-                    label: `unrealized (${pct(summary.total_unrealized_pnl, costBasis)})`,
-                  },
-                  { value: summary.total_realized_pnl, label: "realized" },
-                ].map((p, i) => (
-                  <div
-                    key={p.label}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      marginTop: i === 0 ? 22 : 8,
-                    }}
-                  >
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        alignItems: "center",
-                        gap: 5,
-                        background: tokens.color.chipGreenBg,
-                        color:
-                          p.value < 0 ? "#e6a99c" : tokens.color.chipGreenText,
-                        fontSize: 13,
-                        fontWeight: 600,
-                        padding: "4px 10px",
-                        borderRadius: 999,
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {fmtSigned(p.value)}
-                    </span>
-                    <span
-                      style={{ fontSize: 13, color: tokens.color.inkTextMuted }}
-                    >
-                      {p.label}
-                    </span>
-                  </div>
-                ))}
+                <ValueHistoryChart
+                  data={history}
+                  range={historyRange}
+                  onRangeChange={setHistoryRange}
+                  header={
+                    <div>
+                      <div
+                        style={{
+                          fontSize: 13,
+                          color: tokens.color.inkTextMuted,
+                          marginBottom: 10,
+                        }}
+                      >
+                        Total value
+                      </div>
+                      <div
+                        style={{
+                          fontFamily: tokens.font.serif,
+                          fontSize: "clamp(28px, 8vw, 52px)",
+                          lineHeight: 1,
+                          letterSpacing: "-1px",
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      >
+                        {fmtPlain(summary.total_value)}
+                      </div>
+                      <div
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: 14,
+                          marginTop: 8,
+                          fontSize: 13,
+                          color: tokens.color.inkTextMuted,
+                        }}
+                      >
+                        <span>
+                          Unrealized{" "}
+                          <b style={heroFigure(summary.total_unrealized_pnl)}>
+                            {fmtSigned(summary.total_unrealized_pnl)}
+                          </b>{" "}
+                          ({pct(summary.total_unrealized_pnl, costBasis)})
+                        </span>
+                        <span>
+                          Realized{" "}
+                          <b style={heroFigure(summary.total_realized_pnl)}>
+                            {fmtSigned(summary.total_realized_pnl)}
+                          </b>
+                        </span>
+                      </div>
+                    </div>
+                  }
+                />
                 <div
                   style={{
                     display: "flex",
                     justifyContent: "space-between",
                     alignItems: "center",
-                    marginTop: "auto",
-                    paddingTop: 20,
+                    paddingTop: 10,
                     fontSize: 12,
                     color: tokens.color.inkTextMuted,
                   }}
@@ -378,9 +392,18 @@ export default function InvestmentsPage() {
                     {refreshing ? "Refreshing…" : "Refresh prices"}
                   </button>
                 </div>
-              </div>
+              </section>
 
-              <div style={{ ...card, marginBottom: 0 }}>
+              <section
+                aria-labelledby="allocation-title"
+                style={{
+                  ...card,
+                  marginBottom: 0,
+                  flex: "1 1 280px",
+                  minWidth: 0,
+                  boxSizing: "border-box",
+                }}
+              >
                 <div
                   style={{
                     display: "flex",
@@ -391,7 +414,9 @@ export default function InvestmentsPage() {
                     marginBottom: 14,
                   }}
                 >
-                  <h2 style={sectionTitle}>Allocation</h2>
+                  <h2 id="allocation-title" style={sectionTitle}>
+                    Allocation
+                  </h2>
                   <div
                     style={{
                       display: "flex",
@@ -497,16 +522,14 @@ export default function InvestmentsPage() {
                     })}
                   </div>
                 </div>
-              </div>
+              </section>
             </div>
 
-            <div style={{ ...card, marginBottom: 18 }}>
-              <ValueHistoryChart
-                data={history}
-                range={historyRange}
-                onRangeChange={setHistoryRange}
-              />
-            </div>
+            {noteParts.length > 0 && (
+              <div style={{ ...notice, marginBottom: 18, color: tokens.color.muted3 }}>
+                {noteParts.join(" · ")}
+              </div>
+            )}
 
             {/* CTAs */}
             <div

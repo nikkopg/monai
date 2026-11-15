@@ -177,3 +177,12 @@ export const categoryPalette: { name: string; hex: string }[] = [
   { name: "Transfer", hex: tokens.color.muted2 },
   { name: "Uncategorized", hex: tokens.color.muted },
 ];
+
+// Warm one-line note strip (Cashflow net-worth notice, Investments rate/stale strip).
+export const notice: React.CSSProperties = {
+  background: tokens.color.tintWarm,
+  borderRadius: tokens.radius.sm,
+  padding: "8px 16px",
+  fontSize: 12,
+  lineHeight: 1.5,
+};

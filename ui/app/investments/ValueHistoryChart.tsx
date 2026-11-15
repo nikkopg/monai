@@ -10,17 +10,18 @@ import {
 } from "recharts";
 
 import { tokens } from "../styles";
-import { sectionTitle } from "./sectionStyles";
+import Pills from "../components/Pills";
 
 // ---------------------------------------------------------------------------
-// Portfolio value / P&L history (VZ-02, INVX-01). Styled to match the cashflow
-// TrendChart (ui/app/cashflow/charts/TrendChart.tsx): tokens (not hardcoded
-// hex), no CartesianGrid / YAxis, borderless X-axis, monotone line at
-// strokeWidth 2.4, matching tooltip, 170px height. Card chrome comes from the
-// caller (page.tsx wraps it in `card`), like AllocationPieChart; the chart keeps
-// its own title and range/view controls.
-// Fetches GET /api/investments/history (open read). Explicit-height wrapper is
-// load-bearing (Recharts blank-render pitfall, 04-RESEARCH.md).
+// Portfolio value / P&L history (VZ-02, INVX-01), drawn inside the dark
+// "Portfolio value" hero on /investments. Same look as the Cashflow net worth
+// hero (NetWorthTrendChart `hero`): `header` (label + total) sits left of the
+// range and Value/P&L Pills, on-ink line and tick colours, no CartesianGrid /
+// YAxis, borderless X-axis, monotone line at strokeWidth 2.4. The hero card
+// chrome comes from page.tsx; this root is a plain flex column.
+// The data is fetched by page.tsx (GET /api/investments/history, open read).
+// Explicit-height wrapper is load-bearing (Recharts blank-render pitfall,
+// 04-RESEARCH.md).
 // ---------------------------------------------------------------------------
 
 export type HistoryPoint = {
@@ -32,94 +33,82 @@ export type HistoryPoint = {
 type Range = "1M" | "3M" | "6M" | "All";
 type View = "value" | "pnl";
 
-const RANGES: Range[] = ["1M", "3M", "6M", "All"];
-const tickStyle = { fill: tokens.color.muted3, fontSize: 12 };
+const RANGE_OPTIONS: { value: Range; label: string }[] = (
+  ["1M", "3M", "6M", "All"] as const
+).map((r) => ({ value: r, label: r }));
+const VIEW_OPTIONS: { value: View; label: string }[] = [
+  { value: "value", label: "Value" },
+  { value: "pnl", label: "P&L" },
+];
+const tickStyle = { fill: tokens.color.inkTextMuted, fontSize: 12 };
 
 const fmtPlain = (n: number) => new Intl.NumberFormat("en-US").format(n);
 const fmtSigned = (n: number) =>
   new Intl.NumberFormat("en-US", { signDisplay: "always" }).format(n);
 
-function pillStyle(active: boolean): React.CSSProperties {
-  return {
-    padding: "4px 12px",
-    minHeight: 32,
-    borderRadius: 6,
-    fontSize: 12,
-    border: `1px solid ${tokens.color.border}`,
-    background: active ? tokens.color.green : "transparent",
-    color: active ? "white" : tokens.color.muted3,
-    cursor: "pointer",
-  };
-}
-
 export default function ValueHistoryChart({
   data,
   range,
   onRangeChange,
+  header,
 }: {
   data: HistoryPoint[];
   range: Range;
   onRangeChange: (r: Range) => void;
+  header?: React.ReactNode;
 }) {
   const [view, setView] = useState<View>("value");
 
   const latestPnl = data.length > 0 ? data[data.length - 1].total_pnl : 0;
-  const pnlColor = latestPnl >= 0 ? tokens.color.green : tokens.color.terracotta;
+  const pnlStroke = latestPnl >= 0 ? tokens.color.chipGreenText : "#e6a99c";
 
   return (
-    <section>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
       <div
         style={{
           display: "flex",
           justifyContent: "space-between",
-          alignItems: "center",
+          alignItems: "flex-start",
+          // Wrap, so in a narrow hero the pills drop below the total.
           flexWrap: "wrap",
-          gap: 8,
-          marginBottom: 16,
+          gap: "10px 16px",
+          marginBottom: 6,
         }}
       >
-        <h2 style={sectionTitle}>Portfolio history</h2>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
-          {RANGES.map((r) => (
-            <button
-              key={r}
-              type="button"
-              className="coarse-tap"
-              style={pillStyle(range === r)}
-              onClick={() => onRangeChange(r)}
-            >
-              {r}
-            </button>
-          ))}
+        {header}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          <Pills
+            options={RANGE_OPTIONS}
+            value={range}
+            onChange={onRangeChange}
+            dark
+            tap
+            label="History range"
+          />
+          <Pills
+            options={VIEW_OPTIONS}
+            value={view}
+            onChange={setView}
+            dark
+            tap
+            label="History metric"
+          />
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 4, marginTop: 8, marginBottom: 16 }}>
-        <button
-          type="button"
-          className="coarse-tap"
-          style={pillStyle(view === "value")}
-          onClick={() => setView("value")}
-        >
-          Value
-        </button>
-        <button
-          type="button"
-          className="coarse-tap"
-          style={pillStyle(view === "pnl")}
-          onClick={() => setView("pnl")}
-        >
-          P&amp;L
-        </button>
-      </div>
-
       {data.length < 2 ? (
-        <p style={{ fontSize: 14, color: tokens.color.muted3, margin: 0 }}>
+        <p
+          style={{
+            fontSize: 14,
+            color: tokens.color.inkTextMuted,
+            margin: "auto 0 0",
+          }}
+        >
           Not enough history yet — check back after a few days of price
           snapshots.
         </p>
       ) : (
-        <div style={{ width: "100%", height: 170 }}>
+        <div style={{ width: "100%", height: 130, marginTop: "auto" }}>
           <ResponsiveContainer>
             <LineChart
               data={data}
@@ -130,6 +119,7 @@ export default function ValueHistoryChart({
                 tick={tickStyle}
                 axisLine={false}
                 tickLine={false}
+                minTickGap={24}
               />
               <Tooltip
                 formatter={(value) =>
@@ -151,7 +141,7 @@ export default function ValueHistoryChart({
                 <Line
                   type="monotone"
                   dataKey="total_market_value"
-                  stroke={tokens.color.green}
+                  stroke={tokens.color.chipGreenText}
                   name="Portfolio value"
                   strokeWidth={2.4}
                   dot={false}
@@ -161,7 +151,7 @@ export default function ValueHistoryChart({
                 <Line
                   type="monotone"
                   dataKey="total_pnl"
-                  stroke={pnlColor}
+                  stroke={pnlStroke}
                   name="Unrealized P&L"
                   strokeWidth={2.4}
                   dot={false}
@@ -172,6 +162,6 @@ export default function ValueHistoryChart({
           </ResponsiveContainer>
         </div>
       )}
-    </section>
+    </div>
   );
 }
