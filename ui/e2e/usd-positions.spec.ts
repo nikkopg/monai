@@ -405,6 +405,43 @@ test.describe("USD positions on the Investments page", () => {
     expect(a2.y).toBeGreaterThanOrEqual(h2.y + h2.height);
   });
 
+  test("the donut sits inside the Allocation card with the legend below it", async ({ page }) => {
+    for (const vp of [
+      { width: 1440, height: 900 },
+      { width: 375, height: 812 },
+    ]) {
+      await mockInvestmentsPage(page, [usdHolding, idrHolding]);
+      // Size before goto so ResponsiveContainer measures the real width.
+      await page.setViewportSize(vp);
+      await page.goto("/investments");
+      const alloc = page.getByRole("region", { name: "Allocation" });
+      const svg = alloc.locator("svg.recharts-surface").first();
+      await expect(svg).toBeVisible();
+      const c = (await alloc.boundingBox())!;
+      const s = (await svg.boundingBox())!;
+      expect(s.x).toBeGreaterThanOrEqual(c.x);
+      expect(s.y).toBeGreaterThanOrEqual(c.y);
+      expect(s.x + s.width).toBeLessThanOrEqual(c.x + c.width);
+      expect(s.y + s.height).toBeLessThanOrEqual(c.y + c.height);
+      expect(s.height).toBeLessThanOrEqual(220);
+
+      const total = alloc.getByText("Total", { exact: true });
+      await expect(total).toBeVisible();
+      const t = (await total.boundingBox())!;
+      const cx = t.x + t.width / 2;
+      const cy = t.y + t.height / 2;
+      expect(cx).toBeGreaterThanOrEqual(s.x);
+      expect(cx).toBeLessThanOrEqual(s.x + s.width);
+      expect(cy).toBeGreaterThanOrEqual(s.y);
+      expect(cy).toBeLessThanOrEqual(s.y + s.height);
+      await expect(total.locator("xpath=following-sibling::*[1]")).toHaveText("1.5M");
+
+      await alloc.getByRole("group", { name: "Allocation grouping" }).getByRole("button", { name: "Asset type" }).click();
+      const label = (await alloc.getByText("Mutual funds", { exact: true }).boundingBox())!;
+      expect(label.y).toBeGreaterThanOrEqual(s.y + s.height);
+    }
+  });
+
   test("controls are at least 32px tall", async ({ page }) => {
     await mockInvestmentsPage(page, [usdHolding, idrHolding]);
     await page.goto("/investments");

@@ -10,7 +10,7 @@ import { type Platform } from "./PlatformManager";
 import ClosedPositions, { type ClosedPosition } from "./ClosedPositions";
 import { extractDetail } from "../lib/api";
 import { fmtAmount, fmtUsdPrice, rateHover } from "../lib/money";
-import { assetLabel } from "../cashflow/holdings";
+import { assetLabel, fmtShort } from "../cashflow/holdings";
 import HoldingModal from "./HoldingModal";
 import HoldingOverrideModal from "./HoldingOverrideModal";
 import PriceOverrideDialog from "./PriceOverrideDialog";
@@ -486,17 +486,13 @@ export default function InvestmentsPage() {
                 <div
                   style={{
                     display: "flex",
-                    alignItems: "center",
-                    flexWrap: "wrap",
-                    gap: 22,
+                    flexDirection: "column",
+                    gap: 14,
                   }}
                 >
-                  <div style={{ flex: "1 1 160px", minWidth: 0 }}>
-                    <AllocationPieChart data={allocationData} />
-                  </div>
+                  <AllocationPieChart data={allocationData} />
                   <div
                     style={{
-                      flex: "0 0 auto",
                       display: "flex",
                       flexDirection: "column",
                       gap: 10,
@@ -534,6 +530,9 @@ export default function InvestmentsPage() {
                             }}
                           >
                             {s.label}
+                          </span>
+                          <span style={{ fontVariantNumeric: "tabular-nums" }}>
+                            {fmtShort(s.value, "IDR")}
                           </span>
                           <span style={{ color: muted }}>
                             {total > 0

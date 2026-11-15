@@ -1,6 +1,7 @@
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 
 import { chartColors, tokens } from "../styles";
+import { fmtShort } from "../cashflow/holdings";
 
 // ---------------------------------------------------------------------------
 // VZ-01 allocation pie (Phase 7 Plan 03) — structural clone of the Phase-4
@@ -10,6 +11,8 @@ import { chartColors, tokens } from "../styles";
 // existing platform groups). Pure renderer: the parent (page.tsx) resolves
 // which grouping's {label, value}[] array to pass in via groupBy state; this
 // component has no fetch and no knowledge of "asset_type vs platform".
+// Radii are percentages of the box, so the donut cannot clip (261115-dcq);
+// the legend sits below it in page.tsx.
 // Explicit-height wrapper is load-bearing — see Pitfall 3, 04-RESEARCH.md:
 // ResponsiveContainer renders blank inside a grid/flex parent with no
 // resolvable height. Placement/toggle chrome polish deferred to
@@ -37,16 +40,37 @@ export default function AllocationPieChart({
     );
   }
 
+  const total = data.reduce((a, b) => a + b.value, 0);
+
   return (
-    <div style={{ width: "100%", height: 280 }}>
+    <div style={{ position: "relative", width: "100%", height: 200 }}>
+      {/* Before the chart in the DOM so the recharts wrapper (and its hover
+          Tooltip) paints above it; the text shows through the donut hole. */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          justifyContent: "center",
+          pointerEvents: "none",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        <span style={{ fontSize: 11, color: muted }}>Total</span>
+        <span style={{ fontSize: 17, fontWeight: 600 }}>
+          {fmtShort(total, "IDR")}
+        </span>
+      </div>
       <ResponsiveContainer>
         <PieChart>
           <Pie
             data={data}
             dataKey="value"
             nameKey="label"
-            innerRadius={60}
-            outerRadius={100}
+            innerRadius="62%"
+            outerRadius="92%"
             paddingAngle={2}
             // recharts 3.x animates the entrance from zero-width sectors on a
             // requestAnimationFrame clock. Animation stays on (restored in
