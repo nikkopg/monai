@@ -382,6 +382,7 @@ export default function HoldingModal({
         </h2>
         <form onSubmit={handleSubmit}>
           <div
+            className="form-grid"
             style={{
               display: "grid",
               gridTemplateColumns: "1fr 1fr",

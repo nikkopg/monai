@@ -300,6 +300,14 @@
   }
 }
 
+/* Modal forms go to one column on phones (261115-oax P3): `1fr` columns cannot
+   shrink below the date input's intrinsic width, which starved Amount. */
+@media (max-width: 560px) {
+  .form-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
 /* Phase 33 Inbox. Hex values are literal copies of ui/app/styles.ts tokens
    because CSS cannot import styles.ts: #2f6f4f green, #6f6857 muted3,
    #f0ece3 hairline. */

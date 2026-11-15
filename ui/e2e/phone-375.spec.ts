@@ -1,6 +1,7 @@
 import { test, expect, type Locator, type Page } from "@playwright/test";
 
 import { cspViolations, watchCsp } from "./csp-fixture";
+import { ids, mockInbox, NOW, proposal, transferProposal, txRow } from "./inbox-fixtures";
 
 // 375px checks from the 2026-11-15 other-pages audit, route-mocked, synthetic
 // values only (261115-oax). A fixed overlay is 375 wide and `main` leaves cards
@@ -316,5 +317,150 @@ test.describe("P2 records (261115-oax)", () => {
     expect(Math.round(min.y)).toBe(Math.round(max.y));
     const cb = (await card.boundingBox())!;
     expect(max.x + max.width).toBeLessThanOrEqual(cb.x + cb.width);
+  });
+});
+
+// ===========================================================================
+// P3 — modals
+// ===========================================================================
+
+// The investments page with one worst-case crypto row (8-dp quantity, 9-digit
+// USD price) next to an IDR row. Task 6 reuses it.
+async function mockInvestments(page: Page) {
+  const base = {
+    id: 21,
+    ticker: "ZZIDR",
+    currency: "IDR",
+    asset_type: "idx_stock",
+    quantity: 12345, // pii-ok synthetic
+    avg_cost: 8765, // pii-ok synthetic
+    current_price: 9876, // pii-ok synthetic
+    current_value: 1234567890, // pii-ok synthetic
+    unrealized_pnl: 123456789, // pii-ok synthetic
+    realized_pnl: -12345678, // pii-ok synthetic
+    platform_id: 7,
+    coingecko_id: null,
+    price_source: "manual",
+    price_fetched_at: "2026-01-02T00:00:00Z",
+    is_stale: false,
+  };
+  const coin = {
+    ...base,
+    id: 22,
+    ticker: "ZZCOIN",
+    currency: "USD",
+    asset_type: "crypto",
+    quantity: 12345.12345678, // pii-ok synthetic
+    avg_cost: 397000, // pii-ok synthetic
+    current_price: 397234, // pii-ok synthetic
+    current_value: 1234567890, // pii-ok synthetic
+    unrealized_pnl: 123456789, // pii-ok synthetic
+    usd_avg_cost: 0.024074644, // pii-ok synthetic
+    usd_current_price: 0.024074645, // pii-ok synthetic
+    usd_current_value: 74822.24, // pii-ok synthetic
+    usd_unrealized_pnl: 7482.22, // pii-ok synthetic
+    usd_rate: 16500, // pii-ok synthetic
+    usd_rate_date: "2026-01-02",
+  };
+  await page.route("**/api/investments/summary**", (r) =>
+    r.fulfill(
+      json({
+        groups: [{ platform_id: 7, platform_name: "ZZ Exchange", kind: "crypto app", subtotal: 2469135780, holdings: [base, coin] }], // pii-ok synthetic
+        asset_type_groups: [
+          { asset_type: "idx_stock", total_value: 1234567890 }, // pii-ok synthetic
+          { asset_type: "crypto", total_value: 1234567890 }, // pii-ok synthetic
+        ],
+        total_value: 2469135780, // pii-ok synthetic
+        total_unrealized_pnl: 246913578, // pii-ok synthetic
+        total_realized_pnl: -24691356, // pii-ok synthetic
+        as_of: "2026-01-02",
+      }),
+    ),
+  );
+  await page.route("**/api/investments/history**", (r) => r.fulfill(json({ points: [] })));
+  await page.route("**/api/platforms", (r) => r.fulfill(json([{ id: 7, name: "ZZ Exchange", kind: "crypto app" }])));
+  await page.route("**/api/closed-positions**", (r) => r.fulfill(json([])));
+}
+
+// Text-like inputs narrower than 120px, as "name: width" so a failure names them.
+function narrowInputs(dialog: Locator): Promise<string[]> {
+  return dialog.evaluate((root) =>
+    Array.from(root.querySelectorAll<HTMLElement>("input:not([type=checkbox]):not([type=radio]):not([type=hidden]), textarea"))
+      .filter((el) => el.getBoundingClientRect().width > 0)
+      .filter((el) => el.getBoundingClientRect().width < 120)
+      .map((el) => `${el.id || el.getAttribute("placeholder") || el.tagName}: ${Math.round(el.getBoundingClientRect().width)}`),
+  );
+}
+
+// Every currency chip sits on the same rounded top as the input before it. Returns the chip count.
+async function chipsShareTop(dialog: Locator): Promise<number> {
+  const chips = await dialog.locator("input + [aria-label*=urrency]").all();
+  for (const chip of chips) {
+    const input = chip.locator("xpath=preceding-sibling::input[1]");
+    expect(Math.round((await chip.boundingBox())!.y)).toBe(Math.round((await input.boundingBox())!.y));
+  }
+  return chips.length;
+}
+
+async function dialogFits(dialog: Locator, expectChips: boolean) {
+  await expect(dialog).toBeVisible();
+  expect(await narrowInputs(dialog)).toEqual([]);
+  expect(await crossings(dialog)).toEqual([]);
+  const chips = await chipsShareTop(dialog);
+  if (expectChips) expect(chips).toBeGreaterThan(0);
+}
+
+test.describe("P3 modals (261115-oax)", () => {
+  test("P3: Add transaction (Expense and cross-currency Transfer) fits at 375", async ({ page }) => {
+    await mockRecords(page);
+    await page.goto("/records");
+    await page.getByRole("button", { name: "+ Add record", exact: true }).click();
+    const dialog = page.getByRole("heading", { name: "Add transaction" }).locator("..");
+    await dialogFits(dialog, true);
+
+    await page.getByRole("button", { name: "Transfer", exact: true }).click();
+    await page.getByLabel("From account", { exact: true }).selectOption({ label: "ZZ Dollar" });
+    await page.getByLabel("To account", { exact: true }).selectOption({ label: "ZZ Bank" });
+    await expect(page.getByLabel("Amount received (IDR)", { exact: true })).toBeVisible();
+    await dialogFits(dialog, true);
+  });
+
+  test("P3: Log event (HoldingModal) fits at 375", async ({ page }) => {
+    await mockPlatform(page);
+    await page.route("**/api/accounts", (r) => r.fulfill(json([{ id: 1, name: "ZZ Bank", type: "liquid", currency: "IDR" }])));
+    await page.goto("/investments/7");
+    await page.getByRole("button", { name: "Buy & Sell", exact: true }).click();
+    await page.getByRole("button", { name: "+ Log event", exact: true }).click();
+    // Picking a funding account shows the cash-amount row and the currency chips.
+    await page.locator('label:text-is("Investment liquid account") + select').selectOption({ label: "ZZ Bank" });
+    await dialogFits(page.getByRole("heading", { name: "Log event" }).locator(".."), true);
+  });
+
+  test("P3: Add holding directly (HoldingOverrideModal) fits at 375", async ({ page }) => {
+    await mockInvestments(page);
+    await page.goto("/investments");
+    await page.getByRole("button", { name: "Holdings options", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Add holding directly", exact: true }).click();
+    await dialogFits(page.getByRole("heading", { name: "Add holding directly" }).locator(".."), false);
+  });
+
+  test("P3: an Inbox proposal card fits at 375", async ({ page }) => {
+    await mockInbox(page, {
+      list: [
+        proposal({
+          id: ids.a,
+          payload: {
+            operation: "add_transaction",
+            rows: [txRow({ after: { amount: "-1234567890.00", merchant: "ZZ Merchant With A Long Name" } })], // pii-ok synthetic
+          },
+        }),
+        transferProposal({ id: ids.b }),
+      ],
+    });
+    await page.clock.setFixedTime(NOW);
+    await page.goto("/inbox");
+    const cards = page.getByRole("article");
+    await expect(cards).toHaveCount(2);
+    for (const card of await cards.all()) expect(await crossings(card)).toEqual([]);
   });
 });

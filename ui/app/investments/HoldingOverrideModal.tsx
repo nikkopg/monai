@@ -141,6 +141,7 @@ export default function HoldingOverrideModal({
         </p>
         <form onSubmit={handleSubmit}>
           <div
+            className="form-grid"
             style={{
               display: "grid",
               gridTemplateColumns: "1fr 1fr",

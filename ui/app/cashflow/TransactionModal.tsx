@@ -449,6 +449,7 @@ export default function TransactionModal({
           )}
 
           <div
+            className="form-grid"
             style={{
               display: "grid",
               gridTemplateColumns: "1fr 1fr",
