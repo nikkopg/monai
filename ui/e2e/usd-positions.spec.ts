@@ -238,9 +238,12 @@ test.describe("USD positions on the Investments page", () => {
     await page.goto("/investments");
     await expect(row(page, "ZZUSD")).toBeVisible();
 
-    // chartColors[0] and chartColors[1]: the colours the pie uses for slices 0 and 1
+    // chartColors[0] and chartColors[1]: the colours the pie uses for slices 0 and 1.
+    // Scoped to Allocation: the Holdings group rows say "Crypto" too.
+    const alloc = page.getByRole("region", { name: "Allocation" });
+    await alloc.getByRole("group", { name: "Allocation grouping" }).getByRole("button", { name: "Asset type" }).click();
     const swatch = (label: string) =>
-      page.getByText(label, { exact: true }).locator("xpath=preceding-sibling::span[1]");
+      alloc.getByText(label, { exact: true }).locator("xpath=preceding-sibling::span[1]");
     await expect(swatch("Crypto")).toHaveCSS("background-color", "rgb(47, 111, 79)");
     await expect(swatch("Gold")).toHaveCSS("background-color", "rgb(90, 143, 115)");
 
@@ -285,6 +288,10 @@ test.describe("USD positions on the Investments page", () => {
     await expect(lines(page, "ZZUSD", I.value).cell).toBeVisible();
     await expect(page.getByText("Units", { exact: true })).toBeHidden();
     await expect(row(page, "ZZIDR").getByText("10 × 1,200", { exact: true })).toBeVisible();
+
+    const open = (await page.getByRole("link", { name: "Open ZZ Exchange", exact: true }).boundingBox())!;
+    expect(open.x).toBeGreaterThanOrEqual(0);
+    expect(open.x + open.width).toBeLessThanOrEqual(375);
 
     const total = page.getByText("1,512,000", { exact: true }).first();
     expect(await total.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
@@ -336,7 +343,9 @@ test.describe("USD positions on the Investments page", () => {
     await expect(page.getByText("Unrealized P&L", { exact: true })).toHaveCount(0);
     await expect(page.getByText("Realized P&L", { exact: true })).toHaveCount(0);
     await expect(page.getByText(/[\u25B2\u25BC]/)).toHaveCount(0);
-    const box = await page.getByText("Mutual funds", { exact: true }).boundingBox();
+    const alloc = page.getByRole("region", { name: "Allocation" });
+    await alloc.getByRole("group", { name: "Allocation grouping" }).getByRole("button", { name: "Asset type" }).click();
+    const box = await alloc.getByText("Mutual funds", { exact: true }).boundingBox();
     expect(box!.height).toBeLessThan(20);
   });
 
@@ -401,13 +410,73 @@ test.describe("USD positions on the Investments page", () => {
     await page.goto("/investments");
     await expect(row(page, "ZZUSD")).toBeVisible();
     const controls = [
-      ...["Refresh prices", "Asset type", "Platform", "1M", "All", "Value", "P&L", "Add holding directly", "Holding options: ZZUSD"].map(
+      ...["Refresh prices", "1M", "All", "Value", "P&L", "Open", "Closed", "+ Log event", "Holdings options", "Holding options: ZZUSD"].map(
         (name) => page.getByRole("button", { name, exact: true })
       ),
-      page.getByRole("link", { name: "ZZ Exchange", exact: true }),
+      page.getByRole("link", { name: "Open ZZ Exchange", exact: true }),
+      // Both the Allocation and the Holdings grouping groups carry these.
+      ...(await page.getByRole("button", { name: "Asset type", exact: true }).all()),
+      ...(await page.getByRole("button", { name: "Platform", exact: true }).all()),
     ];
     for (const c of controls) {
       expect((await c.boundingBox())!.height).toBeGreaterThanOrEqual(32);
     }
+  });
+
+  test.describe("one Holdings card", () => {
+    const holdings = (page: Page) => page.getByRole("region", { name: "Holdings" });
+    const group = (page: Page, label: string) => page.getByRole("group", { name: label });
+
+    test("one Holdings card groups rows under platform rows", async ({ page }) => {
+      await mockInvestmentsPage(page, [usdHolding, idrHolding]);
+      await page.goto("/investments");
+      await expect(holdings(page)).toHaveCount(1);
+      await expect(holdings(page).getByText("2 positions", { exact: true })).toBeVisible();
+      await expect(holdings(page).getByText("1,512,000", { exact: true })).toBeVisible();
+      await expect(holdings(page).getByRole("link", { name: "Open ZZ Exchange" })).toHaveAttribute("href", "/investments/1");
+      await expect(row(page, "ZZUSD")).toBeVisible();
+      await expect(row(page, "ZZIDR")).toBeVisible();
+      await expect(page.getByRole("button", { name: "Holding options: ZZUSD", exact: true })).toBeVisible();
+      await expect(page.getByText("Return", { exact: true })).toHaveCount(1);
+    });
+
+    test("the grouping pill is shared with Allocation", async ({ page }) => {
+      await mockInvestmentsPage(page, [usdHolding, idrHolding]);
+      await page.goto("/investments");
+      const pressed = (label: string, name: string) =>
+        group(page, label).getByRole("button", { name, exact: true });
+      await expect(pressed("Holdings grouping", "Platform")).toHaveAttribute("aria-pressed", "true");
+      await expect(pressed("Allocation grouping", "Platform")).toHaveAttribute("aria-pressed", "true");
+
+      await pressed("Holdings grouping", "Asset type").click();
+      await expect(pressed("Allocation grouping", "Asset type")).toHaveAttribute("aria-pressed", "true");
+      await expect(holdings(page).getByText("Crypto", { exact: true })).toBeVisible();
+      await expect(holdings(page).getByRole("link", { name: "Open ZZ Exchange" })).toHaveCount(0);
+      await expect(row(page, "ZZUSD")).toContainText("ZZ Exchange");
+
+      await pressed("Allocation grouping", "Platform").click();
+      await expect(pressed("Holdings grouping", "Platform")).toHaveAttribute("aria-pressed", "true");
+      await expect(holdings(page).getByRole("link", { name: "Open ZZ Exchange" })).toBeVisible();
+    });
+
+    test("Open/Closed switch", async ({ page }) => {
+      await mockInvestmentsPage(page, [usdHolding, idrHolding]);
+      await page.goto("/investments");
+      await expect(row(page, "ZZUSD")).toBeVisible();
+      await group(page, "Holdings view").getByRole("button", { name: "Closed", exact: true }).click();
+      await expect(page.getByText("No closed positions yet.")).toBeVisible();
+      await expect(page.getByText("Return", { exact: true })).toHaveCount(0);
+      await expect(group(page, "Holdings grouping")).toHaveCount(0);
+      await group(page, "Holdings view").getByRole("button", { name: "Open", exact: true }).click();
+      await expect(row(page, "ZZUSD")).toBeVisible();
+    });
+
+    test("the menu holds Add holding directly", async ({ page }) => {
+      await mockInvestmentsPage(page, [usdHolding, idrHolding]);
+      await page.goto("/investments");
+      await page.getByRole("button", { name: "Holdings options", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Add holding directly", exact: true }).click();
+      await expect(page.getByRole("heading", { name: "Add holding directly" })).toBeVisible();
+    });
   });
 });

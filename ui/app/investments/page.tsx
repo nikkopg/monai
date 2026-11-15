@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 
-import { tokens, card, btn, btnDark, chartColors, notice } from "../styles";
-import { sectionTitle, columnHeader } from "./sectionStyles";
+import { tokens, card, btnDark, chartColors, notice } from "../styles";
+import { sectionTitle, columnHeader, groupRow } from "./sectionStyles";
 import PlatformManager, { type Platform } from "./PlatformManager";
 import ClosedPositions, { type ClosedPosition } from "./ClosedPositions";
 import { extractDetail } from "../lib/api";
@@ -13,6 +13,7 @@ import { assetLabel } from "../cashflow/holdings";
 import HoldingModal from "./HoldingModal";
 import HoldingOverrideModal from "./HoldingOverrideModal";
 import PriceOverrideDialog from "./PriceOverrideDialog";
+import Pills from "../components/Pills";
 import RowMenu from "../components/RowMenu";
 import StalenessBadge from "./StalenessBadge";
 import ValueHistoryChart, { type HistoryPoint } from "./ValueHistoryChart";
@@ -60,6 +61,57 @@ type Group = {
   subtotal: number;
   holdings: HoldingRow[];
 };
+
+type GroupBy = "platform" | "asset_type";
+const GROUP_OPTIONS: { value: GroupBy; label: string }[] = [
+  { value: "platform", label: "Platform" },
+  { value: "asset_type", label: "Asset type" },
+];
+const VIEW_OPTIONS: { value: "open" | "closed"; label: string }[] = [
+  { value: "open", label: "Open" },
+  { value: "closed", label: "Closed" },
+];
+
+// One group row of the Holdings table plus the holding rows under it.
+type TableGroup = {
+  key: string;
+  name: string;
+  platformId: number | null; // set only for platform groups (the "Open ›" link)
+  subtotal: number;
+  rows: { h: HoldingRow; platformName: string }[];
+};
+
+function tableGroupsOf(groups: Group[], by: GroupBy): TableGroup[] {
+  const platformName = (g: Group) =>
+    g.platform_id === null ? "Unassigned" : g.platform_name;
+  if (by === "platform") {
+    return groups.map((g) => ({
+      key: String(g.platform_id),
+      name: platformName(g),
+      platformId: g.platform_id,
+      subtotal: Number(g.subtotal),
+      rows: g.holdings.map((h) => ({ h, platformName: platformName(g) })),
+    }));
+  }
+  const byType = new Map<string, TableGroup>();
+  for (const g of groups) {
+    for (const h of g.holdings) {
+      const key = String(h.asset_type);
+      const tg = byType.get(key) ?? {
+        key,
+        name: assetLabel(h.asset_type),
+        platformId: null,
+        subtotal: 0,
+        rows: [],
+      };
+      // The same IDR figure the row shows; an unpriced row counts 0.
+      tg.subtotal += h.current_value ?? 0;
+      tg.rows.push({ h, platformName: platformName(g) });
+      byType.set(key, tg);
+    }
+  }
+  return Array.from(byType.values()).sort((a, b) => b.subtotal - a.subtotal);
+}
 
 type AssetTypeGroup = { asset_type: string | null; total_value: number };
 
@@ -134,9 +186,9 @@ export default function InvestmentsPage() {
   const [historyRange, setHistoryRange] = useState<"1M" | "3M" | "6M" | "All">(
     "3M"
   );
-  const [allocationGroupBy, setAllocationGroupBy] = useState<
-    "asset_type" | "platform"
-  >("asset_type");
+  // One grouping for the Allocation card and the Holdings table.
+  const [groupBy, setGroupBy] = useState<GroupBy>("platform");
+  const [view, setView] = useState<"open" | "closed">("open");
 
   const [showEvent, setShowEvent] = useState(false);
   const [overrideOpen, setOverrideOpen] = useState(false);
@@ -217,9 +269,10 @@ export default function InvestmentsPage() {
       .filter((g) => g.holdings.length > 0 || g.platform_id !== null) ?? [];
 
   const hasAnyHolding = activeGroups.some((g) => g.holdings.length > 0);
+  const tableGroups = tableGroupsOf(activeGroups, groupBy);
 
   const allocationData: AllocationSlice[] =
-    allocationGroupBy === "asset_type"
+    groupBy === "asset_type"
       ? (summary?.asset_type_groups ?? []).map((g) => ({
           label: assetLabel(g.asset_type),
           value: Number(g.total_value),
@@ -417,48 +470,14 @@ export default function InvestmentsPage() {
                   <h2 id="allocation-title" style={sectionTitle}>
                     Allocation
                   </h2>
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: 4,
-                      background: "#efece4",
-                      border: `1px solid ${tokens.color.border2}`,
-                      borderRadius: 999,
-                      padding: 3,
-                    }}
-                  >
-                    {(
-                      [
-                        { key: "asset_type", label: "Asset type" },
-                        { key: "platform", label: "Platform" },
-                      ] as const
-                    ).map((opt) => {
-                      const active = allocationGroupBy === opt.key;
-                      return (
-                        <button
-                          key={opt.key}
-                          type="button"
-                          onClick={() => setAllocationGroupBy(opt.key)}
-                          className="coarse-tap"
-                          style={{
-                            minHeight: 32,
-                            padding: "5px 12px",
-                            borderRadius: 999,
-                            fontSize: 12,
-                            fontWeight: active ? 600 : 500,
-                            border: "none",
-                            cursor: "pointer",
-                            background: active ? tokens.color.ink : "transparent",
-                            color: active
-                              ? tokens.color.inkText
-                              : tokens.color.muted3,
-                          }}
-                        >
-                          {opt.label}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <Pills
+                    small
+                    tap
+                    label="Allocation grouping"
+                    options={GROUP_OPTIONS}
+                    value={groupBy}
+                    onChange={setGroupBy}
+                  />
                 </div>
                 <div
                   style={{
@@ -531,52 +550,6 @@ export default function InvestmentsPage() {
               </div>
             )}
 
-            {/* CTAs */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 14,
-                marginBottom: 18,
-              }}
-            >
-              <button style={btnDark} type="button" onClick={() => setShowEvent(true)}>
-                + Log event
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setEditingHolding(null);
-                  setOverrideOpen(true);
-                }}
-                className="coarse-tap"
-                style={{
-                  minHeight: 32,
-                  background: "transparent",
-                  color: muted,
-                  border: "none",
-                  fontSize: 13,
-                  cursor: "pointer",
-                  textDecoration: "underline",
-                  padding: 0,
-                }}
-              >
-                Add holding directly
-              </button>
-            </div>
-
-            {!hasAnyHolding && (
-              <div style={card}>
-                <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
-                  No holdings yet.
-                </div>
-                <p style={{ fontSize: 14, color: muted, margin: 0 }}>
-                  Log your first buy to start tracking a position, or add a
-                  platform first if you hold assets across more than one app.
-                </p>
-              </div>
-            )}
-
             {/* Refused delete: viewport-anchored so it's seen from deep in the list */}
             {deleteError && (
               <div
@@ -609,299 +582,359 @@ export default function InvestmentsPage() {
               </div>
             )}
 
-            {/* Platform-grouped holdings */}
-            {activeGroups.map((g) => {
-              const isUnassigned = g.platform_id === null;
-              return (
-                <div key={String(g.platform_id)} style={{ ...card, marginBottom: 18 }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "baseline",
-                      marginBottom: 8,
-                    }}
+            {/* One Holdings card: Open / Closed views, grouped by the shared grouping */}
+            <section
+              aria-labelledby="holdings-title"
+              style={{ ...card, marginBottom: 18 }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: 8,
+                  marginBottom: 10,
+                }}
+              >
+                <h2 id="holdings-title" style={sectionTitle}>
+                  Holdings
+                </h2>
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <Pills
+                    small
+                    tap
+                    label="Holdings view"
+                    options={VIEW_OPTIONS}
+                    value={view}
+                    onChange={setView}
+                  />
+                  {/* Closed records carry no asset type, so grouping only applies to Open. */}
+                  {view === "open" && (
+                    <Pills
+                      small
+                      tap
+                      label="Holdings grouping"
+                      options={GROUP_OPTIONS}
+                      value={groupBy}
+                      onChange={setGroupBy}
+                    />
+                  )}
+                  <button
+                    style={btnDark}
+                    type="button"
+                    onClick={() => setShowEvent(true)}
                   >
-                    <div>
-                      {isUnassigned ? (
-                        <span
-                          style={{
-                            fontSize: 14,
-                            fontWeight: 600,
-                            color: muted,
-                          }}
-                        >
-                          Unassigned
-                        </span>
-                      ) : (
-                        <Link
-                          href={`/investments/${g.platform_id}`}
-                          className="coarse-tap"
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            minHeight: 32,
-                            fontSize: 14,
-                            fontWeight: 600,
-                            color: tokens.color.ink,
-                            cursor: "pointer",
-                            textDecoration: "none",
-                          }}
-                          onMouseEnter={(e) =>
-                            (e.currentTarget.style.textDecoration = "underline")
-                          }
-                          onMouseLeave={(e) =>
-                            (e.currentTarget.style.textDecoration = "none")
-                          }
-                        >
-                          {g.platform_name}
-                        </Link>
-                      )}
-                      {g.kind && (
-                        <span
-                          style={{ fontSize: 12, color: muted, marginLeft: 8 }}
-                        >
-                          {g.kind}
-                        </span>
-                      )}
-                    </div>
-                    <span
-                      style={{
-                        fontSize: 14,
-                        fontWeight: 600,
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {fmtPlain(g.subtotal)}
-                    </span>
-                  </div>
+                    + Log event
+                  </button>
+                  <RowMenu
+                    label="Holdings options"
+                    items={[
+                      {
+                        label: "Add holding directly",
+                        onSelect: () => {
+                          setEditingHolding(null);
+                          setOverrideOpen(true);
+                        },
+                      },
+                    ]}
+                  />
+                </div>
+              </div>
 
-                  {g.holdings.length === 0 ? (
-                    <p style={{ fontSize: 14, color: muted, margin: 0 }}>
-                      No holdings in this platform yet.
-                    </p>
-                  ) : (
-                    <>
+              {view === "closed" ? (
+                <ClosedPositions rows={closed} load={load} />
+              ) : !hasAnyHolding ? (
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
+                    No holdings yet.
+                  </div>
+                  <p style={{ fontSize: 14, color: muted, margin: 0 }}>
+                    Log your first buy to start tracking a position, or add a
+                    platform first if you hold assets across more than one app.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div
+                    className="inv-wide"
+                    style={{ display: "flex", ...columnHeader }}
+                  >
+                    <span style={{ flex: 2 }}>Asset</span>
+                    <span className="inv-wide" style={{ flex: 1, textAlign: "right" }}>Units</span>
+                    <span className="inv-wide" style={{ flex: 1.2, textAlign: "right" }}>Price</span>
+                    <span style={{ flex: 1.2, textAlign: "right" }}>Value</span>
+                    <span style={{ flex: 1.2, textAlign: "right" }}>Return</span>
+                    <span style={{ flex: 1.4, textAlign: "right" }} />
+                  </div>
+                  {tableGroups.map((tg) => (
+                    <Fragment key={tg.key}>
                       <div
-                        className="inv-wide"
-                        style={{ display: "flex", ...columnHeader }}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          ...groupRow,
+                          padding: "6px 8px",
+                          borderTop: `1px solid ${tokens.color.borderInner}`,
+                        }}
                       >
-                        <span style={{ flex: 2 }}>Asset</span>
-                        <span className="inv-wide" style={{ flex: 1, textAlign: "right" }}>Units</span>
-                        <span className="inv-wide" style={{ flex: 1.2, textAlign: "right" }}>Price</span>
-                        <span style={{ flex: 1.2, textAlign: "right" }}>Value</span>
-                        <span style={{ flex: 1.2, textAlign: "right" }}>Return</span>
-                        <span style={{ flex: 1.4, textAlign: "right" }} />
+                        <span
+                          style={{
+                            flex: 4.2,
+                            minWidth: 0,
+                            display: "flex",
+                            flexWrap: "wrap",
+                            alignItems: "center",
+                            columnGap: 8,
+                          }}
+                        >
+                          <span>{tg.name}</span>
+                          <span style={{ fontSize: 12, fontWeight: 400, color: muted }}>
+                            {tg.rows.length} {tg.rows.length === 1 ? "position" : "positions"}
+                          </span>
+                          {groupBy === "platform" && tg.platformId !== null && (
+                            <Link
+                              href={`/investments/${tg.platformId}`}
+                              aria-label={`Open ${tg.name}`}
+                              className="coarse-tap"
+                              style={{
+                                minHeight: 32,
+                                display: "inline-flex",
+                                alignItems: "center",
+                                fontSize: 12,
+                                fontWeight: 500,
+                                color: muted,
+                                textDecoration: "none",
+                              }}
+                            >
+                              Open ›
+                            </Link>
+                          )}
+                        </span>
+                        <span style={{ flex: 1.2, textAlign: "right", whiteSpace: "nowrap" }}>
+                          {fmtPlain(tg.subtotal)}
+                        </span>
+                        <span className="inv-wide" style={{ flex: 2.6 }} />
                       </div>
-                      {g.holdings.map((h) => {
-                        const upnl = h.unrealized_pnl;
-                        const basis = h.avg_cost * h.quantity;
-                        return (
-                          <div
-                            key={h.id}
-                            className="inv-row"
+                      {tg.rows.map(({ h, platformName }) => {
+                      const upnl = h.unrealized_pnl;
+                      const basis = h.avg_cost * h.quantity;
+                      return (
+                        <div
+                          key={h.id}
+                          className="inv-row"
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            fontSize: 14,
+                            padding: "13px 0",
+                            borderTop: `1px solid ${tokens.color.borderInner}`,
+                          }}
+                        >
+                          <span
                             style={{
+                              flex: 2,
                               display: "flex",
                               alignItems: "center",
-                              fontSize: 14,
-                              padding: "13px 0",
-                              borderTop: `1px solid ${tokens.color.borderInner}`,
+                              gap: 11,
+                              minWidth: 0,
                             }}
                           >
                             <span
+                              className="inv-wide"
                               style={{
-                                flex: 2,
-                                display: "flex",
+                                width: 32,
+                                height: 32,
+                                borderRadius: 9,
+                                background: badgeColor(h.ticker),
+                                color: BADGE_INK.has(badgeColor(h.ticker)) ? tokens.color.ink : "#fff",
+                                display: "inline-flex",
                                 alignItems: "center",
-                                gap: 11,
-                                minWidth: 0,
+                                justifyContent: "center",
+                                fontSize: 12,
+                                fontWeight: 700,
+                                flexShrink: 0,
                               }}
                             >
+                              {h.ticker.slice(0, 4)}
+                            </span>
+                            <span style={{ minWidth: 0 }}>
                               <span
-                                className="inv-wide"
                                 style={{
-                                  width: 32,
-                                  height: 32,
-                                  borderRadius: 9,
-                                  background: badgeColor(h.ticker),
-                                  color: BADGE_INK.has(badgeColor(h.ticker)) ? tokens.color.ink : "#fff",
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  fontSize: 12,
-                                  fontWeight: 700,
-                                  flexShrink: 0,
+                                  fontWeight: 500,
+                                  display: "block",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
                                 }}
                               >
-                                {h.ticker.slice(0, 4)}
+                                {h.ticker}
                               </span>
-                              <span style={{ minWidth: 0 }}>
-                                <span
-                                  style={{
-                                    fontWeight: 500,
-                                    display: "block",
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                    whiteSpace: "nowrap",
-                                  }}
-                                >
-                                  {h.ticker}
+                              {groupBy === "asset_type" && (
+                                <span style={{ display: "block", fontSize: 12, color: muted }}>
+                                  {platformName}
                                 </span>
-                                <StalenessBadge
-                                  fetchedAt={h.price_fetched_at}
-                                  source={h.price_source}
-                                  isStale={h.is_stale}
-                                />
-                                {h.currency === "USD" && h.usd_rate == null && (
-                                  <span style={{ display: "block", fontSize: 12, color: muted }}>
-                                    No USD rate, shown in IDR
-                                  </span>
-                                )}
-                              </span>
+                              )}
+                              <StalenessBadge
+                                fetchedAt={h.price_fetched_at}
+                                source={h.price_source}
+                                isStale={h.is_stale}
+                              />
+                              {h.currency === "USD" && h.usd_rate == null && (
+                                <span style={{ display: "block", fontSize: 12, color: muted }}>
+                                  No USD rate, shown in IDR
+                                </span>
+                              )}
                             </span>
-                            <span
-                              className="inv-wide"
-                              style={{
-                                flex: 1,
-                                textAlign: "right",
-                                fontVariantNumeric: "tabular-nums",
-                                color: tokens.color.muted3,
-                              }}
-                            >
-                              {fmtQty(h.quantity, h.asset_type)}
-                            </span>
-                            <span
-                              className="inv-wide"
-                              style={{
-                                flex: 1.2,
-                                textAlign: "right",
-                                fontVariantNumeric: "tabular-nums",
-                                color: tokens.color.muted3,
-                              }}
-                            >
-                              {h.usd_current_price != null
-                                ? withIdr(
-                                    fmtUsdPrice(h.usd_current_price, 8),
-                                    `${fmtPlain(h.current_price ?? 0)} IDR`,
-                                    rateHover(h.usd_rate, h.usd_rate_date)
-                                  )
+                          </span>
+                          <span
+                            className="inv-wide"
+                            style={{
+                              flex: 1,
+                              textAlign: "right",
+                              fontVariantNumeric: "tabular-nums",
+                              color: tokens.color.muted3,
+                            }}
+                          >
+                            {fmtQty(h.quantity, h.asset_type)}
+                          </span>
+                          <span
+                            className="inv-wide"
+                            style={{
+                              flex: 1.2,
+                              textAlign: "right",
+                              fontVariantNumeric: "tabular-nums",
+                              color: tokens.color.muted3,
+                            }}
+                          >
+                            {h.usd_current_price != null
+                              ? withIdr(
+                                  fmtUsdPrice(h.usd_current_price, 8),
+                                  `${fmtPlain(h.current_price ?? 0)} IDR`,
+                                  rateHover(h.usd_rate, h.usd_rate_date)
+                                )
+                              : h.current_price != null
+                                ? fmtPlain(h.current_price)
+                                : "—"}
+                          </span>
+                          <span
+                            style={{
+                              flex: 1.2,
+                              textAlign: "right",
+                              fontVariantNumeric: "tabular-nums",
+                              fontWeight: 600,
+                            }}
+                          >
+                            {h.usd_current_value != null
+                              ? withIdr(
+                                  fmtAmount(h.usd_current_value, "USD"),
+                                  `${fmtPlain(h.current_value ?? 0)} IDR`,
+                                  rateHover(h.usd_rate, h.usd_rate_date)
+                                )
+                              : h.current_value != null
+                                ? fmtPlain(h.current_value)
+                                : "—"}
+                          </span>
+                          <span
+                            style={{
+                              flex: 1.2,
+                              textAlign: "right",
+                              fontVariantNumeric: "tabular-nums",
+                              fontWeight: 600,
+                              color: upnl != null ? pnlColor(upnl) : muted,
+                            }}
+                          >
+                            {upnl != null && h.usd_unrealized_pnl != null && h.usd_avg_cost != null
+                              ? withIdr(
+                                  `${pct(h.usd_unrealized_pnl, h.usd_avg_cost * h.quantity)} USD`,
+                                  `${pct(upnl, basis)} IDR`
+                                )
+                              : upnl != null
+                                ? pct(upnl, basis)
+                                : "—"}
+                          </span>
+                          <span
+                            style={{
+                              flex: 1.4,
+                              display: "flex",
+                              gap: 10,
+                              justifyContent: "flex-end",
+                              fontSize: 12,
+                            }}
+                          >
+                            <RowMenu
+                              label={`Holding options: ${h.ticker}`}
+                              items={[
+                                { label: "Set price", onSelect: () => setPriceHolding(h) },
+                                {
+                                  label: "Edit",
+                                  onSelect: () => {
+                                    setEditingHolding(h);
+                                    setOverrideOpen(true);
+                                  },
+                                },
+                                {
+                                  label: "Delete",
+                                  destructive: true,
+                                  onSelect: async () => {
+                                    if (
+                                      !confirm(
+                                        `Delete holding ${h.ticker}? Holdings with buy/sell history can't be deleted — record a sell to close them instead.`
+                                      )
+                                    )
+                                      return;
+                                    setDeleteError(null);
+                                    try {
+                                      const r = await fetch(`/api/holdings/${h.id}`, {
+                                        method: "DELETE",
+                                      });
+                                      if (r.ok) load();
+                                      else
+                                        setDeleteError(
+                                          `Couldn't delete ${h.ticker}: ${await extractDetail(r)}`
+                                        );
+                                    } catch (e) {
+                                      setDeleteError(
+                                        `Couldn't delete ${h.ticker}: ${e instanceof Error ? e.message : "Network error"}`
+                                      );
+                                    }
+                                  },
+                                },
+                              ]}
+                            />
+                          </span>
+                          <span
+                            className="inv-sub"
+                            style={{
+                              flexBasis: "100%",
+                              fontSize: 12,
+                              color: muted,
+                              fontVariantNumeric: "tabular-nums",
+                            }}
+                          >
+                            {`${fmtQty(h.quantity, h.asset_type)} × ${
+                              h.usd_current_price != null
+                                ? fmtUsdPrice(h.usd_current_price, 8)
                                 : h.current_price != null
                                   ? fmtPlain(h.current_price)
-                                  : "—"}
-                            </span>
-                            <span
-                              style={{
-                                flex: 1.2,
-                                textAlign: "right",
-                                fontVariantNumeric: "tabular-nums",
-                                fontWeight: 600,
-                              }}
-                            >
-                              {h.usd_current_value != null
-                                ? withIdr(
-                                    fmtAmount(h.usd_current_value, "USD"),
-                                    `${fmtPlain(h.current_value ?? 0)} IDR`,
-                                    rateHover(h.usd_rate, h.usd_rate_date)
-                                  )
-                                : h.current_value != null
-                                  ? fmtPlain(h.current_value)
-                                  : "—"}
-                            </span>
-                            <span
-                              style={{
-                                flex: 1.2,
-                                textAlign: "right",
-                                fontVariantNumeric: "tabular-nums",
-                                fontWeight: 600,
-                                color: upnl != null ? pnlColor(upnl) : muted,
-                              }}
-                            >
-                              {upnl != null && h.usd_unrealized_pnl != null && h.usd_avg_cost != null
-                                ? withIdr(
-                                    `${pct(h.usd_unrealized_pnl, h.usd_avg_cost * h.quantity)} USD`,
-                                    `${pct(upnl, basis)} IDR`
-                                  )
-                                : upnl != null
-                                  ? pct(upnl, basis)
-                                  : "—"}
-                            </span>
-                            <span
-                              style={{
-                                flex: 1.4,
-                                display: "flex",
-                                gap: 10,
-                                justifyContent: "flex-end",
-                                fontSize: 12,
-                              }}
-                            >
-                              <RowMenu
-                                label={`Holding options: ${h.ticker}`}
-                                items={[
-                                  { label: "Set price", onSelect: () => setPriceHolding(h) },
-                                  {
-                                    label: "Edit",
-                                    onSelect: () => {
-                                      setEditingHolding(h);
-                                      setOverrideOpen(true);
-                                    },
-                                  },
-                                  {
-                                    label: "Delete",
-                                    destructive: true,
-                                    onSelect: async () => {
-                                      if (
-                                        !confirm(
-                                          `Delete holding ${h.ticker}? Holdings with buy/sell history can't be deleted — record a sell to close them instead.`
-                                        )
-                                      )
-                                        return;
-                                      setDeleteError(null);
-                                      try {
-                                        const r = await fetch(`/api/holdings/${h.id}`, {
-                                          method: "DELETE",
-                                        });
-                                        if (r.ok) load();
-                                        else
-                                          setDeleteError(
-                                            `Couldn't delete ${h.ticker}: ${await extractDetail(r)}`
-                                          );
-                                      } catch (e) {
-                                        setDeleteError(
-                                          `Couldn't delete ${h.ticker}: ${e instanceof Error ? e.message : "Network error"}`
-                                        );
-                                      }
-                                    },
-                                  },
-                                ]}
-                              />
-                            </span>
-                            <span
-                              className="inv-sub"
-                              style={{
-                                flexBasis: "100%",
-                                fontSize: 12,
-                                color: muted,
-                                fontVariantNumeric: "tabular-nums",
-                              }}
-                            >
-                              {`${fmtQty(h.quantity, h.asset_type)} × ${
-                                h.usd_current_price != null
-                                  ? fmtUsdPrice(h.usd_current_price, 8)
-                                  : h.current_price != null
-                                    ? fmtPlain(h.current_price)
-                                    : "—"
-                              }`}
-                            </span>
-                          </div>
-                        );
+                                  : "—"
+                            }`}
+                          </span>
+                        </div>
+                      );
                       })}
-                    </>
-                  )}
-                </div>
-              );
-            })}
-
-            <ClosedPositions rows={closed} load={load} />
+                    </Fragment>
+                  ))}
+                </>
+              )}
+            </section>
 
             <PlatformManager platforms={platforms} onChanged={load} />
           </>

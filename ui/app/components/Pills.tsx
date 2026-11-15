@@ -56,7 +56,7 @@ export default function Pills<T extends string>({
               cursor: "pointer",
               color: dark
                 ? active ? tokens.color.ink : tokens.color.inkTextMuted
-                : active ? tokens.color.inkText : tokens.color.muted,
+                : active ? tokens.color.inkText : tokens.color.muted3,
               background: active ? (dark ? tokens.color.inkText : tokens.color.ink) : "transparent",
               transition: "all .2s ease",
             }}
