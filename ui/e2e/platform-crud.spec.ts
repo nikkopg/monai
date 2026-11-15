@@ -54,6 +54,23 @@ async function mockInvestments(page: Page) {
   });
 }
 
+// The cards above Platforms fill in after their fetches; slow (and synthetic)
+// replies make the page grow after load, as it does live, so the hash jump
+// can only land if the page scrolls once its data is in.
+async function mockSlowCards(page: Page) {
+  const slow = (body: unknown) => async (route: import("@playwright/test").Route) => {
+    await new Promise((r) => setTimeout(r, 600));
+    await route.fulfill({ json: body as object });
+  };
+  const cat = (id: number) => ({
+    id, name: `ZZTest Category ${id}`, parent_id: null, kind: "expense", color: null,
+    effective_color: null, icon: null, is_system: false, tx_count: 0, children: [],
+  });
+  const acct = (id: number) => ({ id, name: `ZZTest Account ${id}`, current_balance: 0, type: "liquid" });
+  await page.route("**/api/categories*", slow(Array.from({ length: 40 }, (_, i) => cat(i + 1))));
+  await page.route("**/api/cashflow/summary**", slow({ accounts: [1, 2, 3, 4].map(acct) }));
+}
+
 test.describe("platform CRUD parity (PLAT-02)", () => {
   test("Add a platform posts name and kind to POST /api/platforms", async ({
     page,
@@ -185,11 +202,29 @@ test.describe("platform CRUD parity (PLAT-02)", () => {
   });
 
   test("Investments ⋯ Manage platforms opens Settings at Platforms", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 600 });
+    await mockSlowCards(page);
     await mockInvestments(page);
     await page.goto("/investments");
     await page.getByRole("button", { name: "Holdings options", exact: true }).click();
     await page.getByRole("menuitem", { name: "Manage platforms", exact: true }).click();
     await expect(page).toHaveURL(/\/settings#platforms$/);
-    await expect(page.locator("#platforms")).toBeVisible();
+    // Only judge the scroll once the slow cards above have filled in.
+    await expect(page.getByText("ZZTest Account 4").first()).toBeAttached();
+    await expect(page.getByText("ZZTest Category 40").first()).toBeAttached();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+    await expect(page.locator("#platforms").getByRole("heading", { name: "Platforms" })).toBeInViewport();
+  });
+
+  test("Settings #platforms deep link scrolls the Platforms section into view", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 600 });
+    await mockSlowCards(page);
+    await mockInvestments(page);
+    await page.goto("/settings#platforms");
+    // Only judge the scroll once the slow cards above have filled in.
+    await expect(page.getByText("ZZTest Account 4").first()).toBeAttached();
+    await expect(page.getByText("ZZTest Category 40").first()).toBeAttached();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+    await expect(page.locator("#platforms").getByRole("heading", { name: "Platforms" })).toBeInViewport();
   });
 });

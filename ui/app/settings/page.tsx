@@ -93,10 +93,6 @@ export default function SettingsPage() {
     }
   }
 
-  useEffect(() => {
-    loadAccounts();
-  }, []);
-
   // Platforms manager (moved here from the Investments page).
   const [platforms, setPlatforms] = useState<Platform[]>([]);
 
@@ -109,31 +105,41 @@ export default function SettingsPage() {
     }
   }
 
+  async function loadSettings() {
+    try {
+      const r = await fetch("/api/settings");
+      if (!r.ok) {
+        setLoadError(true);
+        return;
+      }
+      const data: SettingsOut = await r.json();
+      setProvider(data.llm_provider);
+      setModel(data.llm_model);
+      setAnthropicMasked(data.anthropic_api_key_masked);
+      setOpenaiMasked(data.openai_api_key_masked);
+      setBaseCurrency(data.base_currency);
+      setPriceDataSource(data.price_data_source);
+    } catch {
+      setLoadError(true);
+    }
+  }
+
+  // The loaders catch their own errors, so Promise.all always resolves.
+  const [loaded, setLoaded] = useState(false);
   useEffect(() => {
-    loadPlatforms();
+    Promise.all([loadAccounts(), loadPlatforms(), loadSettings()]).then(() =>
+      setLoaded(true)
+    );
   }, []);
 
+  // The cards above a hash target fill in after their fetches, so the
+  // browser's own hash jump lands too early; scroll once the data is in.
+  // CategoryManager's later growth above is absorbed by scroll anchoring.
   useEffect(() => {
-    async function loadSettings() {
-      try {
-        const r = await fetch("/api/settings");
-        if (!r.ok) {
-          setLoadError(true);
-          return;
-        }
-        const data: SettingsOut = await r.json();
-        setProvider(data.llm_provider);
-        setModel(data.llm_model);
-        setAnthropicMasked(data.anthropic_api_key_masked);
-        setOpenaiMasked(data.openai_api_key_masked);
-        setBaseCurrency(data.base_currency);
-        setPriceDataSource(data.price_data_source);
-      } catch {
-        setLoadError(true);
-      }
+    if (loaded && window.location.hash.length > 1) {
+      document.getElementById(window.location.hash.slice(1))?.scrollIntoView();
     }
-    loadSettings();
-  }, []);
+  }, [loaded]);
 
   function handleProviderChange(next: string) {
     setProvider(next);
