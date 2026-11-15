@@ -35,7 +35,7 @@ export async function middleware(req: NextRequest) {
   const { pathname, search, searchParams } = req.nextUrl;
   if (verdict === "ok") {
     if (pathname === "/login" && req.method === "GET") {
-      return NextResponse.redirect(new URL(safeNext(searchParams.get("next")), req.nextUrl));
+      return redirectTo(req, safeNext(searchParams.get("next")));
     }
     return NextResponse.next();
   }
