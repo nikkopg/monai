@@ -41,11 +41,19 @@
 /* Below 561px (phones) the 44px page gutters leave cards too narrow for an
    amount (37 IN-03, 261115-msv). Covers every .tab-in page; Chat's own 16px
    rule further down still wins for the chat column. The old Investments-only
-   rule was folded in here. */
+   rule was folded in here.
+   261115-s37: this is also the one place every page gets clearance under the
+   floating dock (--dock-clear is the single knob). Chat's later
+   .chat-column-inner rule overrides the bottom padding on purpose: the sticky
+   composer carries Chat's clearance (.composer-sticky below). */
 @media (max-width: 560px) {
+  :root {
+    --dock-clear: calc(84px + env(safe-area-inset-bottom));
+  }
   .tab-in {
     padding-left: 16px !important;
     padding-right: 16px !important;
+    padding-bottom: var(--dock-clear) !important;
   }
 }
 
@@ -477,6 +485,11 @@ input, select, button, textarea {
 @media (max-width: 560px) {
   .chat-column-inner {
     padding: 24px 16px 40px !important;
+  }
+  /* 261115-s37: the composer's panel background runs down behind the dock, so
+     no message shows between them and Ask sits above the dock while pinned. */
+  .composer-sticky {
+    padding-bottom: var(--dock-clear) !important;
   }
 }
 /* The composer text box takes its own line on phones, Attach left and Ask right

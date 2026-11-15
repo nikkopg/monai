@@ -1850,6 +1850,7 @@ function ChatInner() {
 
           {/* Composer — sticky at the bottom of the scroll area */}
           <div
+            className="composer-sticky"
             style={{
               position: "sticky",
               bottom: 0,

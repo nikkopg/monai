@@ -675,3 +675,115 @@ test.describe("D1 phone dock (261115-s37)", () => {
     expect(texts).toEqual(["Cashflow", "Records", "Inbox", "Chat", "Investments", "Settings"]);
   });
 });
+
+// ===========================================================================
+// D2 — pages and the Chat composer clear the dock (261115-s37)
+// ===========================================================================
+
+test.describe("D2 dock clearance (261115-s37)", () => {
+  const dockTop = async (page: Page) =>
+    (await page.getByRole("navigation", { name: "Main" }).boundingBox())!.y;
+  const toBottom = (page: Page) => page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  // Bottom edge of the last rendered element child of the page root.
+  const lastCardBottom = (page: Page) =>
+    page.locator("main .tab-in").first().evaluate((root) => {
+      const kids = Array.from(root.children).filter((el) => {
+        const r = el.getBoundingClientRect();
+        return getComputedStyle(el).display !== "none" && r.height > 0;
+      });
+      return kids[kids.length - 1].getBoundingClientRect().bottom;
+    });
+
+  test("D2: the last card on Records ends above the dock", async ({ page }) => {
+    await mockRecords(page);
+    await page.goto("/records");
+    await expect(page.getByPlaceholder("Search merchant or notes…")).toBeVisible();
+    await toBottom(page);
+    const gap = (await dockTop(page)) - (await lastCardBottom(page));
+    console.log(`D2 records gap to dock top: ${gap}`);
+    expect(gap).toBeGreaterThanOrEqual(0);
+  });
+
+  test("D2: the last card on Investments ends above the dock", async ({ page }) => {
+    await mockInvestments(page);
+    await page.goto("/investments");
+    await expect(page.getByText("ZZCOIN").first()).toBeAttached();
+    await toBottom(page);
+    const gap = (await dockTop(page)) - (await lastCardBottom(page));
+    console.log(`D2 investments gap to dock top: ${gap}`);
+    expect(gap).toBeGreaterThanOrEqual(0);
+  });
+
+  test("D2: Chat's Ask button sits above the dock, pinned and at the end", async ({ page }) => {
+    const TID = "00000000-0000-4000-8000-0000000000d2";
+    const filler = "ZZ synthetic filler sentence that pads the message out so the thread is long enough to scroll. ";
+    const messages = Array.from({ length: 16 }, (_, i) => ({
+      id: `00000000-0000-4000-8000-0000000001${String(i).padStart(2, "0")}`,
+      seq: i + 1,
+      role: i % 2 === 0 ? "user" : "assistant",
+      content: `ZZ synthetic ${i % 2 === 0 ? "question" : "answer"} ${i + 1}. ${filler.repeat(3)}`,
+      status: "complete",
+      created_at: new Date().toISOString(),
+      parts: { steps: [], proposals: [] },
+    }));
+    await mockInbox(page, { list: [] });
+    await page.route(/\/api\/threads$/, (r) => r.fulfill({ json: [] }));
+    await page.route(new RegExp(`/api/threads/${TID}$`), (r) =>
+      r.fulfill({
+        json: { id: TID, title: "ZZ synthetic chat", updated_at: new Date().toISOString(), active_run: null, messages, attachments: [] },
+      }),
+    );
+    await page.goto(`/chat?thread=${TID}`);
+    const box = page.getByRole("textbox", { name: "Ask monai a question" });
+    const ask = page.getByRole("button", { name: "Ask", exact: true });
+    await expect(page.getByText("ZZ synthetic question 1.")).toBeVisible();
+    const check = async (where: string) => {
+      const top = await dockTop(page);
+      const askGap = top - (await ask.boundingBox())!.y - (await ask.boundingBox())!.height;
+      const boxGap = top - (await box.boundingBox())!.y - (await box.boundingBox())!.height;
+      console.log(`D2 chat ${where}: ask gap ${askGap}, textbox gap ${boxGap}`);
+      expect(askGap).toBeGreaterThanOrEqual(0);
+      expect(boxGap).toBeGreaterThanOrEqual(0);
+    };
+    await toBottom(page);
+    await check("end");
+    expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeGreaterThan(812);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await check("pinned");
+  });
+
+  test("D2: the Add record modal covers the dock", async ({ page }) => {
+    await mockRecords(page);
+    await page.goto("/records");
+    await page.getByRole("button", { name: "+ Add record", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Add transaction" })).toBeVisible();
+    const d = (await page.getByRole("navigation", { name: "Main" }).boundingBox())!;
+    const covered = await page.evaluate(
+      ([x, y]) => !document.elementFromPoint(x, y)!.closest(".app-dock"),
+      [d.x + d.width / 2, d.y + d.height / 2],
+    );
+    expect(covered).toBe(true);
+  });
+
+  test("D2: a RowMenu that overlaps the dock paints above it", async ({ page }) => {
+    await mockRecords(page);
+    await page.goto("/records");
+    await expect(page.getByPlaceholder("Search merchant or notes…")).toBeVisible();
+    // .fade-in (0.3s on the list) is a stacking context while it runs; let it end.
+    await page.waitForFunction(() => document.getAnimations().length === 0);
+    await toBottom(page);
+    // At the end of the page the last row sits above the dock, so scroll back until
+    // its button is just over the dock; the menu then opens down across it.
+    const opts = page.getByRole("button", { name: /^Record options: / }).last();
+    await page.evaluate((dy) => window.scrollBy(0, dy), (await opts.boundingBox())!.y - ((await dockTop(page)) - 30));
+    await opts.click();
+    const menu = page.locator("[role=menu]");
+    await expect(menu).toBeVisible();
+    const m = (await menu.boundingBox())!;
+    const d = (await page.getByRole("navigation", { name: "Main" }).boundingBox())!;
+    expect(overlaps(m, d)).toBe(true);
+    const x = Math.max(m.x, d.x) + (Math.min(m.x + m.width, d.x + d.width) - Math.max(m.x, d.x)) / 2;
+    const y = Math.max(m.y, d.y) + (Math.min(m.y + m.height, d.y + d.height) - Math.max(m.y, d.y)) / 2;
+    expect(await page.evaluate(([px, py]) => !!document.elementFromPoint(px, py)!.closest("[role=menu]"), [x, y])).toBe(true);
+  });
+});
