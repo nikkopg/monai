@@ -13,6 +13,7 @@ import {
 
 import { tokens, card } from "../../styles";
 import Pills from "../../components/Pills";
+import Skeleton, { DrawLine } from "../../components/Skeleton";
 import {
   visibleRows,
   toPlotPoints,
@@ -228,18 +229,12 @@ export default function NetWorthTrendChart({
           {error}
         </div>
       ) : !rows ? (
-        <div
-          style={{
-            height: chartHeight,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 12,
-            color: tokens.color.muted,
-          }}
+        <Skeleton
+          label="Loading net worth history"
+          style={{ marginTop: hero ? "auto" : 0 }}
         >
-          Loading net worth history…
-        </div>
+          <DrawLine height={chartHeight} />
+        </Skeleton>
       ) : (
         <>
           <div style={{ width: "100%", height: chartHeight, marginTop: hero ? "auto" : 0 }}>

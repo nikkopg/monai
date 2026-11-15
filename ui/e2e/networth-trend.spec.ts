@@ -323,6 +323,40 @@ async function mockPage(page: Page, history: HistoryFn = defaultHistory) {
 }
 
 test.describe("net worth trend card", () => {
+  test("loading: page skeleton with the drawing line, then the chart's own line until history lands (261115-hfb)", async ({
+    page,
+  }) => {
+    await mockPage(page);
+    let releaseSummary!: () => void;
+    let releaseHistory!: () => void;
+    const summaryGate = new Promise<void>((r) => (releaseSummary = r));
+    const historyGate = new Promise<void>((r) => (releaseHistory = r));
+    await page.route("**/api/cashflow/summary**", async (route) => {
+      await summaryGate;
+      await route.fallback();
+    });
+    await page.route("**/api/cashflow/networth-history**", async (route) => {
+      await historyGate;
+      await route.fallback();
+    });
+    await page.goto("/cashflow");
+
+    const pageSkel = page.getByRole("status", { name: "Loading your cashflow" });
+    await expect(pageSkel).toBeVisible();
+    await expect(pageSkel.locator(".draw-line")).toHaveCount(1);
+
+    releaseSummary();
+    await expect(pageSkel).toHaveCount(0);
+    const region = page.getByRole("region", { name: "Net worth trend", exact: true });
+    const chartSkel = region.getByRole("status", { name: "Loading net worth history" });
+    await expect(chartSkel).toBeVisible();
+    await expect(chartSkel.locator(".draw-line")).toHaveCount(1);
+
+    releaseHistory();
+    await expect(chartSkel).toHaveCount(0);
+    await expect(region.locator("g.recharts-line")).toHaveCount(1);
+  });
+
   test("renders one honest dot and no caption text under the chart", async ({
     page,
   }) => {
@@ -388,7 +422,9 @@ test.describe("net worth trend card", () => {
     // Cache proof (D-03) without relying on networkidle, which can be flaky
     // under the Next dev server's hot-reload socket: the loading placeholder
     // never reappears and no new "12" request is issued.
-    await expect(region.getByText("Loading net worth history…")).toHaveCount(0);
+    await expect(
+      region.getByRole("status", { name: "Loading net worth history" })
+    ).toHaveCount(0);
     const finalTwelveCount = requestedMonths.filter((m) => m === "12").length;
     expect(finalTwelveCount).toBe(initialTwelveCount);
     await expect(

@@ -8,6 +8,7 @@ import RollingNumber from "../components/RollingNumber";
 import CategoryDonut from "./charts/CategoryDonut";
 import TrendChart, { type ChartPoint } from "./charts/TrendChart";
 import NetWorthTrendChart from "./charts/NetWorthTrendChart";
+import Skeleton, { Bone, DrawLine } from "../components/Skeleton";
 import HoldingsCard from "./HoldingsCard";
 import type { AccountBalance, InvestmentGroup } from "./holdings";
 import { fmtAmount, fmtAmountSigned } from "../lib/money";
@@ -245,8 +246,96 @@ export default function CashflowPage() {
         </div>
       )}
 
+      {!summary && !summaryError && (
+        <Skeleton pulse label="Loading your cashflow">
+          <div
+            className="bone-dark"
+            style={{
+              background: tokens.color.ink,
+              borderRadius: 18,
+              padding: "22px 28px 18px",
+              marginBottom: 18,
+              display: "flex",
+              flexDirection: "column",
+              gap: 12,
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                flexWrap: "wrap",
+                gap: "10px 16px",
+                alignItems: "flex-start",
+              }}
+            >
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                <Bone w={80} h={12} />
+                <Bone w={260} h={46} />
+                <Bone w={220} h={12} />
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                <Bone w={110} h={32} r={999} />
+                <Bone w={120} h={32} r={999} />
+              </div>
+            </div>
+            <DrawLine height={120} />
+          </div>
+          <div
+            className="cf-lower"
+            style={{ display: "grid", gap: 18, marginBottom: 18, alignItems: "start" }}
+          >
+            <div
+              style={{
+                ...card,
+                marginBottom: 0,
+                display: "flex",
+                flexDirection: "column",
+                gap: 14,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <Bone w={70} h={14} />
+                <Bone w={170} h={28} r={999} />
+              </div>
+              <Bone w="100%" h={150} r={10} />
+              {[0, 1, 2].map((i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between" }}>
+                  <Bone w={70} h={12} />
+                  <Bone w={110} h={16} />
+                </div>
+              ))}
+              <Bone w="100%" h={8} r={999} />
+            </div>
+            <div
+              style={{
+                ...card,
+                marginBottom: 0,
+                display: "flex",
+                flexDirection: "column",
+                gap: 14,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <Bone w={70} h={14} />
+                <Bone w={150} h={28} r={999} />
+              </div>
+              {[0, 1, 2, 3, 4].map((i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <Bone w={10} h={10} />
+                    <Bone w={90} h={12} />
+                  </div>
+                  <Bone w={100} h={12} />
+                </div>
+              ))}
+            </div>
+          </div>
+        </Skeleton>
+      )}
+
       {summary && !summaryError && (
-        <>
+        <div className="fade-in">
           {/* Net worth (with its trend) spans the whole top row. */}
           <div
             style={{
@@ -518,7 +607,7 @@ export default function CashflowPage() {
 
             {netWorthData && <HoldingsCard data={netWorthData} />}
             </div>
-        </>
+        </div>
       )}
     </div>
   );
