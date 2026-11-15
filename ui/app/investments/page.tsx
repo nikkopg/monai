@@ -4,13 +4,13 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-import { tokens, card, btnDark, chartColors, notice } from "../styles";
+import { tokens, card, btnDark, notice } from "../styles";
 import { sectionTitle, columnHeader, groupRow } from "./sectionStyles";
 import { type Platform } from "./PlatformManager";
 import ClosedPositions, { type ClosedPosition } from "./ClosedPositions";
 import { extractDetail } from "../lib/api";
 import { fmtAmount, fmtUsdPrice, rateHover } from "../lib/money";
-import { assetLabel, fmtShort } from "../cashflow/holdings";
+import { GOLDS, assetLabel, fmtShort } from "../cashflow/holdings";
 import HoldingModal from "./HoldingModal";
 import HoldingOverrideModal from "./HoldingOverrideModal";
 import PriceOverrideDialog from "./PriceOverrideDialog";
@@ -275,7 +275,9 @@ export default function InvestmentsPage() {
   const hasAnyHolding = activeGroups.some((g) => g.holdings.length > 0);
   const tableGroups = tableGroupsOf(activeGroups, groupBy);
 
-  const allocationData: AllocationSlice[] =
+  // Largest first, like finish(..., GOLDS, true) on the Cashflow Holdings card,
+  // so a group gets the same colour on both pages.
+  const allocationData: AllocationSlice[] = (
     groupBy === "asset_type"
       ? (summary?.asset_type_groups ?? []).map((g) => ({
           label: assetLabel(g.asset_type),
@@ -286,7 +288,8 @@ export default function InvestmentsPage() {
           .map((g) => ({
             label: g.platform_id === null ? "Unassigned" : g.platform_name,
             value: Number(g.subtotal),
-          }));
+          }))
+  ).sort((a, b) => b.value - a.value);
 
   // Note strip under the top row: the one USD rate (every USD holding carries
   // the same one per summary) and how many held prices are stale.
@@ -518,7 +521,7 @@ export default function InvestmentsPage() {
                               width: 9,
                               height: 9,
                               borderRadius: 3,
-                              background: chartColors[i % chartColors.length],
+                              background: GOLDS[i % GOLDS.length],
                               flexShrink: 0,
                             }}
                           />

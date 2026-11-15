@@ -1,7 +1,7 @@
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 
-import { chartColors, tokens } from "../styles";
-import { fmtShort } from "../cashflow/holdings";
+import { tokens } from "../styles";
+import { GOLDS, fmtShort } from "../cashflow/holdings";
 
 // ---------------------------------------------------------------------------
 // VZ-01 allocation pie (Phase 7 Plan 03) — structural clone of the Phase-4
@@ -13,6 +13,8 @@ import { fmtShort } from "../cashflow/holdings";
 // component has no fetch and no knowledge of "asset_type vs platform".
 // Radii are percentages of the box, so the donut cannot clip (261115-dcq);
 // the legend sits below it in page.tsx.
+// Slices use GOLDS, the Holdings card's investment palette, so terracotta (the loss
+// colour) never colours a slice (261115-dlc).
 // Explicit-height wrapper is load-bearing — see Pitfall 3, 04-RESEARCH.md:
 // ResponsiveContainer renders blank inside a grid/flex parent with no
 // resolvable height. Placement/toggle chrome polish deferred to
@@ -79,7 +81,7 @@ export default function AllocationPieChart({
             // frame and shows no slices.
           >
             {data.map((_, i) => (
-              <Cell key={i} fill={chartColors[i % chartColors.length]} />
+              <Cell key={i} fill={GOLDS[i % GOLDS.length]} />
             ))}
           </Pie>
           <Tooltip

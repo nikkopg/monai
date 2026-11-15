@@ -114,9 +114,11 @@ async function mockInvestmentsPage(page: Page, holdings: unknown[]) {
           { platform_id: 1, platform_name: "ZZ Exchange", kind: "crypto app", subtotal: 1512000, holdings },
         ],
         asset_type_groups: [
-          { asset_type: "crypto", total_value: 1500000 },
           { asset_type: "gold", total_value: 12000 },
           { asset_type: "mutual_fund", total_value: 12000 },
+          { asset_type: "idx_stock", total_value: 6000 },
+          { asset_type: "other", total_value: 3000 },
+          { asset_type: "crypto", total_value: 1500000 },
         ],
         total_value: 1512000,
         total_unrealized_pnl: 797000,
@@ -238,14 +240,24 @@ test.describe("USD positions on the Investments page", () => {
     await page.goto("/investments");
     await expect(row(page, "ZZUSD")).toBeVisible();
 
-    // chartColors[0] and chartColors[1]: the colours the pie uses for slices 0 and 1.
+    // GOLDS[0..4] from ui/app/cashflow/holdings.ts in largest-first order, as on the
+    // Cashflow Holdings card. Crypto is the biggest group but comes fifth in the payload.
     // Scoped to Allocation: the Holdings group rows say "Crypto" too.
     const alloc = page.getByRole("region", { name: "Allocation" });
     await alloc.getByRole("group", { name: "Allocation grouping" }).getByRole("button", { name: "Asset type" }).click();
     const swatch = (label: string) =>
       alloc.getByText(label, { exact: true }).locator("xpath=preceding-sibling::span[1]");
-    await expect(swatch("Crypto")).toHaveCSS("background-color", "rgb(47, 111, 79)");
-    await expect(swatch("Gold")).toHaveCSS("background-color", "rgb(90, 143, 115)");
+    const golds: [string, string][] = [
+      ["Crypto", "rgb(216, 178, 106)"],
+      ["Gold", "rgb(201, 151, 63)"],
+      ["Mutual funds", "rgb(168, 103, 74)"],
+      ["Stocks", "rgb(227, 200, 145)"],
+      ["Other", "rgb(138, 106, 63)"],
+    ];
+    for (const [label, rgb] of golds) {
+      await expect(swatch(label)).toHaveCSS("background-color", rgb);
+      await expect(swatch(label)).not.toHaveCSS("background-color", "rgb(181, 80, 63)");
+    }
 
     const price = lines(page, "ZZUSD", I.price);
     await expect(price.top).toHaveText("5.00 USD");
