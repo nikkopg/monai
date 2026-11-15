@@ -16,6 +16,18 @@ export const config = { matcher: "/((?!_next/|favicon.ico).*)" };
 // Exact paths only, nothing prefix-matched.
 const OPEN = new Set(["/login", "/auth/login", "/auth/logout"]);
 
+// Next 14's middleware adapter parses Location with no base, so a relative Location is a 500 (unlike the
+// relative ones in app/auth/login/route.ts). req.nextUrl carries the bind host; Host is the one the browser used.
+function redirectTo(req: NextRequest, path: string) {
+  const url = new URL(path, req.nextUrl);
+  const host = req.headers.get("host");
+  if (host) {
+    url.port = ""; // a host without a port would otherwise keep the bind port
+    url.host = host;
+  }
+  return NextResponse.redirect(url);
+}
+
 export async function middleware(req: NextRequest) {
   const verdict = await checkGateEnv(req);
   const denial = basicDenial(verdict);
@@ -29,8 +41,5 @@ export async function middleware(req: NextRequest) {
   }
   if (OPEN.has(pathname)) return NextResponse.next();
   if (pathname === "/api" || pathname.startsWith("/api/")) return new NextResponse(denial!.body, denial!.init);
-  const to = req.nextUrl.clone();
-  to.pathname = "/login";
-  to.search = new URLSearchParams({ next: pathname + search }).toString();
-  return NextResponse.redirect(to);
+  return redirectTo(req, "/login?" + new URLSearchParams({ next: pathname + search }));
 }
