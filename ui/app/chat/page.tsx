@@ -1928,7 +1928,7 @@ function ChatInner() {
               onSubmit={submitAttach}
               pendingPassword={att.pendingPassword}
             />
-            <div style={{ display: "flex", gap: 10 }}>
+            <div className="composer-row" style={{ display: "flex", gap: 10 }}>
             <AttachToggle
               expanded={attachOpen}
               onToggle={() => setAttachOpen((o) => !o)}

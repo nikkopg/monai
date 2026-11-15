@@ -528,3 +528,27 @@ test.describe("P4 settings (261115-oax)", () => {
     expect(await row.locator("span[role=button]").evaluate((el) => getComputedStyle(el).fontSize)).toBe("12px");
   });
 });
+
+// ===========================================================================
+// P5 — chat composer
+// ===========================================================================
+
+test.describe("P5 chat (261115-oax)", () => {
+  test("P5: the composer text box has room at 375", async ({ page }) => {
+    await mockInbox(page, { list: [] });
+    await page.route(/\/api\/threads$/, (route) => route.fulfill({ json: [] }));
+    await page.goto("/chat");
+    const box = page.getByRole("textbox", { name: "Ask monai a question" });
+    await expect(box).toBeVisible();
+    const b = (await box.boundingBox())!;
+    expect(b.width).toBeGreaterThanOrEqual(200);
+    for (const name of ["Attach a file", "Ask"]) {
+      const btn = page.getByRole("button", { name, exact: true });
+      const r = (await btn.boundingBox())!;
+      expect(r.y).toBeGreaterThanOrEqual(b.y + b.height);
+      expect(r.x).toBeGreaterThanOrEqual(b.x);
+      expect(r.x + r.width).toBeLessThanOrEqual(b.x + b.width + 0.5);
+      expect(r.height).toBeGreaterThanOrEqual(40);
+    }
+  });
+});
