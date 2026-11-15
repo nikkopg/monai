@@ -315,6 +315,9 @@ input, select, button, textarea {
 /* Trims Cashflow's inline card padding on phones (261115-msv F1). */
 @media (max-width: 560px) {
   .cf-card { padding: 16px !important; }
+  /* The cards always stack below 561px (two 300px columns need more than 600px
+     of content), so the Holdings card sizes to its rows. */
+  .cf-holdings { contain: none !important; min-height: 0 !important; }
 }
 /* Below about 300px of chart width the seam label sits on the line, so hide
    it; the seam line itself stays (261115-msv F3). */

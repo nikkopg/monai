@@ -827,4 +827,20 @@ test.describe("phone width, 375px (261115-msv)", () => {
       expect(f.over).toBeLessThanOrEqual(0.5);
     }
   });
+
+  test("F4: the Holdings card ends at its last row; amount and share share a line", async ({ page }) => {
+    const card = page.getByRole("region", { name: "Holdings", exact: true });
+    const cardBox = (await card.boundingBox())!;
+    const lastBox = (await card.getByRole("button", { name: /^Investment/ }).boundingBox())!;
+    const gap = cardBox.y + cardBox.height - (lastBox.y + lastBox.height);
+    expect(gap).toBeGreaterThanOrEqual(0);
+    expect(gap).toBeLessThanOrEqual(24);
+
+    for (const name of [/^Liquid/, /^Investment/]) {
+      const row = card.getByRole("button", { name });
+      const b = (await row.locator("b").boundingBox())!;
+      const em = (await row.locator("em").boundingBox())!;
+      expect(Math.abs(b.y + b.height / 2 - (em.y + em.height / 2))).toBeLessThanOrEqual(2);
+    }
+  });
 });

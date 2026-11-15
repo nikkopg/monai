@@ -106,15 +106,16 @@ export default function HoldingsCard({ data }: { data: HoldingsData }) {
   return (
     <section
       aria-label="Holdings"
-      className="cf-card"
+      className="cf-card cf-holdings"
       style={{
         ...card,
         marginBottom: 0,
         display: "flex",
         flexDirection: "column",
         alignSelf: "stretch",
-        // contain:size stops this card from growing the row, so the Cashflow
-        // card sets the height; 520 is the height when the cards stack.
+        // contain:size and the 520 floor are for the two-card row. Below 561px
+        // the cards stack and globals.css .cf-holdings drops both, so the card
+        // ends at its last row.
         contain: "size",
         boxSizing: "border-box", // so minHeight counts the padding
         minHeight: 520,
@@ -242,8 +243,8 @@ function Row({
     width: "100%",
     display: "flex",
     alignItems: "center",
-    // Wraps in a very narrow card, so a long amount drops below the name
-    // instead of squeezing the name to nothing.
+    // Wraps in a very narrow card: the amount, % and › move as one group, so
+    // the group drops below the name (right-aligned) instead of splitting.
     flexWrap: "wrap",
     gap: "2px 10px",
     padding: "10px 0",
@@ -279,34 +280,44 @@ function Row({
           <small style={{ fontSize: 11, color: tokens.color.muted3 }}>{row.stale}</small>
         )}
       </span>
-      <b
-        title={row.title}
+      <span
         style={{
           marginLeft: "auto",
-          fontWeight: 600,
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 10,
           whiteSpace: "nowrap",
-          color: row.negative ? tokens.color.terracotta : undefined,
-        }}
-      >
-        {row.amount}
-      </b>
-      <em
-        style={{
-          fontStyle: "normal",
-          color: tokens.color.muted3,
-          width: 32,
-          textAlign: "right",
-          fontSize: 12,
           flexShrink: 0,
         }}
       >
-        {row.share}
-      </em>
-      {interactive && (
-        <span aria-hidden="true" style={{ color: tokens.color.muted3, fontSize: 16, width: 8 }}>
-          ›
-        </span>
-      )}
+        <b
+          title={row.title}
+          style={{
+            fontWeight: 600,
+            whiteSpace: "nowrap",
+            color: row.negative ? tokens.color.terracotta : undefined,
+          }}
+        >
+          {row.amount}
+        </b>
+        <em
+          style={{
+            fontStyle: "normal",
+            color: tokens.color.muted3,
+            width: 32,
+            textAlign: "right",
+            fontSize: 12,
+            flexShrink: 0,
+          }}
+        >
+          {row.share}
+        </em>
+        {interactive && (
+          <span aria-hidden="true" style={{ color: tokens.color.muted3, fontSize: 16, width: 8 }}>
+            ›
+          </span>
+        )}
+      </span>
     </>
   );
   const hover = { onMouseEnter: () => setHovered(row.key), onMouseLeave: () => setHovered(null) };
