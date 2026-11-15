@@ -169,7 +169,7 @@ export default function TrendChart({
               border: "none",
               background: "none",
               padding: "4px 0 0",
-              fontSize: 11,
+              fontSize: 12,
               whiteSpace: "nowrap",
               overflow: "hidden",
               textOverflow: "ellipsis",

@@ -196,7 +196,7 @@ export default function HoldingsCard({ data }: { data: HoldingsData }) {
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          <span style={{ fontSize: 11, color: tokens.color.muted3 }}>{centreLabel}</span>
+          <span style={{ fontSize: 12, color: tokens.color.muted3 }}>{centreLabel}</span>
           <span style={{ fontSize: 17, fontWeight: 600 }}>
             {centre == null ? "—" : <RollingNumber value={centre} format={(n) => fmtShort(n, centreCcy)} />}
           </span>
@@ -271,13 +271,13 @@ function Row({
         {row.sub && (
           <small
             title={row.sub}
-            style={{ fontSize: 11, color: tokens.color.muted3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+            style={{ fontSize: 12, color: tokens.color.muted3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
           >
             {row.sub}
           </small>
         )}
         {row.stale && (
-          <small style={{ fontSize: 11, color: tokens.color.muted3 }}>{row.stale}</small>
+          <small style={{ fontSize: 12, color: tokens.color.muted3 }}>{row.stale}</small>
         )}
       </span>
       <span

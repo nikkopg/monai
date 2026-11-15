@@ -242,7 +242,7 @@ export default function NetWorthTrendChart({
               <LineChart data={points} margin={{ top: 8, right: 6, left: 6, bottom: 0 }}>
                 <XAxis
                   dataKey="month"
-                  tick={{ fill: tickFill, fontSize: 11 }}
+                  tick={{ fill: tickFill, fontSize: 12 }}
                   axisLine={false}
                   tickLine={false}
                   minTickGap={hero ? 24 : 5}
@@ -252,7 +252,7 @@ export default function NetWorthTrendChart({
                   domain={hero ? ["auto", "auto"] : undefined}
                   orientation="right"
                   tickFormatter={(v: number) => `${Math.round(v / 1_000_000)}M`}
-                  tick={{ fill: tickFill, fontSize: 11 }}
+                  tick={{ fill: tickFill, fontSize: 12 }}
                   axisLine={false}
                   tickLine={false}
                   width={40}
@@ -338,7 +338,7 @@ export default function NetWorthTrendChart({
                     label={{
                       value: "Market value →",
                       position: "insideTopRight",
-                      fontSize: 11,
+                      fontSize: 12,
                       fill: tickFill,
                     }}
                   />

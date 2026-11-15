@@ -499,7 +499,7 @@ export default function CashflowPage() {
                 </button>
                 <div style={{ textAlign: "center", lineHeight: 1.3 }}>
                   <div style={{ fontSize: 13, fontWeight: 700 }}>{win.title}</div>
-                  <div style={{ fontSize: 11, color: tokens.color.muted3 }}>
+                  <div style={{ fontSize: 12, color: tokens.color.muted3 }}>
                     {win.span} · vs {win.prevSpan}
                   </div>
                 </div>
@@ -566,7 +566,7 @@ export default function CashflowPage() {
                     style={{
                       display: "flex",
                       justifyContent: "space-between",
-                      fontSize: 11,
+                      fontSize: 12,
                       color: tokens.color.muted3,
                     }}
                   >
@@ -682,7 +682,7 @@ function FigRow({
           <span
             title={badge.title}
             style={{
-              fontSize: 11,
+              fontSize: 12,
               fontWeight: 600,
               display: "inline-flex",
               alignItems: "center",
