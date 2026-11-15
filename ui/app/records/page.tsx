@@ -10,6 +10,7 @@ import TransactionModal, {
 } from "../cashflow/TransactionModal";
 import ConfirmDialog from "../cashflow/ConfirmDialog";
 import RowMenu from "../components/RowMenu";
+import Skeleton, { Bone } from "../components/Skeleton";
 import { formatDateRange } from "../chat/labels";
 import { fmtAmount, fmtAmountSigned, fmtRateCompare, impliedRate, rateHover, sumIdr } from "../lib/money";
 
@@ -938,9 +939,33 @@ function RecordsInner() {
           )}
 
           {loading && txs.length === 0 ? (
-            <div style={{ fontSize: 14, color: tokens.color.muted, paddingTop: 10 }}>
-              Loading your records…
-            </div>
+            <Skeleton label="Loading your records" style={{ paddingTop: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0 6px" }}>
+                <Bone w={90} h={12} />
+                <Bone w={80} h={12} />
+              </div>
+              {[0, 1, 2, 3, 4, 5].map((i) => (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "10px 0",
+                    borderTop: `1px solid ${tokens.color.borderInner}`,
+                  }}
+                >
+                  <Bone w={32} h={32} r={10} />
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <Bone w={110 + i * 12} h={12} />
+                    <Bone w={80} h={10} />
+                  </div>
+                  <div style={{ marginLeft: "auto" }}>
+                    <Bone w={80} h={12} />
+                  </div>
+                </div>
+              ))}
+            </Skeleton>
           ) : txs.length === 0 ? (
             <div style={{ paddingTop: 10 }}>
               <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
@@ -953,7 +978,7 @@ function RecordsInner() {
               </div>
             </div>
           ) : (
-            <>
+            <div className="fade-in">
               {groups.map((g, idx) => {
                 const dayRows = g.rows.filter((r) => r.transfer_pair_id == null);
                 const { total: net, unconverted } = sumIdr(dayRows);
@@ -996,7 +1021,7 @@ function RecordsInner() {
                   </button>
                 </div>
               )}
-            </>
+            </div>
           )}
         </section>
       )}

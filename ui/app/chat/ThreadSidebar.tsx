@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { tokens, input } from "../styles";
 import ConfirmDialog from "../cashflow/ConfirmDialog";
 import RowMenu from "../components/RowMenu";
+import Skeleton, { Bone } from "../components/Skeleton";
 
 // ---------------------------------------------------------------------------
 // ThreadSidebar (Phase 36, THRD-02, D-18/D-20, 36-UI-SPEC section 1).
@@ -252,24 +253,11 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
       <nav aria-label="Chat threads" aria-busy={status === "loading" && threads === null ? true : undefined}>
         {errorLine}
         {status === "loading" && threads === null && (
-          <div>
-            <span className="sr-only" role="status">
-              Loading chats…
-            </span>
+          <Skeleton label="Loading chats" style={{ display: "grid", gap: 12 }}>
             {["80%", "64%", "72%"].map((w) => (
-              <div
-                key={w}
-                aria-hidden="true"
-                style={{
-                  height: 16,
-                  width: w,
-                  background: tokens.color.borderInner,
-                  borderRadius: tokens.radius.sm,
-                  marginBottom: 12,
-                }}
-              />
+              <Bone key={w} w={w} h={16} r={tokens.radius.sm} />
             ))}
-          </div>
+          </Skeleton>
         )}
         {threads !== null && threads.length === 0 && status === "ok" && (
           <p style={{ fontSize: 14, color: tokens.color.muted3, margin: 0, lineHeight: 1.5 }}>

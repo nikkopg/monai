@@ -789,7 +789,7 @@ test.describe("states", () => {
   test("loading", async ({ page }) => {
     await mockInbox(page, { listMode: "hang" });
     await openInbox(page);
-    await expect(page.getByRole("status").filter({ hasText: "Loading your inbox…" })).toBeVisible();
+    await expect(page.getByRole("status", { name: "Loading your inbox" })).toBeVisible();
   });
 
   test("empty", async ({ page }) => {
@@ -1319,7 +1319,7 @@ test.describe("a11y structure", () => {
   test("one persistent polite atomic live region, from the loading state on", async ({ page }) => {
     const inbox = await mockInbox(page, { listMode: "hang" });
     await openInbox(page);
-    await expect(page.getByRole("status").filter({ hasText: "Loading your inbox…" })).toBeVisible();
+    await expect(page.getByRole("status", { name: "Loading your inbox" })).toBeVisible();
     await expect(page.locator(LIVE)).toHaveCount(1);
     inbox.listMode = "ok";
     inbox.list = [oneRow()];

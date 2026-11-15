@@ -9,6 +9,7 @@ import HoldingModal from "../HoldingModal";
 import { extractDetail } from "../../lib/api";
 import { fmtAmount, fmtAmountSigned, fmtUsdPrice, rateHover } from "../../lib/money";
 import RowMenu from "../../components/RowMenu";
+import Skeleton, { Bone } from "../../components/Skeleton";
 import type { PlatformOption } from "../page";
 
 // ---------------------------------------------------------------------------
@@ -161,7 +162,7 @@ export default function PlatformDetailPage() {
   // superseded by an onSaved refetch) fails isStale() and never touches state.
   const loadSeq = useRef(0);
 
-  // silent: skip the full-page "Loading platform…" swap (WR-07) — used by the
+  // silent: skip the full-page loading skeleton swap (WR-07) — used by the
   // post-write onSaved refetch so a successful save doesn't blank the page and
   // unmount the modal mid-flight.
   async function deleteEvent(e: PortfolioEvent) {
@@ -257,11 +258,47 @@ export default function PlatformDetailPage() {
       {backLink}
 
       {loading ? (
-        <div style={card}>
-          <p style={{ color: muted, fontSize: 14, margin: 0 }}>
-            Loading platform…
-          </p>
-        </div>
+        <Skeleton label="Loading platform">
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 16,
+              marginBottom: 28,
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <Bone w={70} h={12} />
+              <Bone w={220} h={40} />
+            </div>
+            <Bone w={110} h={36} r={999} />
+          </div>
+          <div style={{ marginBottom: 18 }}>
+            <Bone w={280} h={44} r={12} />
+          </div>
+          <div style={card}>
+            <Bone w="100%" h={12} />
+            {[0, 1, 2, 3].map((i) => (
+              <div
+                key={i}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "12px 0",
+                  borderTop: `1px solid ${tokens.color.borderInner}`,
+                }}
+              >
+                <Bone w={90} h={14} />
+                <div style={{ display: "flex", gap: 14 }}>
+                  <Bone w={60} h={12} />
+                  <Bone w={80} h={12} />
+                  <Bone w={70} h={12} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </Skeleton>
       ) : notFound ? (
         <div style={{ ...card, color: tokens.color.terracotta }}>
           Platform not found. It may have been deleted.
@@ -272,7 +309,7 @@ export default function PlatformDetailPage() {
             "Couldn't load this platform — check the backend is running and reload the page."}
         </div>
       ) : (
-        <>
+        <div className="fade-in">
           <div
             style={{
               display: "flex",
@@ -703,7 +740,7 @@ export default function PlatformDetailPage() {
               onSaved={() => load({ silent: true })}
             />
           )}
-        </>
+        </div>
       )}
     </div>
   );

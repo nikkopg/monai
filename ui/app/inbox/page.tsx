@@ -24,6 +24,7 @@ import {
   type ProposalRow,
 } from "../lib/inbox";
 import { btnGhost, card as cardStyle, tokens } from "../styles";
+import Skeleton, { Bone } from "../components/Skeleton";
 
 const c = tokens.color;
 const OFFLINE_BANNER_ID = "inbox-offline-banner";
@@ -201,11 +202,26 @@ export default function InboxPage() {
   if (cards === null) {
     body =
       poll.failures === 0 ? (
-        <div style={box}>
-          <p role="status" style={{ fontSize: 14, color: c.muted3, margin: 0 }}>
-            Loading your inbox…
-          </p>
-        </div>
+        <Skeleton label="Loading your inbox">
+          {[0, 1].map((i) => (
+            <div key={i} style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <Bone w={90} h={22} r={999} />
+                <Bone w={70} h={12} />
+              </div>
+              <Bone w="60%" h={16} />
+              <div style={{ display: "grid", gap: 10 }}>
+                <Bone w="100%" h={12} />
+                <Bone w="100%" h={12} />
+                <Bone w="100%" h={12} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <Bone w={96} h={40} r={10} />
+                <Bone w={96} h={40} r={10} />
+              </div>
+            </div>
+          ))}
+        </Skeleton>
       ) : (
         <div style={box}>
           <p role="alert" style={{ fontSize: 14, color: c.terracotta, margin: "0 0 16px" }}>
@@ -229,7 +245,7 @@ export default function InboxPage() {
     );
   } else {
     body = (
-      <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+      <ul className="fade-in" style={{ listStyle: "none", margin: 0, padding: 0 }}>
         {cards.map((h) => (
           <li key={h.proposal.id} style={{ marginBottom: tokens.space.lg }}>
             <InboxCard

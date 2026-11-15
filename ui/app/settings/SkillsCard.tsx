@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { tokens, card, btn, btnGhost } from "../styles";
+import Skeleton, { Bone } from "../components/Skeleton";
 
 // ---------------------------------------------------------------------------
 // Settings "Skills" card (phase 40, plan 02; contract: 40-UI-SPEC.md).
@@ -514,7 +515,11 @@ export default function SkillsCard() {
             </button>
           </div>
         ) : rows === null ? (
-          <div style={small}>Loading skills…</div>
+          <Skeleton label="Loading skills" style={{ display: "grid", gap: 10 }}>
+            <Bone w="70%" h={14} />
+            <Bone w="55%" h={14} />
+            <Bone w="62%" h={14} />
+          </Skeleton>
         ) : rows.length === 0 ? (
           <div data-testid="skills-empty">
             <div style={{ ...body14, fontWeight: 600, color: tokens.color.ink }}>No skills found.</div>

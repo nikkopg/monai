@@ -128,8 +128,12 @@ test.describe("Phase 44 — USD accounts", () => {
   test("loading state renders no USD value or notice from stale state", async ({ page }) => {
     await mockAll(page, 2_000);
     await page.goto("/records");
-    await expect(page.getByText("Loading your records…")).toBeVisible();
+    const skel = page.getByRole("status", { name: "Loading your records" });
+    await expect(skel).toBeVisible();
     await expect(page.getByText(/USD|≈/)).toHaveCount(0);
+    // 261115-hfb: the skeleton goes away once the delayed API answers.
+    await expect(skel).toHaveCount(0, { timeout: 10_000 });
+    await expect(page.getByText("-10.00 USD")).toBeVisible();
 
     await page.goto("/cashflow");
     await expect(page.getByRole("heading", { name: "Cashflow" })).toBeVisible();
