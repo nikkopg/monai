@@ -68,9 +68,10 @@ export default function CsvUpload({ onImported }: Props) {
   return (
     <section style={card}>
       <label style={label}>Import CSV</label>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
         <input
           type="file"
+          style={{ maxWidth: "100%" }}
           accept=".csv"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
         />

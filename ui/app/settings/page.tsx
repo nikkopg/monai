@@ -271,6 +271,7 @@ export default function SettingsPage() {
         <form onSubmit={saveProvider}>
           <label style={fieldLabel}>Provider</label>
           <div
+            className="seg-fill"
             style={{
               display: "inline-flex",
               background: tokens.color.sidebar,

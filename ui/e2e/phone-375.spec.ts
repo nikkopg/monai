@@ -464,3 +464,67 @@ test.describe("P3 modals (261115-oax)", () => {
     for (const card of await cards.all()) expect(await crossings(card)).toEqual([]);
   });
 });
+
+// ===========================================================================
+// P4 — Settings
+// ===========================================================================
+
+test.describe("P4 settings (261115-oax)", () => {
+  test("P4: nothing in Settings crosses its card", async ({ page }) => {
+    const cat = (id: number, name: string, o: Record<string, unknown> = {}) => ({
+      id, name, parent_id: null, kind: "expense", color: null, effective_color: null,
+      icon: null, is_system: false, tx_count: 3, children: [], ...o,
+    });
+    const get = (body: unknown) => (route: import("@playwright/test").Route) =>
+      route.request().method() === "GET" ? route.fulfill(json(body)) : route.fallback();
+    await page.route(
+      "**/api/categories",
+      get([
+        cat(1, "ZZ Adjustment", { is_system: true, tx_count: 12, children: [cat(3, "ZZ Child", { parent_id: 1 })] }),
+        cat(2, "ZZ Groceries"),
+      ]),
+    );
+    await page.route(
+      "**/api/cashflow/summary**",
+      get({ accounts: [{ id: 1, name: "ZZ Bank", type: "liquid", currency: "IDR", current_balance: 1234567890 }] }), // pii-ok synthetic
+    );
+    await page.route("**/api/platforms", get([{ id: 7, name: "ZZ Exchange", kind: "crypto app" }]));
+    await page.route(
+      "**/api/settings",
+      get({
+        llm_provider: "ollama", llm_model: "zz-model", anthropic_api_key_masked: "", openai_api_key_masked: "",
+        base_currency: "IDR", price_data_source: "coingecko",
+      }),
+    );
+    await page.goto("/settings");
+    const row = page.locator(".cat-row").filter({ hasText: "ZZ Adjustment" }).first();
+    await expect(row).toBeVisible();
+
+    // Every bordered card on the page.
+    const cards = page.locator(".tab-in > *");
+    let checked = 0;
+    for (const c of await cards.all()) {
+      if ((await c.evaluate((el) => getComputedStyle(el).borderTopWidth)) === "0px") continue;
+      checked++;
+      expect(await crossings(c)).toEqual([]);
+    }
+    expect(checked).toBeGreaterThan(3);
+
+    // Provider control: "openai" is inside its card.
+    const openai = (await page.getByRole("button", { name: "openai", exact: true }).boundingBox())!;
+    const providerCard = (await page.getByText("LLM Provider & Model", { exact: true }).locator("..").boundingBox())!;
+    expect(openai.x + openai.width).toBeLessThanOrEqual(providerCard.x + providerCard.width);
+
+    // System row: the menu button sits on the name's line, the note below it.
+    const name = (await row.getByText("ZZ Adjustment", { exact: true }).boundingBox())!;
+    const menu = (await row.getByRole("button", { name: /^Category options/ }).boundingBox())!;
+    const note = (await row.getByText("System category — can't be deleted.").boundingBox())!;
+    const menuMid = menu.y + menu.height / 2;
+    expect(menuMid).toBeGreaterThan(name.y);
+    expect(menuMid).toBeLessThan(name.y + name.height);
+    expect(note.y).toBeGreaterThanOrEqual(name.y + name.height);
+
+    // The expand arrow is 12px.
+    expect(await row.locator("span[role=button]").evaluate((el) => getComputedStyle(el).fontSize)).toBe("12px");
+  });
+});

@@ -308,6 +308,35 @@
   }
 }
 
+/* Settings rows on phones (261115-oax P4). The provider control fills its card,
+   category rows wrap so the system note drops under the name (lined up past the
+   arrow) and the menu stays on the name line. */
+@media (max-width: 560px) {
+  .seg-fill {
+    display: flex !important;
+  }
+  .seg-fill > button {
+    flex-grow: 1 !important;
+    flex-basis: 0 !important;
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+  }
+  .cat-row {
+    flex-wrap: wrap;
+  }
+  /* Basis 0 lets arrow, chip, name, badge and menu share line 1; a long name wraps. */
+  .cat-name {
+    flex-grow: 1;
+    flex-basis: 0;
+    min-width: 0;
+  }
+  .cat-note {
+    order: 1;
+    flex-basis: 100%;
+    margin-left: 18px !important;
+  }
+}
+
 /* Phase 33 Inbox. Hex values are literal copies of ui/app/styles.ts tokens
    because CSS cannot import styles.ts: #2f6f4f green, #6f6857 muted3,
    #f0ece3 hairline. */

@@ -467,7 +467,7 @@ export default function CategoryManager({ onChanged }: Props) {
               textAlign: "center",
               cursor: isExpandable ? "pointer" : "default",
               color: tokens.color.muted2,
-              fontSize: 10,
+              fontSize: 12,
               transform: isExpanded ? "rotate(90deg)" : "none",
               transition: "transform .15s ease",
             }}
@@ -504,10 +504,10 @@ export default function CategoryManager({ onChanged }: Props) {
             </div>
           ) : (
             <>
-              <span style={{ fontSize: 13, fontWeight: 400, marginLeft: 4 }}>{node.name}</span>
+              <span className="cat-name" style={{ fontSize: 13, fontWeight: 400, marginLeft: 4 }}>{node.name}</span>
               <span style={badgeStyle}>{node.tx_count}</span>
               {node.is_system && (
-                <span style={{ fontSize: 11, color: tokens.color.muted2, marginLeft: 8 }}>
+                <span className="cat-note" style={{ fontSize: 11, color: tokens.color.muted2, marginLeft: 8 }}>
                   System category — can&apos;t be deleted.
                 </span>
               )}
