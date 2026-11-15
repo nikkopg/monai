@@ -242,3 +242,79 @@ test.describe("P1 platform page (261115-oax)", () => {
     for (const s of await page.locator(".plat-sub").all()) await expect(s).toBeHidden();
   });
 });
+
+// ===========================================================================
+// P2 — Records
+// ===========================================================================
+
+const DAY = "2026-11-10T12:00:00Z";
+const tx = (o: Record<string, unknown>) => ({
+  date: DAY,
+  category: null,
+  merchant: null,
+  notes: null,
+  is_transfer: false,
+  transfer_pair_id: null,
+  ...o,
+});
+
+async function mockRecords(page: Page) {
+  const get = (body: unknown) => (route: import("@playwright/test").Route) =>
+    route.request().method() === "GET" ? route.fulfill(json(body)) : route.fallback();
+  await page.route(
+    "**/api/accounts",
+    get([
+      { id: 1, name: "ZZ Bank", type: "liquid", currency: "IDR" },
+      { id: 2, name: "ZZ Dollar", type: "liquid", currency: "USD" },
+    ]),
+  );
+  await page.route("**/api/categories", get([{ id: 1, name: "ZZ Groceries", is_system: false, children: [] }]));
+  await page.route(
+    "**/api/transactions?*",
+    get([
+      tx({ id: 101, amount: -12345678, category: "ZZ Groceries", merchant: "ZZ Grocery Market", account_id: 1 }), // pii-ok synthetic
+      // degraded transfer leg: its sibling is absent
+      tx({ id: 103, amount: -5000, category: "ZZ Adjustment", account_id: 1, is_transfer: true, transfer_pair_id: 999 }), // pii-ok synthetic
+      // cross-currency pair: USD leg out, IDR leg in
+      tx({
+        id: 601, amount: -1234.56, currency: "USD", category: "Transfer", account_id: 2, is_transfer: true, // pii-ok synthetic
+        transfer_pair_id: 888, amount_idr: -20370000, fx_rate: 16500, fx_rate_date: "2026-11-09", // pii-ok synthetic
+      }),
+      tx({ id: 602, amount: 20370000, category: "Transfer", account_id: 1, is_transfer: true, transfer_pair_id: 888 }), // pii-ok synthetic
+    ]),
+  );
+}
+
+test.describe("P2 records (261115-oax)", () => {
+  test("P2: rows, filters and padding fit at 375", async ({ page }) => {
+    await mockRecords(page);
+    await page.goto("/records");
+    await expect(page.getByPlaceholder("Search merchant or notes…")).toBeVisible();
+
+    const card = page.locator("section:not(.tab-in)").filter({ has: page.getByPlaceholder("Search merchant or notes…") });
+    expect(await card.evaluate((el) => getComputedStyle(el).paddingLeft)).toBe("16px");
+    expect(await crossings(card)).toEqual([]);
+
+    // Rows: the one `div` that directly holds the checkbox cell.
+    const rows = card.locator("div:has(> span > input[type=checkbox])");
+    await expect(rows).toHaveCount(3);
+    for (const row of await rows.all()) {
+      const meta = row.locator("> span").nth(2).locator("> span").last();
+      const amount = row.locator("> div").first();
+      expect((await meta.boundingBox())!.width).toBeGreaterThanOrEqual(150);
+      expect(await digitTextOneLine(amount)).toEqual([]);
+      if ((await amount.locator("> span").count()) === 0) {
+        expect(await lineCount(meta)).toBeLessThanOrEqual(2);
+        expect(await lineCount(amount)).toBe(1);
+      }
+    }
+
+    // Filters.
+    for (const s of await card.locator("select").all()) expect((await s.boundingBox())!.width).toBeGreaterThanOrEqual(150);
+    const min = (await card.getByPlaceholder("Min amount").boundingBox())!;
+    const max = (await card.getByPlaceholder("Max amount").boundingBox())!;
+    expect(Math.round(min.y)).toBe(Math.round(max.y));
+    const cb = (await card.boundingBox())!;
+    expect(max.x + max.width).toBeLessThanOrEqual(cb.x + cb.width);
+  });
+});

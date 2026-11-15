@@ -161,6 +161,7 @@ function LedgerRowShell({
 }) {
   return (
     <div
+      className="rec-row"
       style={{
         display: "flex",
         alignItems: "center",
@@ -193,7 +194,10 @@ function LedgerRowShell({
           by records.spec.ts to locate a specific row via .first()/.last())
           matches every ANCESTOR div wrapping the text too; keeping the outer
           row above as the ONLY div in this subtree makes it the sole match. */}
-      <span style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
+      <span
+        className="rec-text"
+        style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}
+      >
         <span
           style={{
             display: "block",
@@ -211,6 +215,7 @@ function LedgerRowShell({
         </span>
       </span>
       <div
+        className="rec-amt"
         title={amountTitle}
         style={{
           fontSize: 14,
@@ -740,9 +745,10 @@ function RecordsInner() {
       )}
 
       {!error && (
-        <section style={{ ...card, marginBottom: 18 }}>
+        <section className="card-tight" style={{ ...card, marginBottom: 18 }}>
           {selectedIds.size === 0 ? (
             <div
+              className="rec-filters"
               style={{
                 display: "flex",
                 flexWrap: "wrap",
