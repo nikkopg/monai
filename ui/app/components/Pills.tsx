@@ -5,8 +5,8 @@ import { tokens } from "../styles";
 // Pill segmented control shared by the Cashflow net worth card (1Y/3Y/All,
 // Total/Split) and the Cashflow card (Week/Month/Year). `dark` is for
 // the ink hero card; `small` is the light palette at the compact dark sizes;
-// `label` names the group for assistive tech; `tap` gives each button the
-// 32px (44px on touch) hit target Investments requires.
+// `label` names the group for assistive tech. Every pill is 44px tall on touch
+// (.coarse-tap); `tap` adds the 32px desktop floor Investments requires.
 export default function Pills<T extends string>({
   options,
   value,
@@ -44,7 +44,7 @@ export default function Pills<T extends string>({
             key={opt.value}
             type="button"
             aria-pressed={active}
-            {...(tap ? { className: "coarse-tap" } : {})}
+            className="coarse-tap"
             onClick={() => onChange(opt.value)}
             style={{
               border: "none",

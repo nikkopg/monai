@@ -492,6 +492,7 @@ export default function CashflowPage() {
                 <button
                   type="button"
                   aria-label={`Previous ${kind}`}
+                  className="coarse-tap"
                   onClick={() => setOffset(offset - 1)}
                   style={stepBtn}
                 >
@@ -506,6 +507,7 @@ export default function CashflowPage() {
                 <button
                   type="button"
                   aria-label={`Next ${kind}`}
+                  className="coarse-tap"
                   disabled={offset === 0}
                   onClick={() => setOffset(offset + 1)}
                   style={stepBtn}
@@ -622,6 +624,7 @@ const stepBtn: React.CSSProperties = {
   background: tokens.color.card,
   width: 28,
   height: 28,
+  flexShrink: 0,
   borderRadius: 8,
   color: tokens.color.muted3,
   fontSize: 15,

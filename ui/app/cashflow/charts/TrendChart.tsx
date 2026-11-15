@@ -159,6 +159,7 @@ export default function TrendChart({
           <button
             key={p.offset}
             type="button"
+            className="coarse-tap"
             aria-label={p.title}
             title={p.title}
             aria-pressed={p.offset === selected}
