@@ -807,4 +807,24 @@ test.describe("phone width, 375px (261115-msv)", () => {
     });
     expect(lines).toBeLessThanOrEqual(2);
   });
+
+  test("F2: every figure stays on one line inside its card", async ({ page }) => {
+    const figs = await page.evaluate(() =>
+      Array.from(document.querySelectorAll("main .roll")).map((roll) => {
+        const tops = new Set(
+          Array.from(roll.querySelectorAll(".roll-digit, .roll-char"), (d) => Math.round(d.getBoundingClientRect().top))
+        );
+        const card = roll.closest(".cf-card")!;
+        const r = card.getBoundingClientRect();
+        const cs = getComputedStyle(card);
+        const right = r.right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth);
+        return { lines: tops.size, over: roll.getBoundingClientRect().right - right };
+      })
+    );
+    expect(figs.length).toBeGreaterThanOrEqual(5); // hero, Income, Expenses, Net saved, Holdings centre
+    for (const f of figs) {
+      expect(f.lines).toBe(1);
+      expect(f.over).toBeLessThanOrEqual(0.5);
+    }
+  });
 });

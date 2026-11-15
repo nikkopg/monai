@@ -321,8 +321,8 @@ input, select, button, textarea {
    enter the DOM text) shifted by --d tenths of its height. The box takes the
    width of its own target digit (an invisible ::after copy), so spacing and
    letter-spacing match plain text in fonts without tabular figures; the strip
-   is centred over it and clipped only vertically. */
-.roll { display: inline-flex; font-variant-numeric: tabular-nums; }
+   is centred over it and clipped only vertically. It never wraps (261115-msv). */
+.roll { display: inline-flex; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .roll-digit,
 .roll-char {
   display: inline-block;

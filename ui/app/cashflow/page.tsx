@@ -372,7 +372,7 @@ export default function CashflowPage() {
                 <div
                   style={{
                     fontFamily: tokens.font.serif,
-                    fontSize: 52,
+                    fontSize: "clamp(28px, 8vw, 52px)",
                     lineHeight: 1,
                     letterSpacing: "-1px",
                     fontVariantNumeric: "tabular-nums",
@@ -672,7 +672,9 @@ function FigRow({
           color: tokens.color.muted3,
           display: "inline-flex",
           alignItems: "center",
-          gap: 8,
+          flexWrap: "wrap",
+          minWidth: 0,
+          gap: "2px 8px",
         }}
       >
         <span>{label}</span>
