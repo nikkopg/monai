@@ -57,3 +57,12 @@ test("signs in with JavaScript disabled", async ({ browser, baseURL }) => {
     await context.close();
   }
 });
+
+// tailscale serve passes Host through and sets X-Forwarded-Proto; synthetic host.
+const via = { Host: "box.example.ts.net", "X-Forwarded-Proto": "https" };
+
+test("redirects keep the host the browser used (reverse proxy)", async ({ page }) => {
+  const gate = await page.request.get("/cashflow", { headers: via, maxRedirects: 0 });
+  expect(gate.status()).toBe(307);
+  expect(gate.headers()["location"]).toBe("https://box.example.ts.net/login?next=%2Fcashflow");
+});
