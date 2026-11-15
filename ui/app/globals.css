@@ -351,3 +351,41 @@ input, select, button, textarea {
 @media (prefers-reduced-motion: reduce) {
   .roll-digit::before { transition: none; }
 }
+
+/* Loading skeletons (261115-hfb). Bones take their colour and motion from an
+   ancestor class, not from props: the Skeleton wrapper sets .pulse (Investments,
+   Cashflow) or .shimmer (everywhere else), and an ink hero sets .bone-dark.
+   Hex values copy the styles.ts tokens borderInner (#f0ece3), panel (#f7f5f1)
+   and chipGreenText (#9fdcb6); #2f2b25 is the mock's dark bone, no token. */
+.bone { display: block; max-width: 100%; background-color: #f0ece3; }
+.bone-dark .bone { background-color: #2f2b25; }
+.shimmer .bone {
+  background-image: linear-gradient(90deg, transparent 0, #f7f5f1 50%, transparent 100%);
+  background-size: 220% 100%;
+  background-repeat: no-repeat;
+  animation: sweep 1.4s ease-in-out infinite;
+}
+.pulse .bone { animation: breathe 1.6s ease-in-out infinite; }
+.draw-line { display: block; }
+.draw-line path {
+  fill: none;
+  stroke: #9fdcb6;
+  stroke-width: 2.4;
+  stroke-dasharray: 1200;
+  stroke-dashoffset: 1200;
+  vector-effect: non-scaling-stroke;
+  animation: draw 1.8s ease-in-out infinite;
+}
+.fade-in { animation: fadein 0.3s ease-out; }
+@keyframes sweep { from { background-position: 160% 0; } to { background-position: -60% 0; } }
+@keyframes breathe { 50% { opacity: 0.55; } }
+@keyframes draw {
+  0% { stroke-dashoffset: 1200; opacity: 1; }
+  70% { stroke-dashoffset: 0; opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 0; }
+}
+@keyframes fadein { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .bone, .draw-line path { animation: none !important; }
+  .draw-line path { stroke-dashoffset: 0; }
+}

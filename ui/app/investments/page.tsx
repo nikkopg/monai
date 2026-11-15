@@ -16,6 +16,7 @@ import HoldingOverrideModal from "./HoldingOverrideModal";
 import PriceOverrideDialog from "./PriceOverrideDialog";
 import Pills from "../components/Pills";
 import RollingNumber from "../components/RollingNumber";
+import Skeleton, { Bone, DrawLine } from "../components/Skeleton";
 import RowMenu from "../components/RowMenu";
 import StalenessBadge from "./StalenessBadge";
 import ValueHistoryChart, { type HistoryPoint } from "./ValueHistoryChart";
@@ -336,16 +337,157 @@ export default function InvestmentsPage() {
       </div>
 
       {loading ? (
-        <div style={card}>
-          <p style={{ color: muted, fontSize: 14, margin: 0 }}>
-            Loading your portfolio…
-          </p>
-        </div>
+        <Skeleton pulse label="Loading your portfolio">
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 18, marginBottom: 18 }}>
+            <div
+              className="bone-dark"
+              style={{
+                flex: "2 1 560px",
+                minWidth: 0,
+                boxSizing: "border-box",
+                background: tokens.color.ink,
+                borderRadius: 18,
+                padding: "22px 28px 18px",
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <Bone w={80} h={12} />
+                  <Bone w={260} h={46} />
+                  <Bone w={220} h={12} />
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Bone w={150} h={32} r={999} />
+                  <Bone w={96} h={32} r={999} />
+                </div>
+              </div>
+              <DrawLine height={130} />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <Bone w={170} h={12} />
+                <Bone w={110} h={32} r={999} />
+              </div>
+            </div>
+            <div
+              style={{
+                ...card,
+                marginBottom: 0,
+                flex: "1 1 280px",
+                minWidth: 0,
+                boxSizing: "border-box",
+                display: "flex",
+                flexDirection: "column",
+                gap: 14,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <Bone w={80} h={14} />
+                <Bone w={150} h={32} r={999} />
+              </div>
+              <div
+                className="bone"
+                style={{
+                  width: 170,
+                  height: 170,
+                  borderRadius: "50%",
+                  margin: "6px auto",
+                  background: "none",
+                  border: `26px solid ${tokens.color.borderInner}`,
+                }}
+              />
+              {[
+                [70, 70],
+                [90, 60],
+                [60, 66],
+              ].map(([lw, vw], i) => (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 14,
+                    padding: "10px 0",
+                    borderTop: i === 0 ? "none" : `1px solid ${tokens.color.borderInner}`,
+                  }}
+                >
+                  <Bone w={10} h={10} />
+                  <Bone w={lw} h={12} />
+                  <div style={{ marginLeft: "auto" }}>
+                    <Bone w={vw} h={12} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div style={{ marginBottom: 18 }}>
+            <Bone w="100%" h={36} r={12} />
+          </div>
+          <div
+            style={{
+              ...card,
+              marginBottom: 18,
+              display: "flex",
+              flexDirection: "column",
+              gap: 14,
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+              <Bone w={80} h={14} />
+              <div style={{ display: "flex", gap: 8 }}>
+                <Bone w={120} h={32} r={999} />
+                <Bone w={150} h={32} r={999} />
+                <Bone w={110} h={32} r={999} />
+              </div>
+            </div>
+            {[0, 1, 2, 3, 4, 5].map((i) =>
+              i % 3 === 0 ? (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    background: tokens.color.inputBg,
+                    padding: "12px 8px",
+                    borderRadius: 6,
+                  }}
+                >
+                  <Bone w={70 + i * 6} h={13} />
+                  <Bone w={90} h={13} />
+                </div>
+              ) : (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 14,
+                    padding: "10px 0",
+                    borderTop: `1px solid ${tokens.color.borderInner}`,
+                  }}
+                >
+                  <Bone w={30} h={30} />
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <Bone w={60 + i * 9} h={12} />
+                    <Bone w={150} h={10} />
+                  </div>
+                  <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14 }}>
+                    <Bone w={70} h={12} />
+                    <Bone w={52} h={12} />
+                    <Bone w={18} h={12} />
+                  </div>
+                </div>
+              ),
+            )}
+          </div>
+        </Skeleton>
       ) : error ? (
         <div style={{ ...card, color: tokens.color.terracotta }}>{error}</div>
       ) : (
         summary && (
-          <>
+          <div className="fade-in">
             {/* Hero (total, P&L, history chart, price footer) + Allocation */}
             <div
               style={{
@@ -947,7 +1089,7 @@ export default function InvestmentsPage() {
                 </>
               )}
             </section>
-          </>
+          </div>
         )
       )}
 

@@ -346,6 +346,32 @@ test.describe("USD positions on the Investments page", () => {
     }
   });
 
+  test("loading skeleton: hero line draws, bones pulse, reduced motion stops both, the page replaces it (261115-hfb)", async ({ page }) => {
+    await mockInvestmentsPage(page, [usdHolding, idrHolding]);
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    await page.route("**/api/investments/summary**", async (route) => {
+      await gate;
+      await route.fallback();
+    });
+    await page.goto("/investments");
+    const skel = page.getByRole("status", { name: "Loading your portfolio" });
+    await expect(skel).toBeVisible();
+    await expect(skel).toHaveAttribute("aria-busy", "true");
+    await expect(skel.locator(".draw-line")).toHaveCount(1);
+    const names = () =>
+      skel.evaluate((el) => [
+        getComputedStyle(el.querySelector(".bone")!).animationName,
+        getComputedStyle(el.querySelector(".draw-line path")!).animationName,
+      ]);
+    expect(await names()).toEqual(["breathe", "draw"]);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    expect(await names()).toEqual(["none", "none"]);
+    release();
+    await expect(skel).toHaveCount(0);
+    await expect(row(page, "ZZUSD")).toBeVisible();
+  });
+
   test("1024 and 780: holdings rows fit the card, not the viewport (261115-e3k)", async ({ page }) => {
     await mockInvestmentsPage(page, [usdHolding, idrHolding]);
     for (const { width, height, mid } of [
