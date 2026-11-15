@@ -738,3 +738,73 @@ test.describe("USD balances (Phase 44)", () => {
     await expect(page.getByText(/left out of the total|rate of/)).toHaveCount(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 261115-msv: phone width. Synthetic ZZ names and round example figures only.
+// ---------------------------------------------------------------------------
+test.describe("phone width, 375px (261115-msv)", () => {
+  test.use({ viewport: { width: 375, height: 812 }, contextOptions: { reducedMotion: "reduce" } });
+
+  test.beforeEach(async ({ page }) => {
+    // Registered first, so it has the lowest priority: nothing reaches a live backend.
+    await page.route("**/api/**", (route) => route.fulfill({ status: 404, json: { detail: "mocked" } }));
+    await mockSummary(
+      page,
+      summaryFixture({
+        totals: { income: 23_456_789, expense: 12_345_678, net: 11_111_111 }, // pii-ok synthetic
+        unconverted_count: 2,
+        unconverted_usd: 1234.56, // pii-ok synthetic
+      })
+    );
+    await mockNetWorth(
+      page,
+      netWorthFixture({
+        total: 1_234_567_890, // pii-ok synthetic
+        liquid_total: 734_567_890, // pii-ok synthetic
+        investment_total: 500_000_000, // pii-ok synthetic
+        liquid_accounts: [
+          {
+            id: 1,
+            name: "ZZ Bank",
+            type: "liquid",
+            currency: "IDR",
+            fx_rate: 1,
+            current_balance: 734_567_890, // pii-ok synthetic
+            period_net: 0,
+          },
+        ],
+        investment_groups: [
+          {
+            platform_id: 7,
+            platform_name: "ZZ Broker",
+            kind: "broker",
+            subtotal: 500_000_000, // pii-ok synthetic
+            holdings: [{ asset_type: "idx_stock", current_value: 500_000_000 }], // pii-ok synthetic
+          },
+        ],
+      })
+    );
+    await page.goto("/cashflow");
+    await expect(page.getByRole("region", { name: "Holdings", exact: true })).toBeVisible();
+  });
+
+  test("F1: cards are at least 236px wide, the Period pills sit inside the Cashflow card, the USD note is at most 2 lines", async ({
+    page,
+  }) => {
+    const card = cashflowCard(page);
+    const cardBox = (await card.boundingBox())!;
+    const holdingsBox = (await page.getByRole("region", { name: "Holdings", exact: true }).boundingBox())!;
+    expect(cardBox.width).toBeGreaterThanOrEqual(236);
+    expect(holdingsBox.width).toBeGreaterThanOrEqual(236);
+
+    const pills = (await card.getByRole("group", { name: "Period" }).boundingBox())!;
+    expect(pills.x + pills.width).toBeLessThanOrEqual(cardBox.x + cardBox.width);
+
+    const lines = await page.getByText(/USD rows? unconverted/).evaluate((el) => {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      return new Set(Array.from(range.getClientRects(), (q) => Math.round(q.top))).size;
+    });
+    expect(lines).toBeLessThanOrEqual(2);
+  });
+});

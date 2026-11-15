@@ -310,7 +310,7 @@ export default function InvestmentsPage() {
     : 0;
 
   return (
-    <div className="tab-in inv-page" style={{ padding: "40px 44px 60px" }}>
+    <div className="tab-in" style={{ padding: "40px 44px 60px" }}>
       <div style={{ marginBottom: 28 }}>
         <div
           style={{

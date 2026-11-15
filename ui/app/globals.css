@@ -39,9 +39,11 @@
   }
 }
 
-/* Below 340px the 44px page gutters leave cards too narrow for an amount
-   (37 IN-03). Chat's own 16px rule further down wins for the chat column. */
-@media (max-width: 339px) {
+/* Below 561px (phones) the 44px page gutters leave cards too narrow for an
+   amount (37 IN-03, 261115-msv). Covers every .tab-in page; Chat's own 16px
+   rule further down still wins for the chat column. The old Investments-only
+   rule was folded in here. */
+@media (max-width: 560px) {
   .tab-in {
     padding-left: 16px !important;
     padding-right: 16px !important;
@@ -71,12 +73,6 @@
 .inv-holdings {
   container-type: inline-size;
   container-name: holdings;
-}
-@media (max-width: 560px) {
-  .inv-page {
-    padding-left: 16px !important;
-    padding-right: 16px !important;
-  }
 }
 @container holdings (max-width: 809px) {
   .inv-wide {
@@ -315,6 +311,10 @@ input, select, button, textarea {
 .cf-lower { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
 @media (min-width: 1280px) {
   .cf-lower { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+/* Trims Cashflow's inline card padding on phones (261115-msv F1). */
+@media (max-width: 560px) {
+  .cf-card { padding: 16px !important; }
 }
 
 /* RollingNumber: each digit is a 0–9 strip (::before, so the digits never
