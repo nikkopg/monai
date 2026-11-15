@@ -591,6 +591,7 @@ export default function InvestmentsPage() {
 
             {/* One Holdings card: Open / Closed views, grouped by the shared grouping */}
             <section
+              className="inv-holdings"
               aria-labelledby="holdings-title"
               style={{ ...card, marginBottom: 18 }}
             >
@@ -675,7 +676,7 @@ export default function InvestmentsPage() {
               ) : (
                 <>
                   <div
-                    className="inv-wide"
+                    className="inv-head"
                     style={{ display: "flex", ...columnHeader }}
                   >
                     <span style={{ flex: 2 }}>Asset</span>

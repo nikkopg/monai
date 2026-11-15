@@ -346,6 +346,53 @@ test.describe("USD positions on the Investments page", () => {
     }
   });
 
+  test("1024 and 780: holdings rows fit the card, not the viewport (261115-e3k)", async ({ page }) => {
+    await mockInvestmentsPage(page, [usdHolding, idrHolding]);
+    for (const { width, height, mid } of [
+      { width: 1024, height: 800, mid: true },
+      { width: 780, height: 900, mid: false },
+    ]) {
+      // Resize BEFORE goto: resizing a loaded page across 560px measures the nav mid-transition.
+      await page.setViewportSize({ width, height });
+      await page.goto("/investments");
+      await expect(row(page, "ZZUSD")).toBeVisible();
+      const card = (await page.getByRole("region", { name: "Holdings", exact: true }).boundingBox())!;
+      const inside = (b: Box) => {
+        expect(b.x).toBeGreaterThanOrEqual(card.x);
+        expect(b.x + b.width).toBeLessThanOrEqual(card.x + card.width);
+      };
+
+      await expect(page.getByText("Units", { exact: true })).toBeHidden();
+      if (mid) await expect(page.getByText("Return", { exact: true })).toBeVisible();
+      else await expect(page.getByText("Return", { exact: true })).toBeHidden();
+      await expect(row(page, "ZZIDR").getByText("10 × 1,200", { exact: true })).toBeVisible();
+
+      for (const t of ["ZZUSD", "ZZIDR"]) {
+        const { value, ret, stale, ticker } = await rowBoxes(page, t);
+        const menu = (await page.getByRole("button", { name: "Holding options: " + t, exact: true }).boundingBox())!;
+        expect(overlaps(value, ret)).toBe(false);
+        expect(overlaps(value, stale)).toBe(false);
+        expect(overlaps(ret, stale)).toBe(false);
+        for (const b of [value, ret, stale, menu]) inside(b);
+        if (mid) {
+          expect(Math.abs(value.y - ret.y)).toBeLessThanOrEqual(2);
+          expect(value.y).toBeLessThan(ticker.y + ticker.height);
+        } else {
+          expect(value.y).toBeGreaterThanOrEqual(stale.y + stale.height - 1);
+        }
+      }
+
+      const group = page
+        .locator("div")
+        .filter({ has: page.getByRole("link", { name: "Open ZZ Exchange", exact: true }) })
+        .last();
+      const name = (await group.locator("> span").nth(0).boundingBox())!;
+      const subtotal = (await group.locator("> span").nth(1).boundingBox())!;
+      expect(overlaps(name, subtotal)).toBe(false);
+      inside(subtotal);
+    }
+  });
+
   test("hero shows unrealized and realized P&L once; legend labels stay on one line", async ({ page }) => {
     await mockInvestmentsPage(page, [usdHolding, idrHolding]);
     await page.goto("/investments");

@@ -48,28 +48,52 @@
   }
 }
 
-/* Investments on phones (261114-rcv F3). At 560px the sidebar becomes the icon
-   rail, leaving main about 272px wide at 375. Holdings rows drop the Units and
-   Price columns and the ticker badge; "Units x Price" shows as a line under the
-   row instead. Each row stacks into four lines: ticker + the menu, staleness,
-   Value left / Return right, units x price. Children are addressed by DOM
-   position: 1 Asset, 2 Units, 3 Price, 4 Value, 5 Return, 6 menu cell,
-   7 sub-line (the order the usd-positions spec's `> span` indexes pin).
-   Calibration: the 18px menu-cell height is the measured ticker line height
-   (14px Hanken Grotesk); re-measure it if the ticker font changes. */
+/* Investments Holdings rows. The layout keys on the Holdings card's content
+   width (container `holdings` on the section), not the viewport: the nav rail,
+   page padding and card padding decide what fits (261115-e3k).
+   810px and up: all 5 columns. 520-809px: rows stay single-line, Units and
+   Price fold into the units x price sub-line and the header keeps
+   Asset/Value/Return. Below 520px: rows stack into ticker + the menu,
+   staleness, Value left / Return right, units x price (261114-s6g).
+   Children are addressed by DOM position: 1 Asset, 2 Units, 3 Price, 4 Value,
+   5 Return, 6 menu cell, 7 sub-line (the order the usd-positions spec's
+   `> span` indexes pin).
+   Calibration: 810 and 520 were measured on worst-case synthetic rows
+   (staleness "Price as of 317d ago * coingecko", a 10-digit IDR value, 8-dp
+   units). The 5-column layout broke at 802 (staleness over Units) and the mid
+   layout at 510 (staleness over a 10-digit Value). Re-measure if the staleness
+   label, the money formats or the column flex ratios change. The 18px
+   menu-cell height is the measured ticker line height (14px Hanken Grotesk);
+   re-measure it if the ticker font changes. */
 .inv-sub {
   display: none;
+}
+.inv-holdings {
+  container-type: inline-size;
+  container-name: holdings;
 }
 @media (max-width: 560px) {
   .inv-page {
     padding-left: 16px !important;
     padding-right: 16px !important;
   }
+}
+@container holdings (max-width: 809px) {
   .inv-wide {
     display: none !important;
   }
   .inv-row {
     flex-wrap: wrap;
+  }
+  .inv-sub {
+    display: block;
+  }
+}
+@container holdings (max-width: 519px) {
+  .inv-head {
+    display: none !important;
+  }
+  .inv-row {
     column-gap: 16px;
     row-gap: 6px;
   }
@@ -96,7 +120,6 @@
     align-items: center;
   }
   .inv-sub {
-    display: block;
     order: 2;
   }
 }
