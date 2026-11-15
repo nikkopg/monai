@@ -572,4 +572,20 @@ test.describe("net worth trend card", () => {
     // The mode switch reused the cached rows — no new history request.
     expect(requestedMonths.length).toBe(historyRequestsBefore);
   });
+
+  test("375px: the seam line stays, its Market value label is hidden (261115-msv F3)", async ({
+    page,
+  }) => {
+    await mockPage(page, (m) =>
+      m === "12" ? { status: 200, rows: archival1Y() } : defaultHistory(m)
+    );
+    await page.goto("/cashflow");
+    const region = page.getByRole("region", { name: "Net worth trend", exact: true });
+    // Visible at 1280, so the hidden check below cannot pass vacuously.
+    await expect(region.locator(".recharts-label")).toBeVisible();
+
+    await page.setViewportSize({ width: 375, height: 812 });
+    await expect(region.locator(".recharts-reference-line")).toHaveCount(1);
+    await expect(region.locator(".recharts-label")).toBeHidden();
+  });
 });

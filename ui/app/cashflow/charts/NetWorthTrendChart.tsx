@@ -237,7 +237,7 @@ export default function NetWorthTrendChart({
         </Skeleton>
       ) : (
         <>
-          <div style={{ width: "100%", height: chartHeight, marginTop: hero ? "auto" : 0 }}>
+          <div className="nw-chart" style={{ width: "100%", height: chartHeight, marginTop: hero ? "auto" : 0 }}>
             <ResponsiveContainer>
               <LineChart data={points} margin={{ top: 8, right: 6, left: 6, bottom: 0 }}>
                 <XAxis

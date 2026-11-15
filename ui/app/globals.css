@@ -316,6 +316,12 @@ input, select, button, textarea {
 @media (max-width: 560px) {
   .cf-card { padding: 16px !important; }
 }
+/* Below about 300px of chart width the seam label sits on the line, so hide
+   it; the seam line itself stays (261115-msv F3). */
+.nw-chart { container-type: inline-size; container-name: nw-chart; }
+@container nw-chart (max-width: 299px) {
+  .recharts-label { display: none; }
+}
 
 /* RollingNumber: each digit is a 0–9 strip (::before, so the digits never
    enter the DOM text) shifted by --d tenths of its height. The box takes the
