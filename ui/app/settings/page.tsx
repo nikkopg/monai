@@ -42,17 +42,17 @@ type SaveState = {
 };
 
 const cardTitle: React.CSSProperties = {
-  fontSize: 15,
+  fontSize: "var(--fs-h3, 15px)",
   fontWeight: 600,
   marginBottom: 4,
 };
 const cardSub: React.CSSProperties = {
-  fontSize: 13,
+  fontSize: "var(--fs-body, 13px)",
   color: tokens.color.muted,
   marginBottom: 16,
 };
 const fieldLabel: React.CSSProperties = {
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   color: tokens.color.muted2,
   marginBottom: 7,
   display: "block",
@@ -213,12 +213,12 @@ export default function SettingsPage() {
   function statusMessage(state: SaveState) {
     if (state.status === "success") {
       return (
-        <span style={{ color: tokens.color.green, fontSize: 12 }}>Saved.</span>
+        <span style={{ color: tokens.color.green, fontSize: "var(--fs-xs, 12px)" }}>Saved.</span>
       );
     }
     if (state.status === "error") {
       return (
-        <span style={{ color: tokens.color.terracotta, fontSize: 12 }}>
+        <span style={{ color: tokens.color.terracotta, fontSize: "var(--fs-xs, 12px)" }}>
           Save failed: {state.message}. Your previous settings are unchanged — try
           again.
         </span>
@@ -235,7 +235,7 @@ export default function SettingsPage() {
       <div style={{ marginBottom: 28 }}>
         <div
           style={{
-            fontSize: 12,
+            fontSize: "var(--fs-xs, 12px)",
             letterSpacing: ".12em",
             textTransform: "uppercase",
             color: tokens.color.muted2,
@@ -248,7 +248,7 @@ export default function SettingsPage() {
           style={{
             fontFamily: tokens.font.serif,
             fontWeight: 400,
-            fontSize: 40,
+            fontSize: "var(--fs-title, 40px)",
             margin: 0,
             letterSpacing: "-.5px",
           }}
@@ -292,7 +292,8 @@ export default function SettingsPage() {
                     border: "none",
                     borderRadius: 9,
                     padding: "8px 18px",
-                    fontSize: 14,
+                    fontSize: "var(--fs-pill, 14px)",
+                    minHeight: "var(--pill-h, auto)",
                     fontWeight: active ? 600 : 500,
                     cursor: "pointer",
                     color: active ? tokens.color.ink : tokens.color.muted,

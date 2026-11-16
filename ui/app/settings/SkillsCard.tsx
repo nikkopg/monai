@@ -34,11 +34,11 @@ type SkillDetail = {
 const STALE =
   "This skill changed after you opened it. The text below is the new version. Read it, then enable it again.";
 
-const body14: React.CSSProperties = { fontSize: 14, lineHeight: 1.5 };
+const body14: React.CSSProperties = { fontSize: "var(--fs-body, 14px)", lineHeight: 1.5 };
 const small: React.CSSProperties = { ...body14, color: tokens.color.muted3 };
 const errText: React.CSSProperties = { ...body14, color: tokens.color.terracottaText };
 const blockLabel: React.CSSProperties = {
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   fontWeight: 600,
   lineHeight: 1.5,
   color: tokens.color.muted3,
@@ -66,7 +66,7 @@ const pre: React.CSSProperties = {
 };
 const chipBase: React.CSSProperties = {
   display: "inline-block",
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   fontWeight: 600,
   lineHeight: 1.5,
   borderRadius: tokens.radius.pill,
@@ -306,7 +306,7 @@ export default function SkillsCard() {
           id={`skill-panel-heading-${name}`}
           ref={headingRef}
           tabIndex={-1}
-          style={{ fontSize: 15, fontWeight: 600, lineHeight: 1.3, margin: 0, color: tokens.color.ink, overflowWrap: "anywhere" }}
+          style={{ fontSize: "var(--fs-h3, 15px)", fontWeight: 600, lineHeight: 1.3, margin: 0, color: tokens.color.ink, overflowWrap: "anywhere" }}
         >
           {name}
         </h3>
@@ -479,7 +479,7 @@ export default function SkillsCard() {
 
   return (
     <div style={card} data-testid="skills-card">
-      <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Skills</div>
+      <div style={{ fontSize: "var(--fs-h3, 15px)", fontWeight: 600, marginBottom: 4 }}>Skills</div>
       <div style={{ ...small, marginBottom: 16 }}>
         Instruction packs the chat agent can load when your question matches. Each one is off until you enable it.
       </div>

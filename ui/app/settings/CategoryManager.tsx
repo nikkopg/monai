@@ -108,7 +108,7 @@ async function extractDetail(r: Response): Promise<string> {
 }
 
 const badgeStyle: React.CSSProperties = {
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   color: tokens.color.muted,
   background: tokens.color.border,
   borderRadius: tokens.radius.pill,
@@ -338,7 +338,7 @@ export default function CategoryManager({ onChanged }: Props) {
           height: 22,
           borderRadius: tokens.radius.pill,
           background: hexToRgba(hex, 0.16),
-          fontSize: 13,
+          fontSize: "var(--fs-body, 13px)",
           flexShrink: 0,
         }}
       >
@@ -429,10 +429,10 @@ export default function CategoryManager({ onChanged }: Props) {
           placeholder="emoji"
           onChange={(e) => setEditFlow({ ...editFlow, icon: e.target.value })}
         />
-        <button type="button" style={{ ...btn, padding: "4px 10px", fontSize: 12 }} onClick={saveAdd}>
+        <button type="button" style={{ ...btn, padding: "4px 10px", fontSize: "var(--fs-xs, 12px)" }} onClick={saveAdd}>
           Save
         </button>
-        <button type="button" style={{ ...btnGhost, padding: "4px 10px", fontSize: 12 }} onClick={cancelEdit}>
+        <button type="button" style={{ ...btnGhost, padding: "4px 10px", fontSize: "var(--fs-xs, 12px)" }} onClick={cancelEdit}>
           Cancel
         </button>
       </div>
@@ -467,7 +467,7 @@ export default function CategoryManager({ onChanged }: Props) {
               textAlign: "center",
               cursor: isExpandable ? "pointer" : "default",
               color: tokens.color.muted2,
-              fontSize: 12,
+              fontSize: "var(--fs-xs, 12px)",
               transform: isExpanded ? "rotate(90deg)" : "none",
               transition: "transform .15s ease",
             }}
@@ -480,7 +480,7 @@ export default function CategoryManager({ onChanged }: Props) {
           {activeEdit ? (
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flex: 1 }}>
               {activeEdit.node.is_system ? (
-                <span style={{ fontSize: 13, marginLeft: 4 }}>{activeEdit.node.name}</span>
+                <span style={{ fontSize: "var(--fs-body, 13px)", marginLeft: 4 }}>{activeEdit.node.name}</span>
               ) : (
                 <input
                   style={{ ...input, width: 180 }}
@@ -495,19 +495,19 @@ export default function CategoryManager({ onChanged }: Props) {
                 placeholder="emoji"
                 onChange={(e) => setEditFlow({ ...activeEdit, icon: e.target.value })}
               />
-              <button type="button" style={{ ...btn, padding: "4px 10px", fontSize: 12 }} onClick={saveEdit}>
+              <button type="button" style={{ ...btn, padding: "4px 10px", fontSize: "var(--fs-xs, 12px)" }} onClick={saveEdit}>
                 Save
               </button>
-              <button type="button" style={{ ...btnGhost, padding: "4px 10px", fontSize: 12 }} onClick={cancelEdit}>
+              <button type="button" style={{ ...btnGhost, padding: "4px 10px", fontSize: "var(--fs-xs, 12px)" }} onClick={cancelEdit}>
                 Cancel
               </button>
             </div>
           ) : (
             <>
-              <span className="cat-name" style={{ fontSize: 13, fontWeight: 400, marginLeft: 4 }}>{node.name}</span>
+              <span className="cat-name" style={{ fontSize: "var(--fs-body, 13px)", fontWeight: 400, marginLeft: 4 }}>{node.name}</span>
               <span style={badgeStyle}>{node.tx_count}</span>
               {node.is_system && (
-                <span className="cat-note" style={{ fontSize: 11, color: tokens.color.muted2, marginLeft: 8 }}>
+                <span className="cat-note" style={{ fontSize: "var(--fs-xs, 11px)", color: tokens.color.muted2, marginLeft: 8 }}>
                   System category — can&apos;t be deleted.
                 </span>
               )}
@@ -549,7 +549,7 @@ export default function CategoryManager({ onChanged }: Props) {
       {loaded && tree.length === 0 ? (
         <div>
           <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>No categories yet.</div>
-          <div style={{ color: tokens.color.muted, fontSize: 14 }}>
+          <div style={{ color: tokens.color.muted, fontSize: "var(--fs-body, 14px)" }}>
             Categories are created automatically during setup, or add your first one below.
           </div>
         </div>
@@ -567,7 +567,7 @@ export default function CategoryManager({ onChanged }: Props) {
         </div>
       )}
 
-      {error && <div style={{ color: tokens.color.terracotta, fontSize: 12, marginTop: 8 }}>{error}</div>}
+      {error && <div style={{ color: tokens.color.terracotta, fontSize: "var(--fs-xs, 12px)", marginTop: 8 }}>{error}</div>}
 
       {deleteFlow.stage === "confirm" && (
         <ConfirmDialog
@@ -618,7 +618,7 @@ export default function CategoryManager({ onChanged }: Props) {
             style={{ ...card, maxWidth: 360, width: "100%", padding: 24, margin: 0 }}
             onClick={(e) => e.stopPropagation()}
           >
-            <p style={{ fontSize: 14, margin: "0 0 16px", color: tokens.color.text }}>
+            <p style={{ fontSize: "var(--fs-body, 14px)", margin: "0 0 16px", color: tokens.color.text }}>
               Merge &quot;{mergeFlow.from.name}&quot; into which category?
             </p>
             <select
@@ -643,7 +643,7 @@ export default function CategoryManager({ onChanged }: Props) {
                   color: tokens.color.muted,
                   border: "none",
                   padding: "8px 16px",
-                  fontSize: 14,
+                  fontSize: "var(--fs-body, 14px)",
                   cursor: "pointer",
                 }}
               >

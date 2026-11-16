@@ -324,7 +324,7 @@ export default function ExternalMcpCard() {
 
   return (
     <div id="external-mcp" style={card} data-testid="external-mcp-card">
-      <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>External MCP servers</div>
+      <div style={{ fontSize: "var(--fs-h3, 15px)", fontWeight: 600, marginBottom: 4 }}>External MCP servers</div>
       <div style={{ ...small, marginBottom: 16 }}>
         Connect tools from other MCP servers. Each server is off until you review and enable it, and every tool asks
         before it runs.

@@ -531,8 +531,8 @@ test.describe("P4 settings (261115-oax)", () => {
     expect(menuMid).toBeLessThan(name.y + name.height);
     expect(note.y).toBeGreaterThanOrEqual(name.y + name.height);
 
-    // The expand arrow is 12px.
-    expect(await row.locator("span[role=button]").evaluate((el) => getComputedStyle(el).fontSize)).toBe("12px");
+    // The expand arrow is 13px (--fs-xs on phones).
+    expect(await row.locator("span[role=button]").evaluate((el) => getComputedStyle(el).fontSize)).toBe("13px");
   });
 });
 
@@ -1021,5 +1021,57 @@ test.describe("S1 phone type scale (261116-s7w)", () => {
       expect((await b.boundingBox())!.height).toBeGreaterThanOrEqual(36);
       expect(await b.evaluate((el) => getComputedStyle(el).fontSize)).toBe("14px");
     }
+  });
+
+  test("S1: Inbox phone type scale (261116-s7w)", async ({ page }) => {
+    const px = (loc: Locator) => loc.first().evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    await mockInbox(page, {
+      list: [
+        proposal({
+          id: ids.a,
+          payload: { operation: "add_transaction", rows: [txRow({ after: { amount: "-1234567890.00", merchant: "ZZ Merchant With A Long Name" } })] }, // pii-ok synthetic
+        }),
+        transferProposal({ id: ids.b }),
+      ],
+    });
+    await page.clock.setFixedTime(NOW);
+    await page.goto("/inbox");
+    const cards = page.getByRole("article");
+    await expect(cards).toHaveCount(2);
+    await expect(page.locator(".bone")).toHaveCount(0);
+    const main = page.locator("main");
+    expect(await smallText(main, 13)).toEqual([]);
+    expect(await px(main.locator("h1"))).toBe(32);
+    expect(await px(cards.first().getByText("ZZ Merchant With A Long Name").first())).toBeGreaterThanOrEqual(15);
+    for (const card of await cards.all()) {
+      const controls = await card
+        .locator("input:not([type=checkbox]):not([type=radio]):not([type=hidden]), select, textarea")
+        .evaluateAll((els) => els.filter((e) => e.getBoundingClientRect().width > 0).map((e) => getComputedStyle(e).fontSize));
+      expect(controls.filter((s) => s !== "16px")).toEqual([]);
+      expect(await crossings(card)).toEqual([]);
+    }
+  });
+
+  test("S1: Settings phone type scale (261116-s7w)", async ({ page }) => {
+    const px = (loc: Locator) => loc.first().evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    await mockSettings(page);
+    await page.goto("/settings");
+    await expect(page.locator(".cat-row").filter({ hasText: "ZZ Adjustment" }).first()).toBeVisible();
+    await expect(page.locator(".bone")).toHaveCount(0);
+    const main = page.locator("main");
+    expect(await smallText(main, 13)).toEqual([]);
+    expect(await px(main.locator("h1"))).toBe(32);
+    expect(await px(page.getByText("LLM Provider & Model", { exact: true }))).toBe(16);
+    const seg = page.locator(".seg-fill button");
+    expect(await seg.count()).toBeGreaterThan(1);
+    for (const b of await seg.all()) {
+      expect((await b.boundingBox())!.height).toBeGreaterThanOrEqual(36);
+      expect(await b.evaluate((el) => getComputedStyle(el).fontSize)).toBe("14px");
+    }
+    const controls = await main
+      .locator("input:not([type=checkbox]):not([type=radio]):not([type=hidden]), select, textarea")
+      .evaluateAll((els) => els.filter((e) => e.getBoundingClientRect().width > 0).map((e) => getComputedStyle(e).fontSize));
+    expect(controls.length).toBeGreaterThan(2);
+    expect(controls.filter((s) => s !== "16px")).toEqual([]);
   });
 });

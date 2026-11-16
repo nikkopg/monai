@@ -111,7 +111,7 @@ export default function AdjustBalanceModal({ account, onClose, onChanged }: Prop
 
           <p
             style={{
-              fontSize: 13,
+              fontSize: "var(--fs-body, 13px)",
               marginTop: 10,
               color:
                 shown > 0
@@ -140,7 +140,7 @@ export default function AdjustBalanceModal({ account, onClose, onChanged }: Prop
                 color: "#8b8474",
                 border: "none",
                 padding: "8px 16px",
-                fontSize: 14,
+                fontSize: "var(--fs-body, 14px)",
                 cursor: saving ? "default" : "pointer",
               }}
             >
@@ -150,7 +150,7 @@ export default function AdjustBalanceModal({ account, onClose, onChanged }: Prop
               {saving ? "Saving…" : "Save adjustment"}
             </button>
             {error && (
-              <span style={{ color: "#b5503f", fontSize: 12 }}>{error}</span>
+              <span style={{ color: "#b5503f", fontSize: "var(--fs-xs, 12px)" }}>{error}</span>
             )}
           </div>
         </form>

@@ -279,7 +279,7 @@ export default function McpToolReview(props: {
                       borderRadius: tokens.radius.sm,
                       color: tokens.color.text,
                       padding: "6px 8px",
-                      fontSize: 14,
+                      fontSize: "var(--fs-body, 14px)",
                       minHeight: 36,
                     }}
                     className="coarse-tap"

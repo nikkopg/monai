@@ -44,7 +44,7 @@ export function ProposalDiff({
 
   const batchSummary =
     rows.length > 1 ? (
-      <div style={{ fontSize: 12, ...dim, marginBottom: 10 }}>
+      <div style={{ fontSize: "var(--fs-xs, 12px)", ...dim, marginBottom: 10 }}>
         {rows.length} rows affected
       </div>
     ) : null;
@@ -53,7 +53,7 @@ export function ProposalDiff({
   const remainder = rows.length - displayRows.length;
 
   return (
-    <div style={{ fontSize: 14 }}>
+    <div style={{ fontSize: "var(--fs-body, 14px)" }}>
       {batchSummary}
       {displayRows.map((row, i) => {
         if (row.old_name !== undefined) {
@@ -109,7 +109,7 @@ export function ProposalDiff({
           );
           if (changedKeys.length === 0) {
             return (
-              <div key={i} style={{ ...dim, fontSize: 12 }}>
+              <div key={i} style={{ ...dim, fontSize: "var(--fs-xs, 12px)" }}>
                 (no field changes detected)
               </div>
             );
@@ -131,7 +131,7 @@ export function ProposalDiff({
         const fields = Object.entries(row);
         if (fields.length === 0) {
           return (
-            <div key={i} style={{ ...dim, fontSize: 12 }}>
+            <div key={i} style={{ ...dim, fontSize: "var(--fs-xs, 12px)" }}>
               (no row details)
             </div>
           );
@@ -148,7 +148,7 @@ export function ProposalDiff({
         );
       })}
       {remainder > 0 && (
-        <div style={{ ...dim, fontSize: 12, marginTop: 6 }}>
+        <div style={{ ...dim, fontSize: "var(--fs-xs, 12px)", marginTop: 6 }}>
           + {remainder} more row{remainder > 1 ? "s" : ""}
         </div>
       )}

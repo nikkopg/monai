@@ -70,13 +70,13 @@ const text = (v: unknown): string => (v === null || v === undefined ? "" : Strin
 
 const smallBtn: React.CSSProperties = {
   ...btnGhost,
-  fontSize: 14,
+  fontSize: "var(--fs-body, 14px)",
   padding: "4px 12px",
   minHeight: 32,
 };
 
 const chip: React.CSSProperties = {
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   fontWeight: 600,
   borderRadius: tokens.radius.pill,
   padding: "4px 12px",
@@ -92,17 +92,17 @@ const warmChip: React.CSSProperties = {
 
 const greenChip: React.CSSProperties = { ...chip, color: c.ink, background: c.tintGreen };
 const TONE = { green: greenChip, warm: warmChip, neutral: neutralChip };
-const sentenceStyle: React.CSSProperties = { fontSize: 14, color: c.muted3 };
+const sentenceStyle: React.CSSProperties = { fontSize: "var(--fs-body, 14px)", color: c.muted3 };
 
 const cell: React.CSSProperties = {
-  fontSize: 14,
+  fontSize: "var(--fs-body, 14px)",
   color: c.ink,
   padding: "12px 8px",
   borderTop: `1px solid ${c.borderInner}`,
   verticalAlign: "top",
 };
 const th: React.CSSProperties = {
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   fontWeight: 400,
   color: c.muted3,
   textAlign: "left",
@@ -125,7 +125,7 @@ function DuplicateFlags({
   return (
     <>
       <span style={warmChip}>{duplicateChipText(flags.length)}</span>
-      <ul style={{ fontSize: 12, color: c.muted3, listStyle: "none", margin: "4px 0 0", padding: 0 }}>
+      <ul style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3, listStyle: "none", margin: "4px 0 0", padding: 0 }}>
         {flags.map((flag, k) => (
           <li key={k}>
             {flag.kind === "transaction" ? (
@@ -425,22 +425,22 @@ export default function InboxCard({
           id={`inbox-status-${id}`}
           ref={statusRef}
           tabIndex={-1}
-          style={{ fontSize: 12, fontWeight: 600, color: statusColor }}
+          style={{ fontSize: "var(--fs-xs, 12px)", fontWeight: 600, color: statusColor }}
         >
           {status}
         </span>
       </div>
-      <div style={{ marginTop: 4, fontSize: 12, color: c.muted3 }}>
+      <div style={{ marginTop: 4, fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>
         Proposed {relativeAge(Date.parse(p.created_at), nowMs)}
       </div>
 
       {/* upload provenance: before the rows, so the trust statement is read first (D-23) */}
       {upload && badge && (
         <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 12, color: c.muted3 }}>File</span>
+          <span style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>File</span>
           <span
             data-testid="inbox-upload-file"
-            style={{ fontSize: 14, fontWeight: 600, color: c.ink, overflowWrap: "anywhere" }}
+            style={{ fontSize: "var(--fs-body, 14px)", fontWeight: 600, color: c.ink, overflowWrap: "anywhere" }}
           >
             {text(upload.filename)}
           </span>
@@ -467,13 +467,13 @@ export default function InboxCard({
       {live && p.channel === "mcp" && code && (
         <>
           <div style={{ marginTop: 16, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 12, color: c.muted3 }}>Code</span>
+            <span style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>Code</span>
             <code
               ref={codeRef}
               tabIndex={0}
               style={{
                 fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-                fontSize: 14,
+                fontSize: "var(--fs-body, 14px)",
                 fontWeight: 600,
                 letterSpacing: ".14em",
                 color: c.ink,
@@ -495,10 +495,10 @@ export default function InboxCard({
               {copied ? "Copied" : "Copy code"}
             </button>
             {copyFallback && (
-              <span style={{ fontSize: 12, color: c.muted3 }}>Select the code and press Ctrl+C</span>
+              <span style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>Select the code and press Ctrl+C</span>
             )}
           </div>
-          <p style={{ fontSize: 12, color: c.muted3, margin: "8px 0 0" }}>
+          <p style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3, margin: "8px 0 0" }}>
             Tell Claude this code to approve it there. You don't need it to approve here.
             {locked && " Claude can no longer approve this with the code. You still can."}
           </p>
@@ -542,7 +542,7 @@ export default function InboxCard({
                         {skipped && <span style={{ ...neutralChip, marginRight: 8 }}>Skipped</span>}
                         <span style={struck}>{text(a.merchant) || "—"}</span>
                         {text(a.notes) !== "" && (
-                          <div style={{ fontSize: 12, color: c.muted3 }}>{text(a.notes)}</div>
+                          <div style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>{text(a.notes)}</div>
                         )}
                       </td>
                       <td className="inbox-c-account" style={{ ...cell, color: tone }}>{text(a.account)}</td>
@@ -614,11 +614,11 @@ export default function InboxCard({
                           {prov.map((item, k) => (
                             <div key={k} style={{ marginTop: 4 }}>
                               <span style={warmChip}>{item.chip}</span>{" "}
-                              <span style={{ fontSize: 12, color: c.muted3 }}>{item.line}</span>
+                              <span style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>{item.line}</span>
                             </div>
                           ))}
                           {src && (
-                            <div style={{ marginTop: 4, fontSize: 12, color: c.muted3, overflowWrap: "anywhere" }}>
+                            <div style={{ marginTop: 4, fontSize: "var(--fs-xs, 12px)", color: c.muted3, overflowWrap: "anywhere" }}>
                               {src}
                             </div>
                           )}
@@ -641,7 +641,7 @@ export default function InboxCard({
                   {expanded ? "Show fewer rows" : `Show all ${rows.length} rows`}
                 </button>
                 {!expanded && (
-                  <span style={{ fontSize: 12, color: c.muted3 }}>
+                  <span style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>
                     {rows.length - visibleRowIndices(rows, false).length} rows hidden
                   </span>
                 )}
@@ -658,7 +658,7 @@ export default function InboxCard({
             )}
           </>
         ) : op === "add_balance_adjustment" ? (
-          <div style={{ fontSize: 14, color: c.ink }}>
+          <div style={{ fontSize: "var(--fs-body, 14px)", color: c.ink }}>
             Set account #{text(rows[0]?.account_id)} balance to {fmtAbsolute(rows[0]?.target_balance)}
           </div>
         ) : (
@@ -680,7 +680,7 @@ export default function InboxCard({
         >
           {confirmDiscard ? (
             <>
-              <span style={{ fontSize: 14, color: c.ink }}>
+              <span style={{ fontSize: "var(--fs-body, 14px)", color: c.ink }}>
                 Discard this proposal and your skip choices on {skippedCount}{" "}
                 {skippedCount === 1 ? "row" : "rows"}?
               </span>
@@ -716,7 +716,7 @@ export default function InboxCard({
                 {busy === "approve" ? "…" : allSkipped ? "Nothing left to add" : approveLabel(op, rows)}
               </button>
               {allSkipped && (
-                <span id={`inbox-allskipped-${id}`} style={{ fontSize: 12, color: c.muted3 }}>
+                <span id={`inbox-allskipped-${id}`} style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>
                   {ALL_SKIPPED_MSG}
                 </span>
               )}
@@ -730,7 +730,7 @@ export default function InboxCard({
               >
                 {busy === "reject" ? "…" : "Reject and discard"}
               </button>
-              <span style={{ marginLeft: "auto", fontSize: 12, color: c.muted3 }}>
+              <span style={{ marginLeft: "auto", fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>
                 {pendingStatus(expiresMs, nowMs)}
               </span>
             </>
@@ -738,11 +738,11 @@ export default function InboxCard({
         </div>
       )}
       {card.phase === "approved" && (
-        <div style={{ marginTop: 16, fontSize: 12, color: c.muted3 }}>{approvedFooter(op, rows)}</div>
+        <div style={{ marginTop: 16, fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>{approvedFooter(op, rows)}</div>
       )}
 
       {error && (
-        <p role="alert" style={{ fontSize: 12, color: c.terracotta, margin: "8px 0 0" }}>
+        <p role="alert" style={{ fontSize: "var(--fs-xs, 12px)", color: c.terracotta, margin: "8px 0 0" }}>
           {error}
         </p>
       )}

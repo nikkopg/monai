@@ -224,7 +224,7 @@ export default function InboxPage() {
         </Skeleton>
       ) : (
         <div style={box}>
-          <p role="alert" style={{ fontSize: 14, color: c.terracotta, margin: "0 0 16px" }}>
+          <p role="alert" style={{ fontSize: "var(--fs-body, 14px)", color: c.terracotta, margin: "0 0 16px" }}>
             Couldn't load your inbox — check the backend is running and try again.
           </p>
           <button type="button" style={{ ...btnGhost, minHeight: 40 }} onClick={poll.refetchNow}>
@@ -238,7 +238,7 @@ export default function InboxPage() {
         <h2 style={{ fontFamily: tokens.font.serif, fontSize: 20, fontWeight: 400, margin: 0 }}>
           All caught up.
         </h2>
-        <p style={{ fontSize: 14, color: c.muted3, margin: "8px 0 0" }}>
+        <p style={{ fontSize: "var(--fs-body, 14px)", color: c.muted3, margin: "8px 0 0" }}>
           Proposals from Claude and chat land here. Nothing is waiting for you.
         </p>
       </div>
@@ -247,7 +247,7 @@ export default function InboxPage() {
     body = (
       <ul className="fade-in" style={{ listStyle: "none", margin: 0, padding: 0 }}>
         {cards.map((h) => (
-          <li key={h.proposal.id} style={{ marginBottom: tokens.space.lg }}>
+          <li key={h.proposal.id} style={{ marginBottom: "var(--stack, 18px)" }}>
             <InboxCard
               card={h}
               nowMs={nowMs}
@@ -278,7 +278,7 @@ export default function InboxPage() {
       <div style={{ marginBottom: 32 }}>
         <div
           style={{
-            fontSize: 12,
+            fontSize: "var(--fs-xs, 12px)",
             color: c.muted3,
             textTransform: "uppercase",
             letterSpacing: ".12em",
@@ -291,14 +291,14 @@ export default function InboxPage() {
           style={{
             fontFamily: tokens.font.serif,
             fontWeight: 400,
-            fontSize: 40,
+            fontSize: "var(--fs-title, 40px)",
             margin: 0,
             letterSpacing: "-.5px",
           }}
         >
           Inbox
         </h1>
-        <p style={{ fontSize: 14, color: c.muted3, margin: "8px 0 0" }}>
+        <p style={{ fontSize: "var(--fs-body, 14px)", color: c.muted3, margin: "8px 0 0" }}>
           Everything waiting for your say-so. Nothing changes until you approve.
           {cards !== null && cards.length > 0 && ` ${liveCount(cards)} waiting.`}
         </p>
@@ -313,7 +313,7 @@ export default function InboxPage() {
             border: `1px solid ${c.border2}`,
             borderRadius: tokens.radius.md,
             padding: "12px 16px",
-            fontSize: 14,
+            fontSize: "var(--fs-body, 14px)",
             color: c.ink,
             marginBottom: 16,
           }}
@@ -330,7 +330,7 @@ export default function InboxPage() {
             ...cardStyle,
             padding: "12px 16px",
             marginBottom: 16,
-            fontSize: 14,
+            fontSize: "var(--fs-body, 14px)",
             color: c.terracotta,
           }}
         >

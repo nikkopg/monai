@@ -471,7 +471,7 @@ input, select, button, textarea {
   .inbox-c-skip { grid-area: skip; justify-self: start; margin-top: 8px; }
   .inbox-c-account,
   .inbox-c-category {
-    font-size: 12px;
+    font-size: var(--fs-xs, 12px);
     color: #6f6857;
   }
   .inbox-c-category::before {

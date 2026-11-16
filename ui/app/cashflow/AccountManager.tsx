@@ -181,7 +181,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
   return (
     <section style={card}>
       <label style={label}>Accounts</label>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--fs-body, 13px)" }}>
         <tbody>
           {accounts.map((a) => (
             <tr key={a.id} style={{ borderTop: "1px solid #e7e1d5" }}>
@@ -201,7 +201,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
                     padding: "4px 8px",
                     background: tokens.color.tintNeutral,
                     color: tokens.color.muted3,
-                    fontSize: 12,
+                    fontSize: "var(--fs-xs, 12px)",
                     fontWeight: 600,
                     borderRadius: tokens.radius.pill,
                     whiteSpace: "nowrap",
@@ -217,7 +217,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
                     <button
                       type="button"
                       onClick={() => saveEdit(a.id)}
-                      style={{ ...btn, padding: "4px 10px", fontSize: 12, marginRight: 6 }}
+                      style={{ ...btn, padding: "4px 10px", fontSize: "var(--fs-xs, 12px)", marginRight: 6 }}
                     >
                       Save account
                     </button>
@@ -228,7 +228,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
                         background: "transparent",
                         color: "#8b8474",
                         border: "none",
-                        fontSize: 12,
+                        fontSize: "var(--fs-xs, 12px)",
                         cursor: "pointer",
                       }}
                     >
@@ -295,7 +295,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
                 background: "transparent",
                 color: "#8b8474",
                 border: "none",
-                fontSize: 12,
+                fontSize: "var(--fs-xs, 12px)",
                 cursor: "pointer",
               }}
             >
@@ -310,7 +310,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
       </div>
 
       {error && (
-        <div style={{ color: "#b5503f", fontSize: 12, marginTop: 8 }}>{error}</div>
+        <div style={{ color: "#b5503f", fontSize: "var(--fs-xs, 12px)", marginTop: 8 }}>{error}</div>
       )}
 
       {deleteFlow.stage === "confirm" && (
@@ -331,7 +331,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
           confirmDisabled={deleteFlow.targetId === ""}
         >
           {deleteFlow.targetId === "" ? (
-            <p style={{ fontSize: 12, margin: 0, color: tokens.color.terracottaText }}>
+            <p style={{ fontSize: "var(--fs-xs, 12px)", margin: 0, color: tokens.color.terracottaText }}>
               No other {ccy(deleteFlow.account)} account to move these records to.
             </p>
           ) : (
