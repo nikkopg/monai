@@ -575,6 +575,22 @@ input, select, button, textarea {
   }
 }
 
+/* Phone pills: every toggle (Pills, Settings provider) is one size. 36px visible,
+   with ::before stretching the hit area to 44px through the track's padding and
+   border; .pill-btn.coarse-tap outranks the 44px touch rule. The dark track gets
+   a transparent border so it matches the light one's height. */
+@media (max-width: 560px) {
+  .pill-track { padding: 3px !important; gap: 2px !important; }
+  .pill-track[data-dark] { border: 1px solid transparent !important; }
+  .pill-btn, .pill-btn.coarse-tap {
+    min-height: 36px !important;
+    height: 36px;
+    padding: 0 14px !important;
+    position: relative;
+  }
+  .pill-btn::before { content: ""; position: absolute; inset: -4px 0; }
+}
+
 /* Markdown answers (37-04): inline margins cannot express first/last-child or
    nested-list rules, so these use !important to beat the inline styles. */
 .md > :first-child { margin-top: 0 !important; }

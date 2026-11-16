@@ -271,7 +271,7 @@ export default function SettingsPage() {
         <form onSubmit={saveProvider}>
           <label style={fieldLabel}>Provider</label>
           <div
-            className="seg-fill"
+            className="seg-fill pill-track"
             style={{
               display: "inline-flex",
               background: tokens.color.sidebar,
@@ -287,6 +287,7 @@ export default function SettingsPage() {
                 <button
                   key={p}
                   type="button"
+                  className="pill-btn"
                   onClick={() => handleProviderChange(p)}
                   style={{
                     border: "none",

@@ -1120,3 +1120,43 @@ test.describe("S1 phone type scale (261116-s7w)", () => {
     expect(await px(page.getByText("ZZ synthetic answer 2 with a short body."))).toBeGreaterThanOrEqual(15);
   });
 });
+
+// ===========================================================================
+// Uniform phone pills: on a touch phone every toggle is 36px visible inside
+// an equal-height track, and still takes taps 4px above its edge (44px area).
+// ===========================================================================
+
+test.describe("Uniform phone pills", () => {
+  test.use({ isMobile: true, hasTouch: true });
+
+  const measure = (page: Page) =>
+    page.locator(".pill-btn").evaluateAll((els) =>
+      els.map((e) => {
+        e.scrollIntoView({ block: "center" });
+        const b = e.getBoundingClientRect();
+        const hit = document.elementFromPoint(b.left + b.width / 2, b.top - 3);
+        return {
+          h: Math.round(b.height),
+          track: Math.round(e.parentElement!.getBoundingClientRect().height),
+          fs: getComputedStyle(e).fontSize,
+          tap: hit === e,
+        };
+      }),
+    );
+
+  test("Investments and Settings pills share one size", async ({ page }) => {
+    await mockInvestments(page);
+    await page.goto("/investments");
+    await expect(page.locator('section[aria-labelledby="holdings-title"]').getByText("ZZCOIN").first()).toBeAttached();
+    const inv = await measure(page);
+
+    await mockSettings(page);
+    await page.goto("/settings");
+    await expect(page.locator(".cat-row").first()).toBeVisible();
+    const set = await measure(page);
+
+    expect(inv.length).toBeGreaterThan(1);
+    expect(set.length).toBe(3);
+    for (const p of [...inv, ...set]) expect(p).toEqual({ h: 36, track: 44, fs: "14px", tap: true });
+  });
+});

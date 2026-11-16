@@ -6,7 +6,9 @@ import { tokens } from "../styles";
 // Total/Split) and the Cashflow card (Week/Month/Year). `dark` is for
 // the ink hero card; `small` is the light palette at the compact dark sizes;
 // `label` names the group for assistive tech. Every pill is 44px tall on touch
-// (.coarse-tap); `tap` adds the 32px desktop floor Investments requires.
+// (.coarse-tap), except on phones where every pill, Settings' provider toggle
+// included, is 36px with a 44px tap area (.pill-track / .pill-btn in globals.css);
+// `tap` adds the 32px desktop floor Investments requires.
 export default function Pills<T extends string>({
   options,
   value,
@@ -28,6 +30,8 @@ export default function Pills<T extends string>({
   return (
     <div
       {...(label ? { role: "group", "aria-label": label } : {})}
+      className="pill-track"
+      {...(dark ? { "data-dark": "" } : {})}
       style={{
         display: "flex",
         gap: compact ? 2 : 6,
@@ -44,7 +48,7 @@ export default function Pills<T extends string>({
             key={opt.value}
             type="button"
             aria-pressed={active}
-            className="coarse-tap"
+            className="pill-btn coarse-tap"
             onClick={() => onChange(opt.value)}
             style={{
               border: "none",
