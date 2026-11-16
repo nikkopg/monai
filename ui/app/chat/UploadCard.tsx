@@ -52,10 +52,10 @@ export default function UploadCard({
         gap: 8,
       }}
     >
-      <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase", color: tokens.color.muted3 }}>
+      <div style={{ fontSize: "var(--fs-xs, 12px)", fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase", color: tokens.color.muted3 }}>
         Upload
       </div>
-      <div style={{ fontSize: 14, fontWeight: 600, color: tokens.color.ink, overflowWrap: "anywhere" }}>{meta.filename}</div>
+      <div style={{ fontSize: "var(--fs-body, 14px)", fontWeight: 600, color: tokens.color.ink, overflowWrap: "anywhere" }}>{meta.filename}</div>
       <div
         id={sentenceId}
         style={{ fontSize: 16, fontWeight: 600, lineHeight: 1.4, color: tokens.color.ink, fontVariantNumeric: "tabular-nums" }}
@@ -76,7 +76,7 @@ export default function UploadCard({
           s.tail
         )}
       </div>
-      {trust && <div style={{ fontSize: 14, lineHeight: 1.5, color: tokens.color.muted3 }}>{trust}</div>}
+      {trust && <div style={{ fontSize: "var(--fs-body, 14px)", lineHeight: 1.5, color: tokens.color.muted3 }}>{trust}</div>}
     </article>
   );
 }

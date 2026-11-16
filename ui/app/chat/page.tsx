@@ -329,7 +329,7 @@ function EditBox({
         </button>
       </div>
       {error && (
-        <div role="alert" style={{ fontSize: 12, color: tokens.color.terracottaText }}>
+        <div role="alert" style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.terracottaText }}>
           {error}
         </div>
       )}
@@ -368,7 +368,7 @@ function ErrorBlock({
       <div style={{ fontSize: 16, fontWeight: 600, color: tokens.color.ink }}>{title}</div>
       <div
         style={{
-          fontSize: 14,
+          fontSize: "var(--fs-body, 14px)",
           fontWeight: 400,
           color: tokens.color.muted3,
           marginTop: 8,
@@ -378,7 +378,7 @@ function ErrorBlock({
         {body}
       </div>
       {model && (
-        <div style={{ fontSize: 12, color: tokens.color.muted3, marginTop: 8 }}>
+        <div style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3, marginTop: 8 }}>
           Model: {model}
         </div>
       )}
@@ -1338,7 +1338,7 @@ function ChatInner() {
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
           <span style={{ fontFamily: tokens.font.serif, fontSize: 18 }}>monai</span>
           {m.status !== "error" && (
-            <span style={{ fontSize: 12, color: tokens.color.muted3 }}>
+            <span style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3 }}>
               ·{" "}
               {m.status === "cancelled"
                 ? "stopped"
@@ -1353,7 +1353,7 @@ function ChatInner() {
             <span
               title={m.model?.provider ?? undefined}
               style={{
-                fontSize: 12,
+                fontSize: "var(--fs-xs, 12px)",
                 lineHeight: 1.5,
                 color: tokens.color.muted3,
                 background: tokens.color.tintNeutral,
@@ -1445,7 +1445,7 @@ function ChatInner() {
         {m.status === "cancelled" && (
           <div
             role="status"
-            style={{ fontSize: 14, color: tokens.color.muted3, lineHeight: 1.5, marginBottom: 16 }}
+            style={{ fontSize: "var(--fs-body, 14px)", color: tokens.color.muted3, lineHeight: 1.5, marginBottom: 16 }}
           >
             {stoppedLine(m)}
           </div>
@@ -1596,7 +1596,7 @@ function ChatInner() {
                 border: `1px solid ${tokens.color.border2}`,
                 borderRadius: tokens.radius.pill,
                 color: tokens.color.ink,
-                fontSize: 14,
+                fontSize: "var(--fs-body, 14px)",
                 fontWeight: 600,
                 cursor: "pointer",
               }}
@@ -1605,7 +1605,7 @@ function ChatInner() {
             </button>
             <div
               style={{
-                fontSize: 12,
+                fontSize: "var(--fs-xs, 12px)",
                 letterSpacing: ".12em",
                 textTransform: "uppercase",
                 color: tokens.color.muted3,
@@ -1618,7 +1618,7 @@ function ChatInner() {
               style={{
                 fontFamily: tokens.font.serif,
                 fontWeight: 400,
-                fontSize: 40,
+                fontSize: "var(--fs-title, 40px)",
                 margin: 0,
                 letterSpacing: "-.5px",
               }}
@@ -1643,7 +1643,7 @@ function ChatInner() {
                 <div style={{ fontSize: 16, fontWeight: 600, color: tokens.color.ink }}>
                   {"That chat isn't available"}
                 </div>
-                <div style={{ fontSize: 14, color: tokens.color.muted3, marginTop: 4, lineHeight: 1.5 }}>
+                <div style={{ fontSize: "var(--fs-body, 14px)", color: tokens.color.muted3, marginTop: 4, lineHeight: 1.5 }}>
                   It may have been deleted. Start a new chat or pick one from the list.
                 </div>
               </div>
@@ -1661,7 +1661,7 @@ function ChatInner() {
 
             {!loading && !loadError && !asking && messages.length === 0 && (
               <div>
-                <p style={{ fontSize: 14, color: tokens.color.muted3, margin: "0 0 12px", lineHeight: 1.5 }}>
+                <p style={{ fontSize: "var(--fs-body, 14px)", color: tokens.color.muted3, margin: "0 0 12px", lineHeight: 1.5 }}>
                   Try one of these, or ask your own.
                 </p>
                 <div
@@ -1696,14 +1696,14 @@ function ChatInner() {
                         color: tokens.color.ink,
                       }}
                     >
-                      <div style={{ fontSize: 12, color: tokens.color.muted3, lineHeight: 1.5 }}>
+                      <div style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3, lineHeight: 1.5 }}>
                         {ex.caption}
                       </div>
-                      <div style={{ fontSize: 14, color: tokens.color.ink, lineHeight: 1.5 }}>
+                      <div style={{ fontSize: "var(--fs-body, 14px)", color: tokens.color.ink, lineHeight: 1.5 }}>
                         {ex.question}
                       </div>
                       {ex.caption === "Propose a change" && (
-                        <div style={{ fontSize: 12, color: tokens.color.muted3, marginTop: 4, lineHeight: 1.5 }}>
+                        <div style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3, marginTop: 4, lineHeight: 1.5 }}>
                           You approve it before anything changes.
                         </div>
                       )}
@@ -1804,7 +1804,7 @@ function ChatInner() {
                       style={{ display: "flex", alignItems: "center", gap: 12 }}
                     >
                       <span style={{ flex: 1, height: 1, background: tokens.color.border2 }} />
-                      <span style={{ fontSize: 12, color: tokens.color.muted3 }}>{dividerText}</span>
+                      <span style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3 }}>{dividerText}</span>
                       <span style={{ flex: 1, height: 1, background: tokens.color.border2 }} />
                     </div>
                   )}
@@ -1822,7 +1822,7 @@ function ChatInner() {
                   </ErrorBlock>
                 )}
                 {orphan && last?.kind === "user" && actionError?.userId === last.id && (
-                  <div role="alert" style={{ fontSize: 12, color: tokens.color.terracottaText }}>
+                  <div role="alert" style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.terracottaText }}>
                     {actionError.text}
                   </div>
                 )}
@@ -1883,7 +1883,7 @@ function ChatInner() {
                     borderRadius: tokens.radius.pill,
                     boxShadow: tokens.shadow.card,
                     color: tokens.color.ink,
-                    fontSize: 14,
+                    fontSize: "var(--fs-body, 14px)",
                     fontWeight: 600,
                     padding: "0 16px",
                     minHeight: 36,
@@ -1903,7 +1903,7 @@ function ChatInner() {
                   position: "absolute",
                   bottom: "calc(100% + 4px)",
                   left: 0,
-                  fontSize: 13,
+                  fontSize: "var(--fs-xs, 13px)",
                   color: !slash && note?.error ? tokens.color.terracottaText : tokens.color.muted3,
                 }}
               >

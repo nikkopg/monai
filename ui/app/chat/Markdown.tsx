@@ -94,7 +94,7 @@ function rehypeNumericColumns() {
 }
 
 const heading = (
-  size: number,
+  size: number | string,
   margin: string,
   col: string,
   extra?: CSSProperties,
@@ -111,7 +111,7 @@ function makeComponents(dimmed: boolean): Components {
   const ink = dimmed ? c.muted3 : c.ink;
   const soft = dimmed ? c.muted3 : c.textSoft;
   const cell: CSSProperties = {
-    fontSize: 14,
+    fontSize: "var(--fs-body, 14px)",
     lineHeight: 1.5,
     padding: "8px 16px",
     color: ink,
@@ -130,9 +130,9 @@ function makeComponents(dimmed: boolean): Components {
     ),
     h2: ({ node: _n, ...p }) => <h2 style={heading(16, "24px 0 8px", ink)} {...p} />,
     h3: ({ node: _n, ...p }) => <h3 style={heading(16, "16px 0 8px", soft)} {...p} />,
-    h4: ({ node: _n, ...p }) => <h4 style={heading(14, "16px 0 4px", ink)} {...p} />,
-    h5: ({ node: _n, ...p }) => <h5 style={heading(14, "16px 0 4px", ink)} {...p} />,
-    h6: ({ node: _n, ...p }) => <h6 style={heading(14, "16px 0 4px", ink)} {...p} />,
+    h4: ({ node: _n, ...p }) => <h4 style={heading("var(--fs-body, 14px)", "16px 0 4px", ink)} {...p} />,
+    h5: ({ node: _n, ...p }) => <h5 style={heading("var(--fs-body, 14px)", "16px 0 4px", ink)} {...p} />,
+    h6: ({ node: _n, ...p }) => <h6 style={heading("var(--fs-body, 14px)", "16px 0 4px", ink)} {...p} />,
     strong: ({ node: _n, ...p }) => <strong style={{ fontWeight: 600 }} {...p} />,
     ul: ({ node: _n, ...p }) => <ul style={{ paddingLeft: 24, margin: "0 0 16px" }} {...p} />,
     ol: ({ node: _n, ...p }) => (
@@ -160,7 +160,7 @@ function makeComponents(dimmed: boolean): Components {
       <code
         style={{
           fontFamily: MONO,
-          fontSize: 14,
+          fontSize: "var(--fs-body, 14px)",
           color: ink,
           ...(block ? null : { background: c.tintNeutral, padding: "0 4px", borderRadius: 4 }),
         }}
@@ -177,7 +177,7 @@ function makeComponents(dimmed: boolean): Components {
           borderRadius: radius.sm,
           padding: "12px 16px",
           fontFamily: MONO,
-          fontSize: 14,
+          fontSize: "var(--fs-body, 14px)",
           lineHeight: 1.5,
           overflowX: "auto",
           margin: "0 0 16px",
@@ -200,7 +200,7 @@ function makeComponents(dimmed: boolean): Components {
       return external ? (
         <a href={href} target="_blank" rel="noopener noreferrer" style={link}>
           {children}
-          <span aria-hidden="true" style={{ fontSize: 12 }}>
+          <span aria-hidden="true" style={{ fontSize: "var(--fs-xs, 12px)" }}>
             {" ↗"}
           </span>
           <span className="sr-only"> (opens in a new tab)</span>

@@ -62,7 +62,7 @@ function truncate(s: string, n: number): string {
 }
 
 const rowErrStyle: CSSProperties = {
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   color: tokens.color.terracottaText,
   margin: "0 12px 8px",
   lineHeight: 1.5,
@@ -187,7 +187,7 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
   for (const t of threads ?? []) buckets[groupIndex(t.updated_at, now)].push(t);
 
   const errorLine = status === "error" && (
-    <div role="status" style={{ fontSize: 14, color: tokens.color.muted3, marginBottom: 16, lineHeight: 1.5 }}>
+    <div role="status" style={{ fontSize: "var(--fs-body, 14px)", color: tokens.color.muted3, marginBottom: 16, lineHeight: 1.5 }}>
       Couldn&apos;t load your chats.{" "}
       <button
         type="button"
@@ -196,7 +196,7 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
           background: "transparent",
           border: "none",
           cursor: "pointer",
-          fontSize: 14,
+          fontSize: "var(--fs-body, 14px)",
           color: tokens.color.ink,
           textDecoration: "underline",
           minHeight: 36,
@@ -241,7 +241,7 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
           border: `1px solid ${tokens.color.border2}`,
           borderRadius: tokens.radius.pill,
           color: tokens.color.ink,
-          fontSize: 14,
+          fontSize: "var(--fs-body, 14px)",
           fontWeight: 600,
           cursor: "pointer",
           marginBottom: 16,
@@ -260,7 +260,7 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
           </Skeleton>
         )}
         {threads !== null && threads.length === 0 && status === "ok" && (
-          <p style={{ fontSize: 14, color: tokens.color.muted3, margin: 0, lineHeight: 1.5 }}>
+          <p style={{ fontSize: "var(--fs-body, 14px)", color: tokens.color.muted3, margin: 0, lineHeight: 1.5 }}>
             No chats yet.
             <br />
             Your conversations will show up here after your first question.
@@ -275,7 +275,7 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
               <h3
                 id={hid}
                 style={{
-                  fontSize: 12,
+                  fontSize: "var(--fs-xs, 12px)",
                   fontWeight: 600,
                   textTransform: "uppercase",
                   letterSpacing: ".12em",
@@ -348,7 +348,7 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                               whiteSpace: "nowrap",
-                              fontSize: 14,
+                              fontSize: "var(--fs-body, 14px)",
                               fontWeight: active ? 600 : 400,
                               color: tokens.color.ink,
                               textDecoration: "none",

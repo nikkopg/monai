@@ -195,7 +195,7 @@ export function AttachToggle({
           border: `1px solid ${tokens.color.border2}`,
           borderRadius: 14,
           padding: "0 16px",
-          fontSize: 14,
+          fontSize: "var(--fs-body, 14px)",
           fontWeight: 600,
           fontFamily: "inherit",
           minHeight: 36,
@@ -223,11 +223,11 @@ type Account = { id: number; name: string; type: string };
 // The locality answer is cached for the page session.
 let localityCache: Locality | null = null;
 
-const field: React.CSSProperties = { fontSize: 14, fontWeight: 600, color: tokens.color.ink, display: "block", marginBottom: 4 };
-const hint: React.CSSProperties = { fontSize: 12, color: tokens.color.muted3, marginTop: 4 };
-const errText: React.CSSProperties = { fontSize: 14, color: tokens.color.terracottaText };
+const field: React.CSSProperties = { fontSize: "var(--fs-body, 14px)", fontWeight: 600, color: tokens.color.ink, display: "block", marginBottom: 4 };
+const hint: React.CSSProperties = { fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3, marginTop: 4 };
+const errText: React.CSSProperties = { fontSize: "var(--fs-body, 14px)", color: tokens.color.terracottaText };
 const textBtn: React.CSSProperties = {
-  background: "transparent", border: "none", fontFamily: "inherit", fontSize: 14, minHeight: 36,
+  background: "transparent", border: "none", fontFamily: "inherit", fontSize: "var(--fs-body, 14px)", minHeight: 36,
   cursor: "pointer", padding: "0 4px",
 };
 
@@ -368,7 +368,7 @@ export function AttachPanel({
     border: `1px solid ${tokens.color.border2}`,
     borderRadius: tokens.radius.sm,
     padding: "12px 16px",
-    fontSize: 14,
+    fontSize: "var(--fs-body, 14px)",
     color: tokens.color.ink,
     lineHeight: 1.5,
   };
@@ -405,7 +405,7 @@ export function AttachPanel({
       </div>
 
       <div id="attach-locality" data-testid="attach-locality" aria-busy={loc === "loading"} style={box}>
-        <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase", color: tokens.color.muted3 }}>
+        <div style={{ fontSize: "var(--fs-xs, 12px)", fontWeight: 600, letterSpacing: ".12em", textTransform: "uppercase", color: tokens.color.muted3 }}>
           {LOCALITY_EYEBROW}
         </div>
         {loc === "loading" && <div>{LOCALITY_LOADING}</div>}
@@ -458,7 +458,7 @@ export function AttachPanel({
               value={accountId}
               disabled={submitting}
               onChange={(e) => setAccountId(e.target.value)}
-              style={{ ...input, fontSize: 14 }}
+              style={{ ...input, fontSize: "var(--fs-body, 14px)" }}
             >
               <option value="" disabled>Choose an account</option>
               {Array.isArray(accounts) &&
@@ -469,7 +469,7 @@ export function AttachPanel({
             <div style={hint}>monai doesn&apos;t guess the account from the file.</div>
           </>
         ) : (
-          <div style={{ fontSize: 14, color: tokens.color.ink }}>
+          <div style={{ fontSize: "var(--fs-body, 14px)", color: tokens.color.ink }}>
             {accounts === "failed"
               ? "Couldn't load your accounts."
               : "No account can take transactions yet. Add one in Cash flow first."}
@@ -490,7 +490,7 @@ export function AttachPanel({
             spellCheck={false}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            style={{ ...input, fontSize: 14 }}
+            style={{ ...input, fontSize: "var(--fs-body, 14px)" }}
           />
           <div style={hint}>{PASSWORD_HINT}</div>
           <div role="alert" style={errText}>{pendingPassword.wrong ? PASSWORD_WRONG : ""}</div>
@@ -504,7 +504,7 @@ export function AttachPanel({
           className="coarse-tap"
           disabled={!ready}
           onClick={() => void submit()}
-          style={{ ...btnDark, fontSize: 14, minHeight: 36, opacity: ready ? 1 : 0.5, cursor: ready ? "pointer" : "not-allowed" }}
+          style={{ ...btnDark, fontSize: "var(--fs-body, 14px)", minHeight: 36, opacity: ready ? 1 : 0.5, cursor: ready ? "pointer" : "not-allowed" }}
         >
           {submitting ? (kind === "image" ? "Reading the image…" : "Uploading…") : "Attach file"}
         </button>
@@ -513,7 +513,7 @@ export function AttachPanel({
           className="coarse-tap"
           disabled={submitting}
           onClick={() => close(false)}
-          style={{ ...btnGhost, fontSize: 14, minHeight: 36 }}
+          style={{ ...btnGhost, fontSize: "var(--fs-body, 14px)", minHeight: 36 }}
         >
           Cancel
         </button>

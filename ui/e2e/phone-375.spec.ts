@@ -1074,4 +1074,49 @@ test.describe("S1 phone type scale (261116-s7w)", () => {
     expect(controls.length).toBeGreaterThan(2);
     expect(controls.filter((s) => s !== "16px")).toEqual([]);
   });
+
+  test("S1: Chat phone type scale (261116-s7w)", async ({ page }) => {
+    const px = (loc: Locator) => loc.first().evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    await mockInbox(page, { list: [] });
+    await page.route(/\/api\/threads$/, (route) => route.fulfill({ json: [] }));
+    await page.goto("/chat");
+    const box = page.getByRole("textbox", { name: "Ask monai a question" });
+    await expect(box).toBeVisible();
+    const main = page.locator("main");
+    expect(await smallText(main, 13)).toEqual([]);
+    expect(await px(main.locator("h1"))).toBe(32);
+    expect(await px(box)).toBe(16);
+    expect((await box.boundingBox())!.width).toBeGreaterThanOrEqual(200);
+    for (const name of ["Attach a file", "Ask"]) {
+      expect((await page.getByRole("button", { name, exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(40);
+    }
+  });
+
+  test("S1: Chat thread phone type scale (261116-s7w)", async ({ page }) => {
+    const px = (loc: Locator) => loc.first().evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    const TID = "00000000-0000-4000-8000-0000000000e1";
+    const messages = [
+      { role: "user", content: "ZZ synthetic question 1." },
+      { role: "assistant", content: "ZZ synthetic answer 2 with a short body." },
+    ].map((m, i) => ({
+      id: `00000000-0000-4000-8000-0000000002${String(i).padStart(2, "0")}`,
+      seq: i + 1,
+      ...m,
+      status: "complete",
+      created_at: new Date().toISOString(),
+      parts: { steps: [], proposals: [] },
+    }));
+    await mockInbox(page, { list: [] });
+    await page.route(/\/api\/threads$/, (r) => r.fulfill({ json: [] }));
+    await page.route(new RegExp(`/api/threads/${TID}$`), (r) =>
+      r.fulfill({
+        json: { id: TID, title: "ZZ synthetic chat", updated_at: new Date().toISOString(), active_run: null, messages, attachments: [] },
+      }),
+    );
+    await page.goto(`/chat?thread=${TID}`);
+    await expect(page.getByText("ZZ synthetic question 1.")).toBeVisible();
+    const main = page.locator("main");
+    expect(await smallText(main, 13)).toEqual([]);
+    expect(await px(page.getByText("ZZ synthetic answer 2 with a short body."))).toBeGreaterThanOrEqual(15);
+  });
 });

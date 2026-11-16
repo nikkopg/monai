@@ -52,7 +52,7 @@ const btnStyle: React.CSSProperties = {
   background: "transparent",
   border: "none",
   color: tokens.color.muted3,
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   fontWeight: 400,
   padding: "8px 12px",
   minHeight: 36,
@@ -67,7 +67,7 @@ export const tooltipStyle: React.CSSProperties = {
   borderRadius: tokens.radius.sm,
   boxShadow: tokens.shadow.card,
   padding: "8px 12px",
-  fontSize: 14,
+  fontSize: "var(--fs-body, 14px)",
   color: tokens.color.ink,
   maxWidth: 280,
   width: "max-content",
@@ -172,7 +172,7 @@ export default function MessageActions(props: Props) {
       {props.error && (
         <div
           role="alert"
-          style={{ fontSize: 12, color: tokens.color.terracottaText, padding: "0 12px" }}
+          style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.terracottaText, padding: "0 12px" }}
         >
           {props.error}
         </div>

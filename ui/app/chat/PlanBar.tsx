@@ -91,14 +91,14 @@ export default function PlanBar({
         borderRadius: tokens.radius.md,
       }}
     >
-      <span style={{ fontSize: 14, fontWeight: 600, color: tokens.color.ink }}>
+      <span style={{ fontSize: "var(--fs-body, 14px)", fontWeight: 600, color: tokens.color.ink }}>
         {n} changes, in this order
       </span>
-      <span role="status" style={{ fontSize: 13, color: tokens.color.muted3 }}>
+      <span role="status" style={{ fontSize: "var(--fs-xs, 13px)", color: tokens.color.muted3 }}>
         {status}
       </span>
       {running !== null ? (
-        <span style={{ marginLeft: "auto", fontSize: 13, color: tokens.color.muted3 }}>
+        <span style={{ marginLeft: "auto", fontSize: "var(--fs-xs, 13px)", color: tokens.color.muted3 }}>
           Applying {running} of {n}…
         </span>
       ) : (

@@ -23,7 +23,7 @@ export type MenuServer = {
 const TRANSPORT: Record<string, string> = { http: "Streamable HTTP", sse: "SSE", stdio: "Local command" };
 const REASON = "This chat has a document, so external servers can't be used here. Start a new chat for those.";
 
-const body14: React.CSSProperties = { fontSize: 14, lineHeight: 1.5, color: tokens.color.muted3, margin: 0 };
+const body14: React.CSSProperties = { fontSize: "var(--fs-body, 14px)", lineHeight: 1.5, color: tokens.color.muted3, margin: 0 };
 
 export default function ServersMenu({
   servers,
@@ -129,7 +129,7 @@ export default function ServersMenu({
               type="button"
               className="coarse-tap"
               onClick={close}
-              style={{ background: "transparent", border: "none", fontFamily: "inherit", fontSize: 14, minHeight: 36, cursor: "pointer", padding: "0 4px", color: tokens.color.muted3 }}
+              style={{ background: "transparent", border: "none", fontFamily: "inherit", fontSize: "var(--fs-body, 14px)", minHeight: 36, cursor: "pointer", padding: "0 4px", color: tokens.color.muted3 }}
             >
               Close
             </button>
@@ -148,7 +148,7 @@ export default function ServersMenu({
                 style={{ width: 20, height: 20, margin: "8px 0 0" }}
               />
               <span style={{ display: "flex", flexDirection: "column" }}>
-                <span style={{ fontSize: 14, fontWeight: 600, color: tokens.color.ink, overflowWrap: "anywhere" }}>{s.slug}</span>
+                <span style={{ fontSize: "var(--fs-body, 14px)", fontWeight: 600, color: tokens.color.ink, overflowWrap: "anywhere" }}>{s.slug}</span>
                 <span style={{ ...body14, overflowWrap: "anywhere" }}>
                   {TRANSPORT[s.transport] ?? s.transport} · {s.destination}
                 </span>
@@ -159,7 +159,7 @@ export default function ServersMenu({
             </label>
           ))}
 
-          <span style={{ fontSize: 12, color: tokens.color.muted3 }}>
+          <span style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3 }}>
             Changes apply from your next question. Every tool still asks before it runs unless you set it to Always in Settings.
           </span>
           <div role="status" aria-live="polite" data-testid="servers-status" style={body14}>
@@ -190,7 +190,7 @@ export default function ServersMenu({
             border: `1px solid ${tokens.color.border2}`,
             borderRadius: 14,
             padding: "0 16px",
-            fontSize: 14,
+            fontSize: "var(--fs-body, 14px)",
             fontWeight: 600,
             fontFamily: "inherit",
             minHeight: 36,
