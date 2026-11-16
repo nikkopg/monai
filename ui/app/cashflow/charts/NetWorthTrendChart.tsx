@@ -94,7 +94,7 @@ function NetWorthTooltip({
         background: tokens.color.card,
         border: `1px solid ${tokens.color.border2}`,
         borderRadius: 10,
-        fontSize: 12,
+        fontSize: "var(--fs-xs, 12px)",
         color: tokens.color.text,
         padding: "8px 10px",
         lineHeight: 1.5,
@@ -175,7 +175,7 @@ export default function NetWorthTrendChart({
           marginBottom: 6,
         }}
       >
-        {hero ? header : <div style={{ fontSize: 14, fontWeight: 600 }}>Net worth trend</div>}
+        {hero ? header : <div style={{ fontSize: "var(--fs-h3, 14px)", fontWeight: 600 }}>Net worth trend</div>}
         <div style={{ display: "flex", flexWrap: "wrap", gap: hero ? 8 : 10 }}>
           <Pills options={RANGE_OPTIONS} value={range} onChange={setRange} dark={hero} />
           <Pills options={MODE_OPTIONS} value={mode} onChange={setMode} dark={hero} />
@@ -187,7 +187,7 @@ export default function NetWorthTrendChart({
           style={{
             display: "flex",
             gap: 16,
-            fontSize: 12,
+            fontSize: "var(--fs-xs, 12px)",
             color: tokens.color.muted,
             marginTop: 8,
           }}
@@ -220,7 +220,7 @@ export default function NetWorthTrendChart({
       {!rows && error ? (
         <div
           style={{
-            fontSize: 12,
+            fontSize: "var(--fs-xs, 12px)",
             lineHeight: 1.5,
             color: hero ? "#e6a99c" : tokens.color.terracotta,
             marginTop: 8,

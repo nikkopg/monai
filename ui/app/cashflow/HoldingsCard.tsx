@@ -121,7 +121,7 @@ export default function HoldingsCard({ data }: { data: HoldingsData }) {
         minHeight: 520,
       }}
     >
-      <div style={{ fontSize: 14, fontWeight: 600, minHeight: 30, marginBottom: 12, display: "flex", alignItems: "center" }}>
+      <div style={{ fontSize: "var(--fs-h3, 14px)", fontWeight: 600, minHeight: 30, marginBottom: 12, display: "flex", alignItems: "center" }}>
         {view === "main" ? (
           "Holdings"
         ) : (
@@ -196,7 +196,7 @@ export default function HoldingsCard({ data }: { data: HoldingsData }) {
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          <span style={{ fontSize: 12, color: tokens.color.muted3 }}>{centreLabel}</span>
+          <span style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3 }}>{centreLabel}</span>
           <span style={{ fontSize: 17, fontWeight: 600 }}>
             {centre == null ? "—" : <RollingNumber value={centre} format={(n) => fmtShort(n, centreCcy)} />}
           </span>
@@ -207,7 +207,7 @@ export default function HoldingsCard({ data }: { data: HoldingsData }) {
         {empty && (
           <div style={{ paddingTop: 10 }}>
             <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>{empty[0]}</div>
-            <div style={{ color: tokens.color.muted, fontSize: 14 }}>{empty[1]}</div>
+            <div style={{ color: tokens.color.muted, fontSize: "var(--fs-body, 14px)" }}>{empty[1]}</div>
           </div>
         )}
         {rows.map((r, i) => (
@@ -253,7 +253,7 @@ function Row({
     background: hot && interactive ? tokens.color.inputBg : "none",
     textAlign: "left",
     font: "inherit",
-    fontSize: 13,
+    fontSize: "var(--fs-body, 13px)",
     color: tokens.color.ink,
     fontVariantNumeric: "tabular-nums",
     cursor: interactive ? "pointer" : "default",
@@ -271,13 +271,13 @@ function Row({
         {row.sub && (
           <small
             title={row.sub}
-            style={{ fontSize: 12, color: tokens.color.muted3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
+            style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}
           >
             {row.sub}
           </small>
         )}
         {row.stale && (
-          <small style={{ fontSize: 12, color: tokens.color.muted3 }}>{row.stale}</small>
+          <small style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3 }}>{row.stale}</small>
         )}
       </span>
       <span
@@ -306,7 +306,7 @@ function Row({
             color: tokens.color.muted3,
             width: 32,
             textAlign: "right",
-            fontSize: 12,
+            fontSize: "var(--fs-xs, 12px)",
             flexShrink: 0,
           }}
         >

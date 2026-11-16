@@ -217,7 +217,7 @@ export default function CashflowPage() {
         <div>
           <div
             style={{
-              fontSize: 12,
+              fontSize: "var(--fs-xs, 12px)",
               letterSpacing: ".12em",
               textTransform: "uppercase",
               color: tokens.color.muted2,
@@ -230,7 +230,7 @@ export default function CashflowPage() {
             style={{
               fontFamily: tokens.font.serif,
               fontWeight: 400,
-              fontSize: 40,
+              fontSize: "var(--fs-title, 40px)",
               margin: 0,
               letterSpacing: "-.5px",
             }}
@@ -254,7 +254,7 @@ export default function CashflowPage() {
               background: tokens.color.ink,
               borderRadius: 18,
               padding: "22px 28px 18px",
-              marginBottom: 18,
+              marginBottom: "var(--stack, 18px)",
               display: "flex",
               flexDirection: "column",
               gap: 12,
@@ -283,7 +283,7 @@ export default function CashflowPage() {
           </div>
           <div
             className="cf-lower"
-            style={{ display: "grid", gap: 18, marginBottom: 18, alignItems: "start" }}
+            style={{ display: "grid", gap: "var(--stack, 18px)", marginBottom: "var(--stack, 18px)", alignItems: "start" }}
           >
             <div
               className="card-tight"
@@ -346,7 +346,7 @@ export default function CashflowPage() {
               color: tokens.color.inkText,
               borderRadius: 18,
               padding: "22px 28px 18px",
-              marginBottom: 18,
+              marginBottom: "var(--stack, 18px)",
               display: "flex",
               flexDirection: "column",
             }}
@@ -357,7 +357,7 @@ export default function CashflowPage() {
             <div>
               <div
                 style={{
-                  fontSize: 13,
+                  fontSize: "var(--fs-body, 13px)",
                   color: tokens.color.inkTextMuted,
                   marginBottom: 10,
                 }}
@@ -365,14 +365,14 @@ export default function CashflowPage() {
                 Net worth
               </div>
               {netWorthError ? (
-                <div style={{ fontSize: 14, color: "#e6a99c" }}>
+                <div style={{ fontSize: "var(--fs-body, 14px)", color: "#e6a99c" }}>
                   {netWorthError}
                 </div>
               ) : (
                 <div
                   style={{
                     fontFamily: tokens.font.serif,
-                    fontSize: "clamp(28px, 8vw, 52px)",
+                    fontSize: "var(--fs-hero, clamp(28px, 8vw, 52px))",
                     lineHeight: 1,
                     letterSpacing: "-1px",
                     fontVariantNumeric: "tabular-nums",
@@ -385,7 +385,7 @@ export default function CashflowPage() {
                 <div
                   style={{
                     marginTop: 12,
-                    fontSize: 12,
+                    fontSize: "var(--fs-xs, 12px)",
                     color: tokens.color.inkTextMuted,
                     fontVariantNumeric: "tabular-nums",
                   }}
@@ -445,8 +445,8 @@ export default function CashflowPage() {
             className="cf-lower"
             style={{
               display: "grid",
-              gap: 18,
-              marginBottom: 18,
+              gap: "var(--stack, 18px)",
+              marginBottom: "var(--stack, 18px)",
               alignItems: "start",
             }}
           >
@@ -465,7 +465,7 @@ export default function CashflowPage() {
                   marginBottom: 12,
                 }}
               >
-                <div style={{ fontSize: 14, fontWeight: 600 }}>Cashflow</div>
+                <div style={{ fontSize: "var(--fs-h3, 14px)", fontWeight: 600 }}>Cashflow</div>
                 <Pills
                   small
                   label="Period"
@@ -499,8 +499,8 @@ export default function CashflowPage() {
                   ‹
                 </button>
                 <div style={{ textAlign: "center", lineHeight: 1.3 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700 }}>{win.title}</div>
-                  <div style={{ fontSize: 12, color: tokens.color.muted3 }}>
+                  <div style={{ fontSize: "var(--fs-body, 13px)", fontWeight: 700 }}>{win.title}</div>
+                  <div style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3 }}>
                     {win.span} · vs {win.prevSpan}
                   </div>
                 </div>
@@ -526,7 +526,7 @@ export default function CashflowPage() {
                   />
                 </div>
               ) : (
-                <div style={{ marginBottom: 10, fontSize: 12, color: tokens.color.muted3 }}>
+                <div style={{ marginBottom: 10, fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3 }}>
                   Couldn&apos;t load the chart.
                 </div>
               )}
@@ -568,7 +568,7 @@ export default function CashflowPage() {
                     style={{
                       display: "flex",
                       justifyContent: "space-between",
-                      fontSize: 12,
+                      fontSize: "var(--fs-xs, 12px)",
                       color: tokens.color.muted3,
                     }}
                   >
@@ -601,7 +601,7 @@ export default function CashflowPage() {
                 }}
               />
               <div
-                style={{ fontSize: 12, color: tokens.color.muted3, marginBottom: 10 }}
+                style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3, marginBottom: 10 }}
               >
                 Where it went
               </div>
@@ -671,7 +671,7 @@ function FigRow({
     >
       <span
         style={{
-          fontSize: 13,
+          fontSize: "var(--fs-body, 13px)",
           color: tokens.color.muted3,
           display: "inline-flex",
           alignItems: "center",
@@ -685,7 +685,7 @@ function FigRow({
           <span
             title={badge.title}
             style={{
-              fontSize: 12,
+              fontSize: "var(--fs-xs, 12px)",
               fontWeight: 600,
               display: "inline-flex",
               alignItems: "center",

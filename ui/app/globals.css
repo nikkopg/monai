@@ -612,10 +612,12 @@ input, select, button, textarea {
      of content), so the Holdings card sizes to its rows. */
   .cf-holdings { contain: none !important; min-height: 0 !important; }
 }
-/* Below about 300px of chart width the seam label sits on the line, so hide
-   it; the seam line itself stays (261115-msv F3). */
+/* Below about 320px of chart width the seam label sits on the line, so hide
+   it; the seam line itself stays (261115-msv F3). 299 became 319 when the
+   full-bleed phone frame widened the chart to 307px at 375 and the label went
+   to 13px (261116-s7w). */
 .nw-chart { container-type: inline-size; container-name: nw-chart; }
-@container nw-chart (max-width: 299px) {
+@container nw-chart (max-width: 319px) {
   .recharts-label { display: none; }
 }
 

@@ -39,7 +39,7 @@ export default function CategoryDonut({ data }: { data: CategoryGroup[] }) {
   );
 
   if (rows.length === 0) {
-    return <div style={{ fontSize: 12, color: tokens.color.muted }}>No spending in this period.</div>;
+    return <div style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted }}>No spending in this period.</div>;
   }
 
   return (
@@ -50,7 +50,7 @@ export default function CategoryDonut({ data }: { data: CategoryGroup[] }) {
             onClick={() => setDrilled(null)}
             style={{
               alignSelf: "flex-start",
-              fontSize: 12,
+              fontSize: "var(--fs-xs, 12px)",
               color: tokens.color.muted2,
               background: "none",
               border: "none",
@@ -93,7 +93,7 @@ export default function CategoryDonut({ data }: { data: CategoryGroup[] }) {
                   background: tokens.color.card,
                   border: `1px solid ${tokens.color.border2}`,
                   borderRadius: 10,
-                  fontSize: 12,
+                  fontSize: "var(--fs-xs, 12px)",
                   color: tokens.color.text,
                 }}
               />
@@ -112,7 +112,7 @@ export default function CategoryDonut({ data }: { data: CategoryGroup[] }) {
           display: "flex",
           flexDirection: "column",
           gap: 7,
-          fontSize: 12,
+          fontSize: "var(--fs-xs, 12px)",
         }}
       >
         {rows.map((r) => (

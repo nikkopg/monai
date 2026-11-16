@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 import { cspViolations, watchCsp } from "./csp-fixture";
-import { desktopSpot, sizeHistogram, type DesktopSpot } from "./support/type-scale";
+import { desktopSpot, sizeHistogram, smallText, type DesktopSpot } from "./support/type-scale";
 
 // D-11: these pages run with real chart data under the CSP header; any
 // securitypolicyviolation fails the test.
@@ -843,6 +843,53 @@ test.describe("phone width, 375px (261115-msv)", () => {
       const em = (await row.locator("em").boundingBox())!;
       expect(Math.abs(b.y + b.height / 2 - (em.y + em.height / 2))).toBeLessThanOrEqual(2);
     }
+  });
+
+  // S1 (261116-s7w): the phone type scale on Cashflow.
+  test("S1: Cashflow phone type scale (261116-s7w)", async ({ page }) => {
+    const px = (loc: import("@playwright/test").Locator) => loc.first().evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    // History rows so the trend draws axis ticks (synthetic round figures).
+    const half = (total: number) => ({ total, by_account: {}, by_position: {}, honest: true, gap_reason: null, valuation_basis: null, as_of_date: null });
+    const rows = ["2026-06", "2026-07", "2026-08"].map((month, i) => ({
+      month,
+      total: 100_000_000 + i * 10_000_000, // pii-ok synthetic
+      honest: true,
+      gap_reason: null,
+      liquid: half(60_000_000 + i * 5_000_000), // pii-ok synthetic
+      investment: half(40_000_000 + i * 5_000_000), // pii-ok synthetic
+    }));
+    await page.route("**/api/cashflow/networth-history**", (route) => route.fulfill({ json: { rows, honest_months: [], gap_summary: {} } }));
+    await page.reload();
+    await expect(page.locator(".recharts-cartesian-axis-tick-value").first()).toBeVisible();
+    await expect(page.locator(".bone")).toHaveCount(0);
+    const main = page.locator("main");
+    expect(await smallText(main, 13)).toEqual([]);
+    expect(await px(main.locator("h1"))).toBe(32);
+    const hero = main.locator(".roll").first();
+    expect(await px(hero)).toBe(38);
+    expect(await px(cashflowCard(page).getByText("Cashflow", { exact: true }))).toBe(16);
+    for (const w of ["Income", "Expenses", "Net saved"]) {
+      expect(await px(cashflowCard(page).getByText(w, { exact: true }))).toBeGreaterThanOrEqual(15);
+    }
+    for (const b of await cashflowCard(page).getByRole("group", { name: "Period" }).getByRole("button").all()) {
+      expect((await b.boundingBox())!.height).toBeGreaterThanOrEqual(36);
+    }
+    const ticks = await page.locator(".recharts-cartesian-axis-tick-value").evaluateAll((els) => els.map((e) => getComputedStyle(e).fontSize));
+    expect(ticks.length).toBeGreaterThan(0);
+    for (const t of ticks) expect(t).toBe("13px");
+
+    // The hero still fits on one line at 375, and shrinks through the clamp at 320.
+    await page.setViewportSize({ width: 320, height: 700 });
+    expect(await px(hero)).toBeLessThan(38);
+    const fit = await hero.evaluate((roll) => {
+      const tops = new Set(Array.from(roll.querySelectorAll(".roll-digit, .roll-char"), (d) => Math.round(d.getBoundingClientRect().top)));
+      const card = roll.closest(".card-tight")!;
+      const cs = getComputedStyle(card);
+      const right = card.getBoundingClientRect().right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth);
+      return { lines: tops.size, over: roll.getBoundingClientRect().right - right };
+    });
+    expect(fit.lines).toBe(1);
+    expect(fit.over).toBeLessThanOrEqual(0.5);
   });
 
   // S0 (261116-s7w): at 1280 nothing moves. Captured at HEAD (f372f33) before any ui/app edit.
