@@ -275,7 +275,7 @@ async function mockRecords(page: Page) {
   await page.route(
     "**/api/transactions?*",
     get([
-      tx({ id: 101, amount: -12345678, category: "ZZ Groceries", merchant: "ZZ Grocery Market", account_id: 1 }), // pii-ok synthetic
+      tx({ id: 101, amount: -1234567890, category: "ZZ Groceries", merchant: "ZZ Grocery Market", account_id: 1 }), // pii-ok synthetic
       // degraded transfer leg: its sibling is absent
       tx({ id: 103, amount: -5000, category: "ZZ Adjustment", account_id: 1, is_transfer: true, transfer_pair_id: 999 }), // pii-ok synthetic
       // cross-currency pair: USD leg out, IDR leg in
@@ -986,5 +986,40 @@ test.describe("S1 phone type scale (261116-s7w)", () => {
     // Buttons are body text (--fs-body, 15px on phones).
     expect(await dialog.getByRole("button", { name: "Cancel", exact: true }).evaluate((el) => parseFloat(getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(15);
     for (const b of await dialog.locator("button[aria-pressed]").all()) expect((await b.boundingBox())!.height).toBeGreaterThanOrEqual(36);
+  });
+
+  test("S1: Records phone type scale (261116-s7w)", async ({ page }) => {
+    const px = (loc: Locator) => loc.first().evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    await mockRecords(page);
+    await page.goto("/records");
+    await expect(page.getByPlaceholder("Search merchant or notes…")).toBeVisible();
+    await expect(page.locator(".bone")).toHaveCount(0);
+    const main = page.locator("main");
+    expect(await smallText(main, 13)).toEqual([]);
+    expect(await px(main.locator("h1"))).toBe(32);
+    const card = page.locator("section:not(.tab-in)").filter({ has: page.getByPlaceholder("Search merchant or notes…") });
+    expect(await px(card.getByText("ZZ Grocery Market", { exact: true }))).toBeGreaterThanOrEqual(15);
+    // Amount cells hold the digits; the meta line may wrap to two lines by design (P2 caps it).
+    for (const amt of await card.locator(".rec-amt").all()) expect(await digitTextOneLine(amt)).toEqual([]);
+    expect(await crossings(card)).toEqual([]);
+  });
+
+  test("S1: Add record dialog phone type scale (261116-s7w)", async ({ page }) => {
+    await mockRecords(page);
+    await page.goto("/records");
+    await page.getByRole("button", { name: "+ Add record", exact: true }).click();
+    const dialog = page.getByRole("heading", { name: "Add transaction" }).locator("..");
+    await dialogFits(dialog, true);
+    const controls = await dialog
+      .locator("input:not([type=checkbox]):not([type=radio]):not([type=hidden]), select, textarea")
+      .evaluateAll((els) => els.filter((e) => e.getBoundingClientRect().width > 0).map((e) => getComputedStyle(e).fontSize));
+    expect(controls.length).toBeGreaterThan(2);
+    expect(controls.filter((s) => s !== "16px")).toEqual([]);
+    expect(await smallText(dialog, 13)).toEqual([]);
+    for (const name of ["Expense", "Income", "Transfer"]) {
+      const b = dialog.getByRole("button", { name, exact: true });
+      expect((await b.boundingBox())!.height).toBeGreaterThanOrEqual(36);
+      expect(await b.evaluate((el) => getComputedStyle(el).fontSize)).toBe("14px");
+    }
   });
 });

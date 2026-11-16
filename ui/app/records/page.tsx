@@ -182,7 +182,7 @@ function LedgerRowShell({
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
-          fontSize: 13,
+          fontSize: "var(--fs-body, 13px)",
           fontWeight: 600,
           color: tokens.color.muted3,
           flexShrink: 0,
@@ -201,7 +201,7 @@ function LedgerRowShell({
         <span
           style={{
             display: "block",
-            fontSize: 14,
+            fontSize: "var(--fs-body, 14px)",
             fontWeight: 500,
             whiteSpace: "nowrap",
             overflow: "hidden",
@@ -210,7 +210,7 @@ function LedgerRowShell({
         >
           {primary}
         </span>
-        <span style={{ display: "block", fontSize: 12, color: tokens.color.muted2 }}>
+        <span style={{ display: "block", fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted2 }}>
           {meta}
         </span>
       </span>
@@ -218,7 +218,7 @@ function LedgerRowShell({
         className="rec-amt"
         title={amountTitle}
         style={{
-          fontSize: 14,
+          fontSize: "var(--fs-body, 14px)",
           fontWeight: 600,
           fontVariantNumeric: "tabular-nums",
           color: amountColor,
@@ -232,7 +232,7 @@ function LedgerRowShell({
               display: "block",
               textAlign: "right",
               marginTop: 4,
-              fontSize: 12,
+              fontSize: "var(--fs-xs, 12px)",
               fontWeight: 400,
               color: tokens.color.muted3,
             }}
@@ -620,7 +620,7 @@ function RecordsInner() {
         primary={
           <>
             {legA.merchant || legA.category || "Transaction"}
-            <span style={{ fontSize: 12, color: tokens.color.muted, fontWeight: 400 }}>
+            <span style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted, fontWeight: 400 }}>
               {" "}(transfer)
             </span>
           </>
@@ -674,7 +674,7 @@ function RecordsInner() {
     gap: 4,
     minHeight: 32,
     padding: "0 4px 0 12px",
-    fontSize: 14,
+    fontSize: "var(--fs-body, 14px)",
     color: tokens.color.ink,
     background: tokens.color.tintNeutral,
     border: `1px solid ${tokens.color.border2}`,
@@ -707,7 +707,7 @@ function RecordsInner() {
         <div>
           <div
             style={{
-              fontSize: 12,
+              fontSize: "var(--fs-xs, 12px)",
               letterSpacing: ".12em",
               textTransform: "uppercase",
               color: tokens.color.muted2,
@@ -720,7 +720,7 @@ function RecordsInner() {
             style={{
               fontFamily: tokens.font.serif,
               fontWeight: 400,
-              fontSize: 40,
+              fontSize: "var(--fs-title, 40px)",
               margin: 0,
               letterSpacing: "-.5px",
             }}
@@ -745,7 +745,7 @@ function RecordsInner() {
       )}
 
       {!error && (
-        <section className="card-tight" style={{ ...card, marginBottom: 18 }}>
+        <section className="card-tight" style={{ ...card, marginBottom: "var(--stack, 18px)" }}>
           {selectedIds.size === 0 ? (
             <div
               className="rec-filters"
@@ -822,7 +822,7 @@ function RecordsInner() {
                   alignItems: "center",
                   gap: 6,
                   flexShrink: 0,
-                  fontSize: 13,
+                  fontSize: "var(--fs-body, 13px)",
                   color: tokens.color.muted3,
                 }}
               >
@@ -846,7 +846,7 @@ function RecordsInner() {
                 marginBottom: tokens.space.md,
               }}
             >
-              <span style={{ fontSize: 12, fontWeight: 600 }}>
+              <span style={{ fontSize: "var(--fs-xs, 12px)", fontWeight: 600 }}>
                 {selectedIds.size} selected
               </span>
               <div
@@ -881,7 +881,7 @@ function RecordsInner() {
                 <span
                   role="button"
                   onClick={() => setSelectedIds(new Set())}
-                  style={{ color: tokens.color.muted, cursor: "pointer", fontSize: 12 }}
+                  style={{ color: tokens.color.muted, cursor: "pointer", fontSize: "var(--fs-xs, 12px)" }}
                 >
                   Cancel selection
                 </span>
@@ -934,12 +934,12 @@ function RecordsInner() {
           )}
 
           {bulkError && (
-            <div style={{ color: tokens.color.terracotta, fontSize: 12, marginBottom: tokens.space.sm }}>
+            <div style={{ color: tokens.color.terracotta, fontSize: "var(--fs-xs, 12px)", marginBottom: tokens.space.sm }}>
               {bulkError}
             </div>
           )}
           {skipNote && (
-            <div style={{ color: tokens.color.muted, fontSize: 12, marginBottom: tokens.space.sm }}>
+            <div style={{ color: tokens.color.muted, fontSize: "var(--fs-xs, 12px)", marginBottom: tokens.space.sm }}>
               {skipNote}
             </div>
           )}
@@ -977,7 +977,7 @@ function RecordsInner() {
               <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
                 {filtersActive ? "No records match these filters." : "No records yet."}
               </div>
-              <div style={{ color: tokens.color.muted, fontSize: 14 }}>
+              <div style={{ color: tokens.color.muted, fontSize: "var(--fs-body, 14px)" }}>
                 {filtersActive
                   ? "Try widening your search or clearing a filter."
                   : "Add your first record to start building your history."}
@@ -998,10 +998,10 @@ function RecordsInner() {
                         borderTop: idx === 0 ? "none" : `1px solid ${tokens.color.border}`,
                       }}
                     >
-                      <span style={{ fontSize: 12, fontWeight: 600 }}>{g.label}</span>
+                      <span style={{ fontSize: "var(--fs-xs, 12px)", fontWeight: 600 }}>{g.label}</span>
                       <span
                         style={{
-                          fontSize: 12,
+                          fontSize: "var(--fs-xs, 12px)",
                           fontWeight: 600,
                           fontVariantNumeric: "tabular-nums",
                           color: net >= 0 ? tokens.color.green : tokens.color.terracotta,
@@ -1009,7 +1009,7 @@ function RecordsInner() {
                       >
                         Net {unconverted > 0 && unconverted === dayRows.length ? "—" : fmtAmountSigned(net, "IDR")}
                         {unconverted > 0 && (
-                          <span style={{ fontSize: 12, fontWeight: 400, color: tokens.color.terracottaText }}>
+                          <span style={{ fontSize: "var(--fs-xs, 12px)", fontWeight: 400, color: tokens.color.terracottaText }}>
                             {" · "}
                             {unconverted} unconverted
                           </span>
@@ -1057,7 +1057,7 @@ function RecordsInner() {
         />
       )}
       {deleteError && (
-        <div style={{ color: tokens.color.terracotta, fontSize: 12, marginTop: 8 }}>
+        <div style={{ color: tokens.color.terracotta, fontSize: "var(--fs-xs, 12px)", marginTop: 8 }}>
           {deleteError}
         </div>
       )}

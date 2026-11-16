@@ -417,7 +417,8 @@ export default function TransactionModal({
                     border: "none",
                     borderRadius: 9,
                     padding: "8px 18px",
-                    fontSize: 14,
+                    minHeight: "var(--pill-h, auto)",
+                    fontSize: "var(--fs-pill, 14px)",
                     fontWeight: active ? 600 : 500,
                     cursor: locked ? "default" : "pointer",
                     color: active ? tokens.color.ink : tokens.color.muted,
@@ -437,7 +438,7 @@ export default function TransactionModal({
           {locked && (
             <div
               style={{
-                fontSize: 13,
+                fontSize: "var(--fs-body, 13px)",
                 color: tokens.color.muted,
                 marginTop: -10,
                 marginBottom: 14,
@@ -493,7 +494,7 @@ export default function TransactionModal({
                     display: "flex",
                     alignItems: "center",
                     background: tokens.color.sidebar,
-                    fontSize: 14,
+                    fontSize: "var(--fs-body, 14px)",
                     fontWeight: 600,
                     color: tokens.color.muted3,
                     flexShrink: 0,
@@ -554,7 +555,7 @@ export default function TransactionModal({
                     To account
                   </label>
                   {noToAccount ? (
-                    <div style={{ fontSize: 12, color: tokens.color.terracottaText }}>
+                    <div style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.terracottaText }}>
                       No other account to transfer to.
                     </div>
                   ) : (
@@ -596,7 +597,7 @@ export default function TransactionModal({
                             display: "flex",
                             alignItems: "center",
                             background: tokens.color.sidebar,
-                            fontSize: 14,
+                            fontSize: "var(--fs-body, 14px)",
                             fontWeight: 600,
                             color: tokens.color.muted3,
                             flexShrink: 0,
@@ -607,7 +608,7 @@ export default function TransactionModal({
                       </div>
                       <div
                         aria-live="polite"
-                        style={{ marginTop: 4, fontSize: 12, color: tokens.color.muted3 }}
+                        style={{ marginTop: 4, fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3 }}
                       >
                         {implied !== null &&
                           fmtRateCompare(implied, ecb.rate, ecb.rateDate, ecb.status)}
@@ -678,7 +679,7 @@ export default function TransactionModal({
                 color: "#9aa0a6",
                 border: "none",
                 padding: "8px 16px",
-                fontSize: 14,
+                fontSize: "var(--fs-body, 14px)",
                 cursor: "pointer",
               }}
             >
@@ -713,7 +714,7 @@ export default function TransactionModal({
               </button>
             )}
             {error && (
-              <span style={{ color: "#f87171", fontSize: 12 }}>{error}</span>
+              <span style={{ color: "#f87171", fontSize: "var(--fs-xs, 12px)" }}>{error}</span>
             )}
           </div>
         </form>

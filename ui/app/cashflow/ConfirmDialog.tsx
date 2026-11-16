@@ -103,7 +103,7 @@ export default function ConfirmDialog({
         style={{ ...card, maxWidth: 360, width: "100%", padding: 24, margin: 0 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <p id={msgId} style={{ fontSize: 14, fontWeight: 400, margin: "0 0 16px", color: "#23201b" }}>
+        <p id={msgId} style={{ fontSize: "var(--fs-body, 14px)", fontWeight: 400, margin: "0 0 16px", color: "#23201b" }}>
           {message}
         </p>
         {children && <div style={{ marginBottom: 16 }}>{children}</div>}
@@ -117,7 +117,7 @@ export default function ConfirmDialog({
               color: "#6f6857",
               border: "none",
               padding: "8px 16px",
-              fontSize: 14,
+              fontSize: "var(--fs-body, 14px)",
               cursor: "pointer",
             }}
           >
