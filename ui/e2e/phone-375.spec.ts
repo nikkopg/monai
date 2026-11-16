@@ -940,7 +940,7 @@ test.describe("S1 phone type scale (261116-s7w)", () => {
     await expect(page.locator(".bone")).toHaveCount(0);
     const main = page.locator("main");
     expect(await smallText(main, 13)).toEqual([]);
-    expect(await px(main.locator("h1"))).toBe(32);
+    expect(await px(main.locator("h1"))).toBe(24);
     const hero = page.locator('section[aria-label="Portfolio value"] .roll').first();
     expect(await px(hero)).toBe(38);
     const fit = await hero.evaluate((roll) => {
@@ -964,7 +964,7 @@ test.describe("S1 phone type scale (261116-s7w)", () => {
     await expect(page.getByText("Subtotal", { exact: true })).toBeVisible();
     const main = page.locator("main");
     expect(await smallText(main, 13)).toEqual([]);
-    expect(await px(main.locator("h1"))).toBe(32);
+    expect(await px(main.locator("h1"))).toBe(24);
     expect(await px(page.locator(".plat-row").getByText("ZZCOIN", { exact: true }))).toBeGreaterThanOrEqual(15);
   });
 
@@ -996,7 +996,7 @@ test.describe("S1 phone type scale (261116-s7w)", () => {
     await expect(page.locator(".bone")).toHaveCount(0);
     const main = page.locator("main");
     expect(await smallText(main, 13)).toEqual([]);
-    expect(await px(main.locator("h1"))).toBe(32);
+    expect(await px(main.locator("h1"))).toBe(24);
     const card = page.locator("section:not(.tab-in)").filter({ has: page.getByPlaceholder("Search merchant or notes…") });
     expect(await px(card.getByText("ZZ Grocery Market", { exact: true }))).toBeGreaterThanOrEqual(15);
     // Amount cells hold the digits; the meta line may wrap to two lines by design (P2 caps it).
@@ -1041,7 +1041,7 @@ test.describe("S1 phone type scale (261116-s7w)", () => {
     await expect(page.locator(".bone")).toHaveCount(0);
     const main = page.locator("main");
     expect(await smallText(main, 13)).toEqual([]);
-    expect(await px(main.locator("h1"))).toBe(32);
+    expect(await px(main.locator("h1"))).toBe(24);
     expect(await px(cards.first().getByText("ZZ Merchant With A Long Name").first())).toBeGreaterThanOrEqual(15);
     for (const card of await cards.all()) {
       const controls = await card
@@ -1060,7 +1060,7 @@ test.describe("S1 phone type scale (261116-s7w)", () => {
     await expect(page.locator(".bone")).toHaveCount(0);
     const main = page.locator("main");
     expect(await smallText(main, 13)).toEqual([]);
-    expect(await px(main.locator("h1"))).toBe(32);
+    expect(await px(main.locator("h1"))).toBe(24);
     expect(await px(page.getByText("LLM Provider & Model", { exact: true }))).toBe(16);
     const seg = page.locator(".seg-fill button");
     expect(await seg.count()).toBeGreaterThan(1);
@@ -1084,7 +1084,7 @@ test.describe("S1 phone type scale (261116-s7w)", () => {
     await expect(box).toBeVisible();
     const main = page.locator("main");
     expect(await smallText(main, 13)).toEqual([]);
-    expect(await px(main.locator("h1"))).toBe(32);
+    expect(await px(main.locator("h1"))).toBe(24);
     expect(await px(box)).toBe(16);
     expect((await box.boundingBox())!.width).toBeGreaterThanOrEqual(200);
     for (const name of ["Attach a file", "Ask"]) {

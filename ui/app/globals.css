@@ -31,7 +31,7 @@ html {
     --fs-h3: 16px;
     --fs-pill: 14px;
     --pill-h: 36px;
-    --fs-title: 32px;
+    --fs-title: 24px;
     --fs-hero: clamp(28px, 10.2vw, 38px);
     --card-pad: 18px;
     --card-radius: 16px;
