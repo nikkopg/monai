@@ -49,9 +49,9 @@ export default function Pills<T extends string>({
             style={{
               border: "none",
               borderRadius: 999,
-              ...(tap ? { minHeight: 32 } : {}),
+              minHeight: tap ? "var(--pill-h, 32px)" : "var(--pill-h, auto)",
               padding: compact ? "4px 10px" : "7px 15px",
-              fontSize: compact ? 12 : 13,
+              fontSize: compact ? "var(--fs-pill, 12px)" : "var(--fs-pill, 13px)",
               fontWeight: active ? 600 : 500,
               cursor: "pointer",
               color: dark

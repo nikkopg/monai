@@ -15,6 +15,51 @@
   }
 }
 
+/* Phone type scale (261116-s7w), option B of phone-scale-mock.html. The
+   variables exist on phones only. Every converted inline site names its role
+   and carries today's px as the var() fallback, so desktop computes exactly as
+   before. Source order matters: this block follows the 760px block so its
+   .app-frame/.app-panel overrides win. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+@media (max-width: 560px) {
+  :root {
+    --fs-xs: 13px;
+    --fs-body: 15px;
+    --fs-h3: 16px;
+    --fs-pill: 14px;
+    --pill-h: 36px;
+    --fs-title: 32px;
+    --fs-hero: clamp(28px, 10.2vw, 38px);
+    --card-pad: 18px;
+    --card-radius: 16px;
+    --stack: 14px;
+  }
+  /* Full-bleed: the 8px inset and the rounded panel cost 16px of width. */
+  .app-frame {
+    padding: 0 !important;
+  }
+  .app-panel {
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  /* 16px stops iOS zooming on focus; !important beats the inline fontSize. */
+  input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=hidden]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+  /* Recharts writes tick and label sizes as SVG attributes (kept numeric 12 in
+     the components); author CSS beats those. */
+  .recharts-cartesian-axis-tick-value,
+  .recharts-label {
+    font-size: 13px;
+  }
+}
+
 /* Phone dock (261115-s37): the dock is always in the DOM and CSS picks one of
    the two navs, so server and client markup match. Its inline style sets no
    display, so these rules need no !important. */
@@ -562,7 +607,7 @@ input, select, button, textarea {
 /* Trims the inline card padding to 16px on phones. Cashflow, the platform page,
    Records and Investments share it (261115-msv F1, 261115-oax). */
 @media (max-width: 560px) {
-  .card-tight { padding: 16px !important; }
+  .card-tight { padding: var(--card-pad) !important; border-radius: var(--card-radius) !important; }
   /* The cards always stack below 561px (two 300px columns need more than 600px
      of content), so the Holdings card sizes to its rows. */
   .cf-holdings { contain: none !important; min-height: 0 !important; }

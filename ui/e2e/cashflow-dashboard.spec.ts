@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 import { cspViolations, watchCsp } from "./csp-fixture";
+import { desktopSpot, sizeHistogram, type DesktopSpot } from "./support/type-scale";
 
 // D-11: these pages run with real chart data under the CSP header; any
 // securitypolicyviolation fails the test.
@@ -842,5 +843,22 @@ test.describe("phone width, 375px (261115-msv)", () => {
       const em = (await row.locator("em").boundingBox())!;
       expect(Math.abs(b.y + b.height / 2 - (em.y + em.height / 2))).toBeLessThanOrEqual(2);
     }
+  });
+
+  // S0 (261116-s7w): at 1280 nothing moves. Captured at HEAD (f372f33) before any ui/app edit.
+  const S0_CASHFLOW: { hist: Record<string, number>; spot: DesktopSpot; lowerGap: string; heroPx: string } | undefined =
+    {"hist": {"12px": 39, "13px": 9, "14px": 2, "15px": 2, "16px": 2, "17px": 1, "18px": 2, "24px": 1, "40px": 1, "52px": 1}, "spot": {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "0px"}, "pillH": 24}, "lowerGap": "18px", "heroPx": "52px"};
+  test("S0: Cashflow at 1280 is unchanged (261116-s7w)", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await expect(page.getByRole("region", { name: "Holdings", exact: true })).toBeVisible();
+    await expect(page.locator(".bone")).toHaveCount(0);
+    const got = {
+      hist: await sizeHistogram(page.locator("main")),
+      spot: await desktopSpot(page),
+      lowerGap: await page.locator(".cf-lower").evaluate((el) => getComputedStyle(el).gap),
+      heroPx: await page.locator("main .roll").first().evaluate((el) => getComputedStyle(el).fontSize),
+    };
+    if (!S0_CASHFLOW) console.log(`S0CAPTURE cashflow ${JSON.stringify(got)}`);
+    expect(got).toEqual(S0_CASHFLOW);
   });
 });

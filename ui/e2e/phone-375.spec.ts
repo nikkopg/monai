@@ -2,6 +2,7 @@ import { test, expect, type Locator, type Page } from "@playwright/test";
 
 import { cspViolations, watchCsp } from "./csp-fixture";
 import { ids, mockInbox, NOW, proposal, transferProposal, txRow } from "./inbox-fixtures";
+import { desktopSpot, sizeHistogram, type DesktopSpot } from "./support/type-scale";
 
 // 375px checks from the 2026-11-15 other-pages audit, route-mocked, synthetic
 // values only (261115-oax). A fixed overlay is 375 wide and, with the floating
@@ -294,7 +295,7 @@ test.describe("P2 records (261115-oax)", () => {
     await expect(page.getByPlaceholder("Search merchant or notes…")).toBeVisible();
 
     const card = page.locator("section:not(.tab-in)").filter({ has: page.getByPlaceholder("Search merchant or notes…") });
-    expect(await card.evaluate((el) => getComputedStyle(el).paddingLeft)).toBe("16px");
+    expect(await card.evaluate((el) => getComputedStyle(el).paddingLeft)).toBe("18px");
     expect(await crossings(card)).toEqual([]);
 
     // Rows: the one `div` that directly holds the checkbox cell.
@@ -466,37 +467,42 @@ test.describe("P3 modals (261115-oax)", () => {
   });
 });
 
+// The Settings page's API: categories with a system parent, one account, one platform, LLM settings.
+async function mockSettings(page: Page) {
+  const cat = (id: number, name: string, o: Record<string, unknown> = {}) => ({
+    id, name, parent_id: null, kind: "expense", color: null, effective_color: null,
+    icon: null, is_system: false, tx_count: 3, children: [], ...o,
+  });
+  const get = (body: unknown) => (route: import("@playwright/test").Route) =>
+    route.request().method() === "GET" ? route.fulfill(json(body)) : route.fallback();
+  await page.route(
+    "**/api/categories",
+    get([
+      cat(1, "ZZ Adjustment", { is_system: true, tx_count: 12, children: [cat(3, "ZZ Child", { parent_id: 1 })] }),
+      cat(2, "ZZ Groceries"),
+    ]),
+  );
+  await page.route(
+    "**/api/cashflow/summary**",
+    get({ accounts: [{ id: 1, name: "ZZ Bank", type: "liquid", currency: "IDR", current_balance: 1234567890 }] }), // pii-ok synthetic
+  );
+  await page.route("**/api/platforms", get([{ id: 7, name: "ZZ Exchange", kind: "crypto app" }]));
+  await page.route(
+    "**/api/settings",
+    get({
+      llm_provider: "ollama", llm_model: "zz-model", anthropic_api_key_masked: "", openai_api_key_masked: "",
+      base_currency: "IDR", price_data_source: "coingecko",
+    }),
+  );
+}
+
 // ===========================================================================
 // P4 — Settings
 // ===========================================================================
 
 test.describe("P4 settings (261115-oax)", () => {
   test("P4: nothing in Settings crosses its card", async ({ page }) => {
-    const cat = (id: number, name: string, o: Record<string, unknown> = {}) => ({
-      id, name, parent_id: null, kind: "expense", color: null, effective_color: null,
-      icon: null, is_system: false, tx_count: 3, children: [], ...o,
-    });
-    const get = (body: unknown) => (route: import("@playwright/test").Route) =>
-      route.request().method() === "GET" ? route.fulfill(json(body)) : route.fallback();
-    await page.route(
-      "**/api/categories",
-      get([
-        cat(1, "ZZ Adjustment", { is_system: true, tx_count: 12, children: [cat(3, "ZZ Child", { parent_id: 1 })] }),
-        cat(2, "ZZ Groceries"),
-      ]),
-    );
-    await page.route(
-      "**/api/cashflow/summary**",
-      get({ accounts: [{ id: 1, name: "ZZ Bank", type: "liquid", currency: "IDR", current_balance: 1234567890 }] }), // pii-ok synthetic
-    );
-    await page.route("**/api/platforms", get([{ id: 7, name: "ZZ Exchange", kind: "crypto app" }]));
-    await page.route(
-      "**/api/settings",
-      get({
-        llm_provider: "ollama", llm_model: "zz-model", anthropic_api_key_masked: "", openai_api_key_masked: "",
-        base_currency: "IDR", price_data_source: "coingecko",
-      }),
-    );
+    await mockSettings(page);
     await page.goto("/settings");
     const row = page.locator(".cat-row").filter({ hasText: "ZZ Adjustment" }).first();
     await expect(row).toBeVisible();
@@ -566,7 +572,7 @@ test.describe("P6 investments (261115-oax)", () => {
     const alloc = page.locator('section[aria-labelledby="allocation-title"]');
     await expect(holdings.getByText("ZZCOIN").first()).toBeAttached();
     for (const card of [holdings, alloc]) {
-      expect(await card.evaluate((el) => getComputedStyle(el).paddingLeft)).toBe("16px");
+      expect(await card.evaluate((el) => getComputedStyle(el).paddingLeft)).toBe("18px");
       expect(await crossings(card)).toEqual([]);
     }
     const total = alloc.getByText("Total", { exact: true });
@@ -785,5 +791,143 @@ test.describe("D2 dock clearance (261115-s37)", () => {
     const x = Math.max(m.x, d.x) + (Math.min(m.x + m.width, d.x + d.width) - Math.max(m.x, d.x)) / 2;
     const y = Math.max(m.y, d.y) + (Math.min(m.y + m.height, d.y + d.height) - Math.max(m.y, d.y)) / 2;
     expect(await page.evaluate(([px, py]) => !!document.elementFromPoint(px, py)!.closest("[role=menu]"), [x, y])).toBe(true);
+  });
+});
+
+// ===========================================================================
+// S0 — desktop unchanged (261116-s7w)
+// ===========================================================================
+
+// Captured at HEAD (f372f33) before any ui/app edit: the 1280 type histogram of
+// `main` and the desktop spot values for each page. The phone type scale is
+// phone-only, so these must stay green through every task.
+const S0: Record<string, { hist: Record<string, number>; spot: DesktopSpot } | undefined> = {
+  investments: { hist: {"12px": 31, "13px": 9, "14px": 15, "16px": 3, "17px": 1, "40px": 1, "52px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "0px"}, "pillH": 32} }, // pii-ok synthetic
+  platform: { hist: {"12px": 16, "13px": 3, "14px": 16, "28px": 3, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": null, "pillH": null} }, // pii-ok synthetic
+  records: { hist: {"12px": 8, "13px": 5, "14px": 12, "16px": 3, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic
+  inbox: { hist: {"12px": 19, "14px": 17, "20px": 2, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "0px"}, "pillH": null} }, // pii-ok synthetic
+  chat: { hist: {"12px": 7, "14px": 11, "15px": 2, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": null, "pillH": null} }, // pii-ok synthetic
+  settings: { hist: {"11px": 1, "12px": 16, "13px": 9, "13.3333px": 1, "14px": 27, "15px": 6, "16px": 4, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic
+};
+
+async function expectDesktopUnchanged(page: Page, key: string) {
+  await expect(page.locator(".bone")).toHaveCount(0);
+  const got = { hist: await sizeHistogram(page.locator("main")), spot: await desktopSpot(page) };
+  const want = S0[key];
+  if (!want) console.log(`S0CAPTURE ${key} ${JSON.stringify(got)}`);
+  expect(got).toEqual(want);
+}
+
+async function mockChatEmpty(page: Page) {
+  await mockInbox(page, { list: [] });
+  await page.route(/\/api\/threads$/, (route) => route.fulfill({ json: [] }));
+}
+
+test.describe("S0 desktop unchanged (261116-s7w)", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+  });
+
+  test("S0: /investments", async ({ page }) => {
+    await mockInvestments(page);
+    await page.goto("/investments");
+    await expect(page.locator('section[aria-labelledby="holdings-title"]').getByText("ZZCOIN").first()).toBeAttached();
+    await expectDesktopUnchanged(page, "investments");
+  });
+
+  test("S0: /investments/7", async ({ page }) => {
+    await mockPlatform(page);
+    await page.goto("/investments/7");
+    await expect(page.getByText("Subtotal", { exact: true })).toBeVisible();
+    await expectDesktopUnchanged(page, "platform");
+  });
+
+  test("S0: /records", async ({ page }) => {
+    await mockRecords(page);
+    await page.goto("/records");
+    await expect(page.getByPlaceholder("Search merchant or notes…")).toBeVisible();
+    await expectDesktopUnchanged(page, "records");
+  });
+
+  test("S0: /inbox", async ({ page }) => {
+    await mockInbox(page, {
+      list: [
+        proposal({
+          id: ids.a,
+          payload: { operation: "add_transaction", rows: [txRow({ after: { amount: "-1234567890.00", merchant: "ZZ Merchant With A Long Name" } })] }, // pii-ok synthetic
+        }),
+        transferProposal({ id: ids.b }),
+      ],
+    });
+    await page.clock.setFixedTime(NOW);
+    await page.goto("/inbox");
+    await expect(page.getByRole("article")).toHaveCount(2);
+    await expectDesktopUnchanged(page, "inbox");
+  });
+
+  test("S0: /chat", async ({ page }) => {
+    await mockChatEmpty(page);
+    await page.goto("/chat");
+    await expect(page.getByRole("textbox", { name: "Ask monai a question" })).toBeVisible();
+    await expectDesktopUnchanged(page, "chat");
+  });
+
+  test("S0: /settings", async ({ page }) => {
+    await mockSettings(page);
+    await page.goto("/settings");
+    await expect(page.locator(".cat-row").filter({ hasText: "ZZ Adjustment" }).first()).toBeVisible();
+    await expectDesktopUnchanged(page, "settings");
+  });
+});
+
+// ===========================================================================
+// S1 — phone type scale (261116-s7w); shared checks. Each later task adds its page here.
+// ===========================================================================
+
+test.describe("S1 phone type scale (261116-s7w)", () => {
+  test("S1: shell, Records filters and cards, Investments pills", async ({ page }) => {
+    await mockRecords(page);
+    await page.goto("/records");
+    await expect(page.getByPlaceholder("Search merchant or notes…")).toBeVisible();
+
+    // Full-bleed frame: no inset, and the panel has no border, radius or shadow.
+    expect(await page.locator(".app-frame").evaluate((el) => getComputedStyle(el).padding)).toBe("0px");
+    const panel = await page.locator(".app-panel").evaluate((el) => {
+      const cs = getComputedStyle(el);
+      return { border: cs.borderTopWidth, radius: cs.borderRadius, shadow: cs.boxShadow };
+    });
+    expect(panel).toEqual({ border: "0px", radius: "0px", shadow: "none" });
+
+    // iOS must not rescale text.
+    expect(
+      await page.evaluate(() => {
+        const cs = getComputedStyle(document.documentElement) as CSSStyleDeclaration & { webkitTextSizeAdjust?: string };
+        return cs.webkitTextSizeAdjust || cs.getPropertyValue("text-size-adjust");
+      }),
+    ).toBe("100%");
+
+    // Records: every filter control is 16px (iOS does not zoom on focus); card is 18px / 16px.
+    const filters = page.locator(".rec-filters");
+    const sizes = await filters.locator("input:not([type=checkbox]), select").evaluateAll((els) => els.map((e) => getComputedStyle(e).fontSize));
+    expect(sizes.length).toBeGreaterThan(3);
+    expect(sizes.filter((px) => px !== "16px")).toEqual([]);
+    const card = page.locator("section:not(.tab-in)").filter({ has: page.getByPlaceholder("Search merchant or notes…") });
+    expect(await card.evaluate((el) => ({ pad: getComputedStyle(el).paddingLeft, radius: getComputedStyle(el).borderRadius }))).toEqual({
+      pad: "18px",
+      radius: "16px",
+    });
+
+    // Investments: every Pills button is at least 36px tall with 14px text.
+    await mockInvestments(page);
+    await page.goto("/investments");
+    await expect(page.locator('section[aria-labelledby="holdings-title"]').getByText("ZZCOIN").first()).toBeAttached();
+    const pills = await page.locator('[role="group"] button[aria-pressed]').evaluateAll((els) =>
+      els.map((e) => ({ h: e.getBoundingClientRect().height, fs: getComputedStyle(e).fontSize })),
+    );
+    expect(pills.length).toBeGreaterThan(0);
+    for (const p of pills) {
+      expect(p.h).toBeGreaterThanOrEqual(36);
+      expect(p.fs).toBe("14px");
+    }
   });
 });
