@@ -99,7 +99,7 @@ export default function ValueHistoryChart({
       {data.length < 2 ? (
         <p
           style={{
-            fontSize: 14,
+            fontSize: "var(--fs-body, 14px)",
             color: tokens.color.inkTextMuted,
             margin: "auto 0 0",
           }}
@@ -133,7 +133,7 @@ export default function ValueHistoryChart({
                   background: tokens.color.card,
                   border: `1px solid ${tokens.color.border2}`,
                   borderRadius: 10,
-                  fontSize: 12,
+                  fontSize: "var(--fs-xs, 12px)",
                   color: tokens.color.text,
                 }}
               />

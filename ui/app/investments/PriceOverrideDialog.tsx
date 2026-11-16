@@ -79,7 +79,7 @@ export default function PriceOverrideDialog({ holding, onClose, onSaved }: Props
         <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 4px" }}>
           Set price · {holding.ticker}
         </h2>
-        <p style={{ fontSize: 12, color: muted, margin: "0 0 16px" }}>
+        <p style={{ fontSize: "var(--fs-xs, 12px)", color: muted, margin: "0 0 16px" }}>
           Current:{" "}
           {holding.current_price != null
             ? new Intl.NumberFormat("en-US").format(holding.current_price)
@@ -97,7 +97,7 @@ export default function PriceOverrideDialog({ holding, onClose, onSaved }: Props
             value={price}
             onChange={(e) => setPrice(e.target.value)}
           />
-          <p style={{ fontSize: 11, color: muted, margin: "8px 0 0" }}>
+          <p style={{ fontSize: "var(--fs-xs, 11px)", color: muted, margin: "8px 0 0" }}>
             A manual price is used until the next successful live fetch replaces
             it.
           </p>
@@ -112,7 +112,7 @@ export default function PriceOverrideDialog({ holding, onClose, onSaved }: Props
                 color: muted,
                 border: "none",
                 padding: "8px 16px",
-                fontSize: 14,
+                fontSize: "var(--fs-body, 14px)",
                 cursor: "pointer",
               }}
             >
@@ -122,7 +122,7 @@ export default function PriceOverrideDialog({ holding, onClose, onSaved }: Props
               {saving ? "Saving…" : "Set price"}
             </button>
             {error && (
-              <span style={{ color: "#b5503f", fontSize: 12 }}>{error}</span>
+              <span style={{ color: "#b5503f", fontSize: "var(--fs-xs, 12px)" }}>{error}</span>
             )}
           </div>
         </form>

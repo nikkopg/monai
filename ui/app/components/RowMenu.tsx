@@ -33,7 +33,7 @@ const textBtn: CSSProperties = {
   background: "transparent",
   border: "none",
   cursor: "pointer",
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   fontWeight: 400,
   color: tokens.color.muted3,
   padding: 8,
@@ -146,7 +146,7 @@ export default function RowMenu({ label, items, id, className }: Props) {
                 display: "block",
                 width: "100%",
                 textAlign: "left",
-                fontSize: 14,
+                fontSize: "var(--fs-body, 14px)",
                 borderRadius: tokens.radius.sm,
                 color: it.disabled
                   ? tokens.color.muted2

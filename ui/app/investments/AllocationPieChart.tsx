@@ -38,7 +38,7 @@ export default function AllocationPieChart({
 
   if (data.length === 0) {
     return (
-      <p style={{ fontSize: 14, color: muted, margin: 0 }}>
+      <p style={{ fontSize: "var(--fs-body, 14px)", color: muted, margin: 0 }}>
         Add a holding to see your allocation.
       </p>
     );
@@ -62,7 +62,7 @@ export default function AllocationPieChart({
           fontVariantNumeric: "tabular-nums",
         }}
       >
-        <span style={{ fontSize: 12, color: muted }}>Total</span>
+        <span style={{ fontSize: "var(--fs-xs, 12px)", color: muted }}>Total</span>
         <span style={{ fontSize: 17, fontWeight: 600 }}>
           <RollingNumber value={total} format={(n) => fmtShort(n, "IDR")} />
         </span>
@@ -92,7 +92,7 @@ export default function AllocationPieChart({
               background: "#ffffff",
               border: "1px solid #e7e1d5",
               borderRadius: 8,
-              fontSize: 12,
+              fontSize: "var(--fs-xs, 12px)",
               color: "#23201b",
             }}
           />

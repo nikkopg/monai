@@ -75,7 +75,7 @@ const chipStyle: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
   background: tokens.color.sidebar,
-  fontSize: 14,
+  fontSize: "var(--fs-body, 14px)",
   fontWeight: 600,
   color: tokens.color.muted3,
   flexShrink: 0,
@@ -431,7 +431,7 @@ export default function HoldingModal({
                 ))}
               </select>
               {platforms.length === 0 && (
-                <p style={{ ...label, fontSize: 11, marginTop: 4, color: "#b5503f" }}>
+                <p style={{ ...label, fontSize: "var(--fs-xs, 11px)", marginTop: 4, color: "#b5503f" }}>
                   Add a platform first
                 </p>
               )}
@@ -472,7 +472,7 @@ export default function HoldingModal({
                 onChange={(e) => setQuantity(e.target.value)}
               />
               {!isEdit && eventType === "sell" && held && (
-                <p style={{ ...label, fontSize: 11, marginTop: 4, color: tokens.color.muted3 }}>
+                <p style={{ ...label, fontSize: "var(--fs-xs, 11px)", marginTop: 4, color: tokens.color.muted3 }}>
                   Held: {held.quantity}
                 </p>
               )}
@@ -544,12 +544,12 @@ export default function HoldingModal({
                 ))}
               </select>
               {isDividend && (
-                <p style={{ ...label, fontSize: 11, marginTop: 4, color: tokens.color.muted3 }}>
+                <p style={{ ...label, fontSize: "var(--fs-xs, 11px)", marginTop: 4, color: tokens.color.muted3 }}>
                   Dividends aren&apos;t funded from an account.
                 </p>
               )}
               {!isDividend && accountsLoaded && liquidAccounts.length === 0 && (
-                <p style={{ ...label, fontSize: 11, marginTop: 4, color: tokens.color.muted3 }}>
+                <p style={{ ...label, fontSize: "var(--fs-xs, 11px)", marginTop: 4, color: tokens.color.muted3 }}>
                   Add a liquid account in Settings, or use Add holding directly for a
                   position you already hold.
                 </p>
@@ -608,7 +608,7 @@ export default function HoldingModal({
                   </select>
                 </div>
                 {isEdit && linked && (
-                  <p style={{ ...label, fontSize: 11, marginTop: 4, color: tokens.color.muted3 }}>
+                  <p style={{ ...label, fontSize: "var(--fs-xs, 11px)", marginTop: 4, color: tokens.color.muted3 }}>
                     The cash amount is not recalculated; change it too if the fee changed what was paid.
                   </p>
                 )}
@@ -619,7 +619,7 @@ export default function HoldingModal({
           {!isEdit && isFunded && quantity && ticker && (
             <p
               style={{
-                fontSize: 13,
+                fontSize: "var(--fs-body, 13px)",
                 margin: "0 0 10px",
                 color:
                   eventType === "sell" ? tokens.color.terracotta : tokens.color.green,
@@ -642,7 +642,7 @@ export default function HoldingModal({
                 color: "#8b8474",
                 border: "none",
                 padding: "8px 16px",
-                fontSize: 14,
+                fontSize: "var(--fs-body, 14px)",
                 cursor: saving ? "default" : "pointer",
               }}
             >
@@ -669,7 +669,7 @@ export default function HoldingModal({
                 : "Log event"}
             </button>
             {error && (
-              <span style={{ color: "#b5503f", fontSize: 12 }}>{error}</span>
+              <span style={{ color: "#b5503f", fontSize: "var(--fs-xs, 12px)" }}>{error}</span>
             )}
           </div>
         </form>

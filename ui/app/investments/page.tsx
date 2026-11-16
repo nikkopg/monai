@@ -174,7 +174,7 @@ const heroFigure = (n: number): React.CSSProperties => ({
 const withIdr = (primary: string, idrText: string, title?: string) => (
   <>
     <span style={{ display: "block" }}>{primary}</span>
-    <span style={{ display: "block", fontSize: 12, color: muted }} title={title}>
+    <span style={{ display: "block", fontSize: "var(--fs-xs, 12px)", color: muted }} title={title}>
       {idrText}
     </span>
   </>
@@ -314,7 +314,7 @@ export default function InvestmentsPage() {
       <div style={{ marginBottom: 28 }}>
         <div
           style={{
-            fontSize: 12,
+            fontSize: "var(--fs-xs, 12px)",
             letterSpacing: ".12em",
             textTransform: "uppercase",
             color: tokens.color.muted3,
@@ -327,7 +327,7 @@ export default function InvestmentsPage() {
           style={{
             fontFamily: tokens.font.serif,
             fontWeight: 400,
-            fontSize: 40,
+            fontSize: "var(--fs-title, 40px)",
             margin: 0,
             letterSpacing: "-.5px",
           }}
@@ -338,7 +338,7 @@ export default function InvestmentsPage() {
 
       {loading ? (
         <Skeleton pulse label="Loading your portfolio">
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 18, marginBottom: 18 }}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--stack, 18px)", marginBottom: "var(--stack, 18px)" }}>
             <div
               className="bone-dark"
               style={{
@@ -421,13 +421,13 @@ export default function InvestmentsPage() {
               ))}
             </div>
           </div>
-          <div style={{ marginBottom: 18 }}>
+          <div style={{ marginBottom: "var(--stack, 18px)" }}>
             <Bone w="100%" h={36} r={12} />
           </div>
           <div
             style={{
               ...card,
-              marginBottom: 18,
+              marginBottom: "var(--stack, 18px)",
               display: "flex",
               flexDirection: "column",
               gap: 14,
@@ -493,8 +493,8 @@ export default function InvestmentsPage() {
               style={{
                 display: "flex",
                 flexWrap: "wrap",
-                gap: 18,
-                marginBottom: 18,
+                gap: "var(--stack, 18px)",
+                marginBottom: "var(--stack, 18px)",
               }}
             >
               <section
@@ -519,7 +519,7 @@ export default function InvestmentsPage() {
                     <div>
                       <div
                         style={{
-                          fontSize: 13,
+                          fontSize: "var(--fs-body, 13px)",
                           color: tokens.color.inkTextMuted,
                           marginBottom: 10,
                         }}
@@ -529,7 +529,7 @@ export default function InvestmentsPage() {
                       <div
                         style={{
                           fontFamily: tokens.font.serif,
-                          fontSize: "clamp(28px, 8vw, 52px)",
+                          fontSize: "var(--fs-hero, clamp(28px, 8vw, 52px))",
                           lineHeight: 1,
                           letterSpacing: "-1px",
                           fontVariantNumeric: "tabular-nums",
@@ -543,7 +543,7 @@ export default function InvestmentsPage() {
                           flexWrap: "wrap",
                           gap: 14,
                           marginTop: 8,
-                          fontSize: 13,
+                          fontSize: "var(--fs-body, 13px)",
                           color: tokens.color.inkTextMuted,
                         }}
                       >
@@ -570,7 +570,7 @@ export default function InvestmentsPage() {
                     justifyContent: "space-between",
                     alignItems: "center",
                     paddingTop: 10,
-                    fontSize: 12,
+                    fontSize: "var(--fs-xs, 12px)",
                     color: tokens.color.inkTextMuted,
                   }}
                 >
@@ -587,7 +587,7 @@ export default function InvestmentsPage() {
                       border: "none",
                       borderRadius: 999,
                       padding: "5px 12px",
-                      fontSize: 12,
+                      fontSize: "var(--fs-xs, 12px)",
                       fontWeight: 600,
                       cursor: refreshing ? "not-allowed" : "pointer",
                     }}
@@ -657,7 +657,7 @@ export default function InvestmentsPage() {
                             display: "flex",
                             alignItems: "center",
                             gap: 10,
-                            fontSize: 13,
+                            fontSize: "var(--fs-body, 13px)",
                           }}
                         >
                           <span
@@ -695,7 +695,7 @@ export default function InvestmentsPage() {
             </div>
 
             {noteParts.length > 0 && (
-              <div style={{ ...notice, marginBottom: 18, color: tokens.color.muted3 }}>
+              <div style={{ ...notice, marginBottom: "var(--stack, 18px)", color: tokens.color.muted3 }}>
                 {noteParts.join(" · ")}
               </div>
             )}
@@ -717,7 +717,7 @@ export default function InvestmentsPage() {
                   display: "flex",
                   alignItems: "flex-start",
                   gap: 12,
-                  fontSize: 14,
+                  fontSize: "var(--fs-body, 14px)",
                   color: tokens.color.terracotta,
                 }}
               >
@@ -736,7 +736,7 @@ export default function InvestmentsPage() {
             <section
               className="inv-holdings card-tight"
               aria-labelledby="holdings-title"
-              style={{ ...card, marginBottom: 18 }}
+              style={{ ...card, marginBottom: "var(--stack, 18px)" }}
             >
               <div
                 style={{
@@ -811,7 +811,7 @@ export default function InvestmentsPage() {
                   <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
                     No holdings yet.
                   </div>
-                  <p style={{ fontSize: 14, color: muted, margin: 0 }}>
+                  <p style={{ fontSize: "var(--fs-body, 14px)", color: muted, margin: 0 }}>
                     Log your first buy to start tracking a position, or add a
                     platform in Settings first if you hold assets across more than one app.
                   </p>
@@ -851,7 +851,7 @@ export default function InvestmentsPage() {
                           }}
                         >
                           <span>{tg.name}</span>
-                          <span style={{ fontSize: 12, fontWeight: 400, color: muted }}>
+                          <span style={{ fontSize: "var(--fs-xs, 12px)", fontWeight: 400, color: muted }}>
                             {tg.rows.length} {tg.rows.length === 1 ? "position" : "positions"}
                           </span>
                           {groupBy === "platform" && tg.platformId !== null && (
@@ -863,7 +863,7 @@ export default function InvestmentsPage() {
                                 minHeight: 32,
                                 display: "inline-flex",
                                 alignItems: "center",
-                                fontSize: 12,
+                                fontSize: "var(--fs-xs, 12px)",
                                 fontWeight: 500,
                                 color: muted,
                                 textDecoration: "none",
@@ -888,7 +888,7 @@ export default function InvestmentsPage() {
                           style={{
                             display: "flex",
                             alignItems: "center",
-                            fontSize: 14,
+                            fontSize: "var(--fs-body, 14px)",
                             padding: "13px 0",
                             borderTop: `1px solid ${tokens.color.borderInner}`,
                           }}
@@ -913,7 +913,7 @@ export default function InvestmentsPage() {
                                 display: "inline-flex",
                                 alignItems: "center",
                                 justifyContent: "center",
-                                fontSize: 12,
+                                fontSize: "var(--fs-xs, 12px)",
                                 fontWeight: 700,
                                 flexShrink: 0,
                               }}
@@ -933,7 +933,7 @@ export default function InvestmentsPage() {
                                 {h.ticker}
                               </span>
                               {groupBy === "asset_type" && (
-                                <span style={{ display: "block", fontSize: 12, color: muted }}>
+                                <span style={{ display: "block", fontSize: "var(--fs-xs, 12px)", color: muted }}>
                                   {platformName}
                                 </span>
                               )}
@@ -943,7 +943,7 @@ export default function InvestmentsPage() {
                                 isStale={h.is_stale}
                               />
                               {h.currency === "USD" && h.usd_rate == null && (
-                                <span style={{ display: "block", fontSize: 12, color: muted }}>
+                                <span style={{ display: "block", fontSize: "var(--fs-xs, 12px)", color: muted }}>
                                   No USD rate, shown in IDR
                                 </span>
                               )}
@@ -1021,7 +1021,7 @@ export default function InvestmentsPage() {
                               display: "flex",
                               gap: 10,
                               justifyContent: "flex-end",
-                              fontSize: 12,
+                              fontSize: "var(--fs-xs, 12px)",
                             }}
                           >
                             <RowMenu
@@ -1069,7 +1069,7 @@ export default function InvestmentsPage() {
                             className="inv-sub"
                             style={{
                               flexBasis: "100%",
-                              fontSize: 12,
+                              fontSize: "var(--fs-xs, 12px)",
                               color: muted,
                               fontVariantNumeric: "tabular-nums",
                             }}
@@ -1135,6 +1135,6 @@ const rowAction: React.CSSProperties = {
   color: tokens.color.muted3,
   border: "none",
   cursor: "pointer",
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   padding: 0,
 };

@@ -171,6 +171,15 @@ html {
     order: 2;
   }
 }
+/* Phone tickers are 15px (--fs-body), a 20px line, so the menu cell grows
+   with them. Re-measured at 375 (261116-s7w T3). The 810 / 520 thresholds are
+   unchanged: the phone scale only applies at 560px and below, where the
+   Holdings container is at most 492px, so it always takes the stacked layout. */
+@media (max-width: 560px) {
+  .inv-row > :nth-child(6) {
+    height: 20px;
+  }
+}
 
 /* Platform page rows (261115-oax P1). Same idea as .inv-holdings: the layout
    keys on the table card's content width (container `plat`), threshold 519px

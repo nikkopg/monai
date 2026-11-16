@@ -188,7 +188,7 @@ export default function HoldingOverrideModal({
                 ))}
               </select>
               {platforms.length === 0 && (
-                <p style={{ ...label, fontSize: 11, marginTop: 4, color: "#b5503f" }}>
+                <p style={{ ...label, fontSize: "var(--fs-xs, 11px)", marginTop: 4, color: "#b5503f" }}>
                   Add a platform first
                 </p>
               )}
@@ -237,7 +237,7 @@ export default function HoldingOverrideModal({
                   placeholder="bittensor"
                   onChange={(e) => setCoingeckoId(e.target.value)}
                 />
-                <p style={{ ...label, fontSize: 11, marginTop: 4 }}>
+                <p style={{ ...label, fontSize: "var(--fs-xs, 11px)", marginTop: 4 }}>
                   Disambiguates tickers that map to multiple coins (e.g. TAO). Find
                   the coin&apos;s API id on{" "}
                   <a
@@ -265,7 +265,7 @@ export default function HoldingOverrideModal({
                 color: "#8b8474",
                 border: "none",
                 padding: "8px 16px",
-                fontSize: 14,
+                fontSize: "var(--fs-body, 14px)",
                 cursor: "pointer",
               }}
             >
@@ -275,7 +275,7 @@ export default function HoldingOverrideModal({
               {saving ? "Saving…" : isEdit ? "Save holding" : "Add holding directly"}
             </button>
             {error && (
-              <span style={{ color: "#b5503f", fontSize: 12 }}>{error}</span>
+              <span style={{ color: "#b5503f", fontSize: "var(--fs-xs, 12px)" }}>{error}</span>
             )}
           </div>
         </form>

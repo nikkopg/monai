@@ -132,7 +132,7 @@ const muted = tokens.color.muted3;
 const withIdr = (primary: string, idrText: string, title?: string) => (
   <>
     <span style={{ display: "block" }}>{primary}</span>
-    <span style={{ display: "block", fontSize: 12, color: muted }} title={title}>
+    <span style={{ display: "block", fontSize: "var(--fs-xs, 12px)", color: muted }} title={title}>
       {idrText}
     </span>
   </>
@@ -242,7 +242,7 @@ export default function PlatformDetailPage() {
     <Link
       href="/investments"
       style={{
-        fontSize: 12,
+        fontSize: "var(--fs-xs, 12px)",
         color: tokens.color.muted3,
         marginBottom: 12,
         display: "inline-block",
@@ -273,7 +273,7 @@ export default function PlatformDetailPage() {
             </div>
             <Bone w={110} h={36} r={999} />
           </div>
-          <div style={{ marginBottom: 18 }}>
+          <div style={{ marginBottom: "var(--stack, 18px)" }}>
             <Bone w={280} h={44} r={12} />
           </div>
           <div style={card}>
@@ -322,7 +322,7 @@ export default function PlatformDetailPage() {
             <div>
               <div
                 style={{
-                  fontSize: 12,
+                  fontSize: "var(--fs-xs, 12px)",
                   letterSpacing: ".12em",
                   textTransform: "uppercase",
                   color: tokens.color.muted3,
@@ -335,7 +335,7 @@ export default function PlatformDetailPage() {
                 style={{
                   fontFamily: tokens.font.serif,
                   fontWeight: 400,
-                  fontSize: 40,
+                  fontSize: "var(--fs-title, 40px)",
                   margin: 0,
                   letterSpacing: "-.5px",
                 }}
@@ -344,7 +344,7 @@ export default function PlatformDetailPage() {
                 {detail.kind && (
                   <span
                     style={{
-                      fontSize: 12,
+                      fontSize: "var(--fs-xs, 12px)",
                       color: muted,
                       marginLeft: 8,
                       fontFamily: tokens.font.sans,
@@ -364,7 +364,7 @@ export default function PlatformDetailPage() {
               gridTemplateColumns:
                 "repeat(auto-fit, minmax(min(100%, 200px), 1fr))",
               gap: 18,
-              marginBottom: 18,
+              marginBottom: "var(--stack, 18px)",
             }}
           >
             <div style={statCard}>
@@ -394,7 +394,7 @@ export default function PlatformDetailPage() {
               border: `1px solid ${tokens.color.border2}`,
               borderRadius: 12,
               padding: 4,
-              marginBottom: 18,
+              marginBottom: "var(--stack, 18px)",
             }}
           >
             {TABS.map((t) => {
@@ -408,7 +408,8 @@ export default function PlatformDetailPage() {
                     border: "none",
                     borderRadius: 9,
                     padding: "8px 18px",
-                    fontSize: 14,
+                    fontSize: "var(--fs-pill, 14px)",
+                    minHeight: "var(--pill-h, 0px)",
                     fontWeight: active ? 600 : 500,
                     cursor: "pointer",
                     color: active ? tokens.color.ink : tokens.color.muted3,
@@ -438,7 +439,7 @@ export default function PlatformDetailPage() {
           <div className="plat-table card-tight" style={card}>
             {tab === "pnl" ? (
               detail.holdings.length === 0 ? (
-                <p style={{ fontSize: 14, color: muted, margin: 0 }}>
+                <p style={{ fontSize: "var(--fs-body, 14px)", color: muted, margin: 0 }}>
                   No holdings on this platform yet.
                 </p>
               ) : (
@@ -479,7 +480,7 @@ export default function PlatformDetailPage() {
                             display: "inline-flex",
                             alignItems: "center",
                             justifyContent: "center",
-                            fontSize: 12,
+                            fontSize: "var(--fs-xs, 12px)",
                             fontWeight: 700,
                             flexShrink: 0,
                           }}
@@ -489,7 +490,7 @@ export default function PlatformDetailPage() {
                         <span style={{ minWidth: 0 }}>
                           <span style={{ fontWeight: 500, display: "block" }}>{h.ticker}</span>
                           {h.currency === "USD" && h.usd_rate == null && (
-                            <span style={{ display: "block", fontSize: 12, color: muted }}>
+                            <span style={{ display: "block", fontSize: "var(--fs-xs, 12px)", color: muted }}>
                               No USD rate, shown in IDR
                             </span>
                           )}
@@ -588,7 +589,7 @@ export default function PlatformDetailPage() {
                       <span
                         className="plat-sub"
                         style={{
-                          fontSize: 12,
+                          fontSize: "var(--fs-xs, 12px)",
                           color: muted,
                           fontVariantNumeric: "tabular-nums",
                           flexBasis: "100%",
@@ -602,7 +603,7 @@ export default function PlatformDetailPage() {
                 </>
               )
             ) : events.length === 0 ? (
-              <p style={{ fontSize: 14, color: muted, margin: 0 }}>
+              <p style={{ fontSize: "var(--fs-body, 14px)", color: muted, margin: 0 }}>
                 No buy/sell history on this platform yet.
               </p>
             ) : (
@@ -634,6 +635,7 @@ export default function PlatformDetailPage() {
                       }}
                     >
                       <span
+                        aria-hidden="true"
                         style={{
                           width: 24,
                           height: 24,
@@ -667,7 +669,7 @@ export default function PlatformDetailPage() {
                     >
                       {fmtQty(e.quantity, null)}
                       {e.fee ? (
-                        <span style={{ display: "block", fontSize: 12 }}>
+                        <span style={{ display: "block", fontSize: "var(--fs-xs, 12px)" }}>
                           {e.fee_kind === "coin"
                             ? `fee ${fmtQty(e.fee, "crypto")} ${e.ticker}`
                             : `fee ${e.currency === "USD" ? fmtUsdPrice(e.fee) : `${fmtAmount(e.fee)} IDR`}`}
@@ -766,7 +768,7 @@ const statCard: React.CSSProperties = {
   padding: "20px 22px",
 };
 const statLabel: React.CSSProperties = {
-  fontSize: 13,
+  fontSize: "var(--fs-body, 13px)",
   color: tokens.color.muted3,
   marginBottom: 8,
 };
@@ -777,7 +779,7 @@ const statValue: React.CSSProperties = {
 };
 const tableHeaderRow: React.CSSProperties = {
   display: "flex",
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   color: tokens.color.muted3,
   padding: "8px 0",
   borderBottom: `1px solid ${tokens.color.borderInner}`,
@@ -785,7 +787,7 @@ const tableHeaderRow: React.CSSProperties = {
 const tableRow: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
-  fontSize: 14,
+  fontSize: "var(--fs-body, 14px)",
   padding: "13px 0",
   borderTop: `1px solid ${tokens.color.borderInner}`,
 };

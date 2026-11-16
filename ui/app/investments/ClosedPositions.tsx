@@ -32,7 +32,7 @@ const textBtn: React.CSSProperties = {
   background: "transparent",
   border: "none",
   padding: "4px 8px",
-  fontSize: 13,
+  fontSize: "var(--fs-body, 13px)",
   cursor: "pointer",
   color: tokens.color.muted3,
 };
@@ -88,7 +88,7 @@ export default function ClosedPositions({
   };
 
   if (rows.length === 0) {
-    return <p style={{ fontSize: 14, color: tokens.color.muted3, margin: 0 }}>No closed positions yet.</p>;
+    return <p style={{ fontSize: "var(--fs-body, 14px)", color: tokens.color.muted3, margin: 0 }}>No closed positions yet.</p>;
   }
 
   // One group per platform, in first-seen order; the group row carries the realized sum.
@@ -100,7 +100,7 @@ export default function ClosedPositions({
 
   return (
     <div data-testid="closed-positions">
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--fs-body, 14px)" }}>
         <thead>
           <tr style={{ textAlign: "left" }}>
             <th style={columnHeader}>Asset</th>
@@ -201,7 +201,7 @@ export default function ClosedPositions({
         </tbody>
       </table>
       {error && (
-        <p role="alert" style={{ color: tokens.color.terracottaText, fontSize: 13, margin: "8px 0 0" }}>
+        <p role="alert" style={{ color: tokens.color.terracottaText, fontSize: "var(--fs-body, 13px)", margin: "8px 0 0" }}>
           {error}
         </p>
       )}

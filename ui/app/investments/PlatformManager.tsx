@@ -169,7 +169,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
   return (
     <section id="platforms" style={card}>
       <h2 style={{ ...sectionTitle, marginBottom: 12 }}>Platforms</h2>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--fs-body, 13px)" }}>
         <tbody>
           {platforms.map((p) => (
             <tr key={p.id} style={{ borderTop: "1px solid #e7e1d5" }}>
@@ -202,7 +202,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
                   <>
                     {p.name}
                     {p.kind && (
-                      <span style={{ color: tokens.color.muted3, fontSize: 12, marginLeft: 8 }}>
+                      <span style={{ color: tokens.color.muted3, fontSize: "var(--fs-xs, 12px)", marginLeft: 8 }}>
                         {p.kind}
                       </span>
                     )}
@@ -215,7 +215,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
                     <button
                       type="button"
                       onClick={() => saveEdit(p.id)}
-                      style={{ ...btn, padding: "4px 10px", fontSize: 12, marginRight: 6 }}
+                      style={{ ...btn, padding: "4px 10px", fontSize: "var(--fs-xs, 12px)", marginRight: 6 }}
                     >
                       Save platform
                     </button>
@@ -226,7 +226,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
                         background: "transparent",
                         color: tokens.color.muted3,
                         border: "none",
-                        fontSize: 12,
+                        fontSize: "var(--fs-xs, 12px)",
                         cursor: "pointer",
                       }}
                     >
@@ -261,7 +261,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
       </table>
 
       {platforms.length === 0 && !adding && (
-        <div style={{ color: tokens.color.muted3, fontSize: 13, marginTop: 8 }}>
+        <div style={{ color: tokens.color.muted3, fontSize: "var(--fs-body, 13px)", marginTop: 8 }}>
           No platforms yet. Add a platform (e.g. your brokerage or crypto app) to
           start grouping holdings — or log a holding first and assign a platform
           later.
@@ -304,7 +304,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
                 background: "transparent",
                 color: tokens.color.muted3,
                 border: "none",
-                fontSize: 12,
+                fontSize: "var(--fs-xs, 12px)",
                 cursor: "pointer",
               }}
             >
@@ -319,7 +319,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
       </div>
 
       {error && (
-        <div style={{ color: "#b5503f", fontSize: 12, marginTop: 8 }}>{error}</div>
+        <div style={{ color: "#b5503f", fontSize: "var(--fs-xs, 12px)", marginTop: 8 }}>{error}</div>
       )}
 
       {deleteFlow.stage === "confirm" && (
@@ -354,7 +354,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
               ))}
           </select>
           {reassignTargetName && (
-            <p style={{ color: tokens.color.muted3, fontSize: 12, margin: "8px 0 0" }}>
+            <p style={{ color: tokens.color.muted3, fontSize: "var(--fs-xs, 12px)", margin: "8px 0 0" }}>
               Reassign {deleteFlow.affectedCount} holdings to &quot;{reassignTargetName}&quot;
               and delete &quot;{deleteFlow.platform.name}&quot;?
             </p>

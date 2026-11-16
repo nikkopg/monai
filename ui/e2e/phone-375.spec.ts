@@ -2,7 +2,7 @@ import { test, expect, type Locator, type Page } from "@playwright/test";
 
 import { cspViolations, watchCsp } from "./csp-fixture";
 import { ids, mockInbox, NOW, proposal, transferProposal, txRow } from "./inbox-fixtures";
-import { desktopSpot, sizeHistogram, type DesktopSpot } from "./support/type-scale";
+import { desktopSpot, sizeHistogram, smallText, type DesktopSpot } from "./support/type-scale";
 
 // 375px checks from the 2026-11-15 other-pages audit, route-mocked, synthetic
 // values only (261115-oax). A fixed overlay is 375 wide and, with the floating
@@ -576,7 +576,7 @@ test.describe("P6 investments (261115-oax)", () => {
       expect(await crossings(card)).toEqual([]);
     }
     const total = alloc.getByText("Total", { exact: true });
-    expect(await total.evaluate((el) => getComputedStyle(el).fontSize)).toBe("12px");
+    expect(await total.evaluate((el) => getComputedStyle(el).fontSize)).toBe("13px"); // --fs-xs on phones (261116-s7w)
   });
 });
 
@@ -929,5 +929,62 @@ test.describe("S1 phone type scale (261116-s7w)", () => {
       expect(p.h).toBeGreaterThanOrEqual(36);
       expect(p.fs).toBe("14px");
     }
+  });
+
+  test("S1: Investments phone type scale (261116-s7w)", async ({ page }) => {
+    const px = (loc: Locator) => loc.first().evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    await mockInvestments(page);
+    await page.goto("/investments");
+    const holdings = page.locator('section[aria-labelledby="holdings-title"]');
+    await expect(holdings.getByText("ZZCOIN").first()).toBeAttached();
+    await expect(page.locator(".bone")).toHaveCount(0);
+    const main = page.locator("main");
+    expect(await smallText(main, 13)).toEqual([]);
+    expect(await px(main.locator("h1"))).toBe(32);
+    const hero = page.locator('section[aria-label="Portfolio value"] .roll').first();
+    expect(await px(hero)).toBe(38);
+    const fit = await hero.evaluate((roll) => {
+      const tops = new Set(Array.from(roll.querySelectorAll(".roll-digit, .roll-char"), (d) => Math.round(d.getBoundingClientRect().top)));
+      const card = roll.closest("section")!;
+      const cs = getComputedStyle(card);
+      const right = card.getBoundingClientRect().right - parseFloat(cs.paddingRight) - parseFloat(cs.borderRightWidth);
+      return { lines: tops.size, over: roll.getBoundingClientRect().right - right };
+    });
+    expect(fit.lines).toBe(1);
+    expect(fit.over).toBeLessThanOrEqual(0.5);
+    expect(await px(page.locator("#holdings-title"))).toBe(16);
+    expect(await px(page.locator("#allocation-title"))).toBe(16);
+    expect(await px(holdings.getByText("ZZCOIN", { exact: true }))).toBeGreaterThanOrEqual(15);
+  });
+
+  test("S1: platform page phone type scale (261116-s7w)", async ({ page }) => {
+    const px = (loc: Locator) => loc.first().evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    await mockPlatform(page);
+    await page.goto("/investments/7");
+    await expect(page.getByText("Subtotal", { exact: true })).toBeVisible();
+    const main = page.locator("main");
+    expect(await smallText(main, 13)).toEqual([]);
+    expect(await px(main.locator("h1"))).toBe(32);
+    expect(await px(page.locator(".plat-row").getByText("ZZCOIN", { exact: true }))).toBeGreaterThanOrEqual(15);
+  });
+
+  test("S1: Investments dialogs phone type scale (261116-s7w)", async ({ page }) => {
+    await mockPlatform(page);
+    await page.route("**/api/accounts", (r) => r.fulfill(json([{ id: 1, name: "ZZ Bank", type: "liquid", currency: "IDR" }])));
+    await page.goto("/investments/7");
+    await page.getByRole("button", { name: "Buy & Sell", exact: true }).click();
+    await page.getByRole("button", { name: "+ Log event", exact: true }).click();
+    await page.locator('label:text-is("Investment liquid account") + select').selectOption({ label: "ZZ Bank" });
+    const dialog = page.getByRole("heading", { name: "Log event" }).locator("..");
+    await expect(dialog).toBeVisible();
+    const controls = await dialog
+      .locator("input:not([type=checkbox]):not([type=radio]):not([type=hidden]), select, textarea")
+      .evaluateAll((els) => els.filter((e) => e.getBoundingClientRect().width > 0).map((e) => getComputedStyle(e).fontSize));
+    expect(controls.length).toBeGreaterThan(2);
+    expect(controls.filter((s) => s !== "16px")).toEqual([]);
+    expect(await smallText(dialog, 13)).toEqual([]);
+    // Buttons are body text (--fs-body, 15px on phones).
+    expect(await dialog.getByRole("button", { name: "Cancel", exact: true }).evaluate((el) => parseFloat(getComputedStyle(el).fontSize))).toBeGreaterThanOrEqual(15);
+    for (const b of await dialog.locator("button[aria-pressed]").all()) expect((await b.boundingBox())!.height).toBeGreaterThanOrEqual(36);
   });
 });

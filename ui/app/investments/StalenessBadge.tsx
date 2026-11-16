@@ -53,7 +53,7 @@ export default function StalenessBadge({ fetchedAt, source, isStale }: Props) {
 
   if (!isStale) {
     return (
-      <span style={{ fontSize: 12, color: tokens.color.muted3, whiteSpace: "nowrap" }}>
+      <span style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3, whiteSpace: "nowrap" }}>
         {dot}
         {label}
         {source ? ` · ${source}` : ""}
@@ -66,7 +66,7 @@ export default function StalenessBadge({ fetchedAt, source, isStale }: Props) {
       style={{
         display: "inline-flex",
         alignItems: "center",
-        fontSize: 12,
+        fontSize: "var(--fs-xs, 12px)",
         color: STALE_DOT,
         border: `1px solid ${BORDER}`,
         borderRadius: 999,
