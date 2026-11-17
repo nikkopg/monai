@@ -72,6 +72,7 @@ def test_ttl_for_table():
     assert ttl_for("chat") == timedelta(minutes=15)
     assert ttl_for("mcp") == timedelta(hours=48)
     assert ttl_for("upload") == timedelta(hours=48)
+    assert ttl_for("schedule") == timedelta(days=3650)
     with pytest.raises(ValueError):
         ttl_for("discord")
 

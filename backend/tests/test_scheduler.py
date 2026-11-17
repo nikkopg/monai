@@ -308,6 +308,20 @@ def test_build_scheduler_registers_fx_warm_job():
     assert scheduler.get_job("daily_attachment_purge") is not None
 
 
+def test_build_scheduler_registers_bond_proposals_job():
+    from backend.scheduler import build_scheduler
+
+    scheduler = build_scheduler()
+    job = scheduler.get_job("daily_bond_proposals")
+    assert job is not None
+    fields = {f.name: str(f) for f in job.trigger.fields}
+    assert (fields["hour"], fields["minute"]) == ("6", "0")
+    assert str(job.trigger.timezone) == "Asia/Jakarta"
+    assert (job.misfire_grace_time, job.coalesce, job.max_instances) == (3600, True, 1)
+    for other in ("daily_fx_warm", "daily_portfolio_snapshot", "daily_attachment_purge"):
+        assert scheduler.get_job(other) is not None
+
+
 def test_fx_warm_job_fills_window_with_one_range_call(fx_warm_env):
     from backend.scheduler import daily_fx_warm_job
 

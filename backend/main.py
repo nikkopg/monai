@@ -99,6 +99,7 @@ from backend.writes import (
     apply_add_account,
     apply_add_balance_adjustment,
     apply_add_category,
+    apply_add_coupon,
     apply_add_funded_buy,
     apply_add_funded_sell,
     apply_delete_closed_position,
@@ -1939,7 +1940,7 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
 
         elif operation in (
             "add_transfer", "add_funded_buy",
-            "add_funded_sell", "add_balance_adjustment",
+            "add_funded_sell", "add_balance_adjustment", "add_coupon",
         ):
             # Malformed/mismatched payload keys must surface as a clean 422,
             # never an unhandled KeyError -> 500 (Pitfall 3, autonomous
@@ -1956,6 +1957,9 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
 
                 elif operation == "add_balance_adjustment":
                     apply_add_balance_adjustment(db, row["account_id"], row["target_balance"])
+
+                elif operation == "add_coupon":
+                    apply_add_coupon(db, after)
             except (KeyError, TypeError) as e:
                 raise ValueError(f"malformed payload for {operation!r}: {e}")
 
@@ -2037,9 +2041,20 @@ def skip_proposal_row(
     if proposal is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
     _require_pending(proposal)
+    rows = proposal.payload.get("rows", [])
+    if proposal.payload.get("operation") == "add_coupon":  # 261117-rw1: Edit amount, nothing else
+        if req.skip is not None or "category" in req.model_fields_set or req.amount is None:
+            raise HTTPException(status_code=422, detail="A coupon row only takes an amount")
+        if index != 0 or len(rows) != 1:
+            raise HTTPException(status_code=422, detail="Row index out of range")
+        rows[0]["after"]["amount"] = str(req.amount)
+        flag_modified(proposal, "payload")
+        db.commit()
+        return proposal
+    if req.amount is not None:
+        raise HTTPException(status_code=422, detail="Only a coupon's amount can be edited")
     if proposal.payload.get("operation") != "add_transaction":
         raise HTTPException(status_code=422, detail="Only transaction batches have skippable rows")
-    rows = proposal.payload.get("rows", [])
     if not 0 <= index < len(rows):
         raise HTTPException(status_code=422, detail="Row index out of range")
     if req.skip is None and "category" not in req.model_fields_set:

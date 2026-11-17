@@ -764,13 +764,15 @@ class ConfirmRequest(BaseModel):
 
 
 class RowSkipRequest(BaseModel):
-    """Body for PATCH /proposals/{id}/rows/{index}: skip and/or category.
+    """Body for PATCH /proposals/{id}/rows/{index}: skip and/or category (transaction batches),
+    or amount (a pending SBN coupon proposal, 261117-rw1; the only field it accepts).
 
     An explicit null (or blank) category clears it; leaving the key out leaves it alone.
     """
 
     skip: bool | None = None
     category: str | None = Field(default=None, max_length=255)
+    amount: Decimal | None = Field(default=None, gt=0, max_digits=18, decimal_places=2)
 
 
 # ---------------------------------------------------------------------------

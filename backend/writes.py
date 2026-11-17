@@ -523,6 +523,55 @@ def apply_add_funded_buy(db: Session, after: dict) -> dict:
     return {"transaction": tx, "portfolio_event": ev}
 
 
+COUPON_CATEGORY = "Investment income"
+
+
+def apply_add_coupon(db: Session, after: dict) -> dict:
+    """Record one SBN coupon: an income transaction plus a linked dividend event (quick 261117-rw1).
+
+    Refs are validated first (account liquid IDR, position still held, amount positive), so a
+    refusal precedes every write and surfaces as ValueError -> 422, never an IntegrityError.
+    The transaction credits the coupon account (category 'Investment income', not a transfer,
+    so cashflow counts it as income); the dividend event is quantity 1 at the net amount, so
+    realized P&L rises by exactly that and quantity / avg cost stay put. Does NOT commit.
+    """
+    acct = db.get(Account, after["account_id"]) if after.get("account_id") is not None else None
+    if acct is None or acct.type != "liquid" or acct.currency != "IDR":
+        raise ValueError("The coupon account must be a liquid IDR account; nothing was saved")
+    ticker, platform_id = after["ticker"], after["platform_id"]
+    holding = db.query(Holding).filter(Holding.ticker == ticker, Holding.platform_id == platform_id).one_or_none()
+    if holding is None or holding.quantity <= 0:
+        raise ValueError(f"{ticker} is no longer held; a closed bond takes no coupon. Nothing was saved")
+    try:
+        amount = Decimal(str(after["amount"]))
+        day = date.fromisoformat(str(after["date"]))
+    except InvalidOperation:
+        raise ValueError("Coupon amount is not a number; nothing was saved")
+    if not amount.is_finite() or amount <= 0:
+        raise ValueError("Coupon amount must be above 0; nothing was saved")
+    tx = apply_add_transaction(db, {
+        "account": acct.name,
+        "amount": str(amount),
+        "currency": "IDR",
+        "category": COUPON_CATEGORY,
+        "merchant": f"Coupon {ticker}",
+        "is_transfer": False,
+        "date": day.isoformat(),
+    })
+    ev = apply_add_portfolio_event(db, {
+        "ticker": ticker,
+        "event_type": "dividend",
+        "quantity": "1",
+        "price": str(amount),
+        "platform_id": platform_id,
+        "currency": "IDR",
+        "date": day.isoformat(),
+    })
+    ev.source_account_id = tx.account_id
+    ev.transaction_id = tx.id  # both rows flushed by their primitives
+    return {"transaction": tx, "portfolio_event": ev}
+
+
 def apply_add_funded_sell(db: Session, after: dict) -> dict:
     """Insert a funded 'sell' — cash leg + portfolio event, one commit boundary (XFER-03).
 

@@ -110,7 +110,11 @@ def _purge(db) -> None:
     accts = "(SELECT id FROM accounts WHERE name LIKE 'zzsbn2-%')"
     plats = "(SELECT id FROM platforms WHERE name LIKE 'zzsbn2-%')"
     for sql in (
+        "DELETE FROM audit_log WHERE entity = 'closed_position' AND entity_id IN "
+        "(SELECT id FROM closed_positions WHERE ticker LIKE 'ZZSBN2%')",
         "DELETE FROM audit_log WHERE before->>'ticker' LIKE 'ZZSBN2%' OR after->>'ticker' LIKE 'ZZSBN2%'",
+        "DELETE FROM proposals WHERE payload->>'key' LIKE '%ZZSBN2%'",
+        f"DELETE FROM closed_positions WHERE ticker LIKE 'ZZSBN2%' OR platform_id IN {plats}",
         f"DELETE FROM portfolio_events WHERE ticker LIKE 'ZZSBN2%' OR platform_id IN {plats}",
         "DELETE FROM portfolio_value_history WHERE ticker LIKE 'ZZSBN2%'",
         f"DELETE FROM holdings WHERE ticker LIKE 'ZZSBN2%' OR platform_id IN {plats}",
@@ -174,9 +178,9 @@ def _terms(acc_id, **over) -> dict:
             "tax_pct": 10, "coupon_account_id": acc_id, **over}
 
 
-def _buy(client, acc_name, plat, ticker, bond=None, asset_type="bond", qty=12000000):
+def _buy(client, acc_name, plat, ticker, bond=None, asset_type="bond", qty=12000000, on="2026-11-01"):
     body = {"source_account_name": acc_name, "platform_id": plat, "ticker": ticker,
-            "quantity": qty, "price": 1, "cash_amount": qty, "date": "2026-11-01",
+            "quantity": qty, "price": 1, "cash_amount": qty, "date": on,
             "asset_type": asset_type}
     if bond is not None:
         body["bond"] = bond
@@ -388,3 +392,237 @@ def test_refresh_all_prices_skips_bonds(authed, db, monkeypatch):
     others = {h.ticker for h in db.query(Holding).all() if h.asset_type != "bond"}
     assert f"{T}L" not in calls
     assert (out["refreshed"], out["skipped"], out["failed"]) == (0, 0, len(others))
+
+
+# ---------------------------------------------------------------------------
+# T4: coupon and maturity proposals, the approve path, Edit amount
+# ---------------------------------------------------------------------------
+
+D4 = date  # readability in the dates below
+
+
+def _bond(client, db, ticker, buy="2026-01-05", maturity="2026-04-15"):
+    """A synthetic 12,000,000 bond at 6.00% / 10% tax paying on the 15th into its own account."""  # pii-ok synthetic
+    acc_id, acc = _account(db)
+    plat = _platform(db)
+    r = _buy(client, acc, plat, ticker, _terms(acc_id, maturity_date=maturity), on=buy)
+    assert r.status_code == 201, r.text
+    return acc_id, acc, plat
+
+
+def _run(db, today):
+    from backend.bonds import propose_due
+
+    n = propose_due(db, today)
+    db.commit()
+    return n
+
+
+def _props(db, ticker):
+    db.expire_all()
+    return db.execute(text(
+        "SELECT id, status, channel, operation, payload FROM proposals "
+        "WHERE payload->>'key' LIKE :k ORDER BY payload->>'key'"), {"k": f"%:{ticker}:%"}).all()
+
+
+def _keys(db, ticker):
+    return [p.payload["key"].split(":")[0] + ":" + p.payload["key"].rsplit(":", 1)[1] for p in _props(db, ticker)]
+
+
+def _approve(client, approver_key, pid):
+    return client.post(f"/proposals/{pid}/approve", headers={"MONAI_APPROVER_KEY": approver_key})
+
+
+def _patch(client, approver_key, pid, body, i=0):
+    return client.patch(f"/proposals/{pid}/rows/{i}", json=body, headers={"MONAI_APPROVER_KEY": approver_key})
+
+
+def test_propose_coupon_once_and_idempotent(authed, db):
+    _bond(authed, db, f"{T}P1")
+    _run(db, D4(2026, 3, 20))
+    (p,) = _props(db, f"{T}P1")
+    assert (p.status, p.channel, p.operation) == ("pending", "schedule", "add_coupon")
+    assert p.payload["key"].endswith(f":{T}P1:2026-03-15")
+    a = p.payload["rows"][0]["after"]
+    assert (a["amount"], a["gross"], a["tax"], a["date"]) == ("54000", "60000", "6000", "2026-03-15")
+    assert all(isinstance(v, (str, int, bool)) for v in a.values())
+    _run(db, D4(2026, 3, 20))
+    assert len(_props(db, f"{T}P1")) == 1
+    # nothing written to the ledger by the job: only the buy's cash leg exists
+    assert db.execute(text("SELECT count(*) FROM transactions t JOIN accounts a ON a.id = t.account_id "
+                           "WHERE a.name LIKE 'zzsbn2-%'")).scalar() == 1
+
+
+def test_no_coupon_when_bought_after_pay_date(authed, db):
+    _bond(authed, db, f"{T}P2", buy="2026-03-16")
+    _run(db, D4(2026, 3, 20))
+    assert _props(db, f"{T}P2") == []
+
+
+def test_no_coupon_when_dividend_already_on_the_date(authed, db):
+    from backend.writes import apply_add_portfolio_event
+
+    _, _, plat = _bond(authed, db, f"{T}P3")
+    apply_add_portfolio_event(db, {"ticker": f"{T}P3", "event_type": "dividend", "quantity": "1",
+                                   "price": "54000", "platform_id": plat, "currency": "IDR", "date": "2026-03-15"})
+    db.commit()
+    _run(db, D4(2026, 3, 20))
+    assert _props(db, f"{T}P3") == []
+
+
+def test_catch_up_window(authed, db):
+    _bond(authed, db, f"{T}P4")
+    _run(db, D4(2026, 4, 12))  # 03-15 is 28 days back: inside the 31-day window
+    assert _keys(db, f"{T}P4") == ["coupon:2026-03-15"]
+    _bond(authed, db, f"{T}P5")
+    _run(db, D4(2026, 5, 1))  # 03-15 is 47 days back: never proposed
+    assert _keys(db, f"{T}P5") == ["coupon:2026-04-15", "maturity:2026-04-15"]
+
+
+def test_maturity_proposal_once_and_no_coupon_after_maturity(authed, db):
+    _, acc, plat = _bond(authed, db, f"{T}P6")
+    _run(db, D4(2026, 4, 15))
+    _run(db, D4(2026, 4, 15))
+    props = _props(db, f"{T}P6")
+    assert [p.operation for p in props] == ["add_coupon", "add_funded_sell"]
+    a = props[1].payload["rows"][0]["after"]
+    assert (a["quantity"], a["price"], a["cash_amount"], a["source_account_name"], a["date"]) == (
+        12000000.0, 1.0, 12000000.0, acc, "2026-04-15")
+    assert (a["platform_id"], a["asset_type"], a["cash_currency"], a["event_currency"]) == (plat, "bond", "IDR", "IDR")
+    _bond(authed, db, f"{T}P7")
+    _run(db, D4(2026, 6, 20))  # long past maturity: the maturity payout only
+    assert _keys(db, f"{T}P7") == ["maturity:2026-04-15"]
+
+
+def test_ineligible_holdings_are_skipped_quietly(authed, db):
+    _, _, plat = _bond(authed, db, f"{T}P8")
+    r = authed.post("/holdings", json={"ticker": f"{T}P9", "quantity": 5, "avg_cost": 1,
+                                       "asset_type": "bond", "platform_id": plat})
+    assert r.status_code in (200, 201), r.text
+    db.execute(text("UPDATE holdings SET coupon_account_id = NULL WHERE ticker = :t"), {"t": f"{T}P8"})
+    db.commit()
+    _run(db, D4(2026, 3, 20))
+    assert _props(db, f"{T}P8") == [] and _props(db, f"{T}P9") == []
+
+
+def test_duplicate_schedule_key_is_refused_by_the_index(db):
+    from sqlalchemy.exc import IntegrityError
+
+    from backend.tools import _make_proposal
+
+    payload = {"operation": "add_coupon", "key": f"coupon:0:{T}Q:2026-03-15", "rows": []}
+    _make_proposal("add_coupon", payload, "schedule", db=db)
+    with pytest.raises(IntegrityError):
+        _make_proposal("add_coupon", dict(payload), "schedule", db=db)
+    db.rollback()
+
+
+def _realized(client, plat, ticker):
+    row = next(h for h in client.get(f"/platforms/{plat}/detail").json()["holdings"] if h["ticker"] == ticker)
+    return row["realized_pnl"], row["quantity"], row["avg_cost"]
+
+
+def test_approve_coupon_writes_linked_pair_atomically(authed, db, approver_key):
+    from backend.models import PortfolioEvent, Transaction
+
+    ticker = f"{T}R1"
+    _, acc, plat = _bond(authed, db, ticker)
+    before = _realized(authed, plat, ticker)
+    _run(db, D4(2026, 3, 20))
+    pid = str(_props(db, ticker)[0].id)
+    r = _approve(authed, approver_key, pid)
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    ev = db.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker, PortfolioEvent.event_type == "dividend").one()
+    tx = db.get(Transaction, ev.transaction_id)
+    assert (tx.amount, tx.category, tx.merchant, tx.is_transfer) == (D("54000"), "Investment income", f"Coupon {ticker}", False)
+    assert tx.date.date() == date(2026, 3, 15) and tx.account.name == acc
+    cat = db.execute(text("SELECT name FROM categories WHERE id = :i"), {"i": tx.category_id}).scalar()
+    assert cat == "Investment income"
+    assert (ev.quantity, ev.price, ev.source_account_id, ev.date) == (D("1"), D("54000"), tx.account_id, date(2026, 3, 15))
+    for entity, eid in (("transaction", tx.id), ("portfolio_event", ev.id)):
+        assert db.execute(text("SELECT count(*) FROM audit_log WHERE entity = :e AND entity_id = :i AND operation = 'add'"),
+                          {"e": entity, "i": eid}).scalar() == 1
+    after = _realized(authed, plat, ticker)
+    assert (after[1], after[2]) == (before[1], before[2])
+    assert float(after[0]) - float(before[0] or 0) == 54000
+    assert _props(db, ticker)[0].status == "confirmed"
+    _run(db, D4(2026, 3, 20))
+    assert len(_props(db, ticker)) == 1
+
+
+def test_token_confirm_of_a_schedule_proposal_is_403(authed, db):
+    from backend.models import Proposal
+
+    _bond(authed, db, f"{T}R2")
+    _run(db, D4(2026, 3, 20))
+    p = db.get(Proposal, _props(db, f"{T}R2")[0].id)
+    assert authed.post(f"/proposals/{p.id}/confirm", json={"token": p.token}).status_code == 403
+
+
+def test_edit_amount_then_approve_writes_the_edited_amount(authed, db, approver_key):
+    from backend.models import PortfolioEvent, Transaction
+
+    ticker = f"{T}R3"
+    _bond(authed, db, ticker)
+    _run(db, D4(2026, 3, 20))
+    pid = str(_props(db, ticker)[0].id)
+    for body, i in (({"amount": 0}, 0), ({"amount": -5}, 0), ({"amount": "50000.123"}, 0), ({"amount": 50000}, 1),
+                    ({"amount": 50000, "skip": True}, 0), ({"amount": 50000, "category": "Food"}, 0),
+                    ({"category": "Food"}, 0), ({"skip": True}, 0), ({}, 0)):
+        assert _patch(authed, approver_key, pid, body, i).status_code == 422, (body, i)
+    assert _props(db, ticker)[0].payload["rows"][0]["after"]["amount"] == "54000"
+    assert _patch(authed, approver_key, pid, {"amount": 50000}).status_code == 200
+    assert _props(db, ticker)[0].payload["rows"][0]["after"]["amount"] == "50000"
+    assert _approve(authed, approver_key, pid).status_code == 200
+    db.expire_all()
+    ev = db.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker, PortfolioEvent.event_type == "dividend").one()
+    assert (ev.price, db.get(Transaction, ev.transaction_id).amount) == (D("50000"), D("50000"))
+    assert _patch(authed, approver_key, pid, {"amount": 40000}).status_code == 409
+
+
+def test_amount_is_refused_on_a_transaction_batch(authed, db, approver_key):
+    from backend.models import Proposal
+    import datetime as dt
+    import secrets
+
+    _, acc = _account(db)
+    p = Proposal(token=secrets.token_urlsafe(32), operation="add_transaction", status="pending", channel="mcp",
+                 code="ABC234", expires_at=dt.datetime.now(dt.timezone.utc) + dt.timedelta(hours=1),
+                 payload={"operation": "add_transaction", "key": f"x:{T}S:1", "rows": [{"before": None, "after": {
+                     "date": "2026-01-10", "amount": "-100", "account": acc, "currency": "IDR"}}]})
+    db.add(p)
+    db.commit()
+    assert _patch(authed, approver_key, str(p.id), {"amount": 5}).status_code == 422
+
+
+def test_approving_a_coupon_after_the_bond_closed_is_422_and_writes_nothing(authed, db, approver_key):
+    ticker = f"{T}R4"
+    _, acc, plat = _bond(authed, db, ticker)
+    _run(db, D4(2026, 3, 20))
+    pid = str(_props(db, ticker)[0].id)
+    sell = authed.post("/portfolio-events/funded-sell", json={
+        "source_account_name": acc, "platform_id": plat, "ticker": ticker, "quantity": 12000000,
+        "price": 1, "cash_amount": 12000000, "date": "2026-03-18"})
+    assert sell.status_code == 201, sell.text
+    r = _approve(authed, approver_key, pid)
+    assert r.status_code == 422 and "no longer held" in r.text
+    db.expire_all()
+    assert db.execute(text("SELECT count(*) FROM portfolio_events WHERE ticker = :t AND event_type = 'dividend'"),
+                      {"t": ticker}).scalar() == 0
+    assert db.execute(text("SELECT count(*) FROM transactions WHERE merchant = :m"), {"m": f"Coupon {ticker}"}).scalar() == 0
+    assert _props(db, ticker)[0].status == "pending"
+
+
+def test_approving_maturity_closes_the_position_and_credits_the_account(authed, db, approver_key):
+    ticker = f"{T}R5"
+    _, acc, plat = _bond(authed, db, ticker)
+    _run(db, D4(2026, 4, 15))
+    pid = str(next(p for p in _props(db, ticker) if p.operation == "add_funded_sell").id)
+    assert _approve(authed, approver_key, pid).status_code == 200
+    assert _holding(db, ticker) is None
+    assert db.execute(text("SELECT count(*) FROM closed_positions WHERE ticker = :t"), {"t": ticker}).scalar() == 1
+    credit = db.execute(text(
+        "SELECT t.amount FROM transactions t JOIN accounts a ON a.id = t.account_id "
+        "WHERE a.name = :a AND t.amount > 0"), {"a": acc}).scalar()
+    assert credit == D("12000000")
