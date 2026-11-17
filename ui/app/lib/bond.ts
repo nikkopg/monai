@@ -110,25 +110,35 @@ export function termsFromInfo(b: BondInfo | null | undefined): BondTermsInput {
 export const rateChip = (rate: number, floating: boolean) =>
   `${rate.toFixed(2)}% ${floating ? "floating" : "fixed"}`;
 
-// Built from the date parts, never new Date(iso), which reads the string as UTC
-// and can land on the previous day (fmtRowDate in inbox.ts is the model).
-function dayParts(iso: string): Date | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
-  return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
-}
+// Built from the date parts (never new Date(iso), which reads the string as UTC
+// and can land on the previous day). A fixed month list keeps September "Sep":
+// newer ICU renders en-GB as "Sept".
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-const dayMonth = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
-const dayMonthYear = new Intl.DateTimeFormat("en-GB", {
-  day: "numeric",
-  month: "short",
-  year: "numeric",
-});
+const parts = (iso: string) => /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
 
 export const fmtDayMonth = (iso: string) => {
-  const d = dayParts(iso);
-  return d ? dayMonth.format(d) : iso;
+  const m = parts(iso);
+  return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]}` : iso;
 };
 export const fmtDayMonthYear = (iso: string) => {
-  const d = dayParts(iso);
-  return d ? dayMonthYear.format(d) : iso;
+  const m = parts(iso);
+  return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}` : iso;
 };
+
+// Coupons received for one ticker: dividend events, oldest first. The amount is
+// the event's cash_amount, else price x quantity (a coupon is quantity 1).
+export type CouponEvent = {
+  date: string;
+  ticker: string;
+  event_type: string;
+  quantity: number;
+  price: number;
+  cash_amount: number | null;
+};
+export function receivedCoupons(events: CouponEvent[], ticker: string) {
+  return events
+    .filter((e) => e.ticker === ticker && e.event_type === "dividend")
+    .map((e) => ({ date: e.date, amount: e.cash_amount ?? e.price * e.quantity }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+}

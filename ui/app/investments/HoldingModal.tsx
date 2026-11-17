@@ -480,16 +480,22 @@ export default function HoldingModal({
                   onEventTypeChange(e.target.value as "buy" | "sell" | "dividend")
                 }
               >
-                {/* An unfunded event cannot change type (backend 422). */}
-                <option value="buy" disabled={isEdit && !linked && editEvent.event_type !== "buy"}>
+                {/* An unfunded event cannot change type (backend 422); a coupon (linked dividend) stays a dividend (261117-rw1). */}
+                <option
+                  value="buy"
+                  disabled={isEdit && (editEvent.event_type === "dividend" || (!linked && editEvent.event_type !== "buy"))}
+                >
                   Buy
                 </option>
-                <option value="sell" disabled={isEdit && !linked && editEvent.event_type !== "sell"}>
+                <option
+                  value="sell"
+                  disabled={isEdit && (editEvent.event_type === "dividend" || (!linked && editEvent.event_type !== "sell"))}
+                >
                   Sell
                 </option>
                 <option
                   value="dividend"
-                  disabled={linked || (isEdit && editEvent.event_type !== "dividend")}
+                  disabled={isEdit && editEvent.event_type !== "dividend"}
                 >
                   Dividend
                 </option>

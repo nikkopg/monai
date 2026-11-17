@@ -20,6 +20,7 @@ import RollingNumber from "../components/RollingNumber";
 import Skeleton, { Bone, DrawLine } from "../components/Skeleton";
 import RowMenu from "../components/RowMenu";
 import StalenessBadge from "./StalenessBadge";
+import { BondLine } from "./BondLine";
 import ValueHistoryChart, { type HistoryPoint } from "./ValueHistoryChart";
 import AllocationPieChart, { type AllocationSlice } from "./AllocationPieChart";
 
@@ -940,11 +941,23 @@ export default function InvestmentsPage() {
                                   {platformName}
                                 </span>
                               )}
-                              <StalenessBadge
-                                fetchedAt={h.price_fetched_at}
-                                source={h.price_source}
-                                isStale={h.is_stale}
-                              />
+                              {h.asset_type === "bond" ? (
+                                <BondLine
+                                  bond={
+                                    h.bond ?? {
+                                      rate: null, floating: null, pay_day: null, maturity_date: null,
+                                      tax_pct: null, coupon_account_id: null, coupon_account_name: null,
+                                      gross: null, tax: null, net: null, next_coupon_date: null, upcoming: [],
+                                    }
+                                  }
+                                />
+                              ) : (
+                                <StalenessBadge
+                                  fetchedAt={h.price_fetched_at}
+                                  source={h.price_source}
+                                  isStale={h.is_stale}
+                                />
+                              )}
                               {h.currency === "USD" && h.usd_rate == null && (
                                 <span style={{ display: "block", fontSize: "var(--fs-xs, 12px)", color: muted }}>
                                   No USD rate, shown in IDR
@@ -972,7 +985,9 @@ export default function InvestmentsPage() {
                               color: tokens.color.muted3,
                             }}
                           >
-                            {h.usd_current_price != null
+                            {h.asset_type === "bond"
+                              ? "—"
+                              : h.usd_current_price != null
                               ? withIdr(
                                   fmtUsdPrice(h.usd_current_price, 8),
                                   `${fmtPlain(h.current_price ?? 0)} IDR`,
@@ -1030,7 +1045,9 @@ export default function InvestmentsPage() {
                             <RowMenu
                               label={`Holding options: ${h.ticker}`}
                               items={[
-                                { label: "Set price", onSelect: () => setPriceHolding(h) },
+                                ...(h.asset_type === "bond"
+                                  ? []
+                                  : [{ label: "Set price", onSelect: () => setPriceHolding(h) }]),
                                 {
                                   label: "Edit",
                                   onSelect: () => {
@@ -1077,7 +1094,9 @@ export default function InvestmentsPage() {
                               fontVariantNumeric: "tabular-nums",
                             }}
                           >
-                            {`${fmtQty(h.quantity, h.asset_type)} × ${
+                            {h.asset_type === "bond"
+                              ? fmtQty(h.quantity, h.asset_type)
+                              : `${fmtQty(h.quantity, h.asset_type)} × ${
                               h.usd_current_price != null
                                 ? fmtUsdPrice(h.usd_current_price, 8)
                                 : h.current_price != null

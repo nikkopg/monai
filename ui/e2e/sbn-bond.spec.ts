@@ -435,3 +435,226 @@ test.describe("bond forms at 375 (261115-oax conventions)", () => {
     await fits(page, "Save holding");
   });
 });
+
+// ---------------------------------------------------------------------------
+// T7: rows, coupon schedule and the coupon edit guard (synthetic data)
+// ---------------------------------------------------------------------------
+
+const stockRow = {
+  ...bondRow,
+  id: 32,
+  ticker: "ZZSTK",
+  asset_type: "idx_stock",
+  quantity: 100,
+  avg_cost: 1000,
+  current_price: 1100,
+  current_value: 110000,
+  unrealized_pnl: 10000,
+  price_source: "manual",
+  price_fetched_at: "2026-01-02T00:00:00Z",
+  bond: null,
+};
+
+async function mockSummary(page: Page, holdings: unknown[]) {
+  await page.route("**/api/investments/summary**", (r) =>
+    r.fulfill(
+      json({
+        groups: [{ platform_id: 1, platform_name: "Synth Broker", kind: "bond app", subtotal: 12110000, holdings }],
+        asset_type_groups: [{ asset_type: "bond", total_value: 12000000 }],
+        total_value: 12110000,
+        total_unrealized_pnl: 0,
+        total_realized_pnl: 0,
+        as_of: "2026-01-02",
+      }),
+    ),
+  );
+  await page.route("**/api/investments/history**", (r) => r.fulfill(json({ points: [] })));
+  await page.route("**/api/platforms", (r) => r.fulfill(json([{ id: 1, name: "Synth Broker", kind: "bond app" }])));
+  await page.route("**/api/closed-positions**", (r) => r.fulfill(json([])));
+}
+
+const coupon = (id: number, date: string, txId: number | null = id + 100) => ({
+  id,
+  date,
+  ticker: "ZZBOND",
+  event_type: "dividend",
+  quantity: 1,
+  price: 54000,
+  transaction_id: txId,
+  cash_amount: null,
+  currency: "IDR",
+});
+
+async function mockPlatform(page: Page, events: unknown[], holdings = [bondRow]) {
+  await page.route("**/api/platforms", (r) => r.fulfill(json([{ id: 1, name: "Synth Broker", kind: "bond app" }])));
+  await page.route("**/api/platforms/*/detail", (r) =>
+    r.fulfill(
+      json({
+        platform_id: 1,
+        platform_name: "Synth Broker",
+        kind: "bond app",
+        subtotal: 12000000,
+        holdings,
+      }),
+    ),
+  );
+  await page.route("**/api/portfolio-events*", (r) => r.fulfill(json(events)));
+}
+
+test.describe("bond rows and schedule (261117-rw1)", () => {
+  test("Investments rows: chips, next coupon, maturity, no staleness label on a bond", async ({ page }) => {
+    await mockSummary(page, [bondRow, stockRow]);
+    await page.goto("/investments");
+    const row = page.locator(".inv-row", { hasText: "ZZBOND" });
+    await expect(row.getByText("Bond", { exact: true })).toBeVisible();
+    await expect(row.getByText("6.00% fixed", { exact: true })).toBeVisible();
+    await expect(row.getByText("Next coupon 15 Dec · 54,000 to Bank Synth")).toBeVisible();
+    await expect(row.getByText("Matures 15 Nov 2029")).toBeVisible();
+    await expect(row.getByText(/Price as of/)).toHaveCount(0);
+    await expect(page.locator(".inv-row", { hasText: "ZZSTK" }).getByText(/Price as of/)).toBeVisible();
+    await page.getByRole("button", { name: "Holding options: ZZBOND", exact: true }).click();
+    await expect(page.getByRole("menuitem")).toHaveText(["Edit", "Delete"]);
+  });
+
+  test("a bond without terms shows only the Bond chip and a hint", async ({ page }) => {
+    const bare = {
+      ...bondRow,
+      bond: {
+        ...bondRow.bond,
+        rate: null,
+        floating: null,
+        pay_day: null,
+        maturity_date: null,
+        tax_pct: null,
+        gross: null,
+        tax: null,
+        net: null,
+        next_coupon_date: null,
+        upcoming: [],
+      },
+    };
+    await mockSummary(page, [bare]);
+    await page.goto("/investments");
+    const row = page.locator(".inv-row", { hasText: "ZZBOND" });
+    await expect(row.getByText("Bond", { exact: true })).toBeVisible();
+    await expect(row.getByText("Add coupon terms with Edit")).toBeVisible();
+    await expect(row.getByText(/fixed|floating|Next coupon|Matures/)).toHaveCount(0);
+  });
+
+  test("platform page: same bond line and the coupon schedule card", async ({ page }) => {
+    const events = [coupon(1, "2026-09-15"), coupon(2, "2026-10-15")];
+    await mockPlatform(page, events);
+    await page.goto("/investments/1");
+    const row = page.locator(".plat-row", { hasText: "ZZBOND" });
+    await expect(row.getByText("6.00% fixed", { exact: true })).toBeVisible();
+    await expect(row.getByText("Next coupon 15 Dec · 54,000 to Bank Synth")).toBeVisible();
+    await expect(row.getByText("Matures 15 Nov 2029")).toBeVisible();
+
+    const card = page.locator("div", { has: page.getByRole("heading", { name: "Coupon schedule · ZZBOND" }) }).last();
+    await expect(card.getByText("+108,000", { exact: true })).toBeVisible();
+    await expect(card.getByText(/\(2 paid\)/)).toBeVisible();
+    await expect(card.getByText("15 Sep 2026")).toBeVisible();
+    await expect(card.getByText("54,000 · received")).toHaveCount(2);
+    await expect(card.getByText("15 Dec 2026")).toBeVisible();
+    await expect(card.getByText("54,000 · due")).toHaveCount(3);
+    await expect(card.getByText("15 Nov 2029")).toBeVisible();
+    await expect(card.getByText("12,000,000 · maturity")).toBeVisible(); // pii-ok synthetic
+  });
+
+  test("the schedule shows only the last 3 received coupons", async ({ page }) => {
+    const events = [
+      coupon(1, "2026-06-15"),
+      coupon(2, "2026-07-15"),
+      coupon(3, "2026-08-15"),
+      coupon(4, "2026-09-15"),
+    ];
+    await mockPlatform(page, events);
+    await page.goto("/investments/1");
+    await expect(page.getByText("(4 paid)")).toBeVisible();
+    await expect(page.getByText("54,000 · received")).toHaveCount(3);
+    await expect(page.getByText("15 Jun 2026")).toHaveCount(0);
+  });
+
+  test("a linked coupon can't become a trade; a linked buy still can", async ({ page }) => {
+    const buy = { ...coupon(9, "2026-01-05"), event_type: "buy", quantity: 12000000, price: 1, cash_amount: 12000000 };
+    await mockPlatform(page, [coupon(1, "2026-10-15"), buy]);
+    let put: Record<string, unknown> | null = null;
+    await page.route("**/api/portfolio-events/1", async (r) => {
+      if (r.request().method() === "PUT") {
+        put = r.request().postDataJSON();
+        await r.fulfill(json({ id: 1 }));
+      } else await r.fallback();
+    });
+    await page.goto("/investments/1");
+    await page.getByRole("button", { name: "Buy & Sell", exact: true }).click();
+
+    await page.getByRole("button", { name: "Event options: dividend of ZZBOND on 2026-10-15", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    const type = page.locator("select").filter({ has: page.locator("option[value=dividend]") });
+    await expect(type.locator("option[value=buy]")).toBeDisabled();
+    await expect(type.locator("option[value=sell]")).toBeDisabled();
+    await expect(type.locator("option[value=dividend]")).toBeEnabled();
+    await expect(page.getByLabel(/cash amount/i)).toHaveCount(0);
+    await page.getByRole("button", { name: /^Save/ }).last().click();
+    await expect.poll(() => put).not.toBeNull();
+    expect(put).not.toHaveProperty("cash_amount");
+    await expect(page.getByRole("heading", { name: "Save event" })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Event options: buy of ZZBOND on 2026-01-05", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    const type2 = page.locator("select").filter({ has: page.locator("option[value=dividend]") });
+    await expect(type2.locator("option[value=buy]")).toBeEnabled();
+    await expect(type2.locator("option[value=sell]")).toBeEnabled();
+    await expect(type2.locator("option[value=dividend]")).toBeDisabled();
+  });
+});
+
+test.describe("bond rows at 375 (261115-oax conventions)", () => {
+  test.use({ viewport: { width: 375, height: 812 }, contextOptions: { reducedMotion: "reduce" } });
+
+  // The bond text must wrap inside its ticker cell, not cross into other cells.
+  async function bondTextInsideCell(page: Page, rowSelector: string) {
+    const out = await page.locator(rowSelector, { hasText: "ZZBOND" }).evaluate((row) => {
+      const cell = row.children[0] as HTMLElement;
+      const box = cell.getBoundingClientRect();
+      const bad: string[] = [];
+      // children[0] is the 32px ticker badge (its 4-letter text can overhang by a pixel, as before); children[1] holds the name and bond text.
+      const walker = document.createTreeWalker(cell.children[1], NodeFilter.SHOW_TEXT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        if (!(n.textContent ?? "").trim()) continue;
+        const range = document.createRange();
+        range.selectNodeContents(n);
+        const r = range.getBoundingClientRect();
+        if (r.width === 0 && r.height === 0) continue; // display:none (e.g. the phone-hidden badge)
+        if (r.left < box.left - 0.5 || r.right > box.right + 0.5) bad.push(`${(n.textContent ?? "").trim()} [${Math.round(r.left)},${Math.round(r.right)},${Math.round(r.top)}] cell [${Math.round(box.left)},${Math.round(box.right)}]`);
+      }
+      return bad;
+    });
+    expect(out).toEqual([]);
+    const [sw, cw] = await page.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
+    expect(sw).toBeLessThanOrEqual(cw);
+  }
+
+  test("Investments bond row fits", async ({ page }) => {
+    await mockSummary(page, [bondRow]);
+    await page.goto("/investments");
+    await expect(page.getByText("Matures 15 Nov 2029")).toBeVisible();
+    await bondTextInsideCell(page, ".inv-row");
+  });
+
+  test("platform bond row and schedule fit", async ({ page }) => {
+    await mockPlatform(page, [coupon(1, "2026-09-15"), coupon(2, "2026-10-15")]);
+    await page.goto("/investments/1");
+    const heading = page.getByRole("heading", { name: "Coupon schedule · ZZBOND" });
+    await expect(heading).toBeVisible();
+    await bondTextInsideCell(page, ".plat-row");
+    const m = await heading.locator("..").evaluate((root) => {
+      const box = root.getBoundingClientRect();
+      return Array.from(root.querySelectorAll("*")).filter((el) => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && (r.left < box.left - 0.5 || r.right > box.right + 0.5);
+      }).length;
+    });
+    expect(m).toBe(0);
+  });
+});

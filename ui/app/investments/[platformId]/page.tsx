@@ -6,6 +6,8 @@ import { useParams } from "next/navigation";
 
 import { tokens, card, btnDark } from "../../styles";
 import HoldingModal from "../HoldingModal";
+import { BondLine, CouponSchedule } from "../BondLine";
+import type { BondInfo } from "../../lib/bond";
 import { extractDetail } from "../../lib/api";
 import { fmtAmount, fmtAmountSigned, fmtUsdPrice, rateHover } from "../../lib/money";
 import RowMenu from "../../components/RowMenu";
@@ -33,6 +35,7 @@ type PlatformDetailHolding = {
   current_value: number | null;
   unrealized_pnl: number | null;
   realized_pnl: number;
+  bond?: BondInfo | null; // asset_type 'bond' only (quick 261117-rw1)
   // USD positions only (quick 261108-d2c); all null when no USD rate exists.
   usd_avg_cost?: number | null;
   usd_current_price?: number | null;
@@ -489,6 +492,7 @@ export default function PlatformDetailPage() {
                         </span>
                         <span style={{ minWidth: 0 }}>
                           <span style={{ fontWeight: 500, display: "block" }}>{h.ticker}</span>
+                          {h.asset_type === "bond" && h.bond && <BondLine bond={h.bond} />}
                           {h.currency === "USD" && h.usd_rate == null && (
                             <span style={{ display: "block", fontSize: "var(--fs-xs, 12px)", color: muted }}>
                               No USD rate, shown in IDR
@@ -708,6 +712,18 @@ export default function PlatformDetailPage() {
               </>
             )}
           </div>
+
+          {detail.holdings
+            .filter((h) => h.asset_type === "bond" && h.bond?.rate != null)
+            .map((h) => (
+              <CouponSchedule
+                key={h.id}
+                ticker={h.ticker}
+                bond={h.bond as BondInfo}
+                quantity={h.quantity}
+                events={events}
+              />
+            ))}
 
           {editingEvent && (
             <HoldingModal
