@@ -215,7 +215,11 @@ def apply_add_balance_adjustment(
 def apply_edit_transaction(
     db: Session, tx_id: int, after: dict, before: dict | None, allow_paired: bool = False
 ) -> Transaction:
-    """Partial-update an existing transaction. None fields in `after` are left unchanged."""
+    """Partial-update an existing transaction. None fields in `after` are left unchanged.
+
+    Coupon link (261117-rw1): a new amount on a coupon's income leg also sets its dividend
+    event to quantity 1 x that amount (refused when not above 0). Funded buy/sell legs are left alone.
+    """
     tx = db.get(Transaction, tx_id)
     if tx is None:
         raise ValueError(f"Transaction {tx_id} not found during confirm")
@@ -224,6 +228,13 @@ def apply_edit_transaction(
             f"Transaction {tx_id} is one leg of transfer pair {tx.transfer_pair_id} — "
             "use the pair-aware transfer function, or pass allow_paired=True (D-04)"
         )
+    coupon_ev = None
+    if after.get("amount") is not None:
+        coupon_ev = db.query(PortfolioEvent).filter(
+            PortfolioEvent.transaction_id == tx_id, PortfolioEvent.event_type == "dividend"
+        ).one_or_none()
+        if coupon_ev is not None and Decimal(str(after["amount"])) <= 0:
+            raise ValueError("a coupon amount must be above 0; nothing was saved")
     if after.get("category") is not None:
         tx.category = after["category"]
         tx.category_id = resolve_category_id(db, after["category"])  # D-08 dual-write, re-resolve on change
@@ -235,6 +246,13 @@ def apply_edit_transaction(
         tx.notes = after["notes"]
     db.add(AuditLog(entity="transaction", entity_id=tx_id, operation="edit",
                     before=before, after=after))
+    if coupon_ev is not None:
+        ev_before = _portfolio_event_snapshot(coupon_ev)
+        coupon_ev.quantity, coupon_ev.price = Decimal("1"), tx.amount
+        db.add(AuditLog(entity="portfolio_event", entity_id=coupon_ev.id, operation="edit",
+                        before=ev_before, after=_portfolio_event_snapshot(coupon_ev)))
+        db.flush()  # LOAD-BEARING: autoflush=False, recompute's SELECT must see the edited event
+        _recompute_or_refuse(db, coupon_ev.ticker, coupon_ev.platform_id)
     return tx
 
 
@@ -277,7 +295,17 @@ def apply_delete_transaction_or_pair(db: Session, tx_id: int, before: dict | Non
     guard/primitive stays intact — this composes it with allow_paired=True and
     audits every leg. Returns the deleted ids. Does NOT commit (caller owns the
     transaction boundary, D-01).
+
+    Coupon link (261117-rw1): a coupon's income leg goes with its dividend event, via
+    apply_delete_portfolio_event (it deletes and audits the leg, then recomputes). The
+    coupling lives here, not in apply_delete_transaction, which that primitive calls.
     """
+    coupon_ev = db.query(PortfolioEvent).filter(
+        PortfolioEvent.transaction_id == tx_id, PortfolioEvent.event_type == "dividend"
+    ).one_or_none()
+    if coupon_ev is not None:
+        apply_delete_portfolio_event(db, coupon_ev.id, _portfolio_event_snapshot(coupon_ev))
+        return [tx_id]
     tx = db.get(Transaction, tx_id)
     if tx is not None and tx.transfer_pair_id is not None:
         legs = db.query(Transaction).filter(
@@ -1171,6 +1199,9 @@ def apply_edit_portfolio_event(
     cash leg. An edit that leaves the event
     a sell and the position at exactly zero closes it (the event is then deleted,
     its cash leg kept); editing a buy never does. Does NOT commit.
+
+    Coupon link (261117-rw1): a funded dividend is an SBN coupon. It stays a dividend,
+    takes no cash_amount or fee, and its cash leg follows quantity x price.
     """
     ev = _load_editable_event(db, event_id)
     old_ticker = ev.ticker
@@ -1178,8 +1209,13 @@ def apply_edit_portfolio_event(
     was_negative = {t: _ledger_negative(db, t, ev.platform_id) for t in {old_ticker, new_ticker}}
     new_type = after.get("event_type") or ev.event_type
     funded = ev.transaction_id is not None
-    if funded and new_type == "dividend":
-        raise ValueError("a funded event must stay a buy or sell (its cash leg is linked)")
+    coupon = funded and ev.event_type == "dividend"  # a coupon's cash leg is its amount (261117-rw1)
+    if funded and "dividend" in (ev.event_type, new_type) and ev.event_type != new_type:
+        raise ValueError("a coupon stays a dividend and a funded trade stays a buy or sell (the cash leg is linked)")
+    if coupon and after.get("cash_amount") is not None:
+        raise ValueError("a coupon's cash follows its amount; edit the amount")
+    if coupon and ("fee" in after or "fee_kind" in after):
+        raise ValueError("a coupon has no fee")
     if after.get("cash_amount") is not None and not funded:
         raise ValueError("cash_amount can only be set on a funded event (no linked cash transaction)")
     if ("fee" in after or "fee_kind" in after) and not funded:
@@ -1211,7 +1247,10 @@ def apply_edit_portfolio_event(
     tx = db.get(Transaction, ev.transaction_id) if funded else None
     if tx is not None:
         tx_before = _transaction_snapshot(tx)
-        magnitude = abs(Decimal(str(after["cash_amount"]))) if after.get("cash_amount") is not None else abs(tx.amount)
+        if coupon:
+            magnitude = ev.quantity * ev.price
+        else:
+            magnitude = abs(Decimal(str(after["cash_amount"]))) if after.get("cash_amount") is not None else abs(tx.amount)
         new_amount = -magnitude if new_type == "buy" else magnitude
         new_dt = datetime.combine(ev.date, tx.date.time()) if tx.date else datetime.combine(ev.date, datetime.min.time())
         if new_amount != tx.amount or new_dt != tx.date:

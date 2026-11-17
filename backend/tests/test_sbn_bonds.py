@@ -626,3 +626,140 @@ def test_approving_maturity_closes_the_position_and_credits_the_account(authed, 
         "SELECT t.amount FROM transactions t JOIN accounts a ON a.id = t.account_id "
         "WHERE a.name = :a AND t.amount > 0"), {"a": acc}).scalar()
     assert credit == D("12000000")
+
+
+# ---------------------------------------------------------------------------
+# T5: a coupon's income transaction and dividend event stay in step
+# ---------------------------------------------------------------------------
+
+
+def _coupon(client, db, approver_key, ticker):
+    """Approve one 54,000 coupon; return (plat, acc_name, event_id, tx_id)."""
+    from backend.models import PortfolioEvent
+
+    _, acc, plat = _bond(client, db, ticker)
+    _run(db, D4(2026, 3, 20))
+    assert _approve(client, approver_key, str(_props(db, ticker)[0].id)).status_code == 200
+    db.expire_all()
+    ev = db.query(PortfolioEvent).filter(PortfolioEvent.ticker == ticker, PortfolioEvent.event_type == "dividend").one()
+    return plat, acc, ev.id, ev.transaction_id
+
+
+def _pair(db, ev_id, tx_id):
+    from backend.models import PortfolioEvent, Transaction
+
+    db.expire_all()
+    ev, tx = db.get(PortfolioEvent, ev_id), db.get(Transaction, tx_id)
+    return ev, tx
+
+
+def _audit(db, entity, eid, op):
+    return db.execute(text("SELECT count(*) FROM audit_log WHERE entity = :e AND entity_id = :i AND operation = :o"),
+                      {"e": entity, "i": eid, "o": op}).scalar()
+
+
+def test_event_price_edit_moves_the_transaction_and_realized(authed, db, approver_key):
+    ticker = f"{T}L1"
+    plat, _, ev_id, tx_id = _coupon(authed, db, approver_key, ticker)
+    assert float(_realized(authed, plat, ticker)[0]) == 54000
+    r = authed.put(f"/portfolio-events/{ev_id}", json={"price": 50000, "date": "2026-03-16"})
+    assert r.status_code == 200, r.text
+    ev, tx = _pair(db, ev_id, tx_id)
+    assert (tx.amount, tx.date.date(), ev.price, ev.quantity) == (D("50000"), date(2026, 3, 16), D("50000"), D("1"))
+    assert float(_realized(authed, plat, ticker)[0]) == 50000
+    assert _audit(db, "transaction", tx_id, "edit") == 1
+
+
+@pytest.mark.parametrize("body", [{"cash_amount": 40000}, {"fee": 0}, {"fee": 100, "fee_kind": "cash"}, {"event_type": "buy"}])
+def test_coupon_event_refuses_cash_fee_and_type_switch(authed, db, approver_key, body):
+    ticker = f"{T}L2"
+    _, _, ev_id, tx_id = _coupon(authed, db, approver_key, ticker)
+    assert authed.put(f"/portfolio-events/{ev_id}", json=body).status_code == 422
+    ev, tx = _pair(db, ev_id, tx_id)
+    assert (tx.amount, ev.event_type, ev.price, ev.fee) == (D("54000"), "dividend", D("54000"), None)
+
+
+def test_funded_buy_cannot_become_a_dividend(authed, db):
+    ticker = f"{T}L3"
+    _, acc, plat = _bond(authed, db, ticker)
+    ev_id = db.execute(text("SELECT id FROM portfolio_events WHERE ticker = :t"), {"t": ticker}).scalar()
+    assert authed.put(f"/portfolio-events/{ev_id}", json={"event_type": "dividend"}).status_code == 422
+
+
+def test_transaction_amount_edit_moves_the_event_and_realized(authed, db, approver_key):
+    ticker = f"{T}L4"
+    plat, _, ev_id, tx_id = _coupon(authed, db, approver_key, ticker)
+    assert authed.put(f"/transactions/{tx_id}", json={"amount": 52000}).status_code == 200
+    ev, tx = _pair(db, ev_id, tx_id)
+    assert (tx.amount, ev.quantity, ev.price) == (D("52000"), D("1"), D("52000"))
+    assert float(_realized(authed, plat, ticker)[0]) == 52000
+    assert _audit(db, "portfolio_event", ev_id, "edit") == 1
+
+
+@pytest.mark.parametrize("amount", [-100, 0])
+def test_transaction_edit_to_non_positive_amount_is_422_and_changes_nothing(authed, db, approver_key, amount):
+    ticker = f"{T}L5"
+    _, _, ev_id, tx_id = _coupon(authed, db, approver_key, ticker)
+    assert authed.put(f"/transactions/{tx_id}", json={"amount": amount}).status_code == 422
+    ev, tx = _pair(db, ev_id, tx_id)
+    assert (tx.amount, ev.price) == (D("54000"), D("54000"))
+    assert _audit(db, "transaction", tx_id, "edit") == 0
+
+
+def test_transaction_edit_without_amount_leaves_the_event_alone(authed, db, approver_key):
+    ticker = f"{T}L6"
+    _, _, ev_id, tx_id = _coupon(authed, db, approver_key, ticker)
+    assert authed.put(f"/transactions/{tx_id}", json={"notes": "synthetic note"}).status_code == 200
+    assert _audit(db, "portfolio_event", ev_id, "edit") == 0
+    assert _pair(db, ev_id, tx_id)[0].price == D("54000")
+
+
+def test_deleting_the_transaction_removes_the_event(authed, db, approver_key):
+    from backend.models import PortfolioEvent, Transaction
+
+    ticker = f"{T}L7"
+    plat, _, ev_id, tx_id = _coupon(authed, db, approver_key, ticker)
+    r = authed.delete(f"/transactions/{tx_id}")
+    assert (r.status_code, r.json()["deleted_ids"]) == (200, [tx_id])
+    db.expire_all()
+    assert db.get(PortfolioEvent, ev_id) is None and db.get(Transaction, tx_id) is None
+    assert float(_realized(authed, plat, ticker)[0] or 0) == 0
+    assert _audit(db, "portfolio_event", ev_id, "delete") == 1 and _audit(db, "transaction", tx_id, "delete") == 1
+
+
+def test_bulk_delete_removes_the_event_too(authed, db, approver_key):
+    from backend.models import PortfolioEvent
+
+    ticker = f"{T}L8"
+    _, _, ev_id, tx_id = _coupon(authed, db, approver_key, ticker)
+    r = authed.post("/transactions/bulk-delete", json={"ids": [tx_id]})
+    assert r.status_code == 200 and r.json()["deleted"] == [tx_id]
+    db.expire_all()
+    assert db.get(PortfolioEvent, ev_id) is None
+
+
+def test_deleting_the_event_removes_the_transaction(authed, db, approver_key):
+    from backend.models import Transaction
+
+    ticker = f"{T}L9"
+    _, _, ev_id, tx_id = _coupon(authed, db, approver_key, ticker)
+    r = authed.delete(f"/portfolio-events/{ev_id}")
+    assert (r.status_code, r.json()["deleted_transaction_id"]) == (200, tx_id)
+    db.expire_all()
+    assert db.get(Transaction, tx_id) is None
+
+
+def test_funded_buy_leg_behaviour_is_unchanged(authed, db):
+    from backend.models import PortfolioEvent, Transaction
+
+    ticker = f"{T}M1"
+    _, acc, plat = _bond(authed, db, ticker)
+    ev_id, tx_id = db.execute(text("SELECT id, transaction_id FROM portfolio_events WHERE ticker = :t"), {"t": ticker}).one()
+    assert authed.put(f"/transactions/{tx_id}", json={"amount": -11000000}).status_code == 200
+    db.expire_all()
+    ev = db.get(PortfolioEvent, ev_id)
+    assert (ev.quantity, ev.price, ev.transaction_id) == (D("12000000"), D("1"), tx_id)  # event untouched
+    assert authed.delete(f"/transactions/{tx_id}").status_code == 200
+    db.expire_all()
+    ev = db.get(PortfolioEvent, ev_id)
+    assert ev is not None and ev.transaction_id is None and db.get(Transaction, tx_id) is None
