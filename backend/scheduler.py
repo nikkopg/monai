@@ -45,6 +45,31 @@ def daily_portfolio_snapshot_job() -> None:
         db.commit()
 
 
+def refresh_today_snapshot_job() -> None:
+    """After a trade or an approved proposal: rewrite today's snapshot rows from
+    current holdings and cached prices, so a new or changed position counts today
+    instead of after the next 01:00 run. No price fetch (a ticker with no cached
+    price yet stays out until the next refresh). One transaction: a failure keeps
+    the old rows. Never raises.
+    """
+    from datetime import date
+
+    from sqlalchemy import delete
+
+    from backend.db import get_session_sync
+    from backend.models import PortfolioValueHistory
+    from backend.portfolio import snapshot_all_holdings
+
+    try:
+        with get_session_sync() as db:
+            # same date.today() as snapshot_all_holdings
+            db.execute(delete(PortfolioValueHistory).where(PortfolioValueHistory.snapshot_date == date.today()))
+            snapshot_all_holdings(db)
+            db.commit()
+    except Exception:
+        logger.exception("today's snapshot refresh failed; the earlier rows stay")
+
+
 def daily_fx_warm_job() -> None:
     """Sync job: cache the last week of USD->IDR rates (one range call, D-23).
 
@@ -114,6 +139,9 @@ def build_scheduler() -> AsyncIOScheduler:
         misfire_grace_time=3600,
         coalesce=True,
         max_instances=1,
+        # One run at boot: the app is often off at 01:00, and a skipped day is
+        # never backfilled. Rows already written today are skipped, not doubled.
+        next_run_time=datetime.now(ZoneInfo("Asia/Jakarta")),
     )
     scheduler.add_job(
         daily_attachment_purge_job,

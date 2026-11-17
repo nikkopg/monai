@@ -231,6 +231,17 @@ def _clear_fx_today_memo():
 
 
 @pytest.fixture(autouse=True)
+def _no_after_trade_snapshot(monkeypatch):
+    """Trade and approve routes queue refresh_today_snapshot_job, which rewrites
+    today's value-history rows for EVERY holding in the shared test DB and so
+    leaves rows on other tests' platforms. Off by default; a test that checks it
+    restores `backend.scheduler.refresh_today_snapshot_job` itself."""
+    import backend.main as main_mod
+
+    monkeypatch.setattr(main_mod, "refresh_today_snapshot_job", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def _no_ambient_skills(tmp_path_factory, monkeypatch):
     """Phase 40 WR-03: tools_for_turn and the workflow scan MONAI_SKILLS_DIR (default
     /app/skills, the owner's real mount in the container). Point every test at an

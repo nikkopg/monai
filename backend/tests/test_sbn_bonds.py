@@ -333,6 +333,25 @@ def _expected_upcoming(day, maturity):
     return [d.isoformat() for d in pay_dates(day, fx._jakarta_today() - timedelta(days=1), maturity)[:3]]
 
 
+def test_funded_buy_lands_in_todays_snapshot(authed, db, monkeypatch):
+    # The route refreshes today's snapshot, so the trend sees the buy before the next 01:00 run.
+    from datetime import date
+
+    import backend.main as main_mod
+    from backend.models import PortfolioValueHistory
+    from backend.scheduler import refresh_today_snapshot_job
+
+    monkeypatch.setattr(main_mod, "refresh_today_snapshot_job", refresh_today_snapshot_job)
+
+    acc_id, acc = _account(db)
+    plat = _platform(db)
+    assert _buy(authed, acc, plat, f"{T}S", _terms(acc_id)).status_code == 201
+    db.expire_all()
+    rows = db.query(PortfolioValueHistory).filter(PortfolioValueHistory.ticker == f"{T}S",
+                                                  PortfolioValueHistory.snapshot_date == date.today()).all()
+    assert [float(r.market_value) for r in rows] == [12000000]
+
+
 def test_summary_and_platform_detail_value_bond_at_face(authed, db):
     acc_id, acc = _account(db)
     plat = _platform(db)

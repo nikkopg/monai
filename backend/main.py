@@ -68,7 +68,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastmcp.utilities.lifespan import combine_lifespans
@@ -87,6 +87,7 @@ from backend.mcp_server import build_mcp
 from backend.db import get_session, get_session_sync
 from backend.importer import import_csv_text
 from backend.mcp_writes import _load_refs, duplicate_flags
+from backend.scheduler import refresh_today_snapshot_job
 from backend.models import (
     Account, AuditLog, Category, ClosedPosition, Holding, Platform, PortfolioEvent, Proposal, Transaction,
 )
@@ -633,7 +634,7 @@ def list_portfolio_events(platform_id: int, db: Session = Depends(get_session)):
 
 
 @app.put("/portfolio-events/{event_id}", response_model=PortfolioEventOut, dependencies=[Depends(require_api_key)])
-def update_portfolio_event(event_id: int, payload: PortfolioEventUpdate, db: Session = Depends(get_session)):
+def update_portfolio_event(event_id: int, payload: PortfolioEventUpdate, background: BackgroundTasks, db: Session = Depends(get_session)):
     """Partial-update a buy/sell/dividend event; its linked cash leg and the holding follow."""
     ev = db.get(PortfolioEvent, event_id)
     if ev is None:
@@ -649,11 +650,12 @@ def update_portfolio_event(event_id: int, payload: PortfolioEventUpdate, db: Ses
     db.commit()
     from backend.query import reset_engine
     reset_engine()
+    background.add_task(refresh_today_snapshot_job)
     return out
 
 
 @app.delete("/portfolio-events/{event_id}", dependencies=[Depends(require_api_key)])
-def delete_portfolio_event(event_id: int, db: Session = Depends(get_session)):
+def delete_portfolio_event(event_id: int, background: BackgroundTasks, db: Session = Depends(get_session)):
     """Delete a buy/sell/dividend/deposit event (and its linked cash leg); non-deposit deletes recompute the holding."""
     ev = db.get(PortfolioEvent, event_id)
     if ev is None:
@@ -667,11 +669,12 @@ def delete_portfolio_event(event_id: int, db: Session = Depends(get_session)):
     db.commit()
     from backend.query import reset_engine
     reset_engine()
+    background.add_task(refresh_today_snapshot_job)
     return {"status": "deleted", "id": event_id, "deleted_transaction_id": deleted_tx_id}
 
 
 @app.post("/portfolio-events/funded-buy", status_code=201, dependencies=[Depends(require_api_key)])
-def create_funded_buy(payload: FundedBuyCreate, db: Session = Depends(get_session)):
+def create_funded_buy(payload: FundedBuyCreate, background: BackgroundTasks, db: Session = Depends(get_session)):
     """Direct (non-agent) funded 'buy' — cash leg + portfolio event (CHAT-09/XFER-03).
 
     Coerces quantity/price/cash_amount to float before calling apply_add_funded_buy
@@ -703,11 +706,12 @@ def create_funded_buy(payload: FundedBuyCreate, db: Session = Depends(get_sessio
     db.refresh(result["portfolio_event"])
     from backend.query import reset_engine
     reset_engine()
+    background.add_task(refresh_today_snapshot_job)
     return {"transaction_id": result["transaction"].id, "portfolio_event_id": result["portfolio_event"].id}
 
 
 @app.post("/portfolio-events/funded-sell", status_code=201, dependencies=[Depends(require_api_key)])
-def create_funded_sell(payload: FundedSellCreate, db: Session = Depends(get_session)):
+def create_funded_sell(payload: FundedSellCreate, background: BackgroundTasks, db: Session = Depends(get_session)):
     """Direct (non-agent) funded 'sell' — cash leg + portfolio event (CHAT-09/XFER-03)."""
     # LOAD-BEARING: float, not Decimal — see create_funded_buy's comment above.
     after = {
@@ -729,6 +733,7 @@ def create_funded_sell(payload: FundedSellCreate, db: Session = Depends(get_sess
         db.refresh(result["portfolio_event"])
     from backend.query import reset_engine
     reset_engine()
+    background.add_task(refresh_today_snapshot_job)
     return {
         "transaction_id": result["transaction"].id,
         "portfolio_event_id": None if closed is not None else result["portfolio_event"].id,
@@ -2156,6 +2161,7 @@ def _apply_proposal(db: Session, proposal_id: uuid.UUID, token: str | None) -> P
 def confirm_proposal(
     proposal_id: uuid.UUID,
     req: ConfirmRequest,
+    background: BackgroundTasks,
     db: Session = Depends(get_session),
 ):
     """Apply a pending chat proposal by token. Requires API key + valid token.
@@ -2164,7 +2170,9 @@ def confirm_proposal(
     status 409 (expired 410) -> expiry 410 -> token 401 -> execute. A non-chat
     proposal is never token-confirmable; use /approve with the approver key.
     """
-    return _apply_proposal(db, proposal_id, req.token)
+    out = _apply_proposal(db, proposal_id, req.token)
+    background.add_task(refresh_today_snapshot_job)
+    return out
 
 
 @app.post(
@@ -2172,10 +2180,12 @@ def confirm_proposal(
     response_model=ProposalOut,
     dependencies=[Depends(require_approver_key)],
 )
-def approve_proposal(proposal_id: uuid.UUID, db: Session = Depends(get_session)):
+def approve_proposal(proposal_id: uuid.UUID, background: BackgroundTasks, db: Session = Depends(get_session)):
     """Apply a pending proposal of any channel. Approver key only, no token
     (APPR-01, D-16); same lock/check/execute core as /confirm."""
-    return _apply_proposal(db, proposal_id, None)
+    out = _apply_proposal(db, proposal_id, None)
+    background.add_task(refresh_today_snapshot_job)
+    return out
 
 
 @app.post("/proposals/{proposal_id}/reject", response_model=ProposalOut)
