@@ -233,6 +233,7 @@ const ASSET_LABELS: Record<string, string> = {
   mutual_fund: "Mutual funds",
   gold: "Gold",
   cash: "Cash",
+  bond: "Bond (SBN)",
 };
 
 export function assetLabel(t: string | null | undefined): string {

@@ -7,6 +7,8 @@ import { extractDetail, fmtPlain } from "../lib/api";
 import { fmtAmount } from "../lib/money";
 import type { PlatformOption } from "./page";
 import { assetLabel } from "../cashflow/holdings";
+import BondFields from "./BondFields";
+import { EMPTY_TERMS, termsBody, termsValid, type BondTermsInput } from "../lib/bond";
 
 // ---------------------------------------------------------------------------
 // HoldingModal — buy/sell/dividend event entry (D-01, primary INV-01 path).
@@ -38,6 +40,11 @@ import { assetLabel } from "../cashflow/holdings";
 // is always the FILLED amount; the backend stores the net, and an edit shows and
 // sends the filled quantity back so a fee is never applied twice. A cash fee
 // moves the auto-filled cash amount (+ on a buy, - on a sell).
+//
+// Quick 261117-rw1: a new Buy with asset type Bond (SBN) is a face-value SBN
+// purchase. Quantity is the nominal, price is fixed at 1 (hidden), there is no
+// fee, the position is IDR, only IDR liquid accounts fund it, and BondFields asks
+// for the coupon terms (sent as `bond`). Every other path is unchanged.
 // ---------------------------------------------------------------------------
 
 export type EditableEvent = {
@@ -92,7 +99,7 @@ type Account = {
   currency: string | null;
 };
 
-const ASSET_TYPES = ["crypto", "idx_stock", "mutual_fund", "other"] as const;
+const ASSET_TYPES = ["crypto", "idx_stock", "mutual_fund", "bond", "other"] as const;
 
 // datetime-local value from a Date using LOCAL wall-clock components (verbatim
 // from TransactionModal — avoids the toISOString() UTC shift).
@@ -151,6 +158,12 @@ export default function HoldingModal({
   const [error, setError] = useState<string | null>(null);
 
   const isDividend = eventType === "dividend";
+  // SBN buy: nominal x price 1, IDR only, no fee (261117-rw1). New events only.
+  const bondMode = !isEdit && assetType === "bond" && eventType === "buy";
+  const priceVal = bondMode ? "1" : price;
+  const [bondTerms, setBondTerms] = useState<BondTermsInput>(EMPTY_TERMS);
+  // The coupon account follows the funding account until the owner picks one.
+  const [couponTouched, setCouponTouched] = useState(false);
 
   // Funding selector (XFER-03) — modal-owned GET /api/accounts fetch,
   // client-filtered to liquid. Required for Buy/Sell; Dividend has no funded
@@ -165,6 +178,13 @@ export default function HoldingModal({
   // fires on mount) can't overwrite the stored cash amount.
   const [cashAmountTouched, setCashAmountTouched] = useState(isEdit);
   const liquidAccounts = accounts.filter((a) => a.type === "liquid");
+  const fundingOptions = bondMode
+    ? liquidAccounts.filter((a) => (a.currency ?? "IDR") === "IDR")
+    : liquidAccounts;
+  const fundingId = liquidAccounts.find((a) => a.name === fundingAccount)?.id;
+  const terms: BondTermsInput = couponTouched
+    ? bondTerms
+    : { ...bondTerms, couponAccountId: fundingId != null ? String(fundingId) : "" };
   const isFunded = isEdit
     ? linked && !isDividend
     : fundingAccount !== "" && !isDividend;
@@ -185,7 +205,7 @@ export default function HoldingModal({
   const platformCcy = isEdit
     ? undefined
     : platforms.find((p) => String(p.id) === platformId)?.currency;
-  const newCcy = positionCurrency ?? platformCcy ?? fundingCcy;
+  const newCcy = bondMode ? "IDR" : positionCurrency ?? platformCcy ?? fundingCcy;
   const eventCcy = held?.currency ?? newCcy;
   // shortcut: edit mode has no stored cash currency in the events payload, so it
   // labels the cash side by the position currency only when that is IDR.
@@ -193,13 +213,18 @@ export default function HoldingModal({
   const feeKind: "coin" | "cash" =
     feeKindPick ?? (!isEdit && eventType === "buy" && assetType === "crypto" ? "coin" : "cash");
   const feeNum = parseFloat(fee);
-  const hasFee = feeNum > 0;
+  const hasFee = !bondMode && feeNum > 0;
   // The stored movement: a coin fee comes off a buy and goes on top of a sell.
   const qtyNum = parseFloat(quantity);
   const moved =
     hasFee && feeKind === "coin" && !Number.isNaN(qtyNum)
       ? String(Number((eventType === "sell" ? qtyNum + feeNum : qtyNum - feeNum).toFixed(8)))
       : quantity;
+
+  // A USD funding account cannot fund an SBN: clear it so the select re-prompts.
+  useEffect(() => {
+    if (bondMode && fundingAccount && fundingCcy !== "IDR") setFundingAccount("");
+  }, [bondMode, fundingAccount, fundingCcy]);
 
   useEffect(() => {
     let cancelled = false;
@@ -229,9 +254,9 @@ export default function HoldingModal({
     if (cashAmountTouched) return;
     if (cashCcy !== eventCcy) {
       setCashAmount("");
-    } else if (quantity && price) {
+    } else if (quantity && priceVal) {
       const q = parseFloat(quantity);
-      const p = parseFloat(price);
+      const p = parseFloat(priceVal);
       if (!Number.isNaN(q) && !Number.isNaN(p)) {
         // A cash fee is paid on top of a buy and comes off a sell's proceeds.
         const cashFee = hasFee && feeKind === "cash" ? (eventType === "sell" ? -feeNum : feeNum) : 0;
@@ -239,7 +264,7 @@ export default function HoldingModal({
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quantity, price, cashCcy, eventCcy, fee, feeKind, eventType]);
+  }, [quantity, priceVal, cashCcy, eventCcy, fee, feeKind, eventType]);
 
   // When switching to Dividend, default quantity to 1 (still editable) so the
   // form keeps the same field set (quantity=1, price=amount convention).
@@ -303,7 +328,7 @@ export default function HoldingModal({
           platform_id: parseInt(platformId, 10),
           ticker: ticker.trim(),
           quantity: parseFloat(quantity),
-          price: parseFloat(price),
+          price: parseFloat(priceVal),
           cash_amount: parseFloat(cashAmount),
           // cash_currency is omitted: the backend takes it from the account.
           // event_currency only for a new position; a held one keeps its own.
@@ -311,6 +336,7 @@ export default function HoldingModal({
           date: toLocalDateOnly(date),
           asset_type: assetType,
           ...(hasFee ? { fee: feeNum, fee_kind: feeKind } : {}),
+          ...(bondMode ? { bond: termsBody(terms) } : {}),
         };
         const r = await fetch(endpoint, {
           method: "POST",
@@ -374,7 +400,16 @@ export default function HoldingModal({
       onClick={saving ? undefined : onClose}
     >
       <div
-        style={{ ...card, maxWidth: 480, width: "100%", padding: 32, margin: 0 }}
+        style={{
+          ...card,
+          maxWidth: 480,
+          width: "100%",
+          padding: 32,
+          margin: 0,
+          // The bond fields make the card taller than a phone: scroll inside it
+          // so Save stays reachable (261117-rw1).
+          ...(bondMode ? { maxHeight: "calc(100dvh - 32px)", overflowY: "auto" as const } : {}),
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         <h2 style={{ fontSize: 20, fontWeight: 600, margin: "0 0 16px" }}>
@@ -391,12 +426,12 @@ export default function HoldingModal({
             }}
           >
             <div>
-              <label style={label}>Ticker</label>
+              <label style={label}>{bondMode ? "Series" : "Ticker"}</label>
               <input
                 style={input}
                 required
                 value={ticker}
-                placeholder="BBCA"
+                placeholder={bondMode ? "ORI099" : "BBCA"}
                 onChange={(e) => setTicker(e.target.value)}
               />
             </div>
@@ -461,7 +496,7 @@ export default function HoldingModal({
               </select>
             </div>
             <div>
-              <label style={label}>Quantity</label>
+              <label style={label}>{bondMode ? "Nominal (IDR)" : "Quantity"}</label>
               <input
                 style={input}
                 type="number"
@@ -477,44 +512,46 @@ export default function HoldingModal({
                 </p>
               )}
             </div>
-            <div>
-              <label style={label} htmlFor="holding-price">
-                {isDividend
-                  ? "Dividend amount (IDR)"
-                  : isFunded || isEdit
-                  ? `Price per unit (${eventCcy})`
-                  : "Price per unit"}
-              </label>
-              <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
-                <input
-                  id="holding-price"
-                  style={{ ...input, flex: 1, minWidth: 0 }}
-                  type="number"
-                  step="any"
-                  min="0"
-                  required
-                  value={price}
-                  onChange={(e) => setPrice(e.target.value)}
-                />
-                {isFunded &&
-                  !isDividend &&
-                  (held || isEdit ? (
-                    <span aria-label="Position currency" style={chipStyle}>
-                      {eventCcy}
-                    </span>
-                  ) : (
-                    <select
-                      aria-label="Position currency"
-                      style={{ ...input, width: 96, flexShrink: 0 }}
-                      value={newCcy}
-                      onChange={(e) => setPositionCurrency(e.target.value)}
-                    >
-                      <option value="IDR">IDR</option>
-                      <option value="USD">USD</option>
-                    </select>
-                  ))}
+            {!bondMode && (
+              <div>
+                <label style={label} htmlFor="holding-price">
+                  {isDividend
+                    ? "Dividend amount (IDR)"
+                    : isFunded || isEdit
+                    ? `Price per unit (${eventCcy})`
+                    : "Price per unit"}
+                </label>
+                <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
+                  <input
+                    id="holding-price"
+                    style={{ ...input, flex: 1, minWidth: 0 }}
+                    type="number"
+                    step="any"
+                    min="0"
+                    required
+                    value={price}
+                    onChange={(e) => setPrice(e.target.value)}
+                  />
+                  {isFunded &&
+                    !isDividend &&
+                    (held || isEdit ? (
+                      <span aria-label="Position currency" style={chipStyle}>
+                        {eventCcy}
+                      </span>
+                    ) : (
+                      <select
+                        aria-label="Position currency"
+                        style={{ ...input, width: 96, flexShrink: 0 }}
+                        value={newCcy}
+                        onChange={(e) => setPositionCurrency(e.target.value)}
+                      >
+                        <option value="IDR">IDR</option>
+                        <option value="USD">USD</option>
+                      </select>
+                    ))}
+                </div>
               </div>
-            </div>
+            )}
             <div>
               <label style={label}>Date</label>
               <input
@@ -537,7 +574,7 @@ export default function HoldingModal({
                 <option value="" disabled>
                   Choose an account
                 </option>
-                {liquidAccounts.map((a) => (
+                {fundingOptions.map((a) => (
                   <option key={a.id} value={a.name}>
                     {a.name}
                   </option>
@@ -582,7 +619,7 @@ export default function HoldingModal({
                 </div>
               </div>
             )}
-            {isFunded && (
+            {isFunded && !bondMode && (
               <div>
                 <label style={label} htmlFor="holding-fee">
                   {`Fee (${feeKind === "coin" ? ticker.trim() || "coin" : eventCcy})`}
@@ -613,6 +650,17 @@ export default function HoldingModal({
                   </p>
                 )}
               </div>
+            )}
+            {bondMode && (
+              <BondFields
+                value={terms}
+                onChange={(next) => {
+                  if (next.couponAccountId !== terms.couponAccountId) setCouponTouched(true);
+                  setBondTerms(next);
+                }}
+                nominal={parseFloat(quantity) || 0}
+                accounts={fundingOptions}
+              />
             )}
           </div>
 
@@ -655,9 +703,10 @@ export default function HoldingModal({
                 saving ||
                 platforms.length === 0 ||
                 !(parseFloat(quantity) > 0) ||
-                !(parseFloat(price) > 0) ||
+                !(parseFloat(priceVal) > 0) ||
                 (!isEdit && !isDividend && fundingAccount === "") ||
-                (isFunded && !(parseFloat(cashAmount) > 0))
+                (isFunded && !(parseFloat(cashAmount) > 0)) ||
+                (bondMode && !termsValid(terms))
               }
             >
               {saving

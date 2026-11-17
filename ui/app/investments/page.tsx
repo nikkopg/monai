@@ -13,6 +13,7 @@ import { fmtAmount, fmtUsdPrice, rateHover } from "../lib/money";
 import { GOLDS, assetLabel, fmtShort } from "../cashflow/holdings";
 import HoldingModal from "./HoldingModal";
 import HoldingOverrideModal from "./HoldingOverrideModal";
+import type { BondInfo } from "../lib/bond";
 import PriceOverrideDialog from "./PriceOverrideDialog";
 import Pills from "../components/Pills";
 import RollingNumber from "../components/RollingNumber";
@@ -57,6 +58,7 @@ export type HoldingRow = {
   price_source: string | null;
   price_fetched_at: string | null;
   is_stale: boolean;
+  bond?: BondInfo | null; // asset_type 'bond' only (quick 261117-rw1)
 };
 
 type Group = {

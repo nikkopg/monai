@@ -1,10 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { card, input, btn, label } from "../styles";
 import type { PlatformOption, HoldingRow } from "./page";
 import { assetLabel } from "../cashflow/holdings";
+import BondFields from "./BondFields";
+import { termsBody, termsFromInfo, termsValid, type BondTermsInput } from "../lib/bond";
 
 // ---------------------------------------------------------------------------
 // HoldingOverrideModal — D-03 direct override escape hatch. Sets a holding's
@@ -13,6 +15,10 @@ import { assetLabel } from "../cashflow/holdings";
 // "Add holding directly" text-link, not an equal-weight CTA. Dual-mode via
 // `editingHolding == null`: create -> POST /api/holdings, edit -> PUT
 // /api/holdings/{id}. Currency is fixed IDR (D-07), shown read-only.
+//
+// Quick 261117-rw1: asset type Bond (SBN) relabels Quantity to Nominal (IDR),
+// defaults avg cost to 1 and adds BondFields; the terms go out as `bond` (this
+// is also where a floating rate is edited when it resets).
 // ---------------------------------------------------------------------------
 
 type Props = {
@@ -22,7 +28,7 @@ type Props = {
   onSaved: () => void;
 };
 
-const ASSET_TYPES = ["crypto", "idx_stock", "mutual_fund", "other"] as const;
+const ASSET_TYPES = ["crypto", "idx_stock", "mutual_fund", "bond", "other"] as const;
 
 export default function HoldingOverrideModal({
   editingHolding,
@@ -56,6 +62,30 @@ export default function HoldingOverrideModal({
     editingHolding?.coingecko_id ?? ""
   );
 
+  const bondMode = assetType === "bond";
+  const [terms, setTerms] = useState<BondTermsInput>(termsFromInfo(editingHolding?.bond));
+  // IDR liquid accounts, fetched once and only when a bond is being set up.
+  const [coupAccounts, setCoupAccounts] = useState<{ id: number; name: string }[]>([]);
+  useEffect(() => {
+    if (!bondMode || coupAccounts.length > 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/accounts");
+        if (!r.ok) return;
+        const all: { id: number; name: string; type: string | null; currency: string | null }[] =
+          await r.json();
+        if (!cancelled)
+          setCoupAccounts(all.filter((a) => a.type === "liquid" && (a.currency ?? "IDR") === "IDR"));
+      } catch {
+        // the select stays empty and Save stays disabled
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bondMode, coupAccounts.length]);
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -74,6 +104,7 @@ export default function HoldingOverrideModal({
         coingecko_id: coingeckoId.trim() || null,
       };
       if (purchaseDate) body.purchase_date = purchaseDate;
+      if (bondMode) body.bond = termsBody(terms);
 
       const url = isEdit
         ? `/api/holdings/${editingHolding!.id}`
@@ -123,7 +154,16 @@ export default function HoldingOverrideModal({
       onClick={onClose}
     >
       <div
-        style={{ ...card, maxWidth: 480, width: "100%", padding: 32, margin: 0 }}
+        style={{
+          ...card,
+          maxWidth: 480,
+          width: "100%",
+          padding: 32,
+          margin: 0,
+          // The bond fields make the card taller than a phone: scroll inside it
+          // so Save stays reachable (261117-rw1).
+          ...(bondMode ? { maxHeight: "calc(100dvh - 32px)", overflowY: "auto" as const } : {}),
+        }}
         onClick={(e) => e.stopPropagation()}
       >
         <h2 style={{ fontSize: 20, fontWeight: 600, margin: "0 0 8px" }}>
@@ -164,7 +204,10 @@ export default function HoldingOverrideModal({
               <select
                 style={input}
                 value={assetType}
-                onChange={(e) => setAssetType(e.target.value)}
+                onChange={(e) => {
+                  setAssetType(e.target.value);
+                  if (e.target.value === "bond" && !isEdit && avgCost === "") setAvgCost("1");
+                }}
               >
                 {ASSET_TYPES.map((t) => (
                   <option key={t} value={t}>
@@ -194,7 +237,7 @@ export default function HoldingOverrideModal({
               )}
             </div>
             <div>
-              <label style={label}>Quantity</label>
+              <label style={label}>{bondMode ? "Nominal (IDR)" : "Quantity"}</label>
               <input
                 style={input}
                 type="number"
@@ -228,6 +271,14 @@ export default function HoldingOverrideModal({
               <label style={label}>Currency</label>
               <input style={input} value="IDR" readOnly disabled />
             </div>
+            {bondMode && (
+              <BondFields
+                value={terms}
+                onChange={setTerms}
+                nominal={parseFloat(quantity) || 0}
+                accounts={coupAccounts}
+              />
+            )}
             {assetType === "crypto" && (
               <div style={{ gridColumn: "1 / -1" }}>
                 <label style={label}>CoinGecko id (optional)</label>
@@ -271,7 +322,11 @@ export default function HoldingOverrideModal({
             >
               Cancel
             </button>
-            <button style={btn} type="submit" disabled={saving || platforms.length === 0}>
+            <button
+              style={btn}
+              type="submit"
+              disabled={saving || platforms.length === 0 || (bondMode && !termsValid(terms))}
+            >
               {saving ? "Saving…" : isEdit ? "Save holding" : "Add holding directly"}
             </button>
             {error && (
