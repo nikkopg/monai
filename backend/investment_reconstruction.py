@@ -315,9 +315,13 @@ _LEDGER_FLOOR_SQL = (
     "JOIN accounts a ON a.id = t.account_id WHERE a.type = 'liquid'"
 )
 
-_SNAPSHOT_DAY_SQL = (
-    "SELECT MAX(snapshot_date) FROM portfolio_value_history "
-    "WHERE snapshot_date >= :start AND snapshot_date < :end_excl"
+# Newest first: the month uses its latest COMPLETE snapshot day, so one partial
+# day (a price written as 0, or a snapshot taken before a same-day buy was
+# entered) no longer gaps the whole month.
+_SNAPSHOT_DAYS_SQL = (
+    "SELECT DISTINCT snapshot_date FROM portfolio_value_history "
+    "WHERE snapshot_date >= :start AND snapshot_date < :end_excl "
+    "ORDER BY snapshot_date DESC"
 )
 
 # Every one of the live rows is IDR (verified 2026-09-20), and restricting to
@@ -383,7 +387,7 @@ def _honesty(
       4. No snapshot day inside this bucket's OWN month -> not honest,
          `no_snapshot_for_month`. Never falls back to the replay here and
          never reaches into an adjacent month (DD-4, D-03) -- enforced by
-         `_SNAPSHOT_DAY_SQL`'s own month-scoped WHERE clause, not by this
+         `_SNAPSHOT_DAYS_SQL`'s own month-scoped WHERE clause, not by this
          function.
       5. Otherwise, if `held_keys` is not a subset of `covered_keys` -> not
          honest, `snapshot_missing_position` (DD-5).
@@ -520,20 +524,28 @@ def monthly_investment_series(months: int = 72, *, db: Session | None = None) ->
             held_keys: set[str] = set()
 
             if in_snapshot_regime:
-                snapshot_day = conn.execute(
-                    text(_SNAPSHOT_DAY_SQL),
+                days = conn.execute(
+                    text(_SNAPSHOT_DAYS_SQL),
                     {"start": month_start, "end_excl": end_excl},
-                ).scalar()
-                if snapshot_day is not None:
-                    snapshot_positions = _snapshot_positions(conn, snapshot_day)
-                    covered_keys = _covered_keys(snapshot_positions)
-                    held_positions = _replay_positions(events, snapshot_day, synthetic_ids, db)
+                ).scalars().all()
+                # Walk back from the latest day to the first one whose snapshot
+                # covers every held position; none complete leaves the latest
+                # day, so the month still gaps as snapshot_missing_position.
+                # ponytail: one replay per day tried, at most ~31 a month.
+                for day in days:
+                    positions = _snapshot_positions(conn, day)
+                    covered = _covered_keys(positions)
+                    held_positions = _replay_positions(events, day, synthetic_ids, db)
                     # D-01/D-02: a position the replay still shows as held but
                     # with no `holdings` row was closed outside the event
                     # ledger (the CASH@67 case -- drawn to zero, holding row
                     # deleted per audit_log #6342), so a snapshot omitting it
                     # is expected, not a gap.
-                    held_keys = set(held_positions.keys()) & holdings_presence_keys
+                    held = set(held_positions.keys()) & holdings_presence_keys
+                    if snapshot_day is None or held <= covered:
+                        snapshot_day, snapshot_positions, covered_keys, held_keys = day, positions, covered, held
+                    if held <= covered:
+                        break
 
             honest, gap_reason, basis = _honesty(
                 month, month_end, snapshot_floor, snapshot_day, covered_keys, held_keys, raw
