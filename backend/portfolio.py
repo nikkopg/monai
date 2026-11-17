@@ -30,7 +30,9 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend import fx
+from backend.bonds import bond_info
 from backend.models import (
+    Account,
     ClosedPosition,
     Holding,
     Platform,
@@ -253,15 +255,18 @@ def portfolio_summary(db: Session, usd_view: bool = False) -> dict:
     total_unrealized = Decimal("0")
     total_realized = Decimal("0")
 
+    names = {a.id: a.name for a in db.query(Account).all()} if any(h.asset_type == "bond" for h in holdings) else {}
+
     for h in holdings:
-        if h.asset_type == "cash":
+        if h.asset_type in ("cash", "bond"):
             # CG-01: cash values as amount × today's FX rate — no price_cache
-            # read at all (Open Question 2, LOCKED).
+            # read at all (Open Question 2, LOCKED). An SBN is held to maturity
+            # and valued at face (261117-rw1): IDR/IDR is the identity rate 1.
             rate = fx.get_rate(h.currency, "IDR", today, db)
             current_price = rate  # "price" of 1 unit of cash in IDR
             current_value = h.quantity * rate if rate is not None else None
             u_pnl = unrealized_pnl(current_price, h.avg_cost, h.quantity)
-            price_source = "fx"
+            price_source = "face" if h.asset_type == "bond" else "fx"
             price_fetched_at = datetime.now(timezone.utc).isoformat()
             # INV-05: cash is fresh whenever a rate resolved — never the
             # false "stale" badge from _price_is_stale(None, 'cash').
@@ -323,6 +328,7 @@ def portfolio_summary(db: Session, usd_view: bool = False) -> dict:
             # Server-computed freshness (INV-05): the frontend renders this
             # flag, never the TTL. A ticker with no price row is stale.
             "is_stale": is_stale,
+            "bond": bond_info(h, today, names) if h.asset_type == "bond" else None,
         }
         if usd_view and h.currency == "USD":
             usd_price = current_price / usd_rate if None not in (current_price, usd_rate) else None
@@ -411,7 +417,7 @@ def snapshot_all_holdings(db: Session) -> dict:
                 skipped += 1
                 continue
 
-            if h.asset_type == "cash":
+            if h.asset_type in ("cash", "bond"):  # an SBN is held to maturity and valued at face (261117-rw1)
                 # CG-01: cash never has a price_cache row — special-case it
                 # BEFORE the price_row None-skip gate below, or it would be
                 # skipped forever (Plan 04's VZ-02 series would permanently

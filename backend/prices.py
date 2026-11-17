@@ -175,6 +175,8 @@ def refresh_all_prices(db: Session, *, force: bool = False) -> dict:
     # non-null coingecko_id when platforms disagree (Tier 1 override, D-12).
     by_ticker: dict[str, Holding] = {}
     for h in db.query(Holding).all():
+        if h.asset_type == "bond":
+            continue  # an SBN is valued at face, it has no market price (261117-rw1)
         existing = by_ticker.get(h.ticker)
         if existing is None or (existing.coingecko_id is None and h.coingecko_id is not None):
             by_ticker[h.ticker] = h
