@@ -382,6 +382,36 @@ test.describe("net worth trend card", () => {
     expect(requestedMonths[0]).toBe("12");
   });
 
+  test("change line runs first to last plotted total and follows the range", async ({ page }) => {
+    const honest = (month: string, total: number) =>
+      nwRow(month, {
+        liquid: { total: total / 2, honest: true },
+        investment: { total: total / 2, honest: true, as_of_date: `${month}-28` },
+        total,
+        honest: true,
+      });
+    await mockPage(page, (months) =>
+      months === "12"
+        ? {
+            status: 200,
+            rows: [
+              nwRow("2025-12", { liquid: { gap_reason: "fx_unavailable" }, gap: "both_halves_gapped" }),
+              honest("2026-01", 100000000),
+              honest("2026-02", 92500000),
+            ],
+          }
+        : defaultHistory(months)
+    );
+    await page.goto("/cashflow");
+
+    const change = page.getByTestId("hero-change");
+    // The gapped month is skipped: the change starts at the first plotted one.
+    await expect(change).toHaveText("▼7.5%-7,500,000 · since Jan 2026");
+    // 3Y has a single honest month, so there is nothing to compare.
+    await page.getByRole("button", { name: "3Y", exact: true }).click();
+    await expect(change).toHaveCount(0);
+  });
+
   test("zero honest months still renders the card with no caption text", async ({
     page,
   }) => {

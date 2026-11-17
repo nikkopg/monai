@@ -353,7 +353,7 @@ export default function CashflowPage() {
           >
             <NetWorthTrendChart
               hero
-              header={
+              header={(change) => (
             <div>
               <div
                 style={{
@@ -381,6 +381,7 @@ export default function CashflowPage() {
                   <RollingNumber value={netWorthData?.total ?? 0} format={(n) => fmtAmount(n, "IDR")} />
                 </div>
               )}
+              {!netWorthError && change}
               {netWorthData && !netWorthError && (
                 <div
                   style={{
@@ -395,7 +396,7 @@ export default function CashflowPage() {
                 </div>
               )}
             </div>
-              }
+              )}
             />
           </div>
 

@@ -864,7 +864,7 @@ test.describe("phone width, 375px (261115-msv)", () => {
     await expect(page.locator(".bone")).toHaveCount(0);
     const main = page.locator("main");
     expect(await smallText(main, 13)).toEqual([]);
-    expect(await px(main.locator("h1"))).toBe(32);
+    expect(await px(main.locator("h1"))).toBe(24);
     const hero = main.locator(".roll").first();
     expect(await px(hero)).toBe(38);
     expect(await px(cashflowCard(page).getByText("Cashflow", { exact: true }))).toBe(16);

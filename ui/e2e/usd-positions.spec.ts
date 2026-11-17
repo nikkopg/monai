@@ -473,6 +473,12 @@ test.describe("USD positions on the Investments page", () => {
     await expect(hero.locator(".recharts-line-curve")).toHaveCount(1);
     await expect(hero.locator(".recharts-line-curve")).toHaveAttribute("stroke", "#9fdcb6");
     await expect(hero.getByText(/^Unrealized/)).toBeVisible();
+    // Change line: first to last point of the range; P&L shows the amount only.
+    const change = hero.getByTestId("hero-change");
+    await expect(change).toHaveText("▲51.2%+512,000 · since 1 Jan");
+    await hero.getByRole("button", { name: "P&L", exact: true }).click();
+    await expect(change).toHaveText("+797,000 · since 1 Jan");
+    await hero.getByRole("button", { name: "Value", exact: true }).click();
     await expect(hero.getByText(/^Realized/)).toBeVisible();
     await expect(page.getByRole("heading", { name: "Portfolio history" })).toHaveCount(0);
 

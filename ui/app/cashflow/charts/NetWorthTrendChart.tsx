@@ -14,11 +14,13 @@ import {
 import { tokens, card } from "../../styles";
 import Pills from "../../components/Pills";
 import Skeleton, { DrawLine } from "../../components/Skeleton";
+import HeroChange from "../../components/HeroChange";
 import {
   visibleRows,
   toPlotPoints,
   tooltipLines,
   seamMonth,
+  monthLabel,
   RANGE_MONTHS,
   type Range,
   type Mode,
@@ -112,12 +114,14 @@ function NetWorthTooltip({
 // `hero` draws the chart inside the dark net worth card on Cashflow: `header`
 // (the label and total) sits left of the pills, the chart is shorter and the
 // lines use the on-ink colours. The default is the standalone light card.
+// `header` gets the range's change line (first to last plotted total) to place
+// under the total; it is null until two months plot.
 export default function NetWorthTrendChart({
   hero = false,
   header,
 }: {
   hero?: boolean;
-  header?: React.ReactNode;
+  header?: (change: React.ReactNode) => React.ReactNode;
 }) {
   const [range, setRange] = useState<Range>("1Y");
   const [mode, setMode] = useState<Mode>("total");
@@ -149,6 +153,15 @@ export default function NetWorthTrendChart({
   const showSeam = seam !== null && shown.some((r) => r.month === seam);
   const hasTotalAtCost = points.some((p) => p.totalAtCost !== null);
   const hasInvestmentAtCost = points.some((p) => p.investmentAtCost !== null);
+  const plotted = points.filter((p) => p.total !== null);
+  const change =
+    plotted.length >= 2 ? (
+      <HeroChange
+        from={plotted[0].total!}
+        to={plotted[plotted.length - 1].total!}
+        since={monthLabel(plotted[0].month)}
+      />
+    ) : null;
   const newestMonth = rows && rows.length > 0 ? rows[rows.length - 1].month : undefined;
   const totalStroke = hero ? tokens.color.chipGreenText : tokens.color.ink;
   const liquidStroke = hero ? tokens.color.chipGreenText : tokens.color.green;
@@ -175,7 +188,7 @@ export default function NetWorthTrendChart({
           marginBottom: 6,
         }}
       >
-        {hero ? header : <div style={{ fontSize: "var(--fs-h3, 14px)", fontWeight: 600 }}>Net worth trend</div>}
+        {hero ? header?.(change) : <div style={{ fontSize: "var(--fs-h3, 14px)", fontWeight: 600 }}>Net worth trend</div>}
         <div style={{ display: "flex", flexWrap: "wrap", gap: hero ? 8 : 10 }}>
           <Pills options={RANGE_OPTIONS} value={range} onChange={setRange} dark={hero} />
           <Pills options={MODE_OPTIONS} value={mode} onChange={setMode} dark={hero} />

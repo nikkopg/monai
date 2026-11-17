@@ -515,7 +515,7 @@ export default function InvestmentsPage() {
                   data={history}
                   range={historyRange}
                   onRangeChange={setHistoryRange}
-                  header={
+                  header={(change) => (
                     <div>
                       <div
                         style={{
@@ -537,6 +537,7 @@ export default function InvestmentsPage() {
                       >
                         <RollingNumber value={summary.total_value} format={fmtPlain} />
                       </div>
+                      {change}
                       <div
                         style={{
                           display: "flex",
@@ -562,7 +563,7 @@ export default function InvestmentsPage() {
                         </span>
                       </div>
                     </div>
-                  }
+                  )}
                 />
                 <div
                   style={{

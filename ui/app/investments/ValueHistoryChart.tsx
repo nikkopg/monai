@@ -11,6 +11,7 @@ import {
 
 import { tokens } from "../styles";
 import Pills from "../components/Pills";
+import HeroChange from "../components/HeroChange";
 
 // ---------------------------------------------------------------------------
 // Portfolio value / P&L history (VZ-02, INVX-01), drawn inside the dark
@@ -20,6 +21,8 @@ import Pills from "../components/Pills";
 // YAxis, borderless X-axis, monotone line at strokeWidth 2.4. The hero card
 // chrome comes from page.tsx; this root is a plain flex column.
 // The data is fetched by page.tsx (GET /api/investments/history, open read).
+// `header` gets the range's change line (first to last point of the shown
+// metric; P&L shows the amount only) to place under the total.
 // Explicit-height wrapper is load-bearing (Recharts blank-render pitfall,
 // 04-RESEARCH.md).
 // ---------------------------------------------------------------------------
@@ -55,11 +58,21 @@ export default function ValueHistoryChart({
   data: HistoryPoint[];
   range: Range;
   onRangeChange: (r: Range) => void;
-  header?: React.ReactNode;
+  header?: (change: React.ReactNode) => React.ReactNode;
 }) {
   const [view, setView] = useState<View>("value");
 
   const latestPnl = data.length > 0 ? data[data.length - 1].total_pnl : 0;
+  const key = view === "value" ? "total_market_value" : "total_pnl";
+  const change =
+    data.length >= 2 ? (
+      <HeroChange
+        from={Number(data[0][key])}
+        to={Number(data[data.length - 1][key])}
+        since={new Date(data[0].date).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })}
+        showPct={view === "value"}
+      />
+    ) : null;
   const pnlStroke = latestPnl >= 0 ? tokens.color.chipGreenText : "#e6a99c";
 
   return (
@@ -75,7 +88,7 @@ export default function ValueHistoryChart({
           marginBottom: 6,
         }}
       >
-        {header}
+        {header?.(change)}
         <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
           <Pills
             options={RANGE_OPTIONS}
