@@ -690,6 +690,8 @@ def create_funded_buy(payload: FundedBuyCreate, db: Session = Depends(get_sessio
         "event_currency": payload.event_currency, "date": payload.date,
         "notes": payload.notes, "asset_type": payload.asset_type,
         "fee": float(payload.fee) if payload.fee else None, "fee_kind": payload.fee_kind,
+        # mode="json" turns Decimal and date into strings, which AuditLog can serialize
+        "bond": payload.bond.model_dump(mode="json") if payload.bond else None,
     }
     try:
         result = apply_add_funded_buy(db, after)
@@ -831,6 +833,12 @@ def update_holding(holding_id: int, payload: HoldingUpdate, db: Session = Depend
         "id": holding.id, "ticker": holding.ticker,
         "quantity": str(holding.quantity), "avg_cost": str(holding.avg_cost),
         "asset_type": holding.asset_type, "platform_id": holding.platform_id,
+        "bond": None if holding.coupon_rate is None else {
+            "rate": str(holding.coupon_rate), "floating": holding.coupon_floating,
+            "pay_day": holding.coupon_day,
+            "maturity_date": holding.maturity_date.isoformat() if holding.maturity_date else None,
+            "tax_pct": str(holding.coupon_tax_pct), "coupon_account_id": holding.coupon_account_id,
+        },
     }
     try:
         apply_edit_holding(db, holding_id, payload.model_dump(mode="json", exclude_none=True), before)

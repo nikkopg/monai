@@ -299,6 +299,17 @@ class TransferCreate(BaseModel):
     notes: str | None = None
 
 
+class BondTerms(BaseModel):
+    """SBN coupon terms (quick 261117-rw1). Decimals stay plain Decimal so model_dump(mode="json") yields strings."""
+
+    rate: Decimal = Field(..., gt=0, lt=100, decimal_places=2, description="Coupon rate, percent per year")
+    floating: bool = False
+    pay_day: int = Field(..., ge=1, le=28)
+    maturity_date: date
+    tax_pct: Decimal = Field(Decimal(10), ge=0, lt=100, decimal_places=2)
+    coupon_account_id: int
+
+
 class FundedBuyCreate(BaseModel):
     """Body for POST /portfolio-events/funded-buy (XFER-03)."""
 
@@ -320,6 +331,7 @@ class FundedBuyCreate(BaseModel):
     fee_kind: Literal["coin", "cash"] | None = Field(
         None, description="Required with a fee above 0; a cash fee is already inside cash_amount on a buy"
     )
+    bond: BondTerms | None = None
 
 
 class FundedSellCreate(BaseModel):
@@ -367,6 +379,7 @@ class HoldingCreate(BaseModel):
     asset_type: str | None = None
     platform_id: int = Field(..., description="Required — position identity is (ticker, platform_id)")
     coingecko_id: str | None = None
+    bond: BondTerms | None = None
 
 
 class HoldingUpdate(BaseModel):
@@ -379,6 +392,7 @@ class HoldingUpdate(BaseModel):
     asset_type: str | None = None
     platform_id: int | None = None
     coingecko_id: str | None = None
+    bond: BondTerms | None = None
 
 
 class HoldingOut(BaseModel):

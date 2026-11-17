@@ -436,6 +436,41 @@ def _fee_fields(event_type: str, after: dict) -> dict:
     return {"quantity": _fmt_qty(stored), "fee": _fmt_qty(fee), "fee_kind": kind}
 
 
+def _set_bond_terms(db: Session, holding: Holding, terms: dict) -> None:
+    """Validate SBN coupon terms and set the six Holding columns (quick 261117-rw1).
+
+    The single authority every bond write goes through; ValueError -> 422. It writes no
+    AuditLog of its own: each caller already audits a dict that contains the terms.
+    """
+    if holding.asset_type != "bond":
+        raise ValueError("Coupon terms need asset type bond; nothing was saved")
+    if holding.currency != "IDR":
+        raise ValueError("SBN bonds are IDR only; nothing was saved")
+    acct = db.get(Account, terms.get("coupon_account_id"))  # explicit FK check, never an IntegrityError
+    if acct is None or acct.type != "liquid" or acct.currency != "IDR":
+        raise ValueError("The coupon account must be a liquid IDR account; nothing was saved")
+    try:
+        rate = Decimal(str(terms["rate"]))
+        tax_pct = Decimal(str(terms.get("tax_pct", 10)))
+        pay_day = int(terms["pay_day"])
+        maturity = date.fromisoformat(str(terms["maturity_date"]))
+    except (KeyError, ValueError, InvalidOperation):
+        raise ValueError("Bond terms need a rate, pay day and maturity date; nothing was saved")
+    two = Decimal("0.01")
+    if not (rate.is_finite() and 0 < rate < 100 and rate == rate.quantize(two)):
+        raise ValueError("Coupon rate must be above 0 and below 100 with at most 2 decimals; nothing was saved")
+    if not (tax_pct.is_finite() and 0 <= tax_pct < 100 and tax_pct == tax_pct.quantize(two)):
+        raise ValueError("Tax must be 0 or more and below 100 with at most 2 decimals; nothing was saved")
+    if not 1 <= pay_day <= 28:
+        raise ValueError("Coupon pay day must be between 1 and 28; nothing was saved")
+    holding.coupon_rate = rate
+    holding.coupon_floating = bool(terms.get("floating", False))
+    holding.coupon_day = pay_day
+    holding.maturity_date = maturity
+    holding.coupon_tax_pct = tax_pct
+    holding.coupon_account_id = acct.id
+
+
 def apply_add_funded_buy(db: Session, after: dict) -> dict:
     """Insert a funded 'buy' — cash leg + portfolio event, one commit boundary (XFER-03).
 
@@ -480,6 +515,7 @@ def apply_add_funded_buy(db: Session, after: dict) -> dict:
         "currency": ev_ccy,
         "date": after.get("date"),
         "asset_type": after.get("asset_type"),
+        "bond": after.get("bond"),
         **fee_fields,
     })
     ev.source_account_id = tx.account_id
@@ -1024,6 +1060,14 @@ def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
         ).one_or_none()
         if holding is not None:
             holding.asset_type = after["asset_type"]
+    if after.get("bond") is not None:
+        db.flush()
+        holding = db.query(Holding).filter(
+            Holding.ticker == after["ticker"], Holding.platform_id == after["platform_id"]
+        ).one_or_none()
+        if holding is None:  # the recompute upserts the holding, so a missing row is a bug, not input
+            raise ValueError("Coupon terms need a holding; nothing was saved")
+        _set_bond_terms(db, holding, after["bond"])
     return ev
 
 
@@ -1200,6 +1244,8 @@ def apply_add_holding(db: Session, after: dict) -> Holding:
     )
     db.add(holding)
     db.flush()  # LOAD-BEARING: populates holding.id before the AuditLog row below
+    if after.get("bond") is not None:
+        _set_bond_terms(db, holding, after["bond"])
     db.add(AuditLog(entity="holding", entity_id=holding.id, operation="add",
                     before=None, after=after))
     return holding
@@ -1233,6 +1279,8 @@ def apply_edit_holding(db: Session, holding_id: int, after: dict, before: dict |
         holding.platform_id = after["platform_id"]
     if after.get("coingecko_id") is not None:
         holding.coingecko_id = after["coingecko_id"]
+    if after.get("bond") is not None:
+        _set_bond_terms(db, holding, after["bond"])
     db.add(AuditLog(entity="holding", entity_id=holding_id, operation="edit",
                     before=before, after=after))
     return holding
