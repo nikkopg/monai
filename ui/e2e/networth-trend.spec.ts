@@ -400,7 +400,9 @@ test.describe("net worth trend card", () => {
               honest("2026-02", 92500000),
             ],
           }
-        : defaultHistory(months)
+        : months === "600"
+          ? { status: 200, rows: [honest("2021-03", 10000), honest("2026-02", 92500000)] }
+          : defaultHistory(months)
     );
     await page.goto("/cashflow");
 
@@ -410,6 +412,9 @@ test.describe("net worth trend card", () => {
     // 3Y has a single honest month, so there is nothing to compare.
     await page.getByRole("button", { name: "3Y", exact: true }).click();
     await expect(change).toHaveCount(0);
+    // A tiny first balance would give a % in the millions: amount only.
+    await page.getByRole("button", { name: "All", exact: true }).click();
+    await expect(change).toHaveText("+92,490,000 · since Mar 2021"); // pii-ok synthetic
   });
 
   test("zero honest months still renders the card with no caption text", async ({

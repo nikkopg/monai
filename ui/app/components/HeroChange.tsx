@@ -3,8 +3,9 @@ import { tokens } from "../styles";
 // Change line under a dark hero total (Cashflow net worth, Investments value):
 // "▲ 6.8%  +9,712,000 · since Dec 2025". `from`/`to` are the first and last
 // points of the chart under it, so the line always matches the selected range.
-// No % when the start is zero or negative (or `showPct` is off, as for P&L),
-// since a percentage of that means nothing; the signed amount still shows.
+// No % when the start is zero or negative, when it would pass 1000% (a tiny
+// first balance, e.g. net worth on All), or when `showPct` is off (P&L): a
+// percentage of that means nothing, so only the signed amount shows.
 // The arrow is decorative: the amount's sign carries the direction.
 export default function HeroChange({
   from,
@@ -21,7 +22,8 @@ export default function HeroChange({
   const up = delta >= 0;
   const color = up ? tokens.color.chipGreenText : "#e6a99c";
   const amount = new Intl.NumberFormat("en-US", { signDisplay: "always" }).format(Math.round(delta));
-  const pct = showPct && from > 0 ? `${Math.abs((delta / from) * 100).toFixed(1)}%` : null;
+  const ratio = from > 0 ? Math.abs(delta / from) : Infinity;
+  const pct = showPct && ratio <= 10 ? `${(ratio * 100).toFixed(1)}%` : null;
 
   return (
     <div
