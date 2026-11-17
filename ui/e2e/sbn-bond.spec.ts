@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import { HOUR, NOW, ids, iso, mockInbox, proposal } from "./inbox-fixtures";
 
 import {
   couponPreview,
@@ -656,5 +657,137 @@ test.describe("bond rows at 375 (261115-oax conventions)", () => {
       }).length;
     });
     expect(m).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// T8: Inbox coupon and maturity cards. Route-mocked through mockInbox.
+// ---------------------------------------------------------------------------
+
+const couponAfter = {
+  ticker: "ZZBOND", platform_id: 1, date: "2026-12-15", account_id: 11, account: "Bank Synth",
+  amount: "54000", gross: "60000", tax: "6000", rate: "6.00", floating: false, tax_pct: "10",
+  nominal: "12000000", // pii-ok synthetic
+};
+const couponProposal = () =>
+  proposal({
+    id: ids.a,
+    operation: "add_coupon",
+    channel: "schedule",
+    code: undefined,
+    expires_at: iso(NOW + 3650 * 24 * HOUR),
+    payload: { operation: "add_coupon", rows: [{ before: null, after: { ...couponAfter } }] },
+  });
+const maturityProposal = (channel: string) =>
+  proposal({
+    id: ids.b,
+    operation: "add_funded_sell",
+    channel,
+    code: undefined,
+    ...(channel === "schedule" ? { expires_at: iso(NOW + 3650 * 24 * HOUR) } : {}),
+    payload: {
+      operation: "add_funded_sell",
+      rows: [{ before: null, after: {
+        source_account_name: "Bank Synth", cash_currency: "IDR", cash_amount: 12000000, // pii-ok synthetic
+        ticker: "ZZBOND", quantity: 12000000, price: 1, platform_id: 1, event_currency: "IDR", // pii-ok synthetic
+        date: "2029-11-15", notes: "Maturity at face value", asset_type: "bond",
+      } }],
+    },
+  });
+
+async function openInbox(page: Page) {
+  await page.clock.setFixedTime(NOW);
+  await page.goto("/inbox");
+}
+
+test.describe("bond inbox (261117-rw1)", () => {
+  test("coupon card shows the amount, sentence, status and buttons", async ({ page }) => {
+    await mockInbox(page, { list: [couponProposal()] });
+    await openInbox(page);
+    await expect(page.getByRole("heading", { name: "Coupon due 15 Dec 2026 · ZZBOND" })).toBeVisible();
+    await expect(page.getByText("Scheduled", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("inbox-coupon-amount")).toHaveText("+54,000 to Bank Synth");
+    await expect(
+      page.getByText("6.00% fixed on 12,000,000, after 10% tax. Records income on Bank Synth and a coupon on ZZBOND."), // pii-ok synthetic
+    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Approve: Record coupon" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Reject and discard" })).toBeVisible();
+    await expect(page.getByText("Waiting for you", { exact: true })).toHaveCount(2); // header and footer
+    await expect(page.getByText(/expires in/)).toHaveCount(0);
+    await expect(page.getByText(/^Expected/)).toHaveCount(0);
+  });
+
+  test("Edit amount PATCHes the amount and the card shows it with the expected figure", async ({ page }) => {
+    const mock = await mockInbox(page, { list: [couponProposal()] });
+    await openInbox(page);
+    await page.getByRole("button", { name: "Edit amount" }).click();
+    await page.getByLabel("Coupon amount").fill("50000");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByTestId("inbox-coupon-amount")).toHaveText("+50,000 to Bank Synth");
+    await expect(page.getByText("Expected 54,000")).toBeVisible();
+    const sent = mock.sent("PATCH", "/rows/0");
+    expect(sent).toHaveLength(1);
+    expect(sent[0].body).toEqual({ amount: 50000 });
+  });
+
+  test("a 422 on Save shows the error and keeps the amount", async ({ page }) => {
+    await mockInbox(page, { list: [couponProposal()], respond: { skip: { status: 422, detail: "amount must be greater than 0" } } });
+    await openInbox(page);
+    await page.getByRole("button", { name: "Edit amount" }).click();
+    await page.getByLabel("Coupon amount").fill("50000");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(page.getByText("Couldn't apply: amount must be greater than 0")).toBeVisible();
+    await expect(page.getByTestId("inbox-coupon-amount")).toHaveText("+54,000 to Bank Synth");
+  });
+
+  test("Record coupon POSTs approve and the card settles", async ({ page }) => {
+    const mock = await mockInbox(page, { list: [couponProposal()] });
+    await openInbox(page);
+    await page.getByRole("button", { name: "Approve: Record coupon" }).click();
+    await expect(page.getByText("Applied.")).toBeVisible();
+    expect(mock.sent("POST", "/approve")).toHaveLength(1);
+  });
+
+  test("scheduled maturity sell explains itself; a chat sell does not", async ({ page }) => {
+    await mockInbox(page, { list: [maturityProposal("schedule")] });
+    await openInbox(page);
+    await expect(
+      page.getByText(
+        "Matured 15 Nov 2029: sells ZZBOND at face value into Bank Synth. Record any coupon for it first; a closed bond takes no more coupons."
+      )
+    ).toBeVisible();
+    await expect(page.getByText(/expires in/)).toHaveCount(0);
+  });
+
+  test("a chat funded sell renders without the maturity sentence", async ({ page }) => {
+    await mockInbox(page, { list: [maturityProposal("chat")] });
+    await openInbox(page);
+    await expect(page.getByRole("heading", { name: "Record funded sell" })).toBeVisible();
+    await expect(page.getByText(/Matured /)).toHaveCount(0);
+  });
+
+  test.describe("at 375", () => {
+    test.use({ viewport: { width: 375, height: 812 }, contextOptions: { reducedMotion: "reduce" } });
+
+    test("coupon and maturity cards fit with wrapping buttons", async ({ page }) => {
+      await mockInbox(page, { list: [couponProposal(), maturityProposal("schedule")] });
+      await openInbox(page);
+      await expect(page.getByTestId("inbox-coupon-amount")).toBeVisible();
+      await page.getByRole("button", { name: "Edit amount" }).click();
+      const size = await page.getByLabel("Coupon amount").evaluate((el) => getComputedStyle(el).fontSize);
+      expect(size).toBe("16px");
+      const [sw, cw] = await page.evaluate(() => [document.documentElement.scrollWidth, document.documentElement.clientWidth]);
+      expect(sw).toBeLessThanOrEqual(cw);
+      const outside = await page.locator("article").evaluateAll((cards) =>
+        cards.flatMap((card) => {
+          const box = card.getBoundingClientRect();
+          return Array.from(card.querySelectorAll("button, input, p, h2")).filter((el) => {
+            const r = el.getBoundingClientRect();
+            return r.width > 0 && (r.left < box.left - 0.5 || r.right > box.right + 0.5);
+          }).map((el) => el.tagName);
+        })
+      );
+      expect(outside).toEqual([]);
+    });
   });
 });

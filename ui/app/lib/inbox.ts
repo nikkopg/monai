@@ -113,6 +113,7 @@ const FIXED_LABEL: Record<string, string> = {
   add_funded_buy: "Record funded buy",
   add_funded_sell: "Record funded sell",
   add_balance_adjustment: "Adjust balance",
+  add_coupon: "Record coupon",
 };
 
 // Counted verbs: "<Verb> N transaction(s)".
@@ -152,6 +153,10 @@ const accountOf = (r: ProposalRow): string | null => {
  */
 export function cardTitle(operation: string, rows: ProposalRow[]): string {
   const base = effectPhrase(operation, rows) ?? operation.replace(/_/g, " ");
+  if (operation === "add_coupon") {
+    const a = rows[0]?.after;
+    return `Coupon due ${fmtRowDate(a?.date)} · ${a?.ticker ?? ""}`;
+  }
   if (operation !== "add_transaction") return base;
   const accounts: string[] = [];
   for (const r of rows) {
@@ -202,6 +207,8 @@ export function expirySentence(expiresMs: number, nowMs: number): string | null 
 }
 
 export function pendingStatus(expiresMs: number, nowMs: number): string {
+  // Schedule proposals live ~10 years by design (261117-rw1), so a countdown would be noise.
+  if (expiresMs - nowMs > 365 * 86_400_000) return "Waiting for you";
   const s = expirySentence(expiresMs, nowMs);
   return s === null ? "Expired · ask again to redo this" : `Waiting for you · ${s}`;
 }
@@ -428,7 +435,7 @@ export function visibleRowIndices(rows: ProposalRow[], expanded: boolean): numbe
 // ---------------------------------------------------------------------------
 
 export const sourceLabel = (channel: string): string =>
-  channel === "mcp" ? "Claude" : channel === "chat" ? "monai chat" : channel === "upload" ? "Upload" : channel;
+  channel === "mcp" ? "Claude" : channel === "chat" ? "monai chat" : channel === "upload" ? "Upload" : channel === "schedule" ? "Scheduled" : channel;
 
 export const KIND_LABEL: Record<string, string> = {
   csv: "CSV",

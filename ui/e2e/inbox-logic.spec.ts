@@ -12,6 +12,7 @@ import {
   relativeAge,
   expirySentence,
   pendingStatus,
+  sourceLabel,
   fmtRowDate,
   fmtSigned,
   fmtUnsigned,
@@ -612,5 +613,19 @@ test.describe("proxy stream paths (D-18a)", () => {
       expect(h.has("MONAI_APPROVER_KEY"), `${m} ${p}`).toBe(false);
       expect(h.get("MONAI_API_KEY")).toBe("api-synthetic");
     }
+  });
+});
+
+test.describe("scheduled coupon (261117-rw1)", () => {
+  const coupon = [{ before: null, after: { date: "2026-12-15", ticker: "ORI099" } }];
+  test("label, title, source", () => {
+    expect(approveLabel("add_coupon", coupon)).toBe("Record coupon");
+    expect(cardTitle("add_coupon", coupon)).toBe("Coupon due 15 Dec 2026 · ORI099");
+    expect(sourceLabel("schedule")).toBe("Scheduled");
+    expect(sourceLabel("mcp")).toBe("Claude");
+  });
+  test("a ~10 year expiry reads as waiting, not a countdown", () => {
+    expect(pendingStatus(BASE + 3650 * 86_400_000, BASE)).toBe("Waiting for you");
+    expect(pendingStatus(BASE + 365 * 86_400_000, BASE)).toBe("Waiting for you · expires in 8760 h");
   });
 });

@@ -11,7 +11,8 @@
 import { useEffect, useRef, useState } from "react";
 import ProposalDiff from "../components/ProposalDiff";
 import TransferLine from "../components/TransferLine";
-import { extractDetail } from "../lib/api";
+import { extractDetail, fmtPlain } from "../lib/api";
+import { rateChip } from "../lib/bond";
 import { INBOX_SURFACE_HEADER } from "../lib/approverAllowlist";
 import {
   ALL_SKIPPED_MSG,
@@ -150,6 +151,77 @@ function DuplicateFlags({
   );
 }
 
+/** Scheduled coupon: the net amount, one sentence on how it was worked out, and Edit amount. */
+function CouponBody({
+  after,
+  editable,
+  editing,
+  draft,
+  blocked,
+  saving,
+  onEdit,
+  onDraft,
+  onSave,
+  onCancel,
+}: {
+  after: Record<string, unknown>;
+  editable: boolean;
+  editing: boolean;
+  draft: string;
+  blocked: boolean;
+  saving: boolean;
+  onEdit: () => void;
+  onDraft: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const amount = Number(after.amount);
+  const expected = Number(after.gross) - Number(after.tax);
+  const rate = Number(after.rate);
+  const sentence =
+    `${Number.isFinite(rate) ? rateChip(rate, after.floating === true) : "Coupon"} on ${fmtPlain(Number(after.nominal))}, ` +
+    `after ${text(after.tax_pct)}% tax. Records income on ${text(after.account)} and a coupon on ${text(after.ticker)}.`;
+  return (
+    <div>
+      <div
+        data-testid="inbox-coupon-amount"
+        style={{ fontFamily: tokens.font.serif, fontSize: 28, color: c.ink, fontVariantNumeric: "tabular-nums", overflowWrap: "anywhere" }}
+      >
+        +{fmtPlain(amount)} to {text(after.account)}
+      </div>
+      <p style={{ ...sentenceStyle, margin: "4px 0 0" }}>{sentence}</p>
+      {Number.isFinite(expected) && expected !== amount && (
+        <p style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3, margin: "4px 0 0" }}>Expected {fmtPlain(expected)}</p>
+      )}
+      {editable &&
+        (editing ? (
+          <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <input
+              type="number"
+              inputMode="decimal"
+              min={0}
+              step="any"
+              aria-label="Coupon amount"
+              style={{ ...input, width: 160, ...gated(blocked) }}
+              value={draft}
+              onChange={(e) => onDraft(e.target.value)}
+            />
+            <button type="button" style={{ ...smallBtn, ...gated(blocked) }} aria-disabled={blocked} onClick={onSave}>
+              {saving ? "…" : "Save"}
+            </button>
+            <button type="button" style={smallBtn} onClick={onCancel}>
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button type="button" style={{ ...smallBtn, marginTop: 12 }} onClick={onEdit}>
+            Edit amount
+          </button>
+        ))}
+    </div>
+  );
+}
+
 export default function InboxCard({
   card,
   nowMs,
@@ -178,6 +250,8 @@ export default function InboxCard({
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const [copyFallback, setCopyFallback] = useState(false);
+  const [editAmount, setEditAmount] = useState(false);
+  const [amountDraft, setAmountDraft] = useState("");
 
   const blocked = offline || busy !== null;
 
@@ -322,6 +396,22 @@ export default function InboxCard({
         })
       );
       announce(`Row ${i + 1} category set to ${value ?? "Uncategorized"}.`);
+    });
+  }
+
+  async function saveAmount() {
+    const n = Number(amountDraft);
+    if (blocked || amountDraft.trim() === "" || !Number.isFinite(n) || n <= 0) return;
+    await act(0, async () => {
+      const r = await fetch(`/api/proposals/${id}/rows/0`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...INBOX_SURFACE_HEADER },
+        body: JSON.stringify({ amount: n }),
+      });
+      if (!r.ok) return fail(r);
+      onRows(id, rows.map((row, k) => (k === 0 ? { ...row, after: { ...row.after, amount: String(n) } } : row)));
+      setEditAmount(false);
+      announce(`Coupon amount set to ${fmtPlain(n)}.`);
     });
   }
 
@@ -661,11 +751,36 @@ export default function InboxCard({
           <div style={{ fontSize: "var(--fs-body, 14px)", color: c.ink }}>
             Set account #{text(rows[0]?.account_id)} balance to {fmtAbsolute(rows[0]?.target_balance)}
           </div>
-        ) : (
-          <ProposalDiff
-            rows={rows.map(({ duplicates: _d, skip: _s, ...diffRow }) => diffRow)}
-            dimColor={tokens.color.muted3}
+        ) : op === "add_coupon" ? (
+          <CouponBody
+            after={rows[0]?.after ?? {}}
+            editable={live}
+            editing={editAmount}
+            draft={amountDraft}
+            blocked={blocked}
+            saving={busy === 0}
+            onEdit={() => {
+              setAmountDraft(text(rows[0]?.after?.amount));
+              setEditAmount(true);
+            }}
+            onDraft={setAmountDraft}
+            onSave={() => void saveAmount()}
+            onCancel={() => setEditAmount(false)}
           />
+        ) : (
+          <>
+            {p.channel === "schedule" && op === "add_funded_sell" && (
+              <p style={{ ...sentenceStyle, margin: "0 0 12px" }}>
+                Matured {fmtRowDate(rows[0]?.after?.date)}: sells {text(rows[0]?.after?.ticker)} at face value into{" "}
+                {text(rows[0]?.after?.source_account_name)}. Record any coupon for it first; a closed bond takes no
+                more coupons.
+              </p>
+            )}
+            <ProposalDiff
+              rows={rows.map(({ duplicates: _d, skip: _s, ...diffRow }) => diffRow)}
+              dimColor={tokens.color.muted3}
+            />
+          </>
         )}
       </div>
 
