@@ -301,7 +301,8 @@ def test_023_keeps_every_value():
         mp.setattr("logging.config.fileConfig", lambda *a, **k: None)
         try:
             cfg, command = _cfg(s.url)
-            command.upgrade(cfg, "head")
+            # 023 only: later migrations may seed rows (024 adds a category).
+            command.upgrade(cfg, "d7e2c5a81f04")
         finally:
             mp.undo()
         after = _dump(s.engine)
