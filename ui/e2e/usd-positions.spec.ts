@@ -465,7 +465,7 @@ test.describe("USD positions on the Investments page", () => {
     await expect(hero).toHaveCSS("background-color", "rgb(35, 32, 27)");
     await expect(hero.getByText("Total value", { exact: true })).toBeVisible();
     await expect(hero.getByRole("button", { name: "Refresh prices" })).toBeVisible();
-    for (const name of ["1M", "3M", "6M", "All", "Value", "P&L"]) {
+    for (const name of ["1M", "3M", "All", "Value", "P&L"]) {
       await expect(hero.getByRole("button", { name, exact: true })).toBeVisible();
     }
     await expect(hero.getByRole("button", { name: "3M", exact: true })).toHaveAttribute("aria-pressed", "true");

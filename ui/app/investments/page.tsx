@@ -189,7 +189,7 @@ export default function InvestmentsPage() {
   const [error, setError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
-  const [historyRange, setHistoryRange] = useState<"1M" | "3M" | "6M" | "All">(
+  const [historyRange, setHistoryRange] = useState<"1M" | "3M" | "All">(
     "3M"
   );
   // One grouping for the Allocation card and the Holdings table.
@@ -232,7 +232,7 @@ export default function InvestmentsPage() {
     load();
   }, [load]);
 
-  const loadHistory = useCallback(async (range: "1M" | "3M" | "6M" | "All") => {
+  const loadHistory = useCallback(async (range: "1M" | "3M" | "All") => {
     try {
       const res = await fetch(`/api/investments/history?range=${range}`);
       if (!res.ok) throw new Error("fetch failed");

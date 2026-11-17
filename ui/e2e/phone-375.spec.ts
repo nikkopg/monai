@@ -802,7 +802,7 @@ test.describe("D2 dock clearance (261115-s37)", () => {
 // `main` and the desktop spot values for each page. The phone type scale is
 // phone-only, so these must stay green through every task.
 const S0: Record<string, { hist: Record<string, number>; spot: DesktopSpot } | undefined> = {
-  investments: { hist: {"12px": 31, "13px": 9, "14px": 15, "16px": 3, "17px": 1, "40px": 1, "52px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "0px"}, "pillH": 32} }, // pii-ok synthetic
+  investments: { hist: {"12px": 30, "13px": 9, "14px": 15, "16px": 3, "17px": 1, "40px": 1, "52px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "0px"}, "pillH": 32} }, // pii-ok synthetic
   platform: { hist: {"12px": 16, "13px": 3, "14px": 16, "28px": 3, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": null, "pillH": null} }, // pii-ok synthetic
   records: { hist: {"12px": 8, "13px": 5, "14px": 12, "16px": 3, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic
   inbox: { hist: {"12px": 19, "14px": 17, "20px": 2, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "0px"}, "pillH": null} }, // pii-ok synthetic

@@ -30,11 +30,11 @@ export type HistoryPoint = {
   total_pnl: number;
 };
 
-type Range = "1M" | "3M" | "6M" | "All";
+type Range = "1M" | "3M" | "All";
 type View = "value" | "pnl";
 
 const RANGE_OPTIONS: { value: Range; label: string }[] = (
-  ["1M", "3M", "6M", "All"] as const
+  ["1M", "3M", "All"] as const
 ).map((r) => ({ value: r, label: r }));
 const VIEW_OPTIONS: { value: View; label: string }[] = [
   { value: "value", label: "Value" },
