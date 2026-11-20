@@ -171,7 +171,7 @@ function LedgerRowShell({
       }}
     >
       <span style={{ width: 28, flexShrink: 0 }}>
-        <input type="checkbox" checked={checked} onChange={onToggle} />
+        <input type="checkbox" aria-label={`Select ${name}`} checked={checked} onChange={onToggle} />
       </span>
       <span
         style={{
@@ -759,13 +759,18 @@ function RecordsInner() {
                 marginBottom: tokens.space.md,
               }}
             >
+              {/* Visually hidden labels: the filters show placeholders and option text only. */}
+              <label htmlFor="rec-q" className="sr-only">Search records</label>
               <input
+                id="rec-q"
                 style={{ ...input, flex: 2, minWidth: 180 }}
                 placeholder="Search merchant or notes…"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
               />
+              <label htmlFor="rec-account" className="sr-only">Filter by account</label>
               <select
+                id="rec-account"
                 style={{ ...input, flex: 1 }}
                 value={accountId}
                 onChange={(e) => setAccountId(e.target.value)}
@@ -777,7 +782,9 @@ function RecordsInner() {
                   </option>
                 ))}
               </select>
+              <label htmlFor="rec-category" className="sr-only">Filter by category</label>
               <select
+                id="rec-category"
                 style={{ ...input, flex: 1 }}
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
@@ -792,7 +799,9 @@ function RecordsInner() {
                   </option>
                 ))}
               </select>
+              <label htmlFor="rec-type" className="sr-only">Filter by type</label>
               <select
+                id="rec-type"
                 style={{ ...input, flex: 1 }}
                 value={type}
                 onChange={(e) => setType(e.target.value)}
@@ -802,14 +811,18 @@ function RecordsInner() {
                 <option value="income">Income</option>
                 <option value="transfer">Transfer</option>
               </select>
+              <label htmlFor="rec-min" className="sr-only">Minimum amount</label>
               <input
+                id="rec-min"
                 style={{ ...input, width: 110 }}
                 type="number"
                 placeholder="Min amount"
                 value={amountMin}
                 onChange={(e) => setAmountMin(e.target.value)}
               />
+              <label htmlFor="rec-max" className="sr-only">Maximum amount</label>
               <input
+                id="rec-max"
                 style={{ ...input, width: 110 }}
                 type="number"
                 placeholder="Max amount"

@@ -1272,3 +1272,23 @@ test.describe("antislop 001 T2 (261120-r0k)", () => {
     expect(hits).toEqual([true, true, true, true]);
   });
 });
+
+test.describe("antislop 001 T3 (261120-r0k)", () => {
+  test("T3: Records filters, row checkboxes and Settings fields have programmatic labels", async ({ page }) => {
+    await mockRecords(page);
+    await page.goto("/records");
+    for (const name of ["Search records", "Filter by account", "Filter by category", "Filter by type", "Minimum amount", "Maximum amount"])
+      await expect(page.getByLabel(name, { exact: true })).toHaveCount(1);
+    const boxes = page.locator(".rec-row input[type=checkbox]");
+    expect(await boxes.count()).toBeGreaterThan(0);
+    for (const label of await boxes.evaluateAll((els) => els.map((e) => e.getAttribute("aria-label") ?? "")))
+      expect(label).toMatch(/^Select \S/);
+
+    await mockSettings(page);
+    await page.goto("/settings");
+    await expect(page.locator(".cat-row").first()).toBeVisible();
+    for (const name of ["Model", "Anthropic API key", "OpenAI API key", "Base currency", "Price data source", "Import CSV"])
+      await expect(page.getByLabel(name, { exact: true })).toHaveCount(1);
+    await expect(page.getByRole("group", { name: "Provider" })).toBeVisible();
+  });
+});

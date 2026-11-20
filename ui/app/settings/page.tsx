@@ -269,8 +269,10 @@ export default function SettingsPage() {
         <div style={cardTitle}>LLM Provider &amp; Model</div>
         <div style={cardSub}>Which engine answers your questions.</div>
         <form onSubmit={saveProvider}>
-          <label style={fieldLabel}>Provider</label>
+          <div id="set-provider" style={fieldLabel}>Provider</div>
           <div
+            role="group"
+            aria-labelledby="set-provider"
             className="seg-fill pill-track"
             style={{
               display: "inline-flex",
@@ -310,8 +312,9 @@ export default function SettingsPage() {
               );
             })}
           </div>
-          <label style={fieldLabel}>Model</label>
+          <label htmlFor="set-model" style={fieldLabel}>Model</label>
           <input
+            id="set-model"
             style={input}
             type="text"
             value={model}
@@ -344,16 +347,18 @@ export default function SettingsPage() {
           Stored encrypted. Leave blank to keep the current key.
         </div>
         <form onSubmit={saveKeys}>
-          <label style={fieldLabel}>Anthropic API key</label>
+          <label htmlFor="set-anthropic-key" style={fieldLabel}>Anthropic API key</label>
           <input
+            id="set-anthropic-key"
             style={{ ...input, marginBottom: 14 }}
             type="password"
             value={anthropicKey}
             placeholder={anthropicMasked ? anthropicMasked : "sk-ant-..."}
             onChange={(e) => setAnthropicKey(e.target.value)}
           />
-          <label style={fieldLabel}>OpenAI API key</label>
+          <label htmlFor="set-openai-key" style={fieldLabel}>OpenAI API key</label>
           <input
+            id="set-openai-key"
             style={input}
             type="password"
             value={openaiKey}
@@ -419,8 +424,9 @@ export default function SettingsPage() {
             }}
           >
             <div>
-              <label style={fieldLabel}>Base currency</label>
+              <label htmlFor="set-base-currency" style={fieldLabel}>Base currency</label>
               <input
+                id="set-base-currency"
                 style={input}
                 type="text"
                 value={baseCurrency}
@@ -428,8 +434,9 @@ export default function SettingsPage() {
               />
             </div>
             <div>
-              <label style={fieldLabel}>Price data source</label>
+              <label htmlFor="set-price-source" style={fieldLabel}>Price data source</label>
               <select
+                id="set-price-source"
                 style={input}
                 value={priceDataSource}
                 onChange={(e) => setPriceDataSource(e.target.value)}
