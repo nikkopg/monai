@@ -832,6 +832,7 @@ function RecordsInner() {
                 onChange={(e) => setAmountMax(e.target.value)}
               />
               <label
+                className="tap44"
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -1037,7 +1038,7 @@ function RecordsInner() {
               })}
               {hasMore && (
                 <div style={{ textAlign: "center", marginTop: 14 }}>
-                  <button type="button" style={btn} onClick={() => load(false)}>
+                  <button type="button" className="tap44" style={btn} onClick={() => load(false)}>
                     Load 100 more
                   </button>
                 </div>

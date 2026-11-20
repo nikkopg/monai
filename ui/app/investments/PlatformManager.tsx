@@ -294,7 +294,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
               <option value="IDR">IDR</option>
               <option value="USD">USD</option>
             </select>
-            <button style={btn} type="submit">
+            <button className="tap44" style={btn} type="submit">
               Add platform
             </button>
             <button
@@ -312,7 +312,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
             </button>
           </form>
         ) : (
-          <button type="button" style={btn} onClick={() => setAdding(true)}>
+          <button type="button" className="tap44" style={btn} onClick={() => setAdding(true)}>
             Add platform
           </button>
         )}

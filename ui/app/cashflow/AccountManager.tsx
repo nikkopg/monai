@@ -285,7 +285,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
               <option value="IDR">IDR</option>
               <option value="USD">USD</option>
             </select>
-            <button style={btn} type="submit">
+            <button className="tap44" style={btn} type="submit">
               Add account
             </button>
             <button
@@ -303,7 +303,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
             </button>
           </form>
         ) : (
-          <button type="button" style={btn} onClick={() => setAdding(true)}>
+          <button type="button" className="tap44" style={btn} onClick={() => setAdding(true)}>
             Add account
           </button>
         )}

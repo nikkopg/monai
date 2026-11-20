@@ -1336,6 +1336,27 @@ test.describe("antislop 001 T4 (261120-r0k)", () => {
     await page.goto("/investments");
     expect(await hits44(page.getByRole("button", { name: "+ Log event" }))).toBe(true);
   });
+
+  test("T4 follow-up: add, upload, load-more and open controls take 44px taps", async ({ page }) => {
+    await mockRecords(page);
+    // A full page of 100 rows is what shows "Load 100 more"; routes added later win.
+    const full = Array.from({ length: 100 }, (_, i) => tx({ id: 1000 + i, amount: -1000 - i, category: "ZZ Groceries", account_id: 1 })); // pii-ok synthetic
+    await page.route("**/api/transactions?*", (route) => route.fulfill(json(full)));
+    await page.goto("/records");
+    await expect(page.getByPlaceholder("Search merchant or notes…")).toBeVisible();
+    expect(await hits44(page.locator("label.tap44", { hasText: "Show transfers" }))).toBe(true);
+    expect(await hits44(page.getByRole("button", { name: "Load 100 more" }))).toBe(true);
+
+    await mockSettings(page);
+    await page.goto("/settings");
+    await expect(page.locator(".cat-row").first()).toBeVisible();
+    for (const name of ["Add category", "Add account", "Upload CSV", "Add platform"])
+      expect(await hits44(page.getByRole("button", { name }))).toBe(true);
+
+    await mockInvestments(page);
+    await page.goto("/investments");
+    expect(await hits44(page.getByRole("link", { name: /^Open / }).first())).toBe(true);
+  });
 });
 
 // ===========================================================================

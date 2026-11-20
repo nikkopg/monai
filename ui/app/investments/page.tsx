@@ -864,7 +864,7 @@ export default function InvestmentsPage() {
                             <Link
                               href={`/investments/${tg.platformId}`}
                               aria-label={`Open ${tg.name}`}
-                              className="coarse-tap"
+                              className="coarse-tap tap44"
                               style={{
                                 minHeight: 32,
                                 display: "inline-flex",

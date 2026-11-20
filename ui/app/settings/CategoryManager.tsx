@@ -571,7 +571,7 @@ export default function CategoryManager({ onChanged }: Props) {
         renderAddRow(0)
       ) : (
         <div style={{ marginTop: 12 }}>
-          <button type="button" style={btn} onClick={() => startAdd(null)}>
+          <button type="button" className="tap44" style={btn} onClick={() => startAdd(null)}>
             Add category
           </button>
         </div>

@@ -78,6 +78,7 @@ export default function CsvUpload({ onImported }: Props) {
         />
         <button
           type="button"
+          className="tap44"
           style={btn}
           disabled={!file || uploading}
           onClick={handleUpload}
