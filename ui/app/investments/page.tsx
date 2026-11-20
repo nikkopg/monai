@@ -784,6 +784,7 @@ export default function InvestmentsPage() {
                     />
                   )}
                   <button
+                    className="tap44"
                     style={btnDark}
                     type="button"
                     onClick={() => setShowEvent(true)}

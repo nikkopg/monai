@@ -299,10 +299,11 @@ test.describe("P2 records (261115-oax)", () => {
     expect(await crossings(card)).toEqual([]);
 
     // Rows: the one `div` that directly holds the checkbox cell.
-    const rows = card.locator("div:has(> span > input[type=checkbox])");
+    const rows = card.locator("div.rec-row");
     await expect(rows).toHaveCount(3);
     for (const row of await rows.all()) {
-      const meta = row.locator("> span").nth(2).locator("> span").last();
+      // Children: label (checkbox, 261120-r0k T4), avatar span, text span, amount div.
+      const meta = row.locator("> span").nth(1).locator("> span").last();
       const amount = row.locator("> div").first();
       expect((await meta.boundingBox())!.width).toBeGreaterThanOrEqual(150);
       expect(await digitTextOneLine(amount)).toEqual([]);
@@ -1290,5 +1291,49 @@ test.describe("antislop 001 T3 (261120-r0k)", () => {
     for (const name of ["Model", "Anthropic API key", "OpenAI API key", "Base currency", "Price data source", "Import CSV"])
       await expect(page.getByLabel(name, { exact: true })).toHaveCount(1);
     await expect(page.getByRole("group", { name: "Provider" })).toBeVisible();
+  });
+});
+
+test.describe("antislop 001 T4 (261120-r0k)", () => {
+  test.use({ isMobile: true, hasTouch: true });
+
+  // Points 21px left, right, above and below the centre all land on the control.
+  const hits44 = (loc: Locator) =>
+    loc.evaluate((el) => {
+      el.scrollIntoView({ block: "center" });
+      const b = el.getBoundingClientRect();
+      const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+      return [[-21, 0], [21, 0], [0, -21], [0, 21]].every(([dx, dy]) => el.contains(document.elementFromPoint(cx + dx, cy + dy)));
+    });
+
+  test("T4: listed controls take taps across a 44px square on phones", async ({ page }) => {
+    await mockRecords(page);
+    await page.goto("/records");
+    await expect(page.getByPlaceholder("Search merchant or notes…")).toBeVisible();
+    expect(await hits44(page.getByRole("button", { name: "+ Add record" }))).toBe(true);
+    expect(await hits44(page.locator(".rec-row label.tap44").first())).toBe(true);
+    expect(await hits44(page.getByRole("button", { name: /^Record options: / }).first())).toBe(true);
+
+    await mockSettings(page);
+    await page.goto("/settings");
+    await expect(page.locator(".cat-row").first()).toBeVisible();
+    for (const name of ["Save Provider", "Save Keys"]) expect(await hits44(page.getByRole("button", { name }))).toBe(true);
+    expect(await hits44(page.getByRole("button", { name: /^Category options: / }).first())).toBe(true);
+
+    await mockPlatform(page);
+    await page.goto("/investments/7");
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    expect(await hits44(page.getByRole("link", { name: "← Investments" }))).toBe(true);
+    const tabs = page.getByRole("button", { name: /^(PnL|Buy & Sell)$/ });
+    await expect(tabs).toHaveCount(2);
+    for (const cls of await tabs.evaluateAll((els) => els.map((e) => e.className))) expect(cls).toContain("pill-btn");
+    await page.getByRole("button", { name: "Buy & Sell" }).click();
+    await expect(page.getByRole("button", { name: "Buy & Sell" })).toHaveAttribute("aria-pressed", "true");
+    // "+ Log event" lives on the Buy & Sell tab.
+    expect(await hits44(page.getByRole("button", { name: "+ Log event" }))).toBe(true);
+
+    await mockInvestments(page);
+    await page.goto("/investments");
+    expect(await hits44(page.getByRole("button", { name: "+ Log event" }))).toBe(true);
   });
 });

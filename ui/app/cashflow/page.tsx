@@ -493,7 +493,7 @@ export default function CashflowPage() {
                 <button
                   type="button"
                   aria-label={`Previous ${kind}`}
-                  className="coarse-tap"
+                  className="coarse-tap tap44"
                   onClick={() => setOffset(offset - 1)}
                   style={stepBtn}
                 >
@@ -508,7 +508,7 @@ export default function CashflowPage() {
                 <button
                   type="button"
                   aria-label={`Next ${kind}`}
-                  className="coarse-tap"
+                  className="coarse-tap tap44"
                   disabled={offset === 0}
                   onClick={() => setOffset(offset + 1)}
                   style={stepBtn}

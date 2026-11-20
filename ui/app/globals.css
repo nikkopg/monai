@@ -593,6 +593,25 @@ input, select, button, textarea {
   .pill-btn::before { content: ""; position: absolute; inset: -4px 0; }
 }
 
+/* .tap44: an invisible hit area of at least 44 x 44, centred on a control
+   that is visually smaller (arrows, row menus, small buttons, back links).
+   Touch only; desktop size and layout are untouched. */
+@media (pointer: coarse) {
+  .tap44 { position: relative; }
+  .tap44::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+    /* Above a positioned neighbour it overlaps by a few px (the platform back
+       link's header). No .tap44 control sits within 22px of another control. */
+    z-index: 1;
+  }
+}
+
 /* Settings category expand arrow: a bare 14px button; on touch an invisible
    ::before widens the tap area to 44 x 45. */
 .cat-expand {
@@ -711,6 +730,9 @@ input, select, button, textarea {
 }
 @media (prefers-reduced-motion: reduce) {
   .roll-digit::before { transition: none; }
+  /* Pills carry an inline `transition: all .2s`, which also animates their size
+     when the layout changes width; reduced motion means no animation at all. */
+  .pill-btn { transition: none !important; }
 }
 
 /* Loading skeletons (261115-hfb). Bones take their colour and motion from an

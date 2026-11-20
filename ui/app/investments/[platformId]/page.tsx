@@ -245,6 +245,7 @@ export default function PlatformDetailPage() {
   const backLink = (
     <Link
       href="/investments"
+      className="tap44"
       style={{
         fontSize: "var(--fs-xs, 12px)",
         color: tokens.color.muted3,
@@ -390,8 +391,10 @@ export default function PlatformDetailPage() {
           </div>
 
           {/* Segmented control (Component 10) — copied verbatim from
-              TransactionModal.tsx's segmented control markup. */}
+              TransactionModal.tsx's segmented control markup. Phone size comes
+              from the shared .pill-track/.pill-btn, like Settings' provider toggle. */}
           <div
+            className="pill-track"
             style={{
               display: "inline-flex",
               background: tokens.color.sidebar,
@@ -407,6 +410,8 @@ export default function PlatformDetailPage() {
                 <button
                   key={t.key}
                   type="button"
+                  className="pill-btn"
+                  aria-pressed={active}
                   onClick={() => setTab(t.key)}
                   style={{
                     border: "none",
@@ -432,6 +437,7 @@ export default function PlatformDetailPage() {
             <div style={{ marginBottom: 14 }}>
               <button
                 type="button"
+                className="tap44"
                 style={btnDark}
                 onClick={() => setShowLogEvent(true)}
               >

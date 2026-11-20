@@ -170,9 +170,10 @@ function LedgerRowShell({
         borderTop: `1px solid ${tokens.color.borderInner}`,
       }}
     >
-      <span style={{ width: 28, flexShrink: 0 }}>
+      {/* The label carries the 44px tap area (a checkbox cannot take ::before). */}
+      <label className="tap44" style={{ width: 28, flexShrink: 0 }}>
         <input type="checkbox" aria-label={`Select ${name}`} checked={checked} onChange={onToggle} />
-      </span>
+      </label>
       <span
         style={{
           width: 38,
@@ -730,6 +731,7 @@ function RecordsInner() {
         </div>
         <button
           type="button"
+          className="tap44"
           style={btnDark}
           onClick={() => {
             setEditingTx(null);

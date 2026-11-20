@@ -789,6 +789,23 @@ test.describe("phone width, 375px (261115-msv)", () => {
     await expect(page.getByRole("region", { name: "Holdings", exact: true })).toBeVisible();
   });
 
+  test.describe("touch (261120-r0k T4)", () => {
+    test.use({ isMobile: true, hasTouch: true });
+
+    test("T4: period arrows take taps across a 44px square", async ({ page }) => {
+      for (const name of [/^Previous /, /^Next /]) {
+        const btn = page.getByRole("button", { name }).first();
+        const hits = await btn.evaluate((el) => {
+          el.scrollIntoView({ block: "center" });
+          const b = el.getBoundingClientRect();
+          const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+          return [[-21, 0], [21, 0], [0, -21], [0, 21]].map(([dx, dy]) => el.contains(document.elementFromPoint(cx + dx, cy + dy)));
+        });
+        expect(hits).toEqual([true, true, true, true]);
+      }
+    });
+  });
+
   test("F1: cards are at least 236px wide, the Period pills sit inside the Cashflow card, the USD note is at most 2 lines", async ({
     page,
   }) => {

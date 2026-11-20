@@ -87,7 +87,7 @@ export default function RowMenu({ label, items, id, className }: Props) {
         ref={btnRef}
         type="button"
         id={btnId}
-        className="coarse-tap"
+        className="coarse-tap tap44"
         style={{ ...textBtn, fontSize: 16, lineHeight: 1, padding: "8px 10px" }}
         aria-label={label}
         aria-haspopup="menu"

@@ -329,6 +329,7 @@ export default function SettingsPage() {
             }}
           >
             <button
+              className="tap44"
               style={saveBtn(providerState)}
               type="submit"
               disabled={providerState.status === "saving"}
@@ -374,6 +375,7 @@ export default function SettingsPage() {
             }}
           >
             <button
+              className="tap44"
               style={saveBtn(keysState)}
               type="submit"
               disabled={keysState.status === "saving"}
@@ -449,6 +451,7 @@ export default function SettingsPage() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <button
+              className="tap44"
               style={saveBtn(preferencesState)}
               type="submit"
               disabled={preferencesState.status === "saving"}
