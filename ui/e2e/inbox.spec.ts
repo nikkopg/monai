@@ -1277,7 +1277,7 @@ test.describe("keyboard", () => {
       if (next === skip1) {
         expect(await css(next, "outline-width")).toBe("2px");
         expect(await css(next, "outline-style")).toBe("solid");
-        expect(await css(next, "outline-color")).toBe(RGB.green);
+        expect(await css(next, "outline-color")).toBe("rgb(61, 140, 99)"); // #3d8c63 focus ring (261120-r0k T1)
         expect(await css(next, "outline-offset")).toBe("2px");
       }
     }

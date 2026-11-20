@@ -45,6 +45,12 @@ for (const [fg, bg] of PAIRS) {
   });
 }
 
-test("control: muted on panel fails, so the detector works", () => {
-  expect(ratio(tokens.color.muted, tokens.color.panel)).toBeLessThan(4.5);
+test("control: a known-failing grey on panel fails, so the detector works", () => {
+  // #a49c8c was muted2 before 261120-r0k T1 (2.50:1 on the panel); the tokens now pass.
+  expect(ratio("#a49c8c", tokens.color.panel)).toBeLessThan(4.5);
+});
+
+test("muted and muted2 pass 4.5:1 on white and the panel (261120-r0k T1)", () => {
+  for (const fg of [tokens.color.muted, tokens.color.muted2])
+    for (const bg of ["#ffffff", tokens.color.panel]) expect(ratio(fg, bg)).toBeGreaterThanOrEqual(4.5);
 });
