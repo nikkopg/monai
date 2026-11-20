@@ -215,17 +215,6 @@ export default function OverviewPage() {
         }}
       >
         <div>
-          <div
-            style={{
-              fontSize: "var(--fs-xs, 12px)",
-              letterSpacing: ".12em",
-              textTransform: "uppercase",
-              color: tokens.color.muted2,
-              marginBottom: 4,
-            }}
-          >
-            Overview
-          </div>
           <h1
             style={{
               fontFamily: tokens.font.serif,
