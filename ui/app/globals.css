@@ -409,6 +409,17 @@ input, select, button, textarea {
   font-family: inherit;
 }
 
+/* Base cursor: every control shows it is clickable once, here, instead of
+   relying on inline cursor styles (native selects had none). Disabled controls
+   say so. */
+button:not(:disabled), a[href], select:not(:disabled), summary, label[for],
+[role="button"], [role="tab"], [role="switch"] {
+  cursor: pointer;
+}
+button:disabled, select:disabled, input:disabled, textarea:disabled, [aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
 /* One green that is >= 3:1 on both white (4.09) and the ink hero cards (3.96);
    the brand green #2f6f4f was 2.71:1 on ink. */
 :focus-visible {

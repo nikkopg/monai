@@ -1366,3 +1366,33 @@ test("T5: no em dash in user-visible UI strings", async () => {
   walk(root);
   expect(found).toEqual([]);
 });
+
+test.describe("antislop 001 T6 (261120-r0k)", () => {
+  test("T6: each page has its own title", async ({ page }) => {
+    for (const [path, title] of [
+      ["/cashflow", "Cashflow · monai"], ["/records", "Records · monai"], ["/investments", "Investments · monai"],
+      ["/inbox", "Inbox · monai"], ["/chat", "Chat · monai"], ["/settings", "Settings · monai"],
+    ]) {
+      await page.goto(path);
+      await expect(page).toHaveTitle(title);
+    }
+  });
+
+  test("T6: native selects show a pointer, disabled buttons show not-allowed", async ({ page }) => {
+    await mockRecords(page);
+    await page.goto("/records");
+    const sel = page.getByLabel("Filter by account", { exact: true });
+    await expect(sel).toBeVisible();
+    expect(await sel.evaluate((el) => getComputedStyle(el).cursor)).toBe("pointer");
+    const cursor = await page.evaluate(() => {
+      const b = document.createElement("button");
+      b.disabled = true;
+      b.textContent = "x";
+      document.querySelector("main")!.appendChild(b);
+      const c = getComputedStyle(b).cursor;
+      b.remove();
+      return c;
+    });
+    expect(cursor).toBe("not-allowed");
+  });
+});
