@@ -92,7 +92,7 @@ async function noHorizontalScroll(page: Page) {
 test.describe("Phase 44 — USD accounts", () => {
   test("Cashflow Holdings shows the IDR value with native USD beneath, and native USD in the USD view", async ({ page }) => {
     await mockAll(page);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const card = page.getByRole("region", { name: "Holdings", exact: true });
     await card.getByRole("button", { name: /^Liquid/ }).click();
     const row = card.getByText(LONG_NAME, { exact: true }).locator("xpath=../..");
@@ -135,8 +135,8 @@ test.describe("Phase 44 — USD accounts", () => {
     await expect(skel).toHaveCount(0, { timeout: 10_000 });
     await expect(page.getByText("-10.00 USD")).toBeVisible();
 
-    await page.goto("/cashflow");
-    await expect(page.getByRole("heading", { name: "Cashflow" })).toBeVisible();
+    await page.goto("/overview");
+    await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
     await expect(page.getByText(/ USD|≈|unconverted|stale/)).toHaveCount(0);
     await page.getByRole("button", { name: /^Liquid/ }).click({ timeout: 10_000 });
     await expect(page.getByText("-1,234,567.89 USD").first()).toBeVisible();
@@ -145,7 +145,7 @@ test.describe("Phase 44 — USD accounts", () => {
   test("375px: a large USD amount and its IDR value fit without horizontal scroll", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
     await mockAll(page);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     await page.getByRole("button", { name: /^Liquid/ }).click();
     await expect(page.getByText("-1,234,567.89 USD").first()).toBeVisible();
     await noHorizontalScroll(page);

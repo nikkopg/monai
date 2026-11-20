@@ -4,7 +4,7 @@ import { Fragment, Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { tokens, input, btnDark, btnGhost } from "../styles";
-import ConfirmDialog from "../cashflow/ConfirmDialog";
+import ConfirmDialog from "../overview/ConfirmDialog";
 import type { DiffRow } from "../components/ProposalDiff";
 import { hhmm } from "../lib/inbox";
 import { errorCopy } from "./errors";
@@ -1293,7 +1293,7 @@ function ChatInner() {
     else void sendQuestion(text, { replaceFrom: editing.id, mode: "edit" });
   }
 
-  // /cashflow re-fetches its own list on mount. Mark the proposal applied here so
+  // /overview re-fetches its own list on mount. Mark the proposal applied here so
   // Regenerate / Edit lock for this point at once (D-19). Card and plan bar share it;
   // a card's own reject lands here too, so Approve all hides (D-17).
   function markStatus(msgId: string, pid: string, status: LiveStatus) {

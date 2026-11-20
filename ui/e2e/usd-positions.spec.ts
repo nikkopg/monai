@@ -240,7 +240,7 @@ test.describe("USD positions on the Investments page", () => {
     await page.goto("/investments");
     await expect(row(page, "ZZUSD")).toBeVisible();
 
-    // GOLDS[0..4] from ui/app/cashflow/holdings.ts in largest-first order, as on the
+    // GOLDS[0..4] from ui/app/overview/holdings.ts in largest-first order, as on the
     // Cashflow Holdings card. Crypto is the biggest group but comes fifth in the payload.
     // Scoped to Allocation: the Holdings group rows say "Crypto" too.
     const alloc = page.getByRole("region", { name: "Allocation" });

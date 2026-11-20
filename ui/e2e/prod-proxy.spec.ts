@@ -91,7 +91,7 @@ test.describe("production proxy", () => {
     });
     await watchCsp(page);
     await page.route("**/api/**", (r) => r.fulfill({ json: [] }));
-    for (const path of ["/", "/cashflow", "/chat", "/records", "/investments", "/settings", "/inbox"]) {
+    for (const path of ["/", "/overview", "/chat", "/records", "/investments", "/settings", "/inbox"]) {
       await page.goto(path);
       await page.waitForLoadState("networkidle");
       expect(await cspViolations(page), path).toEqual([]);

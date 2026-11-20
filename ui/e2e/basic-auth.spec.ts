@@ -113,11 +113,11 @@ test.describe("session token", () => {
 
 test.describe("safeNext", () => {
   test("keeps same-origin paths, rejects everything else", () => {
-    for (const ok of ["/cashflow", "/records?x=1#h"]) expect(safeNext(ok)).toBe(ok);
+    for (const ok of ["/overview", "/records?x=1#h"]) expect(safeNext(ok)).toBe(ok);
     const bad = [null, undefined, 5, "", "cashflow", "//evil.example", "/\\evil.example", "\\\\evil.example", "/\\/evil.example",
-      "https://evil.example", "http:/evil.example", "javascript:alert(1)", " /cashflow", "/\tx", "/a\nb", "/\u0000x", "/café",
+      "https://evil.example", "http:/evil.example", "javascript:alert(1)", " /overview", "/\tx", "/a\nb", "/\u0000x", "/café",
       "/login", "/login?next=/x", "/auth/login", "/" + "a".repeat(2100)];
-    for (const b of bad) expect(safeNext(b), JSON.stringify(b)).toBe("/cashflow");
+    for (const b of bad) expect(safeNext(b), JSON.stringify(b)).toBe("/overview");
   });
 });
 
@@ -181,7 +181,7 @@ test.describe("middleware", () => {
   test("authenticated /login redirects to a sanitised next", async () => {
     const headers = await ck(future());
     expect(new URL((await run("/login?next=/records", { headers })).headers.get("location")!).pathname).toBe("/records");
-    expect(new URL((await run("/login?next=//evil.example", { headers })).headers.get("location")!).pathname).toBe("/cashflow");
+    expect(new URL((await run("/login?next=//evil.example", { headers })).headers.get("location")!).pathname).toBe("/overview");
   });
 });
 
@@ -216,7 +216,7 @@ test.describe("login route", () => {
     const r = await send({ password: PW });
     const sc = r.headers.get("set-cookie")!;
     expect(sc).not.toMatch(/max-age|expires/i);
-    expect(r.headers.get("location")).toBe("/cashflow");
+    expect(r.headers.get("location")).toBe("/overview");
     const token = new RegExp(`${SESSION_COOKIE}=([^;]+)`).exec(sc)![1];
     const left = Number(token.split(".")[0]) - Date.now() / 1000;
     expect(left).toBeGreaterThan(11 * 3600);
@@ -331,6 +331,6 @@ test.describe("server", () => {
     expect((await fetch(new URL("/records", baseURL), { headers: { cookie }, redirect: "manual" })).status).toBe(200);
     const l = await fetch(new URL("/login", baseURL), { headers: { cookie }, redirect: "manual" });
     expect(l.status).toBe(307);
-    expect(new URL(l.headers.get("location")!).pathname).toBe("/cashflow");
+    expect(new URL(l.headers.get("location")!).pathname).toBe("/overview");
   });
 });

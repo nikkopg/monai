@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { changeBadge, chartWindows, periodWindow, spendBar, topCategories } from "../app/cashflow/periodCard";
+import { changeBadge, chartWindows, periodWindow, spendBar, topCategories } from "../app/overview/periodCard";
 
 // Browserless: pure period maths for the Cashflow card (no
 // page, no server). All values synthetic; dates built from local Date constructors.

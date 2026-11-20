@@ -591,7 +591,7 @@ test.describe("D1 phone dock (261115-s37)", () => {
   const bg = (loc: Locator) => loc.evaluate((el) => getComputedStyle(el).backgroundColor);
 
   test("D1: dock geometry, sidebar hidden", async ({ page }) => {
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const dock = dockOf(page);
     await expect(dock).toBeVisible();
     await expect(page.locator(".app-sidebar")).toBeHidden();
@@ -608,9 +608,9 @@ test.describe("D1 phone dock (261115-s37)", () => {
   });
 
   test("D1: the active route is the light circle", async ({ page }) => {
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const dock = dockOf(page);
-    const names = ["Cashflow", "Records", "Inbox", "Chat", "Investments"];
+    const names = ["Overview", "Records", "Inbox", "Chat", "Investments"];
     for (const name of names) {
       await dock.getByRole("link", { name }).click();
       await expect(page).toHaveURL(new RegExp(`/${name.toLowerCase()}$`));
@@ -629,7 +629,7 @@ test.describe("D1 phone dock (261115-s37)", () => {
 
   test("D1: the Inbox link keeps its label and badge", async ({ page }) => {
     await mockInbox(page, { counts: 3 });
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const link = dockOf(page).getByRole("link", { name: "Inbox, 3 pending" });
     await expect(link).toBeVisible();
     await expect(link.locator(".dock-badge")).toBeVisible();
@@ -637,7 +637,7 @@ test.describe("D1 phone dock (261115-s37)", () => {
   });
 
   test("D1: the More menu opens, closes and works from the keyboard", async ({ page }) => {
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const dock = dockOf(page);
     const more = dock.getByRole("button", { name: "More" });
     const settings = page.getByRole("menuitem", { name: "Settings" });
@@ -658,7 +658,7 @@ test.describe("D1 phone dock (261115-s37)", () => {
 
     await more.click();
     await expect(page.getByRole("menu")).toBeVisible();
-    await page.getByRole("heading", { name: "Cashflow", level: 1 }).click();
+    await page.getByRole("heading", { name: "Overview", level: 1 }).click();
     await expect(page.getByRole("menu")).toHaveCount(0);
 
     await more.focus();
@@ -670,7 +670,7 @@ test.describe("D1 phone dock (261115-s37)", () => {
 
   test("D1: at 1280 the sidebar is unchanged and the dock is hidden", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     await expect(dockOf(page)).toBeHidden();
     const side = page.locator(".app-sidebar");
     await expect(side).toBeVisible();
@@ -679,7 +679,7 @@ test.describe("D1 phone dock (261115-s37)", () => {
     await expect(page.getByRole("button", { name: "Collapse sidebar" })).toBeVisible();
     await expect(page.getByText("Local-first")).toBeVisible();
     const texts = (await page.locator(".app-sidebar nav a").allTextContents()).map((t) => t.trim());
-    expect(texts).toEqual(["Cashflow", "Records", "Inbox", "Chat", "Investments", "Settings"]);
+    expect(texts).toEqual(["Overview", "Records", "Inbox", "Chat", "Investments", "Settings"]);
   });
 });
 
@@ -1391,7 +1391,7 @@ test("T5: no em dash in user-visible UI strings", async () => {
 test.describe("antislop 001 T6 (261120-r0k)", () => {
   test("T6: each page has its own title", async ({ page }) => {
     for (const [path, title] of [
-      ["/cashflow", "Cashflow · monai"], ["/records", "Records · monai"], ["/investments", "Investments · monai"],
+      ["/overview", "Overview · monai"], ["/records", "Records · monai"], ["/investments", "Investments · monai"],
       ["/inbox", "Inbox · monai"], ["/chat", "Chat · monai"], ["/settings", "Settings · monai"],
     ]) {
       await page.goto(path);

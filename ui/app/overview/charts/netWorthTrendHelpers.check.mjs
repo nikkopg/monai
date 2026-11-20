@@ -1,5 +1,5 @@
 // Assert-based self-check for netWorthTrendHelpers.ts (Phase 23 Plan 01, RED step).
-// Run: node --experimental-strip-types ui/app/cashflow/charts/netWorthTrendHelpers.check.mjs
+// Run: node --experimental-strip-types ui/app/overview/charts/netWorthTrendHelpers.check.mjs
 // Repeat with TZ=America/Los_Angeles to pin the UTC-label rule.
 //
 // No test framework, no console-log-only assertions — this uses the strict assert

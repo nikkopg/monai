@@ -7,7 +7,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { tokens, input } from "../styles";
-import ConfirmDialog from "../cashflow/ConfirmDialog";
+import ConfirmDialog from "../overview/ConfirmDialog";
 import RowMenu from "../components/RowMenu";
 import Skeleton, { Bone } from "../components/Skeleton";
 

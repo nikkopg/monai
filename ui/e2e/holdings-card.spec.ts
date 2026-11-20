@@ -13,7 +13,7 @@ import {
   platformRows,
   type AccountBalance,
   type InvestmentGroup,
-} from "../app/cashflow/holdings";
+} from "../app/overview/holdings";
 
 // ---------------------------------------------------------------------------
 // The Cashflow page's Holdings card. Part 1 is browserless logic (holdings.ts);
@@ -242,7 +242,7 @@ test.describe("Holdings card", () => {
 
   test.beforeEach(async ({ page }) => {
     await mockAll(page);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     await expect(holdings(page)).toBeVisible();
   });
 
@@ -379,6 +379,6 @@ test.describe("Holdings card", () => {
 // Without reduced motion (and in a visible tab) the donut animates; it must still draw.
 test("the donut draws its sectors with animation on", async ({ page }) => {
   await mockAll(page);
-  await page.goto("/cashflow");
+  await page.goto("/overview");
   await expect(holdings(page).locator(".recharts-pie-sector")).toHaveCount(2);
 });

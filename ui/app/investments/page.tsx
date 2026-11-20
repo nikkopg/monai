@@ -10,7 +10,7 @@ import { type Platform } from "./PlatformManager";
 import ClosedPositions, { type ClosedPosition } from "./ClosedPositions";
 import { extractDetail } from "../lib/api";
 import { fmtAmount, fmtUsdPrice, rateHover } from "../lib/money";
-import { GOLDS, assetLabel, fmtShort } from "../cashflow/holdings";
+import { GOLDS, assetLabel, fmtShort } from "../overview/holdings";
 import HoldingModal from "./HoldingModal";
 import HoldingOverrideModal from "./HoldingOverrideModal";
 import type { BondInfo } from "../lib/bond";

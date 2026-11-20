@@ -7,8 +7,8 @@ import { tokens, card, input, btn, btnDark, dangerBtn } from "../styles";
 import TransactionModal, {
   type Tx as ModalTx,
   type AccountOption,
-} from "../cashflow/TransactionModal";
-import ConfirmDialog from "../cashflow/ConfirmDialog";
+} from "../overview/TransactionModal";
+import ConfirmDialog from "../overview/ConfirmDialog";
 import RowMenu from "../components/RowMenu";
 import Skeleton, { Bone } from "../components/Skeleton";
 import { formatDateRange } from "../chat/labels";

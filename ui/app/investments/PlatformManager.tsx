@@ -5,13 +5,13 @@ import { useState } from "react";
 import { tokens, card, input, btn } from "../styles";
 import { sectionTitle } from "./sectionStyles";
 import RowMenu from "../components/RowMenu";
-import ConfirmDialog from "../cashflow/ConfirmDialog";
+import ConfirmDialog from "../overview/ConfirmDialog";
 import { extractDetail } from "../lib/api";
 
 // ---------------------------------------------------------------------------
 // PlatformManager — list platforms with inline edit + delete (D-12).
 // Rendered on the Settings page (section id "platforms"), not on Investments.
-// Direct structural mirror of ../cashflow/AccountManager.tsx; the only
+// Direct structural mirror of ../overview/AccountManager.tsx; the only
 // entity-shape difference is the optional `kind` label alongside `name`.
 // Delete flow:
 //   1. ConfirmDialog "Delete this platform? This can't be undone."

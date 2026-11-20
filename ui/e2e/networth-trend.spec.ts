@@ -339,7 +339,7 @@ test.describe("net worth trend card", () => {
       await historyGate;
       await route.fallback();
     });
-    await page.goto("/cashflow");
+    await page.goto("/overview");
 
     const pageSkel = page.getByRole("status", { name: "Loading your cashflow" });
     await expect(pageSkel).toBeVisible();
@@ -361,7 +361,7 @@ test.describe("net worth trend card", () => {
     page,
   }) => {
     const requestedMonths = await mockPage(page);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
 
     const region = page.getByRole("region", { name: "Net worth trend", exact: true });
     await expect(region).toBeVisible();
@@ -404,7 +404,7 @@ test.describe("net worth trend card", () => {
           ? { status: 200, rows: [honest("2021-03", 10000), honest("2026-02", 92500000)] }
           : defaultHistory(months)
     );
-    await page.goto("/cashflow");
+    await page.goto("/overview");
 
     const change = page.getByTestId("hero-change");
     // The gapped month is skipped: the change starts at the first plotted one.
@@ -423,7 +423,7 @@ test.describe("net worth trend card", () => {
     await mockPage(page, (months) =>
       months === "12" ? { status: 200, rows: allGapped1Y() } : defaultHistory(months)
     );
-    await page.goto("/cashflow");
+    await page.goto("/overview");
 
     const region = page.getByRole("region", { name: "Net worth trend", exact: true });
     await expect(region).toBeVisible();
@@ -436,7 +436,7 @@ test.describe("net worth trend card", () => {
     page,
   }) => {
     const requestedMonths = await mockPage(page);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
 
     const region = page.getByRole("region", { name: "Net worth trend", exact: true });
     // Wait for the 1Y dot before recording the baseline request count.
@@ -480,7 +480,7 @@ test.describe("net worth trend card", () => {
     page,
   }) => {
     const requestedMonths = await mockPage(page);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
 
     const region = page.getByRole("region", { name: "Net worth trend", exact: true });
     await expect(region.locator("circle.recharts-line-dot")).toHaveCount(1);
@@ -508,7 +508,7 @@ test.describe("net worth trend card", () => {
     page,
   }) => {
     await mockPage(page);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
 
     const region = page.getByRole("region", { name: "Net worth trend", exact: true });
     await expect(region.locator("circle.recharts-line-dot")).toHaveCount(1);
@@ -543,7 +543,7 @@ test.describe("net worth trend card", () => {
     page,
   }) => {
     await mockPage(page, () => ({ status: 500, rows: [] }));
-    await page.goto("/cashflow");
+    await page.goto("/overview");
 
     const region = page.getByRole("region", { name: "Net worth trend", exact: true });
     await expect(region).toContainText(
@@ -562,7 +562,7 @@ test.describe("net worth trend card", () => {
         ? { status: 200, rows: archival1Y(), liquid_drift_estimate: 8000000 }
         : defaultHistory(m)
     );
-    await page.goto("/cashflow");
+    await page.goto("/overview");
 
     const region = page.getByRole("region", { name: "Net worth trend", exact: true });
     await expect(region).toBeVisible();
@@ -614,7 +614,7 @@ test.describe("net worth trend card", () => {
     await mockPage(page, (m) =>
       m === "12" ? { status: 200, rows: archival1Y() } : defaultHistory(m)
     );
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const region = page.getByRole("region", { name: "Net worth trend", exact: true });
     // Visible at 1280, so the hidden check below cannot pass vacuously.
     await expect(region.locator(".recharts-label")).toBeVisible();

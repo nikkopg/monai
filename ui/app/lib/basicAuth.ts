@@ -116,7 +116,7 @@ export async function verifySession(
 
 /** A redirect target that can only be a same-origin path (never /login or /auth/*, to avoid loops). */
 export function safeNext(raw: unknown): string {
-  const dflt = "/cashflow";
+  const dflt = "/overview";
   if (typeof raw !== "string" || raw.length > 2048 || !/^[\x21-\x7E]+$/.test(raw) || raw.includes("\\")) return dflt;
   if (raw[0] !== "/" || raw[1] === "/") return dflt;
   try {

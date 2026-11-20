@@ -6,7 +6,7 @@ import { card, input, btn, label, tokens } from "../styles";
 import { extractDetail, fmtPlain } from "../lib/api";
 import { fmtAmount } from "../lib/money";
 import type { PlatformOption } from "./page";
-import { assetLabel } from "../cashflow/holdings";
+import { assetLabel } from "../overview/holdings";
 import BondFields from "./BondFields";
 import { EMPTY_TERMS, termsBody, termsValid, type BondTermsInput } from "../lib/bond";
 

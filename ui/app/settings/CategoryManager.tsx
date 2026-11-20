@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { tokens, card, input, btn, btnGhost, categoryPalette } from "../styles";
-import ConfirmDialog from "../cashflow/ConfirmDialog";
+import ConfirmDialog from "../overview/ConfirmDialog";
 import RowMenu from "../components/RowMenu";
 
 // ---------------------------------------------------------------------------

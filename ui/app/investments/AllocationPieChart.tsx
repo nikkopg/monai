@@ -2,7 +2,7 @@ import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 
 import { tokens } from "../styles";
 import RollingNumber from "../components/RollingNumber";
-import { GOLDS, fmtShort } from "../cashflow/holdings";
+import { GOLDS, fmtShort } from "../overview/holdings";
 
 // ---------------------------------------------------------------------------
 // VZ-01 allocation pie (Phase 7 Plan 03) — structural clone of the Phase-4

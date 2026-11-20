@@ -109,7 +109,7 @@ test.describe("nav badge", () => {
     await expect.poll(() => inbox.hits.counts).toBeGreaterThan(0);
     await page.waitForTimeout(300);
     const texts = (await page.locator(".app-sidebar nav a").allTextContents()).map((t) => t.trim());
-    expect(texts).toEqual(["Cashflow", "Records", "Inbox", "Chat", "Investments", "Settings"]);
+    expect(texts).toEqual(["Overview", "Records", "Inbox", "Chat", "Investments", "Settings"]);
     await expect(link(page, "Inbox")).toBeVisible();
     await expect(page.locator(".nav-badge")).toHaveCount(0);
   });

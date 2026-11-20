@@ -87,10 +87,10 @@ test.describe("/cashflow dashboard", () => {
     page,
   }) => {
     await mockSummary(page);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
 
     await expect(
-      page.getByRole("heading", { name: "Cashflow" })
+      page.getByRole("heading", { name: "Overview" })
     ).toBeVisible();
     const card = cashflowCard(page);
     await expect(card.getByText("Income", { exact: true })).toBeVisible();
@@ -100,7 +100,7 @@ test.describe("/cashflow dashboard", () => {
 
   test("renders at least one chart svg", async ({ page }) => {
     await mockSummary(page);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
 
     await expect(cashflowCard(page).locator("svg").first()).toBeVisible();
   });
@@ -110,7 +110,7 @@ test.describe("/cashflow dashboard", () => {
   }) => {
     await page.clock.setFixedTime(new Date(2026, 10, 11, 12));
     const { periods, ranges } = await mockSummary(page);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
 
     const month = cashflowCard(page).getByRole("button", { name: "Month", exact: true });
     await expect(month).toHaveAttribute("aria-pressed", "true");
@@ -158,7 +158,7 @@ test.describe("Cashflow card", () => {
 
   test("renders the figures, badges, bar and stepper", async ({ page }) => {
     await mockSummary(page, summaryFixture(), rangeBodies);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const card = cashflowCard(page);
 
     await expect(card.getByText("9,500,000", { exact: true })).toBeVisible();
@@ -194,7 +194,7 @@ test.describe("Cashflow card", () => {
 
   test("the stepper moves to the previous month and back", async ({ page }) => {
     const { ranges } = await mockSummary(page, summaryFixture(), rangeBodies);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const card = cashflowCard(page);
     await expect(card.getByText("Nov 2026", { exact: true })).toBeVisible();
 
@@ -228,7 +228,7 @@ test.describe("Cashflow card", () => {
       ...rangeBodies,
       "2026-11-01..2026-11-11": summaryFixture({ totals: { income: 0, expense: 1_000_000, net: -1_000_000 } }), // pii-ok synthetic
     });
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const card = cashflowCard(page);
 
     await expect(card.getByText("1,000,000", { exact: true }).first()).toBeVisible();
@@ -240,7 +240,7 @@ test.describe("Cashflow card", () => {
 
   test("the chart sits in the card between the stepper and the Income row", async ({ page }) => {
     const { ranges } = await mockSummary(page, summaryFixture(), frameBodies);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const card = cashflowCard(page);
     const group = card.getByRole("group", { name: "Cash flow by month" });
     await expect(group.getByRole("button")).toHaveText(["Jun", "Jul", "Aug", "Sep", "Oct", "Nov"]);
@@ -262,7 +262,7 @@ test.describe("Cashflow card", () => {
 
   test("the pills switch the chart between weeks, months and years", async ({ page }) => {
     const { ranges } = await mockSummary(page, summaryFixture(), frameBodies);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const card = cashflowCard(page);
 
     await card.getByRole("button", { name: "Week", exact: true }).click();
@@ -282,7 +282,7 @@ test.describe("Cashflow card", () => {
 
   test("request cost: seven ranges per load, none for a step inside the frame", async ({ page }) => {
     const { ranges } = await mockSummary(page, summaryFixture(), frameBodies);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const card = cashflowCard(page);
     await expect(card.getByRole("group", { name: "Cash flow by month" })).toBeVisible();
     expect(new Set(ranges).size).toBe(7);
@@ -304,7 +304,7 @@ test.describe("Cashflow card", () => {
       }
       return route.fallback();
     });
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const card = cashflowCard(page);
     await expect(card.getByText("Couldn't load the chart.")).toBeVisible();
     await expect(card.getByRole("group", { name: /Cash flow by/ })).toHaveCount(0);
@@ -321,7 +321,7 @@ test.describe("Cashflow card", () => {
 
   test("the selected period is highlighted and ‹ › move the highlight", async ({ page }) => {
     await mockSummary(page, summaryFixture(), frameBodies);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const card = cashflowCard(page);
     await expect(card.getByRole("group", { name: "Cash flow by month" })).toBeVisible();
 
@@ -350,7 +350,7 @@ test.describe("Cashflow card", () => {
 
   test("clicking a bar selects its period", async ({ page }) => {
     await mockSummary(page, summaryFixture(), frameBodies);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const card = cashflowCard(page);
     await expect(card.getByText("Nov 2026", { exact: true })).toBeVisible();
 
@@ -363,7 +363,7 @@ test.describe("Cashflow card", () => {
 
   test("Enter and Space on a label button select its period", async ({ page }) => {
     await mockSummary(page, summaryFixture(), frameBodies);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const card = cashflowCard(page);
     await expect(card.getByText("Nov 2026", { exact: true })).toBeVisible();
 
@@ -380,7 +380,7 @@ test.describe("Cashflow card", () => {
 
   test("hovering a bar shows the exact figures", async ({ page }) => {
     await mockSummary(page, summaryFixture(), frameBodies);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const card = cashflowCard(page);
     await expect(card.getByRole("group", { name: "Cash flow by month" })).toBeVisible();
     await card.locator('path.recharts-rectangle[name="Income"][offset="0"]').hover({ position: { x: 9, y: 4 } }); // clear of the net dot
@@ -397,7 +397,7 @@ test.describe("Cashflow card", () => {
       "2023-01-01..2023-12-31": empty,
       "2024-01-01..2024-12-31": empty,
     });
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const card = cashflowCard(page);
     await card.getByRole("button", { name: "Year", exact: true }).click();
     const group = card.getByRole("group", { name: "Cash flow by year" });
@@ -407,7 +407,7 @@ test.describe("Cashflow card", () => {
   test("net worth spans the whole top row on a wide window", async ({ page }) => {
     await mockSummary(page, summaryFixture(), frameBodies);
     await page.setViewportSize({ width: 1440, height: 900 });
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const nw = await page.getByRole("region", { name: "Net worth trend" }).boundingBox();
     const row = await page.locator(".cf-lower").boundingBox();
     expect(nw!.width).toBeGreaterThanOrEqual(row!.width * 0.9);
@@ -415,7 +415,7 @@ test.describe("Cashflow card", () => {
 
   test("the period pills are the shared Pills markup", async ({ page }) => {
     const { ranges } = await mockSummary(page, summaryFixture(), rangeBodies);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const mine = cashflowCard(page).getByRole("button", { name: /^(Week|Month|Year)$/ });
     const theirs = page
       .getByRole("region", { name: "Net worth trend" })
@@ -509,7 +509,7 @@ test.describe("Cashflow card legend layout", () => {
       await mockSummary(page, layoutSummary);
       await page.route("**/api/net-worth**", (route) => route.fulfill({ json: layoutNetWorth }));
       await page.setViewportSize({ width, height: 900 });
-      await page.goto("/cashflow");
+      await page.goto("/overview");
       const card = cashflowCard(page);
       const list = card.getByRole("list", { name: "Where it went" });
       await expect(list.getByText("12,345,678")).toBeVisible(); // pii-ok: mocked fixture
@@ -565,7 +565,7 @@ test.describe("Cashflow card legend layout", () => {
 
   test("clicking a slice with subcategories drills in and Back returns", async ({ page }) => {
     await mockSummary(page);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const card = cashflowCard(page);
     const list = card.getByRole("list", { name: "Where it went" });
     await expect(list.getByText("Food & Drinks", { exact: true })).toBeVisible();
@@ -618,7 +618,7 @@ test.describe("USD balances (Phase 44)", () => {
   // The Holdings card replaced the liquid-accounts list: Liquid is one click in,
   // and its IDR view shows each USD account's native balance as the subline.
   const openLiquid = async (page: Page) => {
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     const card = page.getByRole("region", { name: "Holdings", exact: true });
     await card.getByRole("button", { name: /^Liquid/ }).click();
     return card;
@@ -686,7 +686,7 @@ test.describe("USD balances (Phase 44)", () => {
   test("unconverted notice sits above the cards and keeps the IDR totals", async ({ page }) => {
     await mockSummary(page, summaryFixture({ unconverted_count: 3, unconverted_usd: -12.34 }));
     await mockNetWorth(page, netWorthFixture());
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     await expect(page.getByText("3 USD rows unconverted (-12.34 USD)", { exact: true })).toBeVisible();
     await expect(page.getByText("5,000,000", { exact: true })).toBeVisible();
     await expect(page.getByText("2,000,000", { exact: true })).toBeVisible();
@@ -698,7 +698,7 @@ test.describe("USD balances (Phase 44)", () => {
   }) => {
     await mockSummary(page, summaryFixture({ unconverted_count: 1, unconverted_usd: -12.34 }));
     await mockNetWorth(page, netWorthFixture());
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     await expect(page.getByText("1 USD row unconverted (-12.34 USD)", { exact: true })).toBeVisible();
 
     for (const body of [
@@ -723,7 +723,7 @@ test.describe("USD balances (Phase 44)", () => {
         fx_excluded: [{ name: "ZZ44 Savings", native_balance: 1234.5, currency: "USD" }],
       })
     );
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     await expect(
       page.getByText("1 account(s) left out of the total: no USD->IDR rate within 7 days", { exact: true })
     ).toBeVisible();
@@ -734,7 +734,7 @@ test.describe("USD balances (Phase 44)", () => {
   test("net-worth notice block is absent when there is nothing to say", async ({ page }) => {
     await mockSummary(page);
     await mockNetWorth(page, netWorthFixture({ notice: null, fx_note: null, fx_excluded: [] }));
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     await expect(page.getByText("Net saved", { exact: true })).toBeVisible();
     await expect(page.getByText(/left out of the total|rate of/)).toHaveCount(0);
   });
@@ -785,7 +785,7 @@ test.describe("phone width, 375px (261115-msv)", () => {
         ],
       })
     );
-    await page.goto("/cashflow");
+    await page.goto("/overview");
     await expect(page.getByRole("region", { name: "Holdings", exact: true })).toBeVisible();
   });
 

@@ -21,14 +21,14 @@ const SIDEBAR_COLLAPSED_KEY = "monai.sidebarCollapsed";
 //
 // v1.1 "paper" redesign: was a sticky top bar, now the mockup's 236px sidebar
 // with serif wordmark, icon+label nav items, a dark active pill, and a
-// local-first status footer card. Nav order matches the mockup (Cashflow first).
+// local-first status footer card. Nav order matches the mockup (Overview first).
 //
 // At 560px and below CSS hides the sidebar and shows the floating pill dock
 // (261115-s37): 5 icon links plus a More menu that holds Settings.
 // ---------------------------------------------------------------------------
 
 const NAV_LINKS = [
-  { href: "/cashflow", label: "Cashflow", icon: "cashflow" },
+  { href: "/overview", label: "Overview", icon: "cashflow" },
   { href: "/records", label: "Records", icon: "records" },
   { href: "/inbox", label: "Inbox", icon: "inbox" },
   { href: "/chat", label: "Chat", icon: "chat" },

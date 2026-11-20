@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 import { card, input, btn, label } from "../styles";
 import type { PlatformOption, HoldingRow } from "./page";
-import { assetLabel } from "../cashflow/holdings";
+import { assetLabel } from "../overview/holdings";
 import BondFields from "./BondFields";
 import { termsBody, termsFromInfo, termsValid, type BondTermsInput } from "../lib/bond";
 

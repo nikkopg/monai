@@ -5,9 +5,9 @@ import { test, expect, type Page } from "@playwright/test";
 //
 // This spec MUST fail (RED) until Task 3/4 build the Nav + four routes. It
 // verifies:
-//   (a) each of /chat, /cashflow, /investments, /settings renders a unique,
+//   (a) each of /chat, /overview, /investments, /settings renders a unique,
 //       identifying piece of text with no 404 / blank screen
-//   (b) the shared nav bar shows exactly four links: Chat, Cashflow,
+//   (b) the shared nav bar shows exactly four links: Chat, Overview,
 //       Investments, Settings — on every page
 //   (c) clicking a nav link performs a client-side transition (no full
 //       document reload) — proven via a window sentinel that survives
@@ -16,10 +16,10 @@ import { test, expect, type Page } from "@playwright/test";
 //       a dark ink pill background) while the others are not
 // ---------------------------------------------------------------------------
 
-const NAV_LABELS = ["Chat", "Cashflow", "Investments", "Settings"] as const;
+const NAV_LABELS = ["Chat", "Overview", "Investments", "Settings"] as const;
 
 async function getNavLinks(page: Page) {
-  return page.locator("nav a, header a").filter({ hasText: /^(Chat|Cashflow|Investments|Settings)$/ });
+  return page.locator("nav a, header a").filter({ hasText: /^(Chat|Overview|Investments|Settings)$/ });
 }
 
 test.describe("route rendering", () => {
@@ -31,10 +31,17 @@ test.describe("route rendering", () => {
     ).toBeVisible();
   });
 
-  test("/cashflow renders the Cashflow heading", async ({ page }) => {
-    const res = await page.goto("/cashflow");
+  test("/overview renders the Overview heading", async ({ page }) => {
+    const res = await page.goto("/overview");
     expect(res?.status()).toBeLessThan(400);
-    await expect(page.getByRole("heading", { name: "Cashflow" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Overview" })).toBeVisible();
+  });
+
+  test("/ and the old /cashflow land on /overview", async ({ page }) => {
+    for (const path of ["/", "/cashflow"]) {
+      await page.goto(path);
+      await expect(page).toHaveURL(/\/overview$/);
+    }
   });
 
   test("/investments renders the Investments heading", async ({ page }) => {
@@ -55,7 +62,7 @@ test.describe("route rendering", () => {
 });
 
 test.describe("shared nav bar", () => {
-  for (const route of ["/chat", "/cashflow", "/investments", "/settings"]) {
+  for (const route of ["/chat", "/overview", "/investments", "/settings"]) {
     test(`shows exactly four nav links on ${route}`, async ({ page }) => {
       await page.goto(route);
       const links = await getNavLinks(page);
@@ -69,7 +76,7 @@ test.describe("shared nav bar", () => {
 });
 
 test.describe("client-side navigation", () => {
-  test("clicking Cashflow from Chat navigates without a full reload", async ({
+  test("clicking Overview from Chat navigates without a full reload", async ({
     page,
   }) => {
     await page.goto("/chat");
@@ -80,27 +87,27 @@ test.describe("client-side navigation", () => {
     });
 
     const links = await getNavLinks(page);
-    await links.filter({ hasText: "Cashflow" }).click();
+    await links.filter({ hasText: "Overview" }).click();
 
-    await expect(page).toHaveURL(/\/cashflow$/);
+    await expect(page).toHaveURL(/\/overview$/);
     const sentinel = await page.evaluate(
       () => (window as unknown as { __navProbe?: boolean }).__navProbe
     );
     expect(sentinel).toBe(true);
   });
 
-  test("active nav link is highlighted after navigating to /cashflow", async ({
+  test("active nav link is highlighted after navigating to /overview", async ({
     page,
   }) => {
     await page.goto("/chat");
     const links = await getNavLinks(page);
-    await links.filter({ hasText: "Cashflow" }).click();
-    await expect(page).toHaveURL(/\/cashflow$/);
+    await links.filter({ hasText: "Overview" }).click();
+    await expect(page).toHaveURL(/\/overview$/);
 
     // v1.1: active link carries the dark ink pill (#23201b == rgb(35, 32, 27)).
     // toHaveCSS auto-retries so it settles past the .2s background transition.
-    const cashflowLink = links.filter({ hasText: "Cashflow" });
-    await expect(cashflowLink).toHaveCSS("background-color", "rgb(35, 32, 27)");
+    const overviewLink = links.filter({ hasText: "Overview" });
+    await expect(overviewLink).toHaveCSS("background-color", "rgb(35, 32, 27)");
 
     for (const label of ["Chat", "Investments", "Settings"]) {
       // Inactive links have no pill (transparent background).

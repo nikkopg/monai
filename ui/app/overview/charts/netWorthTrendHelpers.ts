@@ -13,7 +13,7 @@
 // (23.2 D-07).
 //
 // Self-check: node --experimental-strip-types
-//   ui/app/cashflow/charts/netWorthTrendHelpers.check.mjs
+//   ui/app/overview/charts/netWorthTrendHelpers.check.mjs
 
 // --- Types -------------------------------------------------------------
 

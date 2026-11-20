@@ -6,8 +6,8 @@ import { tokens, card, input, btn } from "../styles";
 import CategoryManager from "./CategoryManager";
 import SkillsCard from "./SkillsCard";
 import ExternalMcpCard from "./ExternalMcpCard";
-import AccountManager, { type Account } from "../cashflow/AccountManager";
-import CsvUpload from "../cashflow/CsvUpload";
+import AccountManager, { type Account } from "../overview/AccountManager";
+import CsvUpload from "../overview/CsvUpload";
 import PlatformManager, { type Platform } from "../investments/PlatformManager";
 
 // ---------------------------------------------------------------------------
@@ -79,7 +79,7 @@ export default function SettingsPage() {
     status: "idle",
   });
 
-  // Accounts manager (moved here from the Cashflow page). AccountManager needs
+  // Accounts manager (moved here from the Overview page). AccountManager needs
   // each account's current_balance, which only GET /cashflow/summary returns
   // (the plain /accounts endpoint omits it); period is irrelevant to balances.
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -395,10 +395,10 @@ export default function SettingsPage() {
       </div>
 
       {/* Card: Accounts — balances, rename/delete, adjust balance (moved from
-          the Cashflow page). AccountManager renders its own card section. */}
+          the Overview page). AccountManager renders its own card section. */}
       <AccountManager accounts={accounts} onChanged={loadAccounts} />
 
-      {/* Card: Import CSV (moved from the Cashflow page); an import changes
+      {/* Card: Import CSV (moved from the Overview page); an import changes
           balances, so the accounts above reload. */}
       <CsvUpload onImported={loadAccounts} />
 
