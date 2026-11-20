@@ -1160,3 +1160,89 @@ test.describe("Uniform phone pills", () => {
     for (const p of [...inv, ...set]) expect(p).toEqual({ h: 36, track: 44, fs: "14px", tap: true });
   });
 });
+
+// ===========================================================================
+// antislop audit 001 fixes (261120-r0k). Pass conditions from
+// anti-slop/audit-001-2026-11-20.md: text >= 4.5:1 (3:1 at 24px+ or 18.66px
+// bold) on the colour it sits on, focus ring >= 3:1 on the ink cards.
+// ===========================================================================
+
+// Every visible text node in `main` below its WCAG AA minimum, as readable lines.
+const lowContrast = (page: Page) =>
+  page.evaluate(() => {
+    const parse = (c: string) => {
+      const m = c.match(/rgba?\(([^)]+)\)/);
+      if (!m) return null;
+      const p = m[1].split(/[ ,/]+/).filter(Boolean).map(Number);
+      return { r: p[0], g: p[1], b: p[2], a: p.length > 3 ? p[3] : 1 };
+    };
+    type C = { r: number; g: number; b: number; a: number };
+    const lum = ({ r, g, b }: C) => {
+      const f = (v: number) => ((v /= 255) <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+      return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b);
+    };
+    const blend = (fg: C, bg: C): C => ({
+      r: fg.r * fg.a + bg.r * (1 - fg.a), g: fg.g * fg.a + bg.g * (1 - fg.a), b: fg.b * fg.a + bg.b * (1 - fg.a), a: 1,
+    });
+    const bgOf = (el: Element) => {
+      const stack: C[] = [];
+      for (let e: Element | null = el; e; e = e.parentElement) {
+        const c = parse(getComputedStyle(e).backgroundColor);
+        if (c && c.a > 0) { stack.push(c); if (c.a >= 1) break; }
+      }
+      return stack.reverse().reduce((base, c) => blend(c, base), { r: 255, g: 255, b: 255, a: 1 } as C);
+    };
+    const out: string[] = [];
+    for (const el of document.querySelectorAll("main *")) {
+      const r = el.getBoundingClientRect();
+      const cs = getComputedStyle(el);
+      if (!r.width || !r.height || cs.visibility === "hidden" || el.closest('[aria-hidden="true"]')) continue;
+      if ((el as HTMLButtonElement).disabled || el.closest(":disabled")) continue; // WCAG exempts inactive controls
+      if (![...el.childNodes].some((n) => n.nodeType === 3 && n.textContent!.trim())) continue;
+      const fg = parse(cs.color);
+      if (!fg) continue;
+      const bg = bgOf(el);
+      const a = lum(blend(fg, bg)), b = lum(bg);
+      const ratio = (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      const fs = parseFloat(cs.fontSize);
+      const need = fs >= 24 || (fs >= 18.66 && +cs.fontWeight >= 700) ? 3 : 4.5;
+      if (ratio < need) out.push(`${ratio.toFixed(2)} "${el.textContent!.trim().slice(0, 24)}" ${cs.color}`);
+    }
+    return out;
+  });
+
+test.describe("antislop 001 (261120-r0k)", () => {
+  test("T1: Records, Settings and platform text meets AA contrast", async ({ page }) => {
+    await mockRecords(page);
+    await page.goto("/records");
+    await expect(page.getByPlaceholder("Search merchant or notes…")).toBeVisible();
+    expect(await lowContrast(page)).toEqual([]);
+
+    await mockSettings(page);
+    await page.goto("/settings");
+    await expect(page.locator(".cat-row").first()).toBeVisible();
+    expect(await lowContrast(page)).toEqual([]);
+
+    await mockPlatform(page);
+    await page.goto("/investments/7");
+    await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+    expect(await lowContrast(page)).toEqual([]);
+  });
+
+  test("T1: focus ring is at least 3:1 on the dark hero card", async ({ page }) => {
+    await mockInvestments(page);
+    await page.goto("/investments");
+    const pill = page.locator(".hero-pills .pill-btn").first();
+    await expect(pill).toBeVisible();
+    const ratio = await pill.evaluate((el) => {
+      (el as HTMLElement).focus({ focusVisible: true } as FocusOptions);
+      const m = getComputedStyle(el).outlineColor.match(/\d+/g)!.map(Number);
+      const lum = (r: number, g: number, b: number) =>
+        [r, g, b].map((v) => ((v /= 255) <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4)))
+          .reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
+      const a = lum(m[0], m[1], m[2]), b = lum(0x23, 0x20, 0x1b);
+      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    });
+    expect(ratio).toBeGreaterThanOrEqual(3);
+  });
+});

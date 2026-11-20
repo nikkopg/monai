@@ -109,8 +109,9 @@ async function extractDetail(r: Response): Promise<string> {
 
 const badgeStyle: React.CSSProperties = {
   fontSize: "var(--fs-xs, 12px)",
+  // muted text on the border tint was 2.85:1; on tint2 it passes 4.5:1.
   color: tokens.color.muted,
-  background: tokens.color.border,
+  background: "#f2efe8",
   borderRadius: tokens.radius.pill,
   padding: "2px 8px",
   marginLeft: 8,

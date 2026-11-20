@@ -313,7 +313,7 @@ export default function HoldingOverrideModal({
               onClick={onClose}
               style={{
                 background: "transparent",
-                color: "#8b8474",
+                color: "#716c5f",
                 border: "none",
                 padding: "8px 16px",
                 fontSize: "var(--fs-body, 14px)",

@@ -98,14 +98,15 @@ function fmtQty(n: number, assetType: string | null): string {
 
 // Deterministic badge color per ticker — copied verbatim from
 // investments/page.tsx's badgeColor().
-const BADGE_COLORS = ["#d8b26a", "#5a8f73", "#2f6f4f", "#8fae9c", "#b5503f"];
+// Sage lightened from #5a8f73 (ink 4.34:1) to #6fa287 (ink 5.56:1); every fill + text pair is >= 4.5:1.
+const BADGE_COLORS = ["#d8b26a", "#6fa287", "#2f6f4f", "#8fae9c", "#b5503f"];
 const badgeColor = (t: string) => {
   let h = 0;
   for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) >>> 0;
   return BADGE_COLORS[h % BADGE_COLORS.length];
 };
 // Fills where ink text out-contrasts white.
-const BADGE_INK = new Set<string>([tokens.color.gold, tokens.color.sage, tokens.color.sageLight]);
+const BADGE_INK = new Set<string>([tokens.color.gold, "#6fa287", tokens.color.sageLight]);
 
 // event_type -> Title-cased label + Color-table-mapped hue (green
 // buy/deposit, terracotta sell/withdrawal, ink otherwise).

@@ -409,8 +409,10 @@ input, select, button, textarea {
   font-family: inherit;
 }
 
+/* One green that is >= 3:1 on both white (4.09) and the ink hero cards (3.96);
+   the brand green #2f6f4f was 2.71:1 on ink. */
 :focus-visible {
-  outline: 2px solid #2f6f4f;
+  outline: 2px solid #3d8c63;
   outline-offset: 2px;
 }
 

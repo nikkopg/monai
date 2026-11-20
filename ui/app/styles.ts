@@ -32,8 +32,10 @@ export const tokens = {
     // text
     text: "#23201b",
     textSoft: "#34302a",
-    muted: "#8b8474",
-    muted2: "#a49c8c",
+    // Text greys darkened to pass WCAG AA 4.5:1 on white, the panel and #f2efe8
+    // (were #8b8474 / #a49c8c, 2.5 to 3.7:1).
+    muted: "#716c5f",
+    muted2: "#767064",
     muted3: "#6f6857",
     // hairlines / borders
     border: "#e7e1d5",
@@ -174,8 +176,9 @@ export const categoryPalette: { name: string; hex: string }[] = [
   { name: "Investments", hex: "#c9973f" },
   { name: "Income", hex: tokens.color.greenDark },
   { name: "Others", hex: chartColors[5] },
-  { name: "Transfer", hex: tokens.color.muted2 },
-  { name: "Uncategorized", hex: tokens.color.muted },
+  // Swatches, not text: the old lighter greys, and saved categories store these exact hexes.
+  { name: "Transfer", hex: "#a49c8c" },
+  { name: "Uncategorized", hex: "#8b8474" },
 ];
 
 // Warm one-line note strip (Cashflow net-worth notice, Investments rate/stale strip).

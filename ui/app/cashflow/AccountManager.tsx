@@ -226,7 +226,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
                       onClick={() => setEditingId(null)}
                       style={{
                         background: "transparent",
-                        color: "#8b8474",
+                        color: "#716c5f",
                         border: "none",
                         fontSize: "var(--fs-xs, 12px)",
                         cursor: "pointer",
@@ -293,7 +293,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
               onClick={() => setAdding(false)}
               style={{
                 background: "transparent",
-                color: "#8b8474",
+                color: "#716c5f",
                 border: "none",
                 fontSize: "var(--fs-xs, 12px)",
                 cursor: "pointer",

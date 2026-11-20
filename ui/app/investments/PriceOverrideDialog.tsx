@@ -18,7 +18,7 @@ type Props = {
   onSaved: () => void;
 };
 
-const muted = "#8b8474";
+const muted = "#716c5f";
 
 export default function PriceOverrideDialog({ holding, onClose, onSaved }: Props) {
   const [price, setPrice] = useState("");
