@@ -189,7 +189,7 @@ export default function NetWorthTrendChart({
         }}
       >
         {hero ? header?.(change) : <div style={{ fontSize: "var(--fs-h3, 14px)", fontWeight: 600 }}>Net worth trend</div>}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: hero ? 8 : 10 }}>
+        <div className={hero ? "hero-pills" : undefined} style={hero ? undefined : { display: "flex", flexWrap: "wrap", gap: 10 }}>
           <Pills options={RANGE_OPTIONS} value={range} onChange={setRange} dark={hero} />
           <Pills options={MODE_OPTIONS} value={mode} onChange={setMode} dark={hero} />
         </div>

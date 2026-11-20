@@ -89,7 +89,7 @@ export default function ValueHistoryChart({
         }}
       >
         {header?.(change)}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        <div className="hero-pills">
           <Pills
             options={RANGE_OPTIONS}
             value={range}
