@@ -592,9 +592,15 @@ input, select, button, textarea {
 }
 
 /* Hero range and metric pills (Net worth, Investments Total value): stacked
-   at the top right beside the total; on phones they drop under it in a row. */
-.hero-pills { display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
-@media (max-width: 560px) {
+   at the top right beside the total. The total gives way (its sub-lines wrap)
+   until the card is too narrow for the big number, then the pills drop under
+   it in a row. Card width, not window width: the sidebar and the Allocation
+   card change it. */
+.hero-head { flex-wrap: nowrap; }
+.hero-head > :first-child { flex: 1 1 auto; min-width: 0; }
+.hero-pills { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+@container hero (max-width: 440px) {
+  .hero-head { flex-wrap: wrap; }
   .hero-pills { flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
 }
 

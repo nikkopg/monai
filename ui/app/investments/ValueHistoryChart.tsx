@@ -76,14 +76,14 @@ export default function ValueHistoryChart({
   const pnlStroke = latestPnl >= 0 ? tokens.color.chipGreenText : "#e6a99c";
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
+    <div style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0, containerType: "inline-size", containerName: "hero" }}>
       <div
+        // .hero-head: pills beside the total, under it in a narrow card (globals.css).
+        className="hero-head"
         style={{
           display: "flex",
           justifyContent: "space-between",
           alignItems: "flex-start",
-          // Wrap, so in a narrow hero the pills drop below the total.
-          flexWrap: "wrap",
           gap: "10px 16px",
           marginBottom: 6,
         }}

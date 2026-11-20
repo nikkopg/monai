@@ -174,16 +174,18 @@ export default function NetWorthTrendChart({
   return (
     <section
       aria-label="Net worth trend"
-      style={hero ? { display: "flex", flexDirection: "column", height: "100%" } : card}
+      style={hero ? { display: "flex", flexDirection: "column", height: "100%", containerType: "inline-size", containerName: "hero" } : card}
     >
       <div
+        // Hero: .hero-head puts the pills beside the total, under it in a narrow card (globals.css).
+        className={hero ? "hero-head" : undefined}
         style={{
           display: "flex",
           justifyContent: "space-between",
           alignItems: hero ? "flex-start" : "center",
-          // Wrap, so in a narrow card the pills drop below the total instead
+          // Wrap, so in a narrow card the pills drop below the title instead
           // of running past the card's edge.
-          flexWrap: "wrap",
+          flexWrap: hero ? undefined : "wrap",
           gap: hero ? "10px 16px" : 16,
           marginBottom: 6,
         }}
