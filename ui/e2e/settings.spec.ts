@@ -111,7 +111,7 @@ test.describe("/settings page", () => {
     await open(`Category options: ${cats[1].name}`);
     const del = page.getByRole("menuitem", { name: "Delete", exact: true });
     await expect(del).toHaveAttribute("aria-disabled", "true");
-    await expect(del).toHaveAttribute("title", "System category — can't be deleted.");
+    await expect(del).toHaveAttribute("title", "System category: can't be deleted.");
     await page.keyboard.press("Escape");
 
     await open(`Account options: ${accounts[0].name}`);
@@ -250,7 +250,7 @@ test.describe("AccountManager currency (Phase 44)", () => {
     await target.fill("62.34");
     await expect(preview).toHaveText("Adjustment: +12.34 USD");
     await target.fill("50.001");
-    await expect(preview).toHaveText("No change — target equals current balance.");
+    await expect(preview).toHaveText("No change: target equals current balance.");
     await expect(save).toBeDisabled();
     await target.fill("40");
     await expect(preview).toHaveText("Adjustment: −10.00 USD");

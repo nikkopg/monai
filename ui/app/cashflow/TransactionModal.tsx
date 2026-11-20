@@ -242,7 +242,7 @@ export default function TransactionModal({
     ? editingTx!.currency ?? "IDR"
     : acctOf(chipId)
     ? ccyOf(chipId)
-    : "—";
+    : "–";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -444,7 +444,7 @@ export default function TransactionModal({
                 marginBottom: 14,
               }}
             >
-              This is one leg of a transfer — full pair editing isn&apos;t
+              This is one leg of a transfer. Full pair editing isn&apos;t
               available yet.
             </div>
           )}

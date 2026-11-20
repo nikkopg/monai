@@ -219,7 +219,7 @@ export default function SettingsPage() {
     if (state.status === "error") {
       return (
         <span style={{ color: tokens.color.terracotta, fontSize: "var(--fs-xs, 12px)" }}>
-          Save failed: {state.message}. Your previous settings are unchanged — try
+          Save failed: {state.message}. Your previous settings are unchanged. Try
           again.
         </span>
       );
@@ -259,7 +259,7 @@ export default function SettingsPage() {
 
       {loadError && (
         <div style={{ ...card, color: tokens.color.terracotta }}>
-          Couldn&apos;t load settings — check the backend is running and reload
+          Couldn&apos;t load settings. Check the backend is running and reload
           the page.
         </div>
       )}

@@ -36,8 +36,8 @@ test.describe("money formatter", () => {
   test("missing is a dash", () => {
     for (const v of [null, undefined, NaN, Infinity]) {
       for (const ccy of ["IDR", "USD"]) {
-        expect(fmtAmount(v, ccy), `fmtAmount(${v}, ${ccy})`).toBe("—");
-        expect(fmtAmountSigned(v, ccy), `fmtAmountSigned(${v}, ${ccy})`).toBe("—");
+        expect(fmtAmount(v, ccy), `fmtAmount(${v}, ${ccy})`).toBe("–");
+        expect(fmtAmountSigned(v, ccy), `fmtAmountSigned(${v}, ${ccy})`).toBe("–");
       }
     }
   });

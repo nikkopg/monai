@@ -263,7 +263,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
       {platforms.length === 0 && !adding && (
         <div style={{ color: tokens.color.muted3, fontSize: "var(--fs-body, 13px)", marginTop: 8 }}>
           No platforms yet. Add a platform (e.g. your brokerage or crypto app) to
-          start grouping holdings — or log a holding first and assign a platform
+          start grouping holdings, or log a holding first and assign a platform
           later.
         </div>
       )}
@@ -333,7 +333,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
 
       {deleteFlow.stage === "reassign" && (
         <ConfirmDialog
-          message={`${deleteFlow.affectedCount} holdings use this platform — choose a destination platform to reassign them, or cancel.`}
+          message={`${deleteFlow.affectedCount} holdings use this platform. Choose a destination platform to reassign them, or cancel.`}
           confirmLabel="Reassign & delete"
           onCancel={() => setDeleteFlow({ stage: "idle" })}
           onConfirm={confirmReassignDelete}

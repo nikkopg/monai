@@ -120,7 +120,7 @@ test.describe("/compact and /clear (D-26)", () => {
     await expect(conv(page).getByText("Second synthetic answer")).toBeVisible();
     await composer(page).fill("/clear");
     await page.getByRole("button", { name: "Ask" }).click();
-    await expect(DIVIDER(page)).toHaveText("Context cleared — earlier messages are not sent to the model");
+    await expect(DIVIDER(page)).toHaveText("Context cleared. Earlier messages are not sent to the model");
     expect(posts).toEqual(["clear"]);
     expect(await queryBodies(page)).toEqual([]);
     await expect(conv(page).getByText("Second synthetic answer")).toBeVisible();

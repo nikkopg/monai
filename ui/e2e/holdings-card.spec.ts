@@ -60,8 +60,8 @@ test.describe("holdings logic", () => {
     expect(fmtShort(346.15, "USD")).toBe("346.15 USD");
     expect(fmtShort(850, "IDR")).toBe("850");
     expect(fmtShort(999_950, "IDR")).toBe("1.0M"); // pii-ok synthetic
-    expect(fmtShort(null, "IDR")).toBe("—");
-    expect(fmtShort(NaN, "USD")).toBe("—");
+    expect(fmtShort(null, "IDR")).toBe("–");
+    expect(fmtShort(NaN, "USD")).toBe("–");
   });
 
   test("liquidRows in IDR", () => {
@@ -70,7 +70,7 @@ test.describe("holdings logic", () => {
     const [bank, wallet, dollar] = rows;
     expect(bank).toMatchObject({ amount: "4,000,000", sub: undefined, title: undefined, share: "71%" });
     expect(wallet).toMatchObject({ amount: "1,625,000", sub: "100.00 USD", title: RATE_TITLE, share: "29%" });
-    expect(dollar).toMatchObject({ amount: "—", title: NO_RATE_IDR, sub: "50.00 USD", share: "—" });
+    expect(dollar).toMatchObject({ amount: "–", title: NO_RATE_IDR, sub: "50.00 USD", share: "–" });
     expect(rows.map((r) => r.color)).toEqual(GREENS.slice(0, 3));
     expect(centre).toBe(5_625_000);
   });
@@ -81,14 +81,14 @@ test.describe("holdings logic", () => {
     expect(bank).toMatchObject({ amount: "246.15 USD", sub: "4,000,000 IDR", title: RATE_TITLE, share: "71%" });
     // A USD account shows its own balance, not 1,625,000 / 16,250.
     expect(wallet).toMatchObject({ amount: "100.00 USD", sub: undefined, share: "29%" });
-    expect(dollar).toMatchObject({ amount: "50.00 USD", share: "—" });
+    expect(dollar).toMatchObject({ amount: "50.00 USD", share: "–" });
     // Only accounts with an IDR value, the donut's set.
     expect(centre).toBeCloseTo(4_000_000 / 16_250 + 100, 6); // pii-ok synthetic
   });
 
   test("liquidRows in USD with no rate anywhere", () => {
     const { rows, centre } = liquidRows([ZZ_BANK, ZZ_DOLLAR], "USD", 4_000_000); // pii-ok synthetic
-    expect(rows[0]).toMatchObject({ name: "ZZ Bank", amount: "—", title: NO_RATE_USD, sub: "4,000,000 IDR" });
+    expect(rows[0]).toMatchObject({ name: "ZZ Bank", amount: "–", title: NO_RATE_USD, sub: "4,000,000 IDR" });
     expect(centre).toBeNull();
   });
 
@@ -96,7 +96,7 @@ test.describe("holdings logic", () => {
     const owed = acct({ id: 9, name: "ZZ Owed", currency: "IDR", current_balance: -500_000 }); // pii-ok synthetic
     const { rows } = liquidRows([ZZ_BANK, owed], "IDR", 3_500_000); // pii-ok synthetic
     expect(rows[0]).toMatchObject({ name: "ZZ Bank", share: "100%", negative: false });
-    expect(rows[1]).toMatchObject({ name: "ZZ Owed", amount: "-500,000", share: "—", negative: true });
+    expect(rows[1]).toMatchObject({ name: "ZZ Owed", amount: "-500,000", share: "–", negative: true });
   });
 
   test("a stale USD row keeps its label in both views", () => {
@@ -124,7 +124,7 @@ test.describe("holdings logic", () => {
       liquid_total: 1, investment_total: 0, liquid_accounts: [ZZ_BANK], investment_groups: groups.slice(0, 1),
     });
     expect(one[0].sub).toBe("1 account");
-    expect(one[1]).toMatchObject({ sub: "1 platform", share: "—" });
+    expect(one[1]).toMatchObject({ sub: "1 platform", share: "–" });
   });
 
   test("assetLabel", () => {
@@ -279,7 +279,7 @@ test.describe("Holdings card", () => {
 
     await expect(card.getByText("1,625,000", { exact: true })).toHaveAttribute("title", RATE_TITLE);
     await expect(card.getByText("100.00 USD", { exact: true })).toBeVisible();
-    await expect(card.getByText("—", { exact: true }).first()).toHaveAttribute("title", NO_RATE_IDR);
+    await expect(card.getByText("–", { exact: true }).first()).toHaveAttribute("title", NO_RATE_IDR);
 
     await card.getByRole("button", { name: "USD", exact: true }).click();
     await expect(card.getByText("246.15 USD", { exact: true })).toHaveAttribute("title", RATE_TITLE);

@@ -216,16 +216,16 @@ assert.deepEqual(RANGE_MONTHS, { "1Y": 12, "3Y": 36, All: 600 });
   ]);
   assert.deepEqual(tooltipLines(jul, "total", false), [
     "Jul 2026",
-    "No data — the historical FX rate could not be verified for these months",
+    "No data (the historical FX rate could not be verified for these months)",
   ]);
   assert.deepEqual(tooltipLines(jul, "split", false), [
     "Jul 2026",
-    "Liquid: No data — the historical FX rate could not be verified for these months",
+    "Liquid: No data (the historical FX rate could not be verified for these months)",
     "Investment: 41,234,567",
   ]);
   assert.deepEqual(tooltipLines(octBoth, "total", false), [
     "Oct 2025",
-    "No data — the historical FX rate could not be verified for these months; investment tracking hadn't started yet",
+    "No data (the historical FX rate could not be verified for these months; investment tracking hadn't started yet)",
   ]);
 
   const allTooltipOutputs = [

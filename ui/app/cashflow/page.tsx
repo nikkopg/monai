@@ -147,7 +147,7 @@ export default function CashflowPage() {
       setSummaryError(null);
     } else {
       setSummaryError(
-        "Couldn't load the dashboard — check the backend is running and reload the page."
+        "Couldn't load the dashboard. Check the backend is running and reload the page."
       );
     }
   }
@@ -165,16 +165,16 @@ export default function CashflowPage() {
         setNetWorthError(null);
       } else if (r.status === 422) {
         setNetWorthError(
-          "Couldn't verify net worth — some accounts aren't classified as liquid or investment. Check Settings › Accounts."
+          "Couldn't verify net worth: some accounts aren't classified as liquid or investment. Check Settings › Accounts."
         );
       } else {
         setNetWorthError(
-          "Couldn't load the dashboard — check the backend is running and reload the page."
+          "Couldn't load the dashboard. Check the backend is running and reload the page."
         );
       }
     } catch {
       setNetWorthError(
-        "Couldn't load the dashboard — check the backend is running and reload the page."
+        "Couldn't load the dashboard. Check the backend is running and reload the page."
       );
     }
   }

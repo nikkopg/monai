@@ -349,7 +349,7 @@ test.describe("record-modal — Transfer segment (REC-04)", () => {
 
     await expect(
       page.getByText(
-        "This is one leg of a transfer — full pair editing isn't available yet."
+        "This is one leg of a transfer. Full pair editing isn't available yet."
       )
     ).toBeVisible();
     await expect(

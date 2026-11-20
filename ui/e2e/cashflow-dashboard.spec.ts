@@ -644,7 +644,7 @@ test.describe("USD balances (Phase 44)", () => {
       "1 USD = 16,250 IDR · rate of 30 Oct 2026"
     );
     // A negative balance has no slice, so no share.
-    await expect(wallet.getByText("—", { exact: true })).toBeVisible();
+    await expect(wallet.getByText("–", { exact: true })).toBeVisible();
 
     const cash = card.getByText("ZZ44 Cash", { exact: true }).locator("xpath=../..");
     await expect(cash.getByText("4,000,000", { exact: true })).toBeVisible();
@@ -676,7 +676,7 @@ test.describe("USD balances (Phase 44)", () => {
     const card = await openLiquid(page);
     const wallet = card.getByText("ZZ44 Wallet", { exact: true }).locator("xpath=../..");
     await expect(wallet.getByText("-12.34 USD", { exact: true })).toBeVisible();
-    await expect(wallet.getByText("—", { exact: true }).first()).toHaveAttribute(
+    await expect(wallet.getByText("–", { exact: true }).first()).toHaveAttribute(
       "title",
       "IDR value unavailable: no USD→IDR rate, so this account is left out of the total"
     );

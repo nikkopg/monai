@@ -186,7 +186,7 @@ test.describe("bond buy form (261117-rw1)", () => {
     await expect(note).toBeVisible();
 
     await page.getByLabel("Rate % p.a.").fill("");
-    await expect(preview(page)).toContainText("You receive / month—");
+    await expect(preview(page)).toContainText("You receive / month–");
   });
 
   test("submit waits for valid terms, then posts a face-value funded buy with the bond object", async ({ page }) => {

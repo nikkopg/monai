@@ -24,7 +24,7 @@ test.describe("balance adjustment (ACCT-02)", () => {
     await page.goto("/settings");
     await page.getByRole("button", { name: "Account options: Cash", exact: true }).click();
     await page.getByRole("menuitem", { name: "Adjust balance", exact: true }).click();
-    await expect(page.getByText("Adjust balance — Cash")).toBeVisible();
+    await expect(page.getByText("Adjust balance: Cash")).toBeVisible();
 
     const modal = page.locator("form").filter({ hasText: "Save adjustment" });
     await modal.locator("input[type='number']").fill("1500000");
@@ -33,6 +33,6 @@ test.describe("balance adjustment (ACCT-02)", () => {
     await expect(
       page.getByText("Couldn't save adjustment: some backend message. Nothing was changed.")
     ).toBeVisible();
-    await expect(page.getByText("Adjust balance — Cash")).toBeVisible();
+    await expect(page.getByText("Adjust balance: Cash")).toBeVisible();
   });
 });

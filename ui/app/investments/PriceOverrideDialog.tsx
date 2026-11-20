@@ -83,7 +83,7 @@ export default function PriceOverrideDialog({ holding, onClose, onSaved }: Props
           Current:{" "}
           {holding.current_price != null
             ? new Intl.NumberFormat("en-US").format(holding.current_price)
-            : "—"}
+            : "–"}
           {holding.price_source ? ` · ${holding.price_source}` : ""}
         </p>
         <form onSubmit={handleSubmit}>

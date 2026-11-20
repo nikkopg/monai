@@ -725,7 +725,7 @@ test.describe("Records USD rows (Phase 44 D-13, D-14)", () => {
 
     await expect(page.getByText(`Net ${signed(-225525)}`, { exact: true })).toBeVisible();
     await expect(page.getByText(/^Net -25,000 · 1 unconverted$/)).toBeVisible();
-    await expect(page.getByText(/^Net — · 1 unconverted$/)).toBeVisible();
+    await expect(page.getByText(/^Net – · 1 unconverted$/)).toBeVisible();
 
     const pair = page.getByText("25.50 USD", { exact: false });
     await expect(pair).toHaveCount(1);

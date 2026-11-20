@@ -131,7 +131,7 @@ test.describe("nav badge", () => {
     await expect.poll(() => inbox.hits.counts).toBeGreaterThan(0);
     await expect(link(page, "Inbox")).toBeVisible();
     await expect(page.locator(".nav-badge")).toHaveCount(0);
-    await expect(page.getByText("—", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("–", { exact: true })).toHaveCount(0);
   });
 
   test("em dash after two failed counts", async ({ page }) => {
@@ -142,7 +142,7 @@ test.describe("nav badge", () => {
     await page.waitForTimeout(300);
     await expect(page.locator(".nav-badge")).toHaveCount(0);
     await page.clock.runFor(60_000);
-    await expect(page.locator(".nav-badge")).toHaveText("—");
+    await expect(page.locator(".nav-badge")).toHaveText("–");
     await expect(link(page, "Inbox, pending count unavailable")).toBeVisible();
   });
 
@@ -807,7 +807,7 @@ test.describe("states", () => {
     await openInbox(page);
     const alert = page
       .getByRole("alert")
-      .filter({ hasText: "Couldn't load your inbox — check the backend is running and try again." });
+      .filter({ hasText: "Couldn't load your inbox. Check the backend is running and try again." });
     await expect(alert).toBeVisible();
     inbox.listMode = "ok";
     inbox.list = [oneRow()];
@@ -1208,7 +1208,7 @@ test.describe("offline", () => {
     await expect(
       page.getByRole("link", { name: "Inbox, pending count unavailable", exact: true })
     ).toBeVisible();
-    await expect(page.locator(".nav-badge")).toHaveText("—");
+    await expect(page.locator(".nav-badge")).toHaveText("–");
     await expect(live(page)).toHaveText("Can't reach monai. Retrying.");
 
     inbox.listMode = "ok";
@@ -1510,7 +1510,7 @@ test.describe("chat card", () => {
   test("Reject still says nothing changed", async ({ page }) => {
     const { posts } = await chatSetup(page);
     await page.getByRole("button", { name: "Reject", exact: true }).click();
-    await expect(page.getByText("Rejected — no changes made.")).toBeVisible();
+    await expect(page.getByText("Rejected. No changes made.")).toBeVisible();
     expect(posts.map((p) => p.path)).toEqual([`/api/proposals/${pid}/reject`]);
   });
 });

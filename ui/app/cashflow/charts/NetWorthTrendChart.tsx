@@ -40,7 +40,7 @@ import {
 // gapped (null-valued) month would otherwise hide the tooltip entirely.
 // `filterNull={false}` keeps the null-valued payload entry, and its
 // `.payload` is still the full plot point, so NetWorthTooltip can render the
-// D-09 "No data — reason" text on a gap month (a planning correction to
+// D-09 "No data (reason)" text on a gap month (a planning correction to
 // 23-RESEARCH.md Pitfall 1's mouse-index workaround, which doesn't hold on
 // this installed version).
 //
@@ -60,7 +60,7 @@ import {
 // ---------------------------------------------------------------------------
 
 const LOAD_ERROR =
-  "Couldn't load net worth history — check the backend is running and reload the page.";
+  "Couldn't load net worth history. Check the backend is running and reload the page.";
 
 const RANGE_OPTIONS: { value: Range; label: string }[] = [
   { value: "1Y", label: "1Y" },

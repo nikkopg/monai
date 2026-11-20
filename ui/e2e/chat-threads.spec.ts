@@ -122,8 +122,8 @@ test.describe("rehydrated proposal cards (D-16, D-17, THRD-06)", () => {
     );
     await page.goto(`/chat?thread=${TID}`);
     await expect(page.getByText("Applied successfully.")).toBeVisible();
-    await expect(page.getByText("Rejected — no changes made.")).toBeVisible();
-    await expect(page.getByText("Expired — ask again to redo this")).toBeVisible();
+    await expect(page.getByText("Rejected. No changes made.")).toBeVisible();
+    await expect(page.getByText("Expired. Ask again to redo this")).toBeVisible();
     await expect(page.getByText("This proposal is no longer available.")).toBeVisible();
     await expect.poll(() => storedTokens(page)).toEqual([]);
   });
@@ -155,7 +155,7 @@ test.describe("persisted notices (THRD-07)", () => {
     await expect(
       page.getByLabel("Conversation").getByText("Stopped. No answer was kept. Proposals from this run were rejected.")
     ).toBeVisible();
-    await expect(page.getByText("Rejected — the run was stopped. No changes made.")).toBeVisible();
+    await expect(page.getByText("Rejected. The run was stopped. No changes made.")).toBeVisible();
     await expect(page.getByRole("button", { name: "Ask again" })).toHaveCount(1);
     await expect(alertBox(page).last().getByRole("button", { name: "Ask again" })).toBeVisible();
   });

@@ -372,7 +372,7 @@ function RecordsInner() {
       setHasMore(rows.length === 100);
     } catch {
       setError(
-        "Couldn't load your records — check the backend is running and reload the page."
+        "Couldn't load your records. Check the backend is running and reload the page."
       );
     } finally {
       setLoading(false);
@@ -464,7 +464,7 @@ function RecordsInner() {
           setSkipNote(
             `${body.recategorized?.length ?? 0} recategorized. ${
               body.skipped.length
-            } transfer legs skipped — transfers are categorized automatically.`
+            } transfer legs skipped. Transfers are categorized automatically.`
           );
         }
         await refresh();
@@ -1022,7 +1022,7 @@ function RecordsInner() {
                           color: net >= 0 ? tokens.color.green : tokens.color.terracotta,
                         }}
                       >
-                        Net {unconverted > 0 && unconverted === dayRows.length ? "—" : fmtAmountSigned(net, "IDR")}
+                        Net {unconverted > 0 && unconverted === dayRows.length ? "–" : fmtAmountSigned(net, "IDR")}
                         {unconverted > 0 && (
                           <span style={{ fontSize: "var(--fs-xs, 12px)", fontWeight: 400, color: tokens.color.terracottaText }}>
                             {" · "}

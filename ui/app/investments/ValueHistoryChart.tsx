@@ -117,7 +117,7 @@ export default function ValueHistoryChart({
             margin: "auto 0 0",
           }}
         >
-          Not enough history yet — check back after a few days of price
+          Not enough history yet. Check back after a few days of price
           snapshots.
         </p>
       ) : (

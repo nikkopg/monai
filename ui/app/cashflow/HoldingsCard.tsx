@@ -198,7 +198,7 @@ export default function HoldingsCard({ data }: { data: HoldingsData }) {
         >
           <span style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3 }}>{centreLabel}</span>
           <span style={{ fontSize: 17, fontWeight: 600 }}>
-            {centre == null ? "—" : <RollingNumber value={centre} format={(n) => fmtShort(n, centreCcy)} />}
+            {centre == null ? "–" : <RollingNumber value={centre} format={(n) => fmtShort(n, centreCcy)} />}
           </span>
         </div>
       </div>

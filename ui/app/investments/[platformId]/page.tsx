@@ -204,7 +204,7 @@ export default function PlatformDetailPage() {
     } catch {
       if (!isStale())
         setError(
-          "Couldn't load this platform — check the backend is running and reload the page."
+          "Couldn't load this platform. Check the backend is running and reload the page."
         );
     } finally {
       if (!isStale() && !opts?.silent) setLoading(false);
@@ -311,7 +311,7 @@ export default function PlatformDetailPage() {
       ) : error || !detail ? (
         <div style={{ ...card, color: tokens.color.terracotta }}>
           {error ??
-            "Couldn't load this platform — check the backend is running and reload the page."}
+            "Couldn't load this platform. Check the backend is running and reload the page."}
         </div>
       ) : (
         <div className="fade-in">
@@ -545,7 +545,7 @@ export default function PlatformDetailPage() {
                             )
                           : h.current_price != null
                             ? fmtPlain(h.current_price)
-                            : "—"}
+                            : "–"}
                       </span>
                       <span
                         style={{
@@ -563,7 +563,7 @@ export default function PlatformDetailPage() {
                             )
                           : h.current_value != null
                             ? fmtPlain(h.current_value)
-                            : "—"}
+                            : "–"}
                       </span>
                       <span
                         style={{
@@ -595,7 +595,7 @@ export default function PlatformDetailPage() {
                             )
                           : h.unrealized_pnl != null
                             ? fmtSigned(h.unrealized_pnl)
-                            : "—"}
+                            : "–"}
                       </span>
                       <span
                         className="plat-sub"

@@ -139,7 +139,7 @@ const fmtSigned = (n: number) =>
     Math.round(n)
   );
 const pct = (n: number, base: number) =>
-  base > 0 ? `${n >= 0 ? "+" : ""}${((n / base) * 100).toFixed(1)}%` : "—";
+  base > 0 ? `${n >= 0 ? "+" : ""}${((n / base) * 100).toFixed(1)}%` : "–";
 
 // Green for gains, terracotta for losses (paired with the +/- sign — WCAG 1.4.1).
 const pnlColor = (n: number) =>
@@ -225,7 +225,7 @@ export default function InvestmentsPage() {
       }
     } catch {
       setError(
-        "Couldn't load your portfolio — check the backend is running and reload the page."
+        "Couldn't load your portfolio. Check the backend is running and reload the page."
       );
     } finally {
       setLoading(false);
@@ -689,7 +689,7 @@ export default function InvestmentsPage() {
                           <span style={{ color: muted }}>
                             {total > 0
                               ? `${Math.round((s.value / total) * 100)}%`
-                              : "—"}
+                              : "–"}
                           </span>
                         </div>
                       );
@@ -988,7 +988,7 @@ export default function InvestmentsPage() {
                             }}
                           >
                             {h.asset_type === "bond"
-                              ? "—"
+                              ? "–"
                               : h.usd_current_price != null
                               ? withIdr(
                                   fmtUsdPrice(h.usd_current_price, 8),
@@ -997,7 +997,7 @@ export default function InvestmentsPage() {
                                 )
                               : h.current_price != null
                                 ? fmtPlain(h.current_price)
-                                : "—"}
+                                : "–"}
                           </span>
                           <span
                             style={{
@@ -1015,7 +1015,7 @@ export default function InvestmentsPage() {
                                 )
                               : h.current_value != null
                                 ? fmtPlain(h.current_value)
-                                : "—"}
+                                : "–"}
                           </span>
                           <span
                             style={{
@@ -1033,7 +1033,7 @@ export default function InvestmentsPage() {
                                 )
                               : upnl != null
                                 ? pct(upnl, basis)
-                                : "—"}
+                                : "–"}
                           </span>
                           <span
                             style={{
@@ -1063,7 +1063,7 @@ export default function InvestmentsPage() {
                                   onSelect: async () => {
                                     if (
                                       !confirm(
-                                        `Delete holding ${h.ticker}? Holdings with buy/sell history can't be deleted — record a sell to close them instead.`
+                                        `Delete holding ${h.ticker}? Holdings with buy/sell history can't be deleted. Record a sell to close them instead.`
                                       )
                                     )
                                       return;
@@ -1103,7 +1103,7 @@ export default function InvestmentsPage() {
                                 ? fmtUsdPrice(h.usd_current_price, 8)
                                 : h.current_price != null
                                   ? fmtPlain(h.current_price)
-                                  : "—"
+                                  : "–"
                             }`}
                           </span>
                         </div>

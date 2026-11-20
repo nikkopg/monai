@@ -243,7 +243,7 @@ export default function CategoryManager({ onChanged }: Props) {
           // (Pitfall 3) — so no reassign CTA is offered here, only the
           // corrective instruction.
           setError(
-            `Couldn't delete category: ${affectedCount} transactions and ${childCount} subcategories use this category — remove or re-parent the subcategories first. Nothing was changed.`
+            `Couldn't delete category: ${affectedCount} transactions and ${childCount} subcategories use this category. Remove or re-parent the subcategories first. Nothing was changed.`
           );
           setDeleteFlow({ stage: "idle" });
           return;
@@ -518,7 +518,7 @@ export default function CategoryManager({ onChanged }: Props) {
               <span style={badgeStyle}>{node.tx_count}</span>
               {node.is_system && (
                 <span className="cat-note" style={{ fontSize: "var(--fs-xs, 11px)", color: tokens.color.muted2, marginLeft: 8 }}>
-                  System category — can&apos;t be deleted.
+                  System category: can&apos;t be deleted.
                 </span>
               )}
               <div style={{ marginLeft: "auto", paddingRight: 8 }}>
@@ -533,7 +533,7 @@ export default function CategoryManager({ onChanged }: Props) {
                       ? {
                           label: "Delete",
                           disabled: true,
-                          title: "System category — can't be deleted.",
+                          title: "System category: can't be deleted.",
                           onSelect: () => {},
                         }
                       : {
@@ -590,7 +590,7 @@ export default function CategoryManager({ onChanged }: Props) {
 
       {deleteFlow.stage === "reassign" && (
         <ConfirmDialog
-          message={`${deleteFlow.affectedCount} transactions use this category — choose a destination category to reassign them, or cancel.`}
+          message={`${deleteFlow.affectedCount} transactions use this category. Choose a destination category to reassign them, or cancel.`}
           confirmLabel="Reassign & delete"
           onCancel={() => setDeleteFlow({ stage: "idle" })}
           onConfirm={confirmReassignDelete}

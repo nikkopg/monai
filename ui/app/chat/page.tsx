@@ -1236,7 +1236,7 @@ function ChatInner() {
     : -1;
   const dividerText = boundary?.summarized
     ? "Earlier messages summarized"
-    : "Context cleared — earlier messages are not sent to the model";
+    : "Context cleared. Earlier messages are not sent to the model";
 
   // Ask again is the same regenerate through replace_from whenever the question is
   // saved (D-18); an unsaved, thread-less pair is replaced locally instead.

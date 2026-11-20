@@ -83,13 +83,13 @@ export type ActionOutcome =
 // ---------------------------------------------------------------------------
 
 export const APPROVER_KEY_PAGE_MSG =
-  "Approvals aren't set up — the web server is missing a valid approver key. See the README approver-key step, then restart.";
+  "Approvals aren't set up: the web server is missing a valid approver key. See the README approver-key step, then restart.";
 export const APPROVER_KEY_ACTION_MSG =
-  "Approvals aren't set up — the web server is missing a valid approver key.";
+  "Approvals aren't set up: the web server is missing a valid approver key.";
 export const NETWORK_FAIL_MSG = "Couldn't reach monai. Try again.";
 export const LEDGER_CHANGED_MSG =
   "Ledger changed since you reviewed; reload to see the updated card.";
-export const ALL_SKIPPED_MSG = "Every row is skipped — reject this proposal instead";
+export const ALL_SKIPPED_MSG = "Every row is skipped. Reject this proposal instead";
 
 // ---------------------------------------------------------------------------
 // Display helpers
@@ -221,7 +221,7 @@ const enGbFull = new Intl.DateTimeFormat("en-GB", {
 
 /** "7 Oct 2026" from YYYY-MM-DD (built from parts: ISO strings shift by timezone). */
 export function fmtRowDate(value: unknown): string {
-  if (value === null || value === undefined) return "—";
+  if (value === null || value === undefined) return "–";
   const s = String(value);
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.slice(0, 10));
   if (!m) return s; // chat dates are unvalidated
@@ -236,21 +236,21 @@ const missing = (v: unknown) =>
 
 /** "-35,000" / "+250,000"; the raw value when not numeric. */
 export function fmtSigned(value: unknown): string {
-  if (missing(value)) return "—";
+  if (missing(value)) return "–";
   const n = Number(value);
   return Number.isFinite(n) ? signedFmt.format(Math.round(n)) : String(value);
 }
 
 /** An absolute amount, minus kept, no "+": "-250,000" / "5,000,000"; the raw value when not numeric. */
 export function fmtAbsolute(value: unknown): string {
-  if (missing(value)) return "—";
+  if (missing(value)) return "–";
   const n = Number(value);
   return Number.isFinite(n) ? fmtPlain(n) : String(value);
 }
 
 /** "50,000" (sign dropped); the raw value when not numeric. */
 export function fmtUnsigned(value: unknown): string {
-  if (missing(value)) return "—";
+  if (missing(value)) return "–";
   const n = Number(value);
   return Number.isFinite(n) ? fmtPlain(Math.abs(n)) : String(value);
 }
@@ -261,7 +261,7 @@ export function fmtUnsigned(value: unknown): string {
  * ("1,234.56 USD"), so the approval line matches the applied amount (WR-08).
  */
 export function fmtMoney(value: unknown, currency: unknown): string {
-  if (missing(value)) return "—";
+  if (missing(value)) return "–";
   const n = Number(value);
   if (!Number.isFinite(n)) return String(value);
   return new Intl.NumberFormat("en-US", {
@@ -283,7 +283,7 @@ export function hhmm(ms: number): string {
 
 /** Sidebar badge text; null hides it. Offline shows an em dash. */
 export function badgeText(pending: number | null, offline: boolean): string | null {
-  if (offline) return "—";
+  if (offline) return "–";
   if (pending === null || pending <= 0) return null;
   return pending > 99 ? "99+" : String(pending);
 }

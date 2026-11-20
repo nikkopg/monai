@@ -535,7 +535,7 @@ test.describe("net worth trend card", () => {
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await expect(tooltip).toBeVisible();
     await expect(tooltip).toContainText(
-      "No data — the historical FX rate could not be verified for these months"
+      "No data (the historical FX rate could not be verified for these months"
     );
   });
 
@@ -547,7 +547,7 @@ test.describe("net worth trend card", () => {
 
     const region = page.getByRole("region", { name: "Net worth trend", exact: true });
     await expect(region).toContainText(
-      "Couldn't load net worth history — check the backend is running and reload the page."
+      "Couldn't load net worth history. Check the backend is running and reload the page."
     );
     await expect(
       region.getByRole("button", { name: "3Y", exact: true })

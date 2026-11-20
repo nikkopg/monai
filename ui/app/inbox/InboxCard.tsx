@@ -630,7 +630,7 @@ export default function InboxCard({
                       <td className="inbox-c-date" style={{ ...cell, color: tone }}>{fmtRowDate(a.date)}</td>
                       <td className="inbox-c-merchant" style={{ ...cell, color: tone }}>
                         {skipped && <span style={{ ...neutralChip, marginRight: 8 }}>Skipped</span>}
-                        <span style={struck}>{text(a.merchant) || "—"}</span>
+                        <span style={struck}>{text(a.merchant) || "–"}</span>
                         {text(a.notes) !== "" && (
                           <div style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>{text(a.notes)}</div>
                         )}

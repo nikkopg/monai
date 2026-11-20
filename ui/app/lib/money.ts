@@ -21,21 +21,21 @@ const wholeFmt = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 const missing = (v: unknown): v is null | undefined =>
   v === null || v === undefined || !Number.isFinite(v);
 
-/** "1,234,568" for IDR or no currency; "1,234.50 USD" for USD; "—" when missing. */
+/** "1,234,568" for IDR or no currency; "1,234.50 USD" for USD; "–" when missing. */
 export function fmtAmount(v: number | null | undefined, ccy?: string | null): string {
-  if (missing(v)) return "—";
+  if (missing(v)) return "–";
   return ccy === "USD" ? `${usd.format(v)} USD` : plain.format(Math.round(v));
 }
 
 /** Same as fmtAmount with an explicit sign: "+12.30 USD", "-0". */
 export function fmtAmountSigned(v: number | null | undefined, ccy?: string | null): string {
-  if (missing(v)) return "—";
+  if (missing(v)) return "–";
   return ccy === "USD" ? `${usdSigned.format(v)} USD` : plainSigned.format(Math.round(v));
 }
 
 /** A USD unit price keeping its digits (2 to 12 dp): "0.18982345 USD", "0.024074644 USD" with sig 8. */
 export function fmtUsdPrice(v: number | null | undefined, sig?: number): string {
-  if (missing(v)) return "—";
+  if (missing(v)) return "–";
   return `${usdPrice.format(sig ? Number(v.toPrecision(sig)) : v)} USD`;
 }
 

@@ -296,11 +296,11 @@ test.describe("upload cards (DOC-05, D-22)", () => {
     await ask(page);
 
     const card = page.getByTestId("upload-card");
-    await expect(card).toContainText("12 rows proposed, 0 flagged — Review in Inbox");
+    await expect(card).toContainText("12 rows proposed, 0 flagged: Review in Inbox");
     await expect(page.getByTestId("upload-card-link")).toHaveAttribute("href", `/inbox#proposal-${PID}`);
     await expect(page.getByTestId("plan-bar")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Approve", exact: true })).toHaveCount(0);
-    await expect(page.getByTestId("chat-announcer")).toContainText("12 rows proposed, 0 flagged — Review in Inbox");
+    await expect(page.getByTestId("chat-announcer")).toContainText("12 rows proposed, 0 flagged: Review in Inbox");
     const stored = await page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.startsWith("monai.proposalToken.")));
     expect(stored).toEqual([]);
   });
@@ -345,7 +345,7 @@ test.describe("after a reload (D-07, DOC-08)", () => {
     });
     await page.goto(`/chat?thread=${TID}`);
 
-    await expect(page.getByTestId("upload-card")).toContainText("12 rows proposed, 0 flagged — Approved in Inbox");
+    await expect(page.getByTestId("upload-card")).toContainText("12 rows proposed, 0 flagged: Approved in Inbox");
     await expect(page.getByTestId("upload-card-link")).toHaveCount(0);
   });
 });

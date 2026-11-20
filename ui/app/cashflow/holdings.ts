@@ -3,7 +3,7 @@
 // can import it the way period-card-logic imports periodCard.ts.
 //
 // Every string the card shows (amount, subline, share, tooltip, centre) is built
-// here. A missing figure is "—" with a reason, never 0, and a USD account shows
+// here. A missing figure is "–" with a reason, never 0, and a USD account shows
 // its own native balance rather than a converted-and-back figure. The main-view
 // totals are the server's, never re-summed client-side.
 import { fmtRowDate } from "../lib/inbox";
@@ -86,9 +86,9 @@ const compact = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
 });
 
-/** Centre-of-donut figure: "10.1M", "5.3K USD", "850", "346.15 USD", "—". */
+/** Centre-of-donut figure: "10.1M", "5.3K USD", "850", "346.15 USD", "–". */
 export function fmtShort(n: number | null | undefined, ccy: Ccy): string {
-  if (n == null || !Number.isFinite(n)) return "—";
+  if (n == null || !Number.isFinite(n)) return "–";
   if (Math.abs(n) >= 1000) return compact.format(n) + (ccy === "USD" ? " USD" : "");
   return fmtAmount(n, ccy);
 }
@@ -109,7 +109,7 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 type Seed = Omit<HoldingRow, "color" | "share"> & { color?: string };
 
 // Sorts (highest first, missing last), colours and computes shares.
-// ponytail: negative or missing values get no slice and share "—", so shares
+// ponytail: negative or missing values get no slice and share "–", so shares
 // cover only the positive balances.
 function finish(seeds: Seed[], palette: string[], sort: boolean): HoldingRow[] {
   const list = sort
@@ -119,7 +119,7 @@ function finish(seeds: Seed[], palette: string[], sort: boolean): HoldingRow[] {
   return list.map((s, i) => ({
     ...s,
     color: s.color ?? palette[i % palette.length],
-    share: s.value != null && s.value > 0 ? `${Math.round((s.value / positive) * 100)}%` : "—",
+    share: s.value != null && s.value > 0 ? `${Math.round((s.value / positive) * 100)}%` : "–",
   }));
 }
 

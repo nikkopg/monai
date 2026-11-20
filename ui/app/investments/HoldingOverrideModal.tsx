@@ -297,8 +297,8 @@ export default function HoldingOverrideModal({
                     rel="noopener noreferrer"
                   >
                     coingecko.com
-                  </a>{" "}
-                  — the URL slug, e.g. <code>bittensor</code>. Leave blank to use
+                  </a>
+                  : the URL slug, e.g. <code>bittensor</code>. Leave blank to use
                   the default ticker mapping.
                 </p>
               </div>

@@ -183,7 +183,7 @@ test.describe("plan bar and Approve all (LOOP-04)", () => {
     await page.goto(`/chat?thread=${TID}`);
     await expect(approveAll(page)).toBeVisible();
     await reject(page).nth(1).click();
-    await expect(page.getByText("Rejected — no changes made.")).toBeVisible();
+    await expect(page.getByText("Rejected. No changes made.")).toBeVisible();
     await expect(approveAll(page)).toHaveCount(0);
     expect(calls).toEqual([]);
   });

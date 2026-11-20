@@ -39,7 +39,7 @@ export default function BondFields({
 }) {
   const set = (patch: Partial<BondTermsInput>) => onChange({ ...value, ...patch });
   const preview = couponPreview(nominal, parseFloat(value.rate), parseFloat(value.taxPct));
-  const money = (n: number | undefined, sign = "") => (n === undefined ? "—" : `${sign}${fmtPlain(n)}`);
+  const money = (n: number | undefined, sign = "") => (n === undefined ? "–" : `${sign}${fmtPlain(n)}`);
 
   return (
     <>

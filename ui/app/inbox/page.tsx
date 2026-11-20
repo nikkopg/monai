@@ -225,7 +225,7 @@ export default function InboxPage() {
       ) : (
         <div style={box}>
           <p role="alert" style={{ fontSize: "var(--fs-body, 14px)", color: c.terracotta, margin: "0 0 16px" }}>
-            Couldn't load your inbox — check the backend is running and try again.
+            Couldn't load your inbox. Check the backend is running and try again.
           </p>
           <button type="button" style={{ ...btnGhost, minHeight: 40 }} onClick={poll.refetchNow}>
             Try again
@@ -319,7 +319,7 @@ export default function InboxPage() {
           }}
         >
           Can't reach monai · retrying (last update{" "}
-          {poll.lastSuccessAt !== null ? hhmm(poll.lastSuccessAt) : "—"})
+          {poll.lastSuccessAt !== null ? hhmm(poll.lastSuccessAt) : "–"})
         </div>
       )}
 

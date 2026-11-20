@@ -128,18 +128,17 @@ test.describe("uploadErrorText", () => {
 });
 
 test.describe("cardSentence", () => {
-  test("pending is linked and uses the em dash", () => {
+  test("pending is linked and joins with a colon, no em dash (261120-r0k)", () => {
     const s = cardSentence(12, 0, "pending");
-    expect(s).toEqual({ lead: "12 rows proposed, 0 flagged — ", tail: "Review in Inbox", linked: true });
-    expect(s.lead).toContain("—");
-    expect(s.lead).toContain(" — ");
+    expect(s).toEqual({ lead: "12 rows proposed, 0 flagged: ", tail: "Review in Inbox", linked: true });
+    expect(s.lead).not.toContain("—");
   });
   test("undefined status is the in-view turn: pending", () => {
     expect(cardSentence(2, 1, undefined).tail).toBe("Review in Inbox");
   });
   test("one row is singular and k is always printed", () => {
-    expect(cardSentence(1, 1, "pending").lead).toBe("1 row proposed, 1 flagged — ");
-    expect(cardSentence(0, 0, "pending").lead).toBe("0 rows proposed, 0 flagged — ");
+    expect(cardSentence(1, 1, "pending").lead).toBe("1 row proposed, 1 flagged: ");
+    expect(cardSentence(0, 0, "pending").lead).toBe("0 rows proposed, 0 flagged: ");
   });
   const tails: [string, string][] = [
     ["confirmed", "Approved in Inbox"],

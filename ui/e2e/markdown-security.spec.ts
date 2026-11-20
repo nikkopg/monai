@@ -124,11 +124,11 @@ test.describe("Markdown renderer (node-only)", () => {
   // [cells of column 2, right-aligned?]; column 1 is a plain label.
   const columnCases: [string[], boolean][] = [
     // placeholders are skipped
-    [["1,000", "—", "n/a", "", "-", "–"], true],
+    [["1,000", "–", "n/a", "", "-", "–"], true],
     // signed Rp, U+2212 minus, trailing IDR, short scale
     [["Rp -50,000", "−50,000", "12,345 IDR", "1.5 jt"], true],
     // no real amount: stays as written
-    [["—", "n/a", ""], false],
+    [["–", "n/a", ""], false],
     // text that merely contains digits
     [["Q3 2026", "1,000"], false],
     [["2026-10", "1,000"], false],

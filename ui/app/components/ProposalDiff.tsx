@@ -85,7 +85,7 @@ export function ProposalDiff({
               {Object.entries(row.after).map(([k, v]) => (
                 <div key={k}>
                   <span style={dim}>{k}: </span>
-                  <span style={add}>{show(v ?? "—")}</span>
+                  <span style={add}>{show(v ?? "–")}</span>
                 </div>
               ))}
             </div>
@@ -97,7 +97,7 @@ export function ProposalDiff({
               {Object.entries(row.before).map(([k, v]) => (
                 <div key={k}>
                   <span style={dim}>{k}: </span>
-                  <span style={del}>{show(v ?? "—")}</span>
+                  <span style={del}>{show(v ?? "–")}</span>
                 </div>
               ))}
             </div>
@@ -119,9 +119,9 @@ export function ProposalDiff({
               {changedKeys.map((k) => (
                 <div key={k}>
                   <span style={dim}>{k}: </span>
-                  <span style={del}>{show(row.before![k] ?? "—")}</span>
+                  <span style={del}>{show(row.before![k] ?? "–")}</span>
                   {" → "}
-                  <span style={add}>{show(row.after![k] ?? "—")}</span>
+                  <span style={add}>{show(row.after![k] ?? "–")}</span>
                 </div>
               ))}
             </div>
@@ -141,7 +141,7 @@ export function ProposalDiff({
             {fields.map(([k, v]) => (
               <div key={k}>
                 <span style={dim}>{k}: </span>
-                <span>{show(v ?? "—")}</span>
+                <span>{show(v ?? "–")}</span>
               </div>
             ))}
           </div>

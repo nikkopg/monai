@@ -94,7 +94,7 @@ export default function AdjustBalanceModal({ account, onClose, onChanged }: Prop
         onClick={(e) => e.stopPropagation()}
       >
         <h2 style={{ fontSize: 20, fontWeight: 600, margin: "0 0 16px" }}>
-          Adjust balance — {account.name}
+          Adjust balance: {account.name}
         </h2>
         <form onSubmit={handleSubmit}>
           <div>
@@ -122,7 +122,7 @@ export default function AdjustBalanceModal({ account, onClose, onChanged }: Prop
             }}
           >
             {shown === 0
-              ? "No change — target equals current balance."
+              ? "No change: target equals current balance."
               : `Adjustment: ${shown > 0 ? "+" : "−"}${isUsd ? "" : "Rp "}${fmtAmount(
                   Math.abs(shown),
                   isUsd ? "USD" : "IDR"

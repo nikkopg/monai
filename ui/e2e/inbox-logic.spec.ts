@@ -298,7 +298,7 @@ test.describe("format", () => {
     expect(fmtRowDate("2026-10-07")).toBe("7 Oct 2026");
     expect(fmtRowDate("2026-10-07T10:00:00")).toBe("7 Oct 2026");
     expect(fmtRowDate("yesterday")).toBe("yesterday");
-    expect(fmtRowDate(null)).toBe("—");
+    expect(fmtRowDate(null)).toBe("–");
   });
   test("amounts", () => {
     expect(fmtSigned("-35000.00")).toBe("-35,000");
@@ -308,10 +308,10 @@ test.describe("format", () => {
   });
   test("missing amounts render as an em dash, never undefined or 0", () => {
     for (const v of [null, undefined, "", "  "]) {
-      expect(fmtSigned(v)).toBe("—");
-      expect(fmtUnsigned(v)).toBe("—");
-      expect(fmtAbsolute(v)).toBe("—");
-      expect(fmtMoney(v, "IDR")).toBe("—");
+      expect(fmtSigned(v)).toBe("–");
+      expect(fmtUnsigned(v)).toBe("–");
+      expect(fmtAbsolute(v)).toBe("–");
+      expect(fmtMoney(v, "IDR")).toBe("–");
     }
     expect(fmtSigned(0)).toBe("0");
   });
@@ -331,8 +331,8 @@ test.describe("badge", () => {
     expect(badgeText(3, false)).toBe("3");
     expect(badgeText(99, false)).toBe("99");
     expect(badgeText(100, false)).toBe("99+");
-    expect(badgeText(3, true)).toBe("—");
-    expect(badgeText(null, true)).toBe("—");
+    expect(badgeText(3, true)).toBe("–");
+    expect(badgeText(null, true)).toBe("–");
   });
   test("nav label", () => {
     expect(navInboxLabel(0, false)).toBe("Inbox");
@@ -469,7 +469,7 @@ test.describe("action mapping", () => {
       expect(mapActionResponse(s, "whatever")).toEqual({ kind: "error", message: APPROVER_KEY_ACTION_MSG });
     }
     expect(APPROVER_KEY_ACTION_MSG).toBe(
-      "Approvals aren't set up — the web server is missing a valid approver key."
+      "Approvals aren't set up: the web server is missing a valid approver key."
     );
   });
   test("404, 409, 410", () => {
@@ -491,7 +491,7 @@ test.describe("action mapping", () => {
   test("422 and 500 carry the server detail", () => {
     expect(mapActionResponse(422, ALL_SKIPPED_MSG)).toEqual({
       kind: "error",
-      message: "Couldn't apply: Every row is skipped — reject this proposal instead",
+      message: "Couldn't apply: Every row is skipped. Reject this proposal instead",
     });
     expect(mapActionResponse(500, "boom")).toEqual({ kind: "error", message: "Couldn't apply: boom" });
   });

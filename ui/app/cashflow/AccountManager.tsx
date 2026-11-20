@@ -324,7 +324,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
 
       {deleteFlow.stage === "reassign" && (
         <ConfirmDialog
-          message={`${deleteFlow.affectedCount} transactions use this account — choose a destination account to reassign them, or cancel.`}
+          message={`${deleteFlow.affectedCount} transactions use this account. Choose a destination account to reassign them, or cancel.`}
           confirmLabel="Reassign & delete"
           onCancel={() => setDeleteFlow({ stage: "idle" })}
           onConfirm={confirmReassignDelete}

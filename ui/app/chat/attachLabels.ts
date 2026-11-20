@@ -156,7 +156,7 @@ export function cardSentence(
   k: number,
   status: string | undefined
 ): { lead: string; tail: string; linked: boolean } {
-  const lead = `${rows(n)} proposed, ${k} flagged — `;
+  const lead = `${rows(n)} proposed, ${k} flagged: `;
   const tail = TAILS[status ?? ""];
   return tail ? { lead, tail, linked: false } : { lead, tail: "Review in Inbox", linked: true };
 }

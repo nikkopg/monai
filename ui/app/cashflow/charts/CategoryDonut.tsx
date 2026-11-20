@@ -133,7 +133,7 @@ export default function CategoryDonut({ data }: { data: CategoryGroup[] }) {
               title={r.name || undefined}
               style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}
             >
-              {r.name || "—"}
+              {r.name || "–"}
             </span>
             <span style={{ fontWeight: 500, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
               {fmtAmount(r.total, "IDR")}

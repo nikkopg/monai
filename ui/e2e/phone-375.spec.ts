@@ -526,7 +526,7 @@ test.describe("P4 settings (261115-oax)", () => {
     // System row: the menu button sits on the name's line, the note below it.
     const name = (await row.getByText("ZZ Adjustment", { exact: true }).boundingBox())!;
     const menu = (await row.getByRole("button", { name: /^Category options/ }).boundingBox())!;
-    const note = (await row.getByText("System category — can't be deleted.").boundingBox())!;
+    const note = (await row.getByText("System category: can't be deleted.").boundingBox())!;
     const menuMid = menu.y + menu.height / 2;
     expect(menuMid).toBeGreaterThan(name.y);
     expect(menuMid).toBeLessThan(name.y + name.height);
@@ -1336,4 +1336,33 @@ test.describe("antislop 001 T4 (261120-r0k)", () => {
     await page.goto("/investments");
     expect(await hits44(page.getByRole("button", { name: "+ Log event" }))).toBe(true);
   });
+});
+
+// ===========================================================================
+// antislop 001 T5 (261120-r0k): no em dash (U+2014) in UI code outside comments.
+// The chat Markdown parser's PLACEHOLDER pattern is the one allowed use: it
+// recognises a dash the model typed, it never shows one.
+// ===========================================================================
+
+test("T5: no em dash in user-visible UI strings", async () => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const root = path.join(__dirname, "..", "app");
+  const found: string[] = [];
+  const walk = (d: string) => {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else if (/\.(ts|tsx)$/.test(e.name)) {
+        const src = fs.readFileSync(p, "utf8")
+          .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+          .split("\n").map((l) => l.replace(/(^|[^:"'`])\/\/.*$/, "$1"));
+        src.forEach((l, i) => {
+          if (l.includes("—") && !l.includes("const PLACEHOLDER")) found.push(`${path.relative(root, p)}:${i + 1}`);
+        });
+      }
+    }
+  };
+  walk(root);
+  expect(found).toEqual([]);
 });
