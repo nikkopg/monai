@@ -532,7 +532,7 @@ test.describe("P4 settings (261115-oax)", () => {
     expect(note.y).toBeGreaterThanOrEqual(name.y + name.height);
 
     // The expand arrow is 13px (--fs-xs on phones).
-    expect(await row.locator("span[role=button]").evaluate((el) => getComputedStyle(el).fontSize)).toBe("13px");
+    expect(await row.locator("button.cat-expand").evaluate((el) => getComputedStyle(el).fontSize)).toBe("13px");
   });
 });
 
@@ -1193,12 +1193,12 @@ const lowContrast = (page: Page) =>
       return stack.reverse().reduce((base, c) => blend(c, base), { r: 255, g: 255, b: 255, a: 1 } as C);
     };
     const out: string[] = [];
-    for (const el of document.querySelectorAll("main *")) {
+    for (const el of Array.from(document.querySelectorAll("main *"))) {
       const r = el.getBoundingClientRect();
       const cs = getComputedStyle(el);
       if (!r.width || !r.height || cs.visibility === "hidden" || el.closest('[aria-hidden="true"]')) continue;
       if ((el as HTMLButtonElement).disabled || el.closest(":disabled")) continue; // WCAG exempts inactive controls
-      if (![...el.childNodes].some((n) => n.nodeType === 3 && n.textContent!.trim())) continue;
+      if (!Array.from(el.childNodes).some((n) => n.nodeType === 3 && n.textContent!.trim())) continue;
       const fg = parse(cs.color);
       if (!fg) continue;
       const bg = bgOf(el);
@@ -1244,5 +1244,31 @@ test.describe("antislop 001 (261120-r0k)", () => {
       return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
     });
     expect(ratio).toBeGreaterThanOrEqual(3);
+  });
+});
+
+test.describe("antislop 001 T2 (261120-r0k)", () => {
+  test.use({ isMobile: true, hasTouch: true });
+
+  test("T2: category expand arrow is a named button, keyboard operable, 44px on touch", async ({ page }) => {
+    await mockSettings(page);
+    await page.goto("/settings");
+    const arrow = page.getByRole("button", { name: "Expand ZZ Adjustment" });
+    await expect(arrow).toHaveAttribute("aria-expanded", "false");
+    await arrow.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("button", { name: "Collapse ZZ Adjustment" })).toHaveAttribute("aria-expanded", "true");
+    await expect(page.locator(".cat-row").filter({ hasText: "ZZ Child" })).toBeVisible();
+    await page.keyboard.press("Space");
+    await expect(page.getByRole("button", { name: "Expand ZZ Adjustment" })).toHaveAttribute("aria-expanded", "false");
+
+    // Tap area: points 21px from the centre on each side still hit the button.
+    const hits = await arrow.evaluate((el) => {
+      el.scrollIntoView({ block: "center" });
+      const b = el.getBoundingClientRect();
+      const cx = b.left + b.width / 2, cy = b.top + b.height / 2;
+      return [[-21, 0], [21, 0], [0, -21], [0, 21]].map(([dx, dy]) => el.contains(document.elementFromPoint(cx + dx, cy + dy)));
+    });
+    expect(hits).toEqual([true, true, true, true]);
   });
 });

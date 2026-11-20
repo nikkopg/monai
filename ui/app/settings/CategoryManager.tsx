@@ -459,22 +459,31 @@ export default function CategoryManager({ onChanged }: Props) {
             gap: tokens.space.xs,
           }}
         >
-          <span
-            role={isExpandable ? "button" : undefined}
-            onClick={isExpandable ? () => toggle(node.id) : undefined}
-            style={{
-              width: 14,
-              display: "inline-block",
-              textAlign: "center",
-              cursor: isExpandable ? "pointer" : "default",
-              color: tokens.color.muted2,
-              fontSize: "var(--fs-xs, 12px)",
-              transform: isExpanded ? "rotate(90deg)" : "none",
-              transition: "transform .15s ease",
-            }}
-          >
-            {isExpandable ? "▶" : ""}
-          </span>
+          {isExpandable ? (
+            // A real button: Tab, Enter/Space, a name and aria-expanded; .cat-expand
+            // keeps the 14px look and widens the tap area to 44px on touch.
+            <button
+              type="button"
+              className="cat-expand"
+              aria-expanded={isExpanded}
+              aria-label={`${isExpanded ? "Collapse" : "Expand"} ${node.name}`}
+              onClick={() => toggle(node.id)}
+              style={{ color: tokens.color.muted2, fontSize: "var(--fs-xs, 12px)" }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  display: "inline-block",
+                  transform: isExpanded ? "rotate(90deg)" : "none",
+                  transition: "transform .15s ease",
+                }}
+              >
+                ▶
+              </span>
+            </button>
+          ) : (
+            <span style={{ width: 14, display: "inline-block" }} />
+          )}
 
           {renderChip(node)}
 

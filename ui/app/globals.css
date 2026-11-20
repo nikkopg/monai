@@ -593,6 +593,23 @@ input, select, button, textarea {
   .pill-btn::before { content: ""; position: absolute; inset: -4px 0; }
 }
 
+/* Settings category expand arrow: a bare 14px button; on touch an invisible
+   ::before widens the tap area to 44 x 45. */
+.cat-expand {
+  position: relative;
+  width: 14px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  line-height: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+@media (pointer: coarse) {
+  .cat-expand::before { content: ""; position: absolute; inset: -14px -15px; }
+}
+
 /* Hero range and metric pills (Net worth, Investments Total value): stacked
    at the top right beside the total. The total gives way (its sub-lines wrap)
    until the card is too narrow for the big number, then the pills drop under
