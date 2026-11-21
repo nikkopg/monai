@@ -1588,3 +1588,17 @@ test.describe("hide amounts with motion (261121-fwp)", () => {
     await expect(total.locator(".sr-only")).toHaveText("2,469,135,780"); // pii-ok synthetic
   });
 });
+
+test.describe("Records filters at mid width", () => {
+  test.use({ viewport: { width: 740, height: 900 } });
+
+  test("selects wrap instead of shrinking past their text; amount fields keep 120px", async ({ page }) => {
+    await mockRecords(page);
+    await page.goto("/records");
+    await expect(page.getByPlaceholder("Search merchant or notes…")).toBeVisible();
+    for (const id of ["rec-account", "rec-category", "rec-type"])
+      expect((await page.locator(`#${id}`).boundingBox())!.width).toBeGreaterThanOrEqual(150);
+    for (const id of ["rec-min", "rec-max"])
+      expect(Math.round((await page.locator(`#${id}`).boundingBox())!.width)).toBe(120);
+  });
+});

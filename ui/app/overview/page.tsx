@@ -378,9 +378,10 @@ export default function OverviewPage() {
               {!netWorthError && change}
               {netWorthData && !netWorthError && (
                 <div
+                  // Same size and gap as the Investments card's Unrealized · Realized line.
                   style={{
-                    marginTop: 12,
-                    fontSize: "var(--fs-xs, 12px)",
+                    marginTop: 8,
+                    fontSize: "var(--fs-body, 14px)",
                     color: tokens.color.inkTextMuted,
                     fontVariantNumeric: "tabular-nums",
                   }}
