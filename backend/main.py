@@ -2004,6 +2004,7 @@ def list_proposals(
         else ProposalOut.model_validate(p)
         for p in rows
     ]
+    _attach_chat_provenance(db, rows, items)
     if status == "pending":
         flags = duplicate_flags(db, rows)
         for item in items:
@@ -2012,6 +2013,32 @@ def list_proposals(
                 for row, row_flags in zip(item.payload.get("rows") or [], flags[item.id]):
                     row["duplicates"] = row_flags
     return items
+
+
+def _attach_chat_provenance(db: Session, rows: list, items: list) -> None:
+    """Set thread_id and request on items whose proposal came from a chat turn (261121-m17).
+
+    request is the closest user message before the proposal's assistant message
+    in the same thread, cut to 200 characters. One query per linked proposal;
+    the Inbox holds a handful.
+    """
+    from backend.models import Message
+
+    for proposal, item in zip(rows, items):
+        if proposal.message_id is None:
+            continue
+        msg = db.get(Message, proposal.message_id)
+        if msg is None:
+            continue
+        ask = (
+            db.query(Message.content)
+            .filter(Message.thread_id == msg.thread_id, Message.seq < msg.seq, Message.role == "user")
+            .order_by(desc(Message.seq))
+            .limit(1)
+            .scalar()
+        )
+        item.thread_id = msg.thread_id
+        item.request = ask[:200] if ask else None
 
 
 # Must stay above any GET route with a path parameter under /proposals so the

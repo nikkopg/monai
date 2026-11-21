@@ -1762,3 +1762,23 @@ test.describe("261121-m17 T3: overwrite and proposal cues", () => {
     await expect(page.getByText("Chat proposals expire after 15 minutes, Claude's and uploads after 48 hours.", { exact: false })).toBeVisible();
   });
 });
+
+test.describe("261121-m17 T4: chat provenance", () => {
+  test("a chat proposal quotes its request and links to the chat", async ({ page }) => {
+    const thread = "bbbbbbbb-0000-4000-8000-000000000001";
+    await mockInbox(page, { list: [chatTx({ id: ids.b, thread_id: thread, request: "ZZ add coffee 25000 to Cash" })] });
+    await openInbox(page);
+    const card = byId(page, ids.b);
+    await expect(card.getByText("From your chat:")).toBeVisible();
+    await expect(card).toContainText("“ZZ add coffee 25000 to Cash”");
+    await expect(card.getByRole("link", { name: "View chat" })).toHaveAttribute("href", `/chat?thread=${thread}`);
+  });
+
+  test("no provenance line without a thread or request", async ({ page }) => {
+    await mockInbox(page, { list: [chatTx({ id: ids.b })] });
+    await openInbox(page);
+    await expect(byId(page, ids.b)).toBeVisible();
+    await expect(byId(page, ids.b).getByText("From your chat:")).toHaveCount(0);
+    await expect(byId(page, ids.b).getByRole("link", { name: "View chat" })).toHaveCount(0);
+  });
+});

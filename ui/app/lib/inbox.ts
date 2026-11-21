@@ -61,6 +61,9 @@ export type InboxProposal = {
   supersedes_id: string | null;
   failed_attempts: number;
   code?: string | null;
+  /** Chat provenance (261121-m17): the thread and request behind a chat proposal. */
+  thread_id?: string | null;
+  request?: string | null;
 };
 
 export type CardPhase =

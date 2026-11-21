@@ -551,6 +551,25 @@ export default function InboxCard({
       <div style={{ marginTop: 4, fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>
         Proposed {relativeAge(Date.parse(p.created_at), nowMs)}
       </div>
+      {/* Where a chat proposal came from (261121-m17), like an upload's file line. */}
+      {(p.request || p.thread_id) && (
+        <p style={{ fontSize: "var(--fs-body, 14px)", color: c.ink, margin: "8px 0 0" }}>
+          {p.request && (
+            <>
+              <span style={{ color: c.muted3 }}>From your chat: </span>
+              &ldquo;{p.request}&rdquo;
+            </>
+          )}
+          {p.thread_id && isUuid(p.thread_id) && (
+            <>
+              {p.request ? " · " : ""}
+              <Link href={`/chat?thread=${p.thread_id}`} style={{ color: c.ink, textDecoration: "underline" }}>
+                View chat
+              </Link>
+            </>
+          )}
+        </p>
+      )}
 
       {/* upload provenance: before the rows, so the trust statement is read first (D-23) */}
       {upload && badge && (

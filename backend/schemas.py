@@ -744,6 +744,10 @@ class ProposalOut(BaseModel):
     status_changed_at: datetime
     supersedes_id: _uuid.UUID | None
     failed_attempts: int
+    # Chat provenance (261121-m17), filled by GET /proposals when message_id is
+    # set: the message's thread and the user request just before it (200 chars).
+    thread_id: _uuid.UUID | None = None
+    request: str | None = None
 
 
 class ProposalApproverOut(ProposalOut):
