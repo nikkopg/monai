@@ -1538,3 +1538,27 @@ test.describe("design review 261121-efd desktop", () => {
     expect(got).toEqual({ tabular: "tabular-nums", scheme: "light", transitionAll: 0, below12: 0 });
   });
 });
+
+test.describe("hide amounts (261121-fwp)", () => {
+  test("the eye button masks the hero amounts, keeps the %, and is remembered", async ({ page }) => {
+    await mockInvestments(page);
+    await page.goto("/investments");
+    // The header column only: the range pills beside it ("1M", "3M") carry digits too.
+    const hero = page.locator(".hero-head > div").first();
+    const hide = page.getByRole("button", { name: "Hide amounts" });
+    await expect(hide).toHaveAttribute("aria-pressed", "false");
+    await expect(hero).toContainText("2,469,135,780"); // pii-ok synthetic
+
+    await hide.click();
+    const show = page.getByRole("button", { name: "Show amounts" });
+    await expect(show).toHaveAttribute("aria-pressed", "true");
+    const text = await hero.innerText();
+    expect(text).toContain("••••••");
+    // Only the percentage may carry digits once amounts are hidden.
+    expect(text.replace(/\(?[−+-]?\d+(\.\d+)?%\)?/g, "").match(/\d/g)).toBeNull();
+
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Show amounts" })).toBeVisible();
+    await expect(page.locator(".hero-head > div").first()).toContainText("••••••");
+  });
+});

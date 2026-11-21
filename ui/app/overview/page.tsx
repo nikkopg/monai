@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { tokens, card, notice } from "../styles";
 import Pills from "../components/Pills";
 import RollingNumber from "../components/RollingNumber";
+import { HideAmountsButton, MASK, useHideAmounts } from "../components/HideAmounts";
 import CategoryDonut from "./charts/CategoryDonut";
 import TrendChart, { type ChartPoint } from "./charts/TrendChart";
 import NetWorthTrendChart from "./charts/NetWorthTrendChart";
@@ -73,6 +74,7 @@ type NetWorth = {
 // ---------------------------------------------------------------------------
 
 export default function OverviewPage() {
+  const [hideAmounts, toggleHideAmounts] = useHideAmounts();
   const [kind, setKind] = useState<PeriodKind>("month");
   const [offset, setOffset] = useState(0);
   const [summary, setSummary] = useState<CashflowSummary | null>(null);
@@ -342,18 +344,22 @@ export default function OverviewPage() {
           >
             <NetWorthTrendChart
               hero
+              hideAmounts={hideAmounts}
               header={(change) => (
             <div>
-              <h2
-                style={{
-                  fontSize: "var(--fs-body, 13px)",
-                  color: tokens.color.inkTextMuted,
-                  margin: "0 0 10px",
-                  fontWeight: 400,
-                }}
-              >
-                Net worth
-              </h2>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "0 0 10px" }}>
+                <h2
+                  style={{
+                    fontSize: "var(--fs-body, 13px)",
+                    color: tokens.color.inkTextMuted,
+                    margin: 0,
+                    fontWeight: 400,
+                  }}
+                >
+                  Net worth
+                </h2>
+                <HideAmountsButton hidden={hideAmounts} onToggle={toggleHideAmounts} />
+              </div>
               {netWorthError ? (
                 <div style={{ fontSize: "var(--fs-body, 14px)", color: "#e6a99c" }}>
                   {netWorthError}
@@ -368,7 +374,7 @@ export default function OverviewPage() {
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  <RollingNumber value={netWorthData?.total ?? 0} format={(n) => fmtAmount(n, "IDR")} />
+                  {hideAmounts ? MASK : <RollingNumber value={netWorthData?.total ?? 0} format={(n) => fmtAmount(n, "IDR")} />}
                 </div>
               )}
               {!netWorthError && change}
@@ -381,8 +387,8 @@ export default function OverviewPage() {
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  Liquid {fmtAmount(netWorthData.liquid_total, "IDR")} ·
-                  Investment {fmtAmount(netWorthData.investment_total, "IDR")}
+                  Liquid {hideAmounts ? MASK : fmtAmount(netWorthData.liquid_total, "IDR")} ·
+                  Investment {hideAmounts ? MASK : fmtAmount(netWorthData.investment_total, "IDR")}
                 </div>
               )}
             </div>

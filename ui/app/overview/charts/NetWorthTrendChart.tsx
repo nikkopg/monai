@@ -115,13 +115,16 @@ function NetWorthTooltip({
 // (the label and total) sits left of the pills, the chart is shorter and the
 // lines use the on-ink colours. The default is the standalone light card.
 // `header` gets the range's change line (first to last plotted total) to place
-// under the total; it is null until two months plot.
+// under the total; it is null until two months plot. `hideAmounts` masks the
+// change amount and drops the tooltip, which would show the totals.
 export default function NetWorthTrendChart({
   hero = false,
   header,
+  hideAmounts = false,
 }: {
   hero?: boolean;
   header?: (change: React.ReactNode) => React.ReactNode;
+  hideAmounts?: boolean;
 }) {
   const [range, setRange] = useState<Range>("1Y");
   const [mode, setMode] = useState<Mode>("total");
@@ -160,6 +163,7 @@ export default function NetWorthTrendChart({
         from={plotted[0].total!}
         to={plotted[plotted.length - 1].total!}
         since={monthLabel(plotted[0].month)}
+        hidden={hideAmounts}
       />
     ) : null;
   const newestMonth = rows && rows.length > 0 ? rows[rows.length - 1].month : undefined;
@@ -272,11 +276,13 @@ export default function NetWorthTrendChart({
                   tickLine={false}
                   width={40}
                 />
-                <Tooltip
-                  filterNull={false}
-                  isAnimationActive={false}
-                  content={<NetWorthTooltip mode={mode} newestMonth={newestMonth} />}
-                />
+                {!hideAmounts && (
+                  <Tooltip
+                    filterNull={false}
+                    isAnimationActive={false}
+                    content={<NetWorthTooltip mode={mode} newestMonth={newestMonth} />}
+                  />
+                )}
                 {mode === "total" ? (
                   <>
                     <Line

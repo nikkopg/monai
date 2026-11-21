@@ -54,11 +54,14 @@ export default function ValueHistoryChart({
   range,
   onRangeChange,
   header,
+  hideAmounts = false,
 }: {
   data: HistoryPoint[];
   range: Range;
   onRangeChange: (r: Range) => void;
   header?: (change: React.ReactNode) => React.ReactNode;
+  // Masks the change amount and drops the tooltip (hide amounts toggle).
+  hideAmounts?: boolean;
 }) {
   const [view, setView] = useState<View>("value");
 
@@ -71,6 +74,7 @@ export default function ValueHistoryChart({
         to={Number(data[data.length - 1][key])}
         since={new Date(data[0].date).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })}
         showPct={view === "value"}
+        hidden={hideAmounts}
       />
     ) : null;
   const pnlStroke = latestPnl >= 0 ? tokens.color.chipGreenText : "#e6a99c";
@@ -134,22 +138,24 @@ export default function ValueHistoryChart({
                 tickLine={false}
                 minTickGap={24}
               />
-              <Tooltip
-                formatter={(value) =>
-                  typeof value === "number"
-                    ? view === "pnl"
-                      ? fmtSigned(value)
-                      : fmtPlain(value)
-                    : value
-                }
-                contentStyle={{
-                  background: tokens.color.card,
-                  border: `1px solid ${tokens.color.border2}`,
-                  borderRadius: 10,
-                  fontSize: "var(--fs-xs, 12px)",
-                  color: tokens.color.text,
-                }}
-              />
+              {!hideAmounts && (
+                <Tooltip
+                  formatter={(value) =>
+                    typeof value === "number"
+                      ? view === "pnl"
+                        ? fmtSigned(value)
+                        : fmtPlain(value)
+                      : value
+                  }
+                  contentStyle={{
+                    background: tokens.color.card,
+                    border: `1px solid ${tokens.color.border2}`,
+                    borderRadius: 10,
+                    fontSize: "var(--fs-xs, 12px)",
+                    color: tokens.color.text,
+                  }}
+                />
+              )}
               {view === "value" ? (
                 <Line
                   type="monotone"
