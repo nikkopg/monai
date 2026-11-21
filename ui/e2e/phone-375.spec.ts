@@ -1286,6 +1286,8 @@ test.describe("antislop 001 T3 (261120-r0k)", () => {
     await page.goto("/records");
     for (const name of ["Search records", "Filter by account", "Filter by category", "Filter by type", "Minimum amount", "Maximum amount"])
       await expect(page.getByLabel(name, { exact: true })).toHaveCount(1);
+    // Row checkboxes show only in select mode (261121-m17).
+    await page.getByRole("button", { name: "Select", exact: true }).click();
     const boxes = page.locator(".rec-row input[type=checkbox]");
     expect(await boxes.count()).toBeGreaterThan(0);
     for (const label of await boxes.evaluateAll((els) => els.map((e) => e.getAttribute("aria-label") ?? "")))
@@ -1317,6 +1319,8 @@ test.describe("antislop 001 T4 (261120-r0k)", () => {
     await page.goto("/records");
     await expect(page.getByPlaceholder("Search merchant or notes…")).toBeVisible();
     expect(await hits44(page.getByRole("button", { name: "+ Add record" }))).toBe(true);
+    expect(await hits44(page.getByRole("button", { name: "Select", exact: true }))).toBe(true);
+    await page.getByRole("button", { name: "Select", exact: true }).click();
     expect(await hits44(page.locator(".rec-row label.tap44").first())).toBe(true);
     expect(await hits44(page.getByRole("button", { name: /^Record options: / }).first())).toBe(true);
 
@@ -1586,6 +1590,38 @@ test.describe("hide amounts with motion (261121-fwp)", () => {
     // Showing rolls back up to the value.
     await page.getByRole("button", { name: "Show amounts" }).click();
     await expect(total.locator(".sr-only")).toHaveText("2,469,135,780"); // pii-ok synthetic
+  });
+});
+
+test.describe("Records select mode (261121-m17)", () => {
+  test("checkboxes show only in select mode; the bar fits a phone; select all and Done", async ({ page }) => {
+    await mockRecords(page);
+    await page.goto("/records");
+    await expect(page.getByPlaceholder("Search merchant or notes…")).toBeVisible();
+    await expect(page.locator(".rec-row input[type=checkbox]")).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Select", exact: true }).click();
+    const boxes = page.locator(".rec-row input[type=checkbox]");
+    expect(await boxes.count()).toBeGreaterThan(0);
+    await expect(page.getByRole("button", { name: "Recategorize" })).toBeDisabled();
+
+    await page.getByRole("button", { name: "Select all" }).click();
+    for (const c of await boxes.all()) await expect(c).toBeChecked();
+    await expect(page.getByRole("button", { name: "Unselect all" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Delete", exact: true })).toBeEnabled();
+
+    // Every bar control stays inside the card at 375px.
+    const card = page.locator("section.card-tight");
+    const right = (await card.boundingBox())!.x + (await card.boundingBox())!.width;
+    for (const b of await page.locator(".rec-bulk button, .rec-bulk select").all())
+      expect((await b.boundingBox())!.x + (await b.boundingBox())!.width).toBeLessThanOrEqual(right);
+
+    await page.getByRole("button", { name: "Unselect all" }).click();
+    for (const c of await boxes.all()) await expect(c).not.toBeChecked();
+
+    await page.getByRole("button", { name: "Done", exact: true }).click();
+    await expect(page.locator(".rec-row input[type=checkbox]")).toHaveCount(0);
+    await expect(page.getByPlaceholder("Search merchant or notes…")).toBeVisible();
   });
 });
 

@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
-import { tokens, card, input, btn, btnDark, dangerBtn } from "../styles";
+import { tokens, card, input, btn, btnDark, btnGhost, dangerBtn } from "../styles";
 import TransactionModal, {
   type Tx as ModalTx,
   type AccountOption,
@@ -142,6 +142,7 @@ function LedgerRowShell({
   amountColor,
   checked,
   onToggle,
+  selectable,
   onEdit,
   onDelete,
 }: {
@@ -156,6 +157,8 @@ function LedgerRowShell({
   amountColor: string;
   checked: boolean;
   onToggle: () => void;
+  /** Select mode (261121-m17): the checkbox shows only while selecting. */
+  selectable: boolean;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -171,9 +174,11 @@ function LedgerRowShell({
       }}
     >
       {/* The label carries the 44px tap area (a checkbox cannot take ::before). */}
-      <label className="tap44" style={{ width: 28, flexShrink: 0 }}>
-        <input type="checkbox" aria-label={`Select ${name}`} checked={checked} onChange={onToggle} />
-      </label>
+      {selectable && (
+        <label className="tap44" style={{ width: 28, flexShrink: 0 }}>
+          <input type="checkbox" aria-label={`Select ${name}`} checked={checked} onChange={onToggle} />
+        </label>
+      )}
       <span
         style={{
           width: 38,
@@ -324,6 +329,13 @@ function RecordsInner() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  // Select mode (261121-m17): checkboxes and the bulk bar show only while selecting.
+  const [selectMode, setSelectMode] = useState(false);
+  const allSelected = txs.length > 0 && txs.every((t) => selectedIds.has(t.id));
+  function endSelectMode() {
+    setSelectMode(false);
+    setSelectedIds(new Set());
+  }
   const [recatCategory, setRecatCategory] = useState("");
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
@@ -462,7 +474,7 @@ function RecordsInner() {
       });
       if (r.ok) {
         const body = await r.json();
-        setSelectedIds(new Set());
+        endSelectMode();
         if (body.skipped?.length) {
           setSkipNote(
             `${body.recategorized?.length ?? 0} recategorized. ${
@@ -499,7 +511,7 @@ function RecordsInner() {
         body: JSON.stringify({ ids: Array.from(selectedIds) }),
       });
       if (r.ok) {
-        setSelectedIds(new Set());
+        endSelectMode();
         setBulkDeleteOpen(false);
         await refresh();
       } else {
@@ -542,6 +554,7 @@ function RecordsInner() {
           {...usdSecondary(tx.currency, tx.amount_idr, tx.fx_rate, tx.fx_rate_date)}
           amountColor={tx.amount < 0 ? tokens.color.terracotta : tokens.color.green}
           checked={selectedIds.has(tx.id)}
+          selectable={selectMode}
           onToggle={() => toggleSelection([tx.id])}
           onEdit={() => {
             setEditingTx(tx);
@@ -595,6 +608,7 @@ function RecordsInner() {
               ))}
           amountColor={tokens.color.ink}
           checked={selectedIds.has(legA.id) && selectedIds.has(legB.id)}
+          selectable={selectMode}
           onToggle={() => toggleSelection([legA.id, legB.id])}
           onEdit={() => {
             setEditingTx(legA);
@@ -634,6 +648,7 @@ function RecordsInner() {
         {...usdSecondary(legA.currency, legA.amount_idr, legA.fx_rate, legA.fx_rate_date)}
         amountColor={legA.amount < 0 ? tokens.color.terracotta : tokens.color.green}
         checked={selectedIds.has(legA.id)}
+        selectable={selectMode}
         onToggle={() => toggleSelection([legA.id])}
         onEdit={() => {
           setEditingTx(legA);
@@ -721,17 +736,24 @@ function RecordsInner() {
             Records
           </h1>
         </div>
-        <button
-          type="button"
-          className="tap44"
-          style={btnDark}
-          onClick={() => {
-            setEditingTx(null);
-            setModalOpen(true);
-          }}
-        >
-          + Add record
-        </button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {!selectMode && (
+            <button type="button" className="tap44" style={btnGhost} onClick={() => setSelectMode(true)}>
+              Select
+            </button>
+          )}
+          <button
+            type="button"
+            className="tap44"
+            style={btnDark}
+            onClick={() => {
+              setEditingTx(null);
+              setModalOpen(true);
+            }}
+          >
+            + Add record
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -740,7 +762,7 @@ function RecordsInner() {
 
       {!error && (
         <section className="card-tight" style={{ ...card, marginBottom: "var(--stack, 18px)" }}>
-          {selectedIds.size === 0 ? (
+          {!selectMode ? (
             <div
               className="rec-filters"
               data-open={filtersOpen}
@@ -856,8 +878,10 @@ function RecordsInner() {
             </div>
           ) : (
             <div
+              className="rec-bulk"
               style={{
                 display: "flex",
+                flexWrap: "wrap",
                 alignItems: "center",
                 gap: tokens.space.sm,
                 background: tokens.color.sidebar,
@@ -866,46 +890,52 @@ function RecordsInner() {
                 marginBottom: tokens.space.md,
               }}
             >
-              <span style={{ fontSize: "var(--fs-xs, 12px)", fontWeight: 600 }}>
+              <button
+                type="button"
+                className="tap44"
+                style={btnGhost}
+                onClick={() => setSelectedIds(allSelected ? new Set() : new Set(txs.map((t) => t.id)))}
+              >
+                {allSelected ? "Unselect all" : "Select all"}
+              </button>
+              <span role="status" style={{ fontSize: "var(--fs-xs, 12px)", fontWeight: 600 }}>
                 {selectedIds.size} selected
               </span>
-              <div
-                style={{
-                  marginLeft: "auto",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: tokens.space.sm,
-                }}
+              <label htmlFor="rec-recat" className="sr-only">Category for the selected records</label>
+              <select
+                id="rec-recat"
+                className="rec-bulk-select"
+                style={{ ...input, width: 160, marginLeft: "auto" }}
+                value={recatCategory}
+                onChange={(e) => setRecatCategory(e.target.value)}
               >
-                <select
-                  style={{ ...input, width: 160 }}
-                  value={recatCategory}
-                  onChange={(e) => setRecatCategory(e.target.value)}
-                >
-                  {categoryOptions.map((o) => (
-                    <option key={o.name} value={o.name}>
-                      {`${"  ".repeat(o.depth)}${o.name}`}
-                    </option>
-                  ))}
-                </select>
-                <button type="button" style={btn} onClick={doBulkRecategorize}>
-                  Recategorize
-                </button>
-                <button
-                  type="button"
-                  style={dangerBtn}
-                  onClick={() => setBulkDeleteOpen(true)}
-                >
-                  Delete
-                </button>
-                <span
-                  role="button"
-                  onClick={() => setSelectedIds(new Set())}
-                  style={{ color: tokens.color.muted, cursor: "pointer", fontSize: "var(--fs-xs, 12px)" }}
-                >
-                  Cancel selection
-                </span>
-              </div>
+                {categoryOptions.map((o) => (
+                  <option key={o.name} value={o.name}>
+                    {`${"  ".repeat(o.depth)}${o.name}`}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="tap44"
+                style={selectedIds.size === 0 ? { ...btn, opacity: 0.5, cursor: "not-allowed" } : btn}
+                disabled={selectedIds.size === 0}
+                onClick={doBulkRecategorize}
+              >
+                Recategorize
+              </button>
+              <button
+                type="button"
+                className="tap44"
+                style={selectedIds.size === 0 ? { ...dangerBtn, opacity: 0.5, cursor: "not-allowed" } : dangerBtn}
+                disabled={selectedIds.size === 0}
+                onClick={() => setBulkDeleteOpen(true)}
+              >
+                Delete
+              </button>
+              <button type="button" className="tap44" style={btnGhost} onClick={endSelectMode}>
+                Done
+              </button>
             </div>
           )}
 

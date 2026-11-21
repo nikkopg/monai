@@ -249,6 +249,8 @@ test.describe("Multi-select + bulk actions (REC-03)", () => {
     // row's text; the row itself is the innermost/deepest matching div, i.e.
     // last in document order (Rule 3 test-authoring fix, 17-04).
     const row = page.locator("div", { hasText: "Warung Sate" }).last();
+    // Checkboxes show only in select mode (261121-m17).
+    await page.getByRole("button", { name: "Select", exact: true }).click();
     await row.locator('input[type="checkbox"]').check();
 
     await expect(page.getByText("1 selected", { exact: true })).toBeVisible();
@@ -257,7 +259,7 @@ test.describe("Multi-select + bulk actions (REC-03)", () => {
     // the bulk bar's.
     await expect(page.locator("button").filter({ hasText: "Recategorize" })).toBeVisible();
     await expect(page.locator("button").filter({ hasText: "Delete" }).first()).toBeVisible();
-    await expect(page.getByText("Cancel selection", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Done", exact: true })).toBeVisible();
 
     await page.locator("button").filter({ hasText: "Delete" }).first().click();
     await expect(
@@ -290,6 +292,8 @@ test.describe("Multi-select + bulk actions (REC-03)", () => {
     // row's text; the row itself is the innermost/deepest matching div, i.e.
     // last in document order (Rule 3 test-authoring fix, 17-04).
     const row = page.locator("div", { hasText: "Warung Sate" }).last();
+    // Checkboxes show only in select mode (261121-m17).
+    await page.getByRole("button", { name: "Select", exact: true }).click();
     await row.locator('input[type="checkbox"]').check();
 
     const bulkBar = page.locator("div").filter({ hasText: "1 selected" }).last();
