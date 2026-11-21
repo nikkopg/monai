@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { tokens, card, notice } from "../styles";
 import Pills from "../components/Pills";
 import RollingNumber from "../components/RollingNumber";
-import { HideAmountsButton, MASK, useHideAmounts } from "../components/HideAmounts";
+import { HideAmountsButton } from "../components/HideAmounts";
 import CategoryDonut from "./charts/CategoryDonut";
 import TrendChart, { type ChartPoint } from "./charts/TrendChart";
 import NetWorthTrendChart from "./charts/NetWorthTrendChart";
@@ -74,7 +74,6 @@ type NetWorth = {
 // ---------------------------------------------------------------------------
 
 export default function OverviewPage() {
-  const [hideAmounts] = useHideAmounts();
   const [kind, setKind] = useState<PeriodKind>("month");
   const [offset, setOffset] = useState(0);
   const [summary, setSummary] = useState<CashflowSummary | null>(null);
@@ -386,8 +385,8 @@ export default function OverviewPage() {
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  Liquid {hideAmounts ? MASK : fmtAmount(netWorthData.liquid_total, "IDR")} ·
-                  Investment {hideAmounts ? MASK : fmtAmount(netWorthData.investment_total, "IDR")}
+                  Liquid <RollingNumber hideable value={netWorthData.liquid_total} format={(n) => fmtAmount(n, "IDR")} /> ·
+                  Investment <RollingNumber hideable value={netWorthData.investment_total} format={(n) => fmtAmount(n, "IDR")} />
                 </div>
               )}
             </div>
