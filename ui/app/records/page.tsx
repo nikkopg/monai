@@ -332,8 +332,11 @@ function RecordsInner() {
   // Select mode (261121-m17): checkboxes and the bulk bar show only while selecting.
   const [selectMode, setSelectMode] = useState(false);
   const allSelected = txs.length > 0 && txs.every((t) => selectedIds.has(t.id));
+  // The category list shows only after Recategorize is pressed (fast 2026-11-21).
+  const [recatOpen, setRecatOpen] = useState(false);
   function endSelectMode() {
     setSelectMode(false);
+    setRecatOpen(false);
     setSelectedIds(new Set());
   }
   const [recatCategory, setRecatCategory] = useState("");
@@ -901,29 +904,51 @@ function RecordsInner() {
               <span role="status" style={{ fontSize: "var(--fs-xs, 12px)", fontWeight: 600 }}>
                 {selectedIds.size} selected
               </span>
-              <label htmlFor="rec-recat" className="sr-only">Category for the selected records</label>
-              <select
-                id="rec-recat"
-                className="rec-bulk-select"
-                style={{ ...input, width: 160, marginLeft: "auto" }}
-                value={recatCategory}
-                onChange={(e) => setRecatCategory(e.target.value)}
-              >
-                {categoryOptions.map((o) => (
-                  <option key={o.name} value={o.name}>
-                    {`${"  ".repeat(o.depth)}${o.name}`}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                className="tap44"
-                style={selectedIds.size === 0 ? { ...btn, opacity: 0.5, cursor: "not-allowed" } : btn}
-                disabled={selectedIds.size === 0}
-                onClick={doBulkRecategorize}
-              >
-                Recategorize
-              </button>
+{recatOpen ? (
+                <>
+                  <label htmlFor="rec-recat" className="sr-only">Category for the selected records</label>
+                  <select
+                    id="rec-recat"
+                    className="rec-bulk-select"
+                    style={{ ...input, width: 160, marginLeft: "auto" }}
+                    value={recatCategory}
+                    onChange={(e) => setRecatCategory(e.target.value)}
+                    autoFocus
+                  >
+                    {categoryOptions.map((o) => (
+                      <option key={o.name} value={o.name}>
+                        {`${"  ".repeat(o.depth)}${o.name}`}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="tap44"
+                    style={selectedIds.size === 0 ? { ...btn, opacity: 0.5, cursor: "not-allowed" } : btn}
+                    disabled={selectedIds.size === 0}
+                    onClick={doBulkRecategorize}
+                  >
+                    Apply
+                  </button>
+                  <button type="button" className="tap44" style={btnGhost} onClick={() => setRecatOpen(false)}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="tap44"
+                  style={
+                    selectedIds.size === 0
+                      ? { ...btn, opacity: 0.5, cursor: "not-allowed", marginLeft: "auto" }
+                      : { ...btn, marginLeft: "auto" }
+                  }
+                  disabled={selectedIds.size === 0}
+                  onClick={() => setRecatOpen(true)}
+                >
+                  Recategorize
+                </button>
+              )}
               <button
                 type="button"
                 className="tap44"

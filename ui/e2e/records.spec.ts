@@ -296,9 +296,12 @@ test.describe("Multi-select + bulk actions (REC-03)", () => {
     await page.getByRole("button", { name: "Select", exact: true }).click();
     await row.locator('input[type="checkbox"]').check();
 
-    const bulkBar = page.locator("div").filter({ hasText: "1 selected" }).last();
+    const bulkBar = page.locator(".rec-bulk");
+    // The category list shows only after Recategorize is pressed.
+    await expect(bulkBar.locator("select")).toHaveCount(0);
+    await bulkBar.getByRole("button", { name: "Recategorize" }).click();
     await bulkBar.locator("select").selectOption("Transport");
-    await bulkBar.locator("button").filter({ hasText: "Recategorize" }).click();
+    await bulkBar.getByRole("button", { name: "Apply" }).click();
 
     await expect.poll(() => recatBody?.category).toBe("Transport");
     await expect.poll(() => recatBody?.ids).toEqual([301]);
