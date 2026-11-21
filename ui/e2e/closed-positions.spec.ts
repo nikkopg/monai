@@ -107,7 +107,8 @@ test.describe("closed positions list", () => {
     for (const name of ["Allocation", "Holdings"]) {
       const h = page.getByRole("heading", { level: 2, name, exact: true });
       await expect(h).toBeVisible();
-      await expect(h).toHaveCSS("font-size", "14px");
+      // --fs-h3 is 15px on desktop since 261121-efd T5 (was a 14px fallback).
+      await expect(h).toHaveCSS("font-size", "15px");
       await expect(h).toHaveCSS("font-weight", "600");
     }
   });

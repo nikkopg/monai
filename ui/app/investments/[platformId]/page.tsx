@@ -421,7 +421,7 @@ export default function PlatformDetailPage() {
                     color: active ? tokens.color.ink : tokens.color.muted3,
                     background: active ? "#fff" : "transparent",
                     boxShadow: active ? "0 1px 2px rgba(40,34,24,.12)" : "none",
-                    transition: "all .2s ease",
+                    transition: "background-color .2s ease, color .2s ease, box-shadow .2s ease",
                   }}
                 >
                   {t.label}

@@ -437,7 +437,7 @@ export default function TransactionModal({
                       ? "0 1px 2px rgba(40,34,24,.12)"
                       : "none",
                     opacity: locked ? 0.5 : 1,
-                    transition: "all .2s ease",
+                    transition: "background-color .2s ease, color .2s ease, box-shadow .2s ease",
                   }}
                 >
                   {s[0].toUpperCase() + s.slice(1)}

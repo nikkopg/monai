@@ -62,7 +62,7 @@ export default function Pills<T extends string>({
                 ? active ? tokens.color.ink : tokens.color.inkTextMuted
                 : active ? tokens.color.inkText : tokens.color.muted3,
               background: active ? (dark ? tokens.color.inkText : tokens.color.ink) : "transparent",
-              transition: "all .2s ease",
+              transition: "background-color .2s ease, color .2s ease, box-shadow .2s ease",
             }}
           >
             {opt.label}

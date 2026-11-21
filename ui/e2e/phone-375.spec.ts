@@ -806,14 +806,15 @@ test.describe("D2 dock clearance (261115-s37)", () => {
 // `main` and the desktop spot values for each page. The phone type scale is
 // phone-only, so these must stay green through every task.
 // 261121-efd T4: each page's 12px count drops by one, the uppercase label above the h1;
-// on Settings the 12px Accounts label also became a 14px h2.
+// on Settings the 12px Accounts label also became a 14px h2. T5 then gives each role
+// one desktop size (xs 12, body 14, h3 15, pill 13), so the stray 11 and 13px move.
 const S0: Record<string, { hist: Record<string, number>; spot: DesktopSpot } | undefined> = {
-  investments: { hist: {"12px": 29, "13px": 9, "14px": 15, "16px": 3, "17px": 1, "40px": 1, "52px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "0px"}, "pillH": 32} }, // pii-ok synthetic
-  platform: { hist: {"12px": 15, "13px": 3, "14px": 16, "28px": 3, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": null, "pillH": null} }, // pii-ok synthetic
-  records: { hist: {"12px": 7, "13px": 5, "14px": 12, "16px": 3, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic
+  investments: { hist: {"12px": 18, "13px": 11, "14px": 22, "15px": 2, "16px": 3, "17px": 1, "40px": 1, "52px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "0px"}, "pillH": 32} }, // pii-ok synthetic
+  platform: { hist: {"12px": 15, "13px": 2, "14px": 17, "28px": 3, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": null, "pillH": null} }, // pii-ok synthetic
+  records: { hist: {"12px": 7, "14px": 17, "16px": 3, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic
   inbox: { hist: {"12px": 18, "14px": 17, "20px": 2, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "0px"}, "pillH": null} }, // pii-ok synthetic
   chat: { hist: {"12px": 6, "14px": 11, "15px": 2, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": null, "pillH": null} }, // pii-ok synthetic
-  settings: { hist: {"11px": 1, "12px": 14, "13px": 9, "13.3333px": 1, "14px": 28, "15px": 6, "16px": 4, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic
+  settings: { hist: {"12px": 15, "13px": 3, "13.3333px": 1, "14px": 32, "15px": 8, "16px": 4, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic
 };
 
 async function expectDesktopUnchanged(page: Page, key: string) {
@@ -1519,5 +1520,21 @@ test.describe("design review 261121-efd desktop", () => {
         })
     );
     expect(cls).toBeLessThan(0.1);
+  });
+
+  test("F006/F007/F011/F012: one desktop scale, fixed-width digits, no transition: all, themed surfaces", async ({ page }) => {
+    await mockSettings(page);
+    await page.goto("/settings");
+    await expect(page.locator(".cat-row").first()).toBeVisible();
+    const got = await page.evaluate(() => {
+      const els = Array.from(document.querySelectorAll("main *"));
+      return {
+        tabular: getComputedStyle(document.body).fontVariantNumeric,
+        scheme: getComputedStyle(document.documentElement).colorScheme,
+        transitionAll: els.filter((e) => getComputedStyle(e).transitionProperty === "all" && getComputedStyle(e).transitionDuration !== "0s").length,
+        below12: els.filter((e) => e.childNodes.length && Array.from(e.childNodes).some((n) => n.nodeType === 3 && n.textContent!.trim()) && parseFloat(getComputedStyle(e).fontSize) < 12).length,
+      };
+    });
+    expect(got).toEqual({ tabular: "tabular-nums", scheme: "light", transitionAll: 0, below12: 0 });
   });
 });

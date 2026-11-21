@@ -15,14 +15,34 @@
   }
 }
 
-/* Phone type scale (261116-s7w), option B of phone-scale-mock.html. The
-   variables exist on phones only. Every converted inline site names its role
-   and carries today's px as the var() fallback, so desktop computes exactly as
-   before. Source order matters: this block follows the 760px block so its
+/* Phone type scale (261116-s7w), option B of phone-scale-mock.html. Every
+   converted inline site names its role with a var() and a px fallback; the
+   desktop values now come from the :root block below (261121-efd F006).
+   Source order matters: this block follows the 760px block so its
    .app-frame/.app-panel overrides win. */
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  /* Browser surfaces in the paper palette (design review 2026-11-21 F012). */
+  color-scheme: light;
+  scrollbar-color: #cfc6b6 transparent;
+}
+::selection {
+  background: rgba(47, 111, 79, 0.2);
+}
+/* Fixed-width digits everywhere, so amounts and rolling numbers do not wobble
+   as their digits change (F007). */
+body {
+  font-variant-numeric: tabular-nums;
+}
+/* Desktop type scale (F006). The inline fallbacks had drifted to 11, 12 and
+   13px for xs, 13 and 14 for body, 14 and 15 for h3; one value per role now.
+   The phone block below overrides these. */
+:root {
+  --fs-xs: 12px;
+  --fs-body: 14px;
+  --fs-h3: 15px;
+  --fs-pill: 13px;
 }
 @media (max-width: 560px) {
   :root {
@@ -752,8 +772,7 @@ button:disabled, select:disabled, input:disabled, textarea:disabled, [aria-disab
 }
 @media (prefers-reduced-motion: reduce) {
   .roll-digit::before { transition: none; }
-  /* Pills carry an inline `transition: all .2s`, which also animates their size
-     when the layout changes width; reduced motion means no animation at all. */
+  /* Pills carry an inline colour transition; reduced motion means no animation at all. */
   .pill-btn { transition: none !important; }
 }
 
