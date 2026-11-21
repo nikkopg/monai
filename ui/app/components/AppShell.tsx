@@ -1,7 +1,9 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { useEffect } from "react";
 import Nav from "./Nav";
+import { initHideAmounts } from "./HideAmounts";
 import { tokens } from "../styles";
 
 // The centered app frame + panel + sidebar, moved out of layout.tsx so /login
@@ -14,7 +16,10 @@ export default function AppShell({
   children: React.ReactNode;
   sidebarCollapsed?: boolean;
 }) {
-  if (usePathname() === "/login") return <>{children}</>;
+  const pathname = usePathname();
+  // The saved hide-amounts choice goes onto <html> before any page data arrives.
+  useEffect(initHideAmounts, []);
+  if (pathname === "/login") return <>{children}</>;
   return (
     <>
       {/* Centered app frame — mockup shell geometry */}

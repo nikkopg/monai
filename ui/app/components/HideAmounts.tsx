@@ -1,28 +1,46 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { tokens } from "../styles";
 
-// Hide amounts on the hero cards (Overview net worth, Investments total value)
-// for when someone can see the screen. One preference for both cards, kept in
-// this browser. It is read in a mount effect, which runs before either card's
-// data arrives, so the real numbers never flash. Percentages stay visible.
+// Hide amounts, for when someone can see the screen (261121-fwp). One setting
+// for the whole app, kept in this browser and mirrored onto <html> as
+// data-hide-amounts: CSS blurs every `.amt` (globals.css) and RollingNumber
+// rolls headline figures down to dots. AppShell applies the saved value on
+// mount, before any page's data arrives, so real numbers never flash.
 const KEY = "monai.hideAmounts";
+const EVENT = "monai:hide-amounts";
 
 export const MASK = "••••••";
 
+function isHidden() {
+  return document.documentElement.dataset.hideAmounts === "1";
+}
+
+function apply(hidden: boolean) {
+  if (hidden) document.documentElement.dataset.hideAmounts = "1";
+  else delete document.documentElement.dataset.hideAmounts;
+  window.dispatchEvent(new Event(EVENT));
+}
+
+export function initHideAmounts() {
+  try {
+    apply(localStorage.getItem(KEY) === "1");
+  } catch {
+    // ignore (e.g. storage disabled)
+  }
+}
+
+function subscribe(onChange: () => void) {
+  window.addEventListener(EVENT, onChange);
+  return () => window.removeEventListener(EVENT, onChange);
+}
+
 export function useHideAmounts(): [boolean, () => void] {
-  const [hidden, setHidden] = useState(false);
-  useEffect(() => {
-    try {
-      setHidden(localStorage.getItem(KEY) === "1");
-    } catch {
-      // ignore (e.g. storage disabled)
-    }
-  }, []);
+  const hidden = useSyncExternalStore(subscribe, isHidden, () => false);
   function toggle() {
-    const next = !hidden;
-    setHidden(next);
+    const next = !isHidden();
+    apply(next);
     try {
       localStorage.setItem(KEY, next ? "1" : "0");
     } catch {
@@ -33,7 +51,8 @@ export function useHideAmounts(): [boolean, () => void] {
 }
 
 // Eye (amounts shown) or eye with a slash (hidden), on the dark hero card.
-export function HideAmountsButton({ hidden, onToggle }: { hidden: boolean; onToggle: () => void }) {
+export function HideAmountsButton() {
+  const [hidden, toggle] = useHideAmounts();
   return (
     <button
       type="button"
@@ -41,7 +60,7 @@ export function HideAmountsButton({ hidden, onToggle }: { hidden: boolean; onTog
       aria-pressed={hidden}
       aria-label={hidden ? "Show amounts" : "Hide amounts"}
       title={hidden ? "Show amounts" : "Hide amounts"}
-      onClick={onToggle}
+      onClick={toggle}
       style={{
         display: "inline-flex",
         alignItems: "center",

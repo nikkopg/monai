@@ -1552,13 +1552,39 @@ test.describe("hide amounts (261121-fwp)", () => {
     await hide.click();
     const show = page.getByRole("button", { name: "Show amounts" });
     await expect(show).toHaveAttribute("aria-pressed", "true");
-    const text = await hero.innerText();
-    expect(text).toContain("••••••");
-    // Only the percentage may carry digits once amounts are hidden.
-    expect(text.replace(/\(?[−+-]?\d+(\.\d+)?%\)?/g, "").match(/\d/g)).toBeNull();
+    // Headline figures turn to dots (at once here: this file runs with reduced motion);
+    // every other amount in the card is blurred, the percentages are not.
+    const rolls = hero.locator(".roll");
+    await expect(rolls).toHaveCount(3); // total, Unrealized, Realized
+    for (const r of await rolls.all()) await expect(r).toContainText("••••••");
+    expect(await hero.innerText()).not.toMatch(/2,469,135,780|246,913,578/); // pii-ok synthetic
+    for (const f of await hero.locator(".amt").evaluateAll((els) => els.map((e) => getComputedStyle(e).filter)))
+      expect(f).toContain("blur");
+    await expect(hero).toContainText("%");
 
     await page.reload();
     await expect(page.getByRole("button", { name: "Show amounts" })).toBeVisible();
     await expect(page.locator(".hero-head > div").first()).toContainText("••••••");
+  });
+});
+
+test.describe("hide amounts with motion (261121-fwp)", () => {
+  test.use({ contextOptions: { reducedMotion: "no-preference" } });
+
+  test("hiding rolls the figures down to 0 first, then shows dots", async ({ page }) => {
+    await mockInvestments(page);
+    await page.goto("/investments");
+    const total = page.locator(".hero-head > div").first().locator(".roll").first();
+    await expect(total.locator(".sr-only")).toHaveText("2,469,135,780"); // pii-ok synthetic
+    await page.getByRole("button", { name: "Hide amounts" }).click();
+    // Mid-roll: the strips are heading to 0 and no real digit is left in the DOM.
+    await expect(total.locator(".roll-digit").first()).toHaveAttribute("data-d", "0");
+    await expect(total.locator(".sr-only")).toHaveText("Hidden amount");
+    await expect(total).not.toContainText("••••••");
+    // After the 0.8s roll, dots.
+    await expect(total).toContainText("••••••", { timeout: 3000 });
+    // Showing rolls back up to the value.
+    await page.getByRole("button", { name: "Show amounts" }).click();
+    await expect(total.locator(".sr-only")).toHaveText("2,469,135,780"); // pii-ok synthetic
   });
 });

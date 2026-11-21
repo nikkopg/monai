@@ -15,6 +15,7 @@ import { tokens, card } from "../../styles";
 import Pills from "../../components/Pills";
 import Skeleton, { DrawLine } from "../../components/Skeleton";
 import HeroChange from "../../components/HeroChange";
+import { useHideAmounts } from "../../components/HideAmounts";
 import {
   visibleRows,
   toPlotPoints,
@@ -115,17 +116,16 @@ function NetWorthTooltip({
 // (the label and total) sits left of the pills, the chart is shorter and the
 // lines use the on-ink colours. The default is the standalone light card.
 // `header` gets the range's change line (first to last plotted total) to place
-// under the total; it is null until two months plot. `hideAmounts` masks the
-// change amount and drops the tooltip, which would show the totals.
+// under the total; it is null until two months plot.
 export default function NetWorthTrendChart({
   hero = false,
   header,
-  hideAmounts = false,
 }: {
   hero?: boolean;
   header?: (change: React.ReactNode) => React.ReactNode;
-  hideAmounts?: boolean;
 }) {
+  // Hide amounts drops the tooltip, which would show the totals.
+  const [hideAmounts] = useHideAmounts();
   const [range, setRange] = useState<Range>("1Y");
   const [mode, setMode] = useState<Mode>("total");
   const [cache, setCache] = useState<Partial<Record<Range, { rows: NetWorthRow[] }>>>({});
@@ -163,7 +163,6 @@ export default function NetWorthTrendChart({
         from={plotted[0].total!}
         to={plotted[plotted.length - 1].total!}
         since={monthLabel(plotted[0].month)}
-        hidden={hideAmounts}
       />
     ) : null;
   const newestMonth = rows && rows.length > 0 ? rows[rows.length - 1].month : undefined;

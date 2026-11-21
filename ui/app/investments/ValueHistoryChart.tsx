@@ -12,6 +12,7 @@ import {
 import { tokens } from "../styles";
 import Pills from "../components/Pills";
 import HeroChange from "../components/HeroChange";
+import { useHideAmounts } from "../components/HideAmounts";
 
 // ---------------------------------------------------------------------------
 // Portfolio value / P&L history (VZ-02, INVX-01), drawn inside the dark
@@ -54,15 +55,14 @@ export default function ValueHistoryChart({
   range,
   onRangeChange,
   header,
-  hideAmounts = false,
 }: {
   data: HistoryPoint[];
   range: Range;
   onRangeChange: (r: Range) => void;
   header?: (change: React.ReactNode) => React.ReactNode;
-  // Masks the change amount and drops the tooltip (hide amounts toggle).
-  hideAmounts?: boolean;
 }) {
+  // Hide amounts drops the tooltip, which would show the values.
+  const [hideAmounts] = useHideAmounts();
   const [view, setView] = useState<View>("value");
 
   const latestPnl = data.length > 0 ? data[data.length - 1].total_pnl : 0;
@@ -74,7 +74,6 @@ export default function ValueHistoryChart({
         to={Number(data[data.length - 1][key])}
         since={new Date(data[0].date).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" })}
         showPct={view === "value"}
-        hidden={hideAmounts}
       />
     ) : null;
   const pnlStroke = latestPnl >= 0 ? tokens.color.chipGreenText : "#e6a99c";

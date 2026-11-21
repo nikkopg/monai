@@ -17,7 +17,7 @@ import type { BondInfo } from "../lib/bond";
 import PriceOverrideDialog from "./PriceOverrideDialog";
 import Pills from "../components/Pills";
 import RollingNumber from "../components/RollingNumber";
-import { HideAmountsButton, MASK, useHideAmounts } from "../components/HideAmounts";
+import { HideAmountsButton } from "../components/HideAmounts";
 import Skeleton, { Bone, DrawLine } from "../components/Skeleton";
 import RowMenu from "../components/RowMenu";
 import StalenessBadge from "./StalenessBadge";
@@ -186,7 +186,6 @@ const withIdr = (primary: string, idrText: string, title?: string) => (
 );
 
 export default function InvestmentsPage() {
-  const [hideAmounts, toggleHideAmounts] = useHideAmounts();
   const router = useRouter();
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
@@ -510,7 +509,6 @@ export default function InvestmentsPage() {
                   data={history}
                   range={historyRange}
                   onRangeChange={setHistoryRange}
-                  hideAmounts={hideAmounts}
                   header={(change) => (
                     <div>
                       <div
@@ -524,7 +522,7 @@ export default function InvestmentsPage() {
                         }}
                       >
                         Total value
-                        <HideAmountsButton hidden={hideAmounts} onToggle={toggleHideAmounts} />
+                        <HideAmountsButton />
                       </div>
                       <div
                         style={{
@@ -535,7 +533,7 @@ export default function InvestmentsPage() {
                           fontVariantNumeric: "tabular-nums",
                         }}
                       >
-                        {hideAmounts ? MASK : <RollingNumber value={summary.total_value} format={fmtPlain} />}
+                        <RollingNumber value={summary.total_value} format={fmtPlain} />
                       </div>
                       {change}
                       <div
@@ -551,14 +549,14 @@ export default function InvestmentsPage() {
                         <span>
                           Unrealized{" "}
                           <b style={heroFigure(summary.total_unrealized_pnl)}>
-                            {hideAmounts ? MASK : <RollingNumber value={summary.total_unrealized_pnl} format={fmtSigned} />}
+                            <RollingNumber value={summary.total_unrealized_pnl} format={fmtSigned} />
                           </b>{" "}
                           ({pct(summary.total_unrealized_pnl, costBasis)})
                         </span>
                         <span>
                           Realized{" "}
                           <b style={heroFigure(summary.total_realized_pnl)}>
-                            {hideAmounts ? MASK : <RollingNumber value={summary.total_realized_pnl} format={fmtSigned} />}
+                            <RollingNumber value={summary.total_realized_pnl} format={fmtSigned} />
                           </b>
                         </span>
                       </div>

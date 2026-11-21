@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { tokens, card, notice } from "../styles";
 import Pills from "../components/Pills";
 import RollingNumber from "../components/RollingNumber";
-import { HideAmountsButton, MASK, useHideAmounts } from "../components/HideAmounts";
+import { HideAmountsButton } from "../components/HideAmounts";
 import CategoryDonut from "./charts/CategoryDonut";
 import TrendChart, { type ChartPoint } from "./charts/TrendChart";
 import NetWorthTrendChart from "./charts/NetWorthTrendChart";
@@ -74,7 +74,6 @@ type NetWorth = {
 // ---------------------------------------------------------------------------
 
 export default function OverviewPage() {
-  const [hideAmounts, toggleHideAmounts] = useHideAmounts();
   const [kind, setKind] = useState<PeriodKind>("month");
   const [offset, setOffset] = useState(0);
   const [summary, setSummary] = useState<CashflowSummary | null>(null);
@@ -344,7 +343,6 @@ export default function OverviewPage() {
           >
             <NetWorthTrendChart
               hero
-              hideAmounts={hideAmounts}
               header={(change) => (
             <div>
               <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "0 0 10px" }}>
@@ -358,7 +356,7 @@ export default function OverviewPage() {
                 >
                   Net worth
                 </h2>
-                <HideAmountsButton hidden={hideAmounts} onToggle={toggleHideAmounts} />
+                <HideAmountsButton />
               </div>
               {netWorthError ? (
                 <div style={{ fontSize: "var(--fs-body, 14px)", color: "#e6a99c" }}>
@@ -374,7 +372,7 @@ export default function OverviewPage() {
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  {hideAmounts ? MASK : <RollingNumber value={netWorthData?.total ?? 0} format={(n) => fmtAmount(n, "IDR")} />}
+                  <RollingNumber value={netWorthData?.total ?? 0} format={(n) => fmtAmount(n, "IDR")} />
                 </div>
               )}
               {!netWorthError && change}
@@ -387,8 +385,8 @@ export default function OverviewPage() {
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  Liquid {hideAmounts ? MASK : fmtAmount(netWorthData.liquid_total, "IDR")} ·
-                  Investment {hideAmounts ? MASK : fmtAmount(netWorthData.investment_total, "IDR")}
+                  Liquid <span className="amt">{fmtAmount(netWorthData.liquid_total, "IDR")}</span> ·
+                  Investment <span className="amt">{fmtAmount(netWorthData.investment_total, "IDR")}</span>
                 </div>
               )}
             </div>

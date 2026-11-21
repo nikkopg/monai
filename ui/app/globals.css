@@ -744,6 +744,14 @@ button:disabled, select:disabled, input:disabled, textarea:disabled, [aria-disab
    width of its own target digit (an invisible ::after copy), so spacing and
    letter-spacing match plain text in fonts without tabular figures; the strip
    is centred over it and clipped only vertically. It never wraps (261115-msv). */
+/* Hide amounts (261121-fwp): every displayed amount carries .amt and blurs
+   while <html data-hide-amounts> is set; blur keeps the layout still and fades
+   both ways. Headline figures (RollingNumber) roll down to dots instead. */
+.amt { transition: filter 0.3s ease-out; }
+html[data-hide-amounts] .amt { filter: blur(6px); user-select: none; }
+@media (prefers-reduced-motion: reduce) {
+  .amt { transition: none; }
+}
 .roll { display: inline-flex; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .roll-digit,
 .roll-char {
