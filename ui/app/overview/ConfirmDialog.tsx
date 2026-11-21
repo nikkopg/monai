@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useId, useRef } from "react";
+import { useId, useRef } from "react";
 import type { ReactNode } from "react";
 
+import useDialog from "../components/useDialog";
 import { card, dangerBtn } from "../styles";
 
 // ---------------------------------------------------------------------------
@@ -41,46 +42,10 @@ export default function ConfirmDialog({
   const msgId = useId();
   const cancelRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const onCancelRef = useRef(onCancel);
-  onCancelRef.current = onCancel;
 
-  // Dialog a11y (Phase 36): initial focus on Cancel, Escape cancels, focus
-  // returns to whatever opened the dialog if it is still in the document, Tab
-  // wraps inside the dialog (WR-09), and Escape is consumed here (capture phase)
-  // so a drawer's own Escape listener behind it does not also fire.
-  useEffect(() => {
-    const opener = document.activeElement as HTMLElement | null;
-    cancelRef.current?.focus();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.stopPropagation();
-        onCancelRef.current();
-      } else if (e.key === "Tab") {
-        const items = dialogRef.current?.querySelectorAll<HTMLElement>(
-          "button:not([disabled]), select:not([disabled]), input:not([disabled]), textarea:not([disabled]), a[href]"
-        );
-        if (!items || items.length === 0) return;
-        const first = items[0];
-        const last = items[items.length - 1];
-        const active = document.activeElement;
-        if (!dialogRef.current?.contains(active)) {
-          e.preventDefault();
-          first.focus();
-        } else if (e.shiftKey && active === first) {
-          e.preventDefault();
-          last.focus();
-        } else if (!e.shiftKey && active === last) {
-          e.preventDefault();
-          first.focus();
-        }
-      }
-    };
-    document.addEventListener("keydown", onKey, true);
-    return () => {
-      document.removeEventListener("keydown", onKey, true);
-      if (opener && opener.isConnected) opener.focus();
-    };
-  }, []);
+  // Dialog a11y (Phase 36): initial focus on Cancel, Escape cancels, Tab wraps,
+  // focus returns to the opener. Shared with every modal via useDialog.
+  useDialog(dialogRef, onCancel, cancelRef);
 
   return (
     <div

@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import useDialog from "../components/useDialog";
 
 import { card, input, btn, label, tokens } from "../styles";
 import { extractDetail, fmtPlain } from "../lib/api";
@@ -386,8 +387,17 @@ export default function HoldingModal({
     }
   }
 
+  // Dialog keyboard behaviour (F002): focus inside, Escape closes, Tab wraps.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  useDialog(dialogRef, saving ? null : onClose);
+
   return (
     <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
       style={{
         position: "fixed",
         inset: 0,
@@ -412,7 +422,7 @@ export default function HoldingModal({
         }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 style={{ fontSize: 20, fontWeight: 600, margin: "0 0 16px" }}>
+        <h2 id={titleId} style={{ fontSize: 20, fontWeight: 600, margin: "0 0 16px" }}>
           {isEdit ? "Edit event" : "Log event"}
         </h2>
         <form onSubmit={handleSubmit}>

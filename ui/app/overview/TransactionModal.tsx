@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import useDialog from "../components/useDialog";
 
 import { tokens, card, input, btn, label } from "../styles";
 import { fmtRateCompare, impliedRate } from "../lib/money";
@@ -371,8 +372,17 @@ export default function TransactionModal({
     }
   }
 
+  // Dialog keyboard behaviour (F002): focus inside, Escape closes, Tab wraps.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  useDialog(dialogRef, saving ? null : onClose);
+
   return (
     <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
       style={{
         position: "fixed",
         inset: 0,
@@ -388,7 +398,7 @@ export default function TransactionModal({
         style={{ ...card, maxWidth: 480, width: "100%", padding: 32, margin: 0 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 style={{ fontSize: 20, fontWeight: 600, margin: "0 0 16px" }}>
+        <h2 id={titleId} style={{ fontSize: 20, fontWeight: 600, margin: "0 0 16px" }}>
           {isEdit ? "Edit transaction" : "Add transaction"}
         </h2>
         <form onSubmit={handleSubmit}>

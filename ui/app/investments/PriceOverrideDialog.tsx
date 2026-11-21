@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
+import useDialog from "../components/useDialog";
 
 import { card, input, btn, label } from "../styles";
 import type { HoldingRow } from "./page";
@@ -59,8 +60,17 @@ export default function PriceOverrideDialog({ holding, onClose, onSaved }: Props
     }
   }
 
+  // Dialog keyboard behaviour (F002): focus inside, Escape closes, Tab wraps.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  useDialog(dialogRef, saving ? null : onClose);
+
   return (
     <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
       style={{
         position: "fixed",
         inset: 0,
@@ -76,7 +86,7 @@ export default function PriceOverrideDialog({ holding, onClose, onSaved }: Props
         style={{ ...card, maxWidth: 360, width: "100%", padding: 24, margin: 0 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 4px" }}>
+        <h2 id={titleId} style={{ fontSize: 18, fontWeight: 600, margin: "0 0 4px" }}>
           Set price · {holding.ticker}
         </h2>
         <p style={{ fontSize: "var(--fs-xs, 12px)", color: muted, margin: "0 0 16px" }}>

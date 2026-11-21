@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 
 import { tokens, card, input, btn, btnGhost, categoryPalette } from "../styles";
 import ConfirmDialog from "../overview/ConfirmDialog";
 import RowMenu from "../components/RowMenu";
+import useDialog from "../components/useDialog";
 
 // ---------------------------------------------------------------------------
 // CategoryManager (Settings) — recursive tree manager for the category
@@ -612,23 +614,8 @@ export default function CategoryManager({ onChanged }: Props) {
       )}
 
       {mergeFlow.stage === "picking" && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(15,17,21,0.72)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 200,
-          }}
-          onClick={() => setMergeFlow({ stage: "idle" })}
-        >
-          <div
-            style={{ ...card, maxWidth: 360, width: "100%", padding: 24, margin: 0 }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p style={{ fontSize: "var(--fs-body, 14px)", margin: "0 0 16px", color: tokens.color.text }}>
+        <MergePicker onClose={() => setMergeFlow({ stage: "idle" })}>
+            <p id="merge-picker-title" style={{ fontSize: "var(--fs-body, 14px)", margin: "0 0 16px", color: tokens.color.text }}>
               Merge &quot;{mergeFlow.from.name}&quot; into which category?
             </p>
             <select
@@ -663,8 +650,7 @@ export default function CategoryManager({ onChanged }: Props) {
                 Merge categories
               </button>
             </div>
-          </div>
-        </div>
+        </MergePicker>
       )}
 
       {mergeFlow.stage === "confirming" && (
@@ -676,5 +662,37 @@ export default function CategoryManager({ onChanged }: Props) {
         />
       )}
     </>
+  );
+}
+
+// The merge picker's modal shell: a named dialog with focus, Escape and Tab
+// handling (design review 2026-11-21 F002).
+function MergePicker({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useDialog(ref, onClose);
+  return (
+    <div
+      ref={ref}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="merge-picker-title"
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(15,17,21,0.72)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 200,
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{ ...card, maxWidth: 360, width: "100%", padding: 24, margin: 0 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>
   );
 }

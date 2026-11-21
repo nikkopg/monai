@@ -1445,4 +1445,17 @@ test.describe("design review 261121-efd", () => {
     await page.getByLabel("Filter by type").selectOption("expense");
     await expect(toggle).toHaveText("Filters (1)");
   });
+
+  test("F002: Add transaction is a named dialog with focus, Escape and focus return", async ({ page }) => {
+    await mockRecords(page);
+    await page.goto("/records");
+    const open = page.getByRole("button", { name: "+ Add record" });
+    await open.click();
+    const dialog = page.getByRole("dialog", { name: "Add transaction" });
+    await expect(dialog).toBeVisible();
+    expect(await dialog.evaluate((d) => d.contains(document.activeElement))).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(open).toBeFocused();
+  });
 });
