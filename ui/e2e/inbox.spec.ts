@@ -720,7 +720,8 @@ test.describe("approve", () => {
     const release = inbox.hold("approve");
     await approveBtn(card).click();
     await expect(statusOf(page, ids.a)).toHaveText("Applying…");
-    await expect(approveBtn(card)).toContainText("…");
+    await expect(approveBtn(card)).toContainText("Applying…"); // 261121-m17: says what it's doing
+    await expect(card.locator(".inbox-footer")).toHaveAttribute("aria-busy", "true");
     await expect(rejectBtn(card)).toHaveAttribute("aria-disabled", "true");
     release();
     // 261121-kwu T3 adds the Records link to the settled status.
@@ -1732,5 +1733,19 @@ test.describe("261121-kwu T3: approved cards link to Records", () => {
     // A row naming an account the list doesn't have, with no usable date, can't be scoped.
     const unknown = proposal({ payload: { operation: "add_transaction", rows: [txRow({ after: { account: "Nowhere", date: null } })] } });
     expect(recordsHref(unknown, accounts)).toBe("/records");
+  });
+});
+
+test.describe("261121-m17: Inbox next findings", () => {
+  test("a slow reject says Rejecting…", async ({ page }) => {
+    const inbox = await mockInbox(page, { list: [oneRow()] });
+    await openInbox(page);
+    const card = byId(page, ids.c);
+    const release = inbox.hold("reject");
+    await rejectBtn(card).click();
+    await expect(card.getByRole("button", { name: "Rejecting…" })).toBeVisible();
+    await expect(card.locator(".inbox-footer")).toHaveAttribute("aria-busy", "true");
+    release();
+    await expect(statusOf(page, ids.c)).toHaveText("Rejected · nothing changed");
   });
 });

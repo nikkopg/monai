@@ -820,6 +820,8 @@ export default function InboxCard({
       {live && (
         <div
           className="inbox-footer"
+          // Say what a slow approve or reject is doing (261121-m17), not a bare "…".
+          aria-busy={busy === "approve" || busy === "reject" || undefined}
           style={{ marginTop: 16, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
           onKeyDown={(e) => {
             if (confirmDiscard && e.key === "Escape") setConfirmDiscard(false);
@@ -860,7 +862,7 @@ export default function InboxCard({
                 onClick={() => void approve()}
               >
                 <span className="sr-only">Approve: </span>
-                {busy === "approve" ? "…" : allSkipped ? "Nothing left to add" : approveLabel(op, rows)}
+                {busy === "approve" ? "Applying…" : allSkipped ? "Nothing left to add" : approveLabel(op, rows)}
               </button>
               {allSkipped && (
                 <span id={`inbox-allskipped-${id}`} style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>
@@ -875,7 +877,7 @@ export default function InboxCard({
                 aria-describedby={blockedDescribedBy}
                 onClick={() => void reject()}
               >
-                {busy === "reject" ? "…" : "Reject and discard"}
+                {busy === "reject" ? "Rejecting…" : "Reject and discard"}
               </button>
               <span style={{ marginLeft: "auto", fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>
                 {pendingStatus(expiresMs, nowMs)}
