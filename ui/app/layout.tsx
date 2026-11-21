@@ -1,4 +1,5 @@
 import { Instrument_Serif, Hanken_Grotesk } from "next/font/google";
+import { cookies } from "next/headers";
 import AppShell from "./components/AppShell";
 import { tokens } from "./styles";
 import "./globals.css";
@@ -37,7 +38,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           minHeight: "100vh",
         }}
       >
-        <AppShell>{children}</AppShell>
+        {/* Same name as Nav.tsx SIDEBAR_COOKIE; a client module's const is not readable here. */}
+        {/* Same name as SIDEBAR_COOKIE in Nav.tsx: a client module's constant can't be read here. */}
+        <AppShell sidebarCollapsed={cookies().get("monai_sidebar")?.value === "1"}>{children}</AppShell>
       </body>
     </html>
   );

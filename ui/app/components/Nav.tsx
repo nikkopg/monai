@@ -13,6 +13,13 @@ import {
 } from "../lib/inbox";
 
 const SIDEBAR_COLLAPSED_KEY = "monai.sidebarCollapsed";
+// The server layout reads this cookie so the first render already has the
+// saved width; a collapse that lands after hydration shifts the whole page (F003).
+export const SIDEBAR_COOKIE = "monai_sidebar";
+
+function writeSidebarCookie(collapsed: boolean) {
+  document.cookie = `${SIDEBAR_COOKIE}=${collapsed ? "1" : "0"}; path=/; max-age=31536000; samesite=lax`;
+}
 
 // ---------------------------------------------------------------------------
 // Nav — left sidebar rendered once from ui/app/layout.tsx (inside the app
@@ -103,7 +110,7 @@ function Icon({ name }: { name: IconName }) {
   }
 }
 
-function sidebarStyle(collapsed: boolean): React.CSSProperties {
+function sidebarStyle(collapsed: boolean, animate: boolean): React.CSSProperties {
   return {
     width: collapsed ? 68 : 236,
     flexShrink: 0,
@@ -113,7 +120,8 @@ function sidebarStyle(collapsed: boolean): React.CSSProperties {
     display: "flex",
     flexDirection: "column",
     alignItems: collapsed ? "center" : "stretch",
-    transition: "width .2s ease, padding .2s ease",
+    // Animate only a toggle, never the first paint (F003).
+    transition: animate ? "width .2s ease, padding .2s ease" : "none",
   };
 }
 
@@ -326,9 +334,10 @@ function PhoneDock({
   );
 }
 
-export default function Nav() {
+export default function Nav({ initialCollapsed = false }: { initialCollapsed?: boolean }) {
   const pathname = usePathname();
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(initialCollapsed);
+  const [animate, setAnimate] = useState(false);
   // Pending Inbox count: null until the first valid count arrives.
   const [pending, setPending] = useState<number | null>(null);
   const [inboxOffline, setInboxOffline] = useState(false);
@@ -360,11 +369,14 @@ export default function Nav() {
     };
   }, []);
 
-  // Hydrate persisted collapsed state after mount (init-then-hydrate avoids
-  // an SSR/hydration mismatch since localStorage isn't available server-side).
+  // One-time move from localStorage: a browser that saved its choice before the
+  // cookie existed gets it applied once and copied into the cookie.
   useEffect(() => {
+    if (document.cookie.split("; ").some((c) => c.startsWith(SIDEBAR_COOKIE + "="))) return;
     try {
-      setCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true");
+      const saved = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "true";
+      setCollapsed(saved);
+      writeSidebarCookie(saved);
     } catch {
       // ignore (e.g. storage disabled)
     }
@@ -372,7 +384,9 @@ export default function Nav() {
 
   function toggleCollapsed() {
     const next = !collapsed;
+    setAnimate(true);
     setCollapsed(next);
+    writeSidebarCookie(next);
     try {
       localStorage.setItem(SIDEBAR_COLLAPSED_KEY, String(next));
     } catch {
@@ -386,7 +400,7 @@ export default function Nav() {
 
   return (
     <>
-    <aside className="app-sidebar" style={sidebarStyle(collapsed)}>
+    <aside className="app-sidebar" style={sidebarStyle(collapsed, animate)}>
       <div
         className="brand-word"
         style={{

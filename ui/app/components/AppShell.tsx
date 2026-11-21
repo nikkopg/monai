@@ -7,7 +7,13 @@ import { tokens } from "../styles";
 // The centered app frame + panel + sidebar, moved out of layout.tsx so /login
 // can render without it (and without Nav's /api polling). usePathname also
 // covers client-side navigation, which a root layout cannot see.
-export default function AppShell({ children }: { children: React.ReactNode }) {
+export default function AppShell({
+  children,
+  sidebarCollapsed = false,
+}: {
+  children: React.ReactNode;
+  sidebarCollapsed?: boolean;
+}) {
   if (usePathname() === "/login") return <>{children}</>;
   return (
     <>
@@ -39,7 +45,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             boxShadow: tokens.shadow.panel,
           }}
         >
-          <Nav />
+          <Nav initialCollapsed={sidebarCollapsed} />
           <main style={{ flex: 1, minWidth: 0, overflowX: "clip" }}>
             {children}
           </main>

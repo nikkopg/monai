@@ -777,6 +777,8 @@ test.describe("D2 dock clearance (261115-s37)", () => {
     await mockRecords(page);
     await page.goto("/records");
     await expect(page.getByPlaceholder("Search merchant or notes…")).toBeVisible();
+    // Open filters keep the page long enough to scroll a row over the dock (261121-efd F005).
+    await page.getByRole("button", { name: /^Filters/ }).click();
     // .fade-in (0.3s on the list) is a stacking context while it runs; let it end.
     await page.waitForFunction(() => document.getAnimations().length === 0);
     await toBottom(page);
@@ -1404,6 +1406,7 @@ test.describe("antislop 001 T6 (261120-r0k)", () => {
   test("T6: native selects show a pointer, disabled buttons show not-allowed", async ({ page }) => {
     await mockRecords(page);
     await page.goto("/records");
+    await page.getByRole("button", { name: /^Filters/ }).click();
     const sel = page.getByLabel("Filter by account", { exact: true });
     await expect(sel).toBeVisible();
     expect(await sel.evaluate((el) => getComputedStyle(el).cursor)).toBe("pointer");
@@ -1457,5 +1460,30 @@ test.describe("design review 261121-efd", () => {
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
     await expect(open).toBeFocused();
+  });
+});
+
+test.describe("design review 261121-efd desktop", () => {
+  test.use({ viewport: { width: 1280, height: 800 } });
+
+  test("F003: a saved collapsed sidebar renders collapsed from the first paint, no layout shift", async ({ page, context, baseURL }) => {
+    await context.addCookies([{ name: "monai_sidebar", value: "1", url: baseURL! }]);
+    await mockSettings(page);
+    await page.goto("/settings", { waitUntil: "domcontentloaded" });
+    // Collapsed is 68px plus padding and border (89); expanded is over 236.
+    expect((await page.locator(".app-sidebar").boundingBox())!.width).toBeLessThan(100);
+    await expect(page.locator(".cat-row").first()).toBeVisible();
+    const cls = await page.evaluate(
+      () =>
+        new Promise<number>((res) => {
+          let v = 0;
+          new PerformanceObserver((l) => {
+            for (const e of l.getEntries() as (PerformanceEntry & { value: number; hadRecentInput: boolean })[])
+              if (!e.hadRecentInput) v += e.value;
+          }).observe({ type: "layout-shift", buffered: true });
+          setTimeout(() => res(v), 300);
+        })
+    );
+    expect(cls).toBeLessThan(0.1);
   });
 });

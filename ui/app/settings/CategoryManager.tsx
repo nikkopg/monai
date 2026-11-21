@@ -566,7 +566,8 @@ export default function CategoryManager({ onChanged }: Props) {
           </div>
         </div>
       ) : (
-        <div>{tree.map((node) => renderRow(node, 0))}</div>
+        // Reserve room while the list loads so the cards below do not jump (F003).
+        <div style={{ minHeight: loaded ? undefined : 400 }}>{tree.map((node) => renderRow(node, 0))}</div>
       )}
 
       {editFlow.mode === "add" && editFlow.parentId === null ? (
