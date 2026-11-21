@@ -533,7 +533,7 @@ export default function InvestmentsPage() {
                           fontVariantNumeric: "tabular-nums",
                         }}
                       >
-                        <RollingNumber value={summary.total_value} format={fmtPlain} />
+                        <RollingNumber hideable value={summary.total_value} format={fmtPlain} />
                       </div>
                       {change}
                       <div
@@ -549,14 +549,14 @@ export default function InvestmentsPage() {
                         <span>
                           Unrealized{" "}
                           <b style={heroFigure(summary.total_unrealized_pnl)}>
-                            <RollingNumber value={summary.total_unrealized_pnl} format={fmtSigned} />
+                            <RollingNumber hideable value={summary.total_unrealized_pnl} format={fmtSigned} />
                           </b>{" "}
                           ({pct(summary.total_unrealized_pnl, costBasis)})
                         </span>
                         <span>
                           Realized{" "}
                           <b style={heroFigure(summary.total_realized_pnl)}>
-                            <RollingNumber value={summary.total_realized_pnl} format={fmtSigned} />
+                            <RollingNumber hideable value={summary.total_realized_pnl} format={fmtSigned} />
                           </b>
                         </span>
                       </div>

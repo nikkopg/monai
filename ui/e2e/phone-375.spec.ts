@@ -1558,8 +1558,8 @@ test.describe("hide amounts (261121-fwp)", () => {
     await expect(rolls).toHaveCount(3); // total, Unrealized, Realized
     for (const r of await rolls.all()) await expect(r).toContainText("••••••");
     expect(await hero.innerText()).not.toMatch(/2,469,135,780|246,913,578/); // pii-ok synthetic
-    for (const f of await hero.locator(".amt").evaluateAll((els) => els.map((e) => getComputedStyle(e).filter)))
-      expect(f).toContain("blur");
+    // Only the percentage may carry digits once amounts are hidden.
+    expect((await hero.innerText()).replace(/\(?[−+-]?\d+(\.\d+)?%\)?/g, "").match(/\d/g)).toBeNull();
     await expect(hero).toContainText("%");
 
     await page.reload();

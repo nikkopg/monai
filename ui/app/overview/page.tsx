@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { tokens, card, notice } from "../styles";
 import Pills from "../components/Pills";
 import RollingNumber from "../components/RollingNumber";
-import { HideAmountsButton } from "../components/HideAmounts";
+import { HideAmountsButton, MASK, useHideAmounts } from "../components/HideAmounts";
 import CategoryDonut from "./charts/CategoryDonut";
 import TrendChart, { type ChartPoint } from "./charts/TrendChart";
 import NetWorthTrendChart from "./charts/NetWorthTrendChart";
@@ -74,6 +74,7 @@ type NetWorth = {
 // ---------------------------------------------------------------------------
 
 export default function OverviewPage() {
+  const [hideAmounts] = useHideAmounts();
   const [kind, setKind] = useState<PeriodKind>("month");
   const [offset, setOffset] = useState(0);
   const [summary, setSummary] = useState<CashflowSummary | null>(null);
@@ -372,7 +373,7 @@ export default function OverviewPage() {
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  <RollingNumber value={netWorthData?.total ?? 0} format={(n) => fmtAmount(n, "IDR")} />
+                  <RollingNumber hideable value={netWorthData?.total ?? 0} format={(n) => fmtAmount(n, "IDR")} />
                 </div>
               )}
               {!netWorthError && change}
@@ -385,8 +386,8 @@ export default function OverviewPage() {
                     fontVariantNumeric: "tabular-nums",
                   }}
                 >
-                  Liquid <span className="amt">{fmtAmount(netWorthData.liquid_total, "IDR")}</span> ·
-                  Investment <span className="amt">{fmtAmount(netWorthData.investment_total, "IDR")}</span>
+                  Liquid {hideAmounts ? MASK : fmtAmount(netWorthData.liquid_total, "IDR")} ·
+                  Investment {hideAmounts ? MASK : fmtAmount(netWorthData.investment_total, "IDR")}
                 </div>
               )}
             </div>

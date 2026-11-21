@@ -744,13 +744,15 @@ button:disabled, select:disabled, input:disabled, textarea:disabled, [aria-disab
    width of its own target digit (an invisible ::after copy), so spacing and
    letter-spacing match plain text in fonts without tabular figures; the strip
    is centred over it and clipped only vertically. It never wraps (261115-msv). */
-/* Hide amounts (261121-fwp): every displayed amount carries .amt and blurs
-   while <html data-hide-amounts> is set; blur keeps the layout still and fades
-   both ways. Headline figures (RollingNumber) roll down to dots instead. */
-.amt { transition: filter 0.3s ease-out; }
-html[data-hide-amounts] .amt { filter: blur(6px); user-select: none; }
+/* Hide amounts (261121-fwp), hero cards only: the headline figures roll their
+   digits to 0 while fading out over 0.5s (RollingNumber HIDE_MS), then the dots
+   fade in. The smaller amounts on the cards turn to dots directly. */
+.roll[data-hiding] { opacity: 0; transition: opacity 0.5s cubic-bezier(0.3, 0, 0.7, 1); }
+.roll-mask { animation: roll-mask-in 0.3s ease-out; }
+@keyframes roll-mask-in { from { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) {
-  .amt { transition: none; }
+  .roll[data-hiding] { transition: none; }
+  .roll-mask { animation: none; }
 }
 .roll { display: inline-flex; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .roll-digit,

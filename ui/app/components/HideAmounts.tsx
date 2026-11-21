@@ -4,10 +4,11 @@ import { useSyncExternalStore } from "react";
 import { tokens } from "../styles";
 
 // Hide amounts, for when someone can see the screen (261121-fwp). One setting
-// for the whole app, kept in this browser and mirrored onto <html> as
-// data-hide-amounts: CSS blurs every `.amt` (globals.css) and RollingNumber
-// rolls headline figures down to dots. AppShell applies the saved value on
-// mount, before any page's data arrives, so real numbers never flash.
+// for both hero cards (Overview net worth, Investments total value), kept in
+// this browser and mirrored onto <html> as data-hide-amounts. RollingNumber
+// rolls the headline figures down to dots; the smaller amounts on the cards
+// turn to dots. AppShell applies the saved value on mount, before any page's
+// data arrives, so real numbers never flash.
 const KEY = "monai.hideAmounts";
 const EVENT = "monai:hide-amounts";
 

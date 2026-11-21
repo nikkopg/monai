@@ -15,22 +15,28 @@ import { MASK, useHideAmounts } from "./HideAmounts";
 // right so the units digit keeps its strip when the number gains a digit.
 // prefers-reduced-motion turns the transition off (globals.css).
 //
-// Hide amounts (261121-fwp): hiding rolls every digit down to 0, then swaps
-// the figure for dots once the roll ends; showing rolls up from 0 as on first
-// show. The real value never reaches the DOM while hidden.
+// Hide amounts (261121-fwp), for the hero figures that pass `hideable`:
+// hiding rolls every digit down to 0 while the figure fades out, then the dots
+// fade in; showing rolls up from 0 as on first show. The real value never
+// reaches the DOM while hidden.
 // ---------------------------------------------------------------------------
 
-// The .roll-digit transition in globals.css.
-const ROLL_MS = 800;
+// How long hiding rolls and fades before the dots replace the figure: the
+// .roll[data-hiding] opacity transition in globals.css. The digit roll itself
+// is 0.8s ease-out, so it is mostly done by then.
+const HIDE_MS = 500;
 
 export default function RollingNumber({
   value,
   format,
+  hideable = false,
 }: {
   value: number;
   format: (n: number) => string;
+  hideable?: boolean;
 }) {
-  const [hidden] = useHideAmounts();
+  const [hideAmounts] = useHideAmounts();
+  const hidden = hideable && hideAmounts;
   const [masked, setMasked] = useState(hidden);
   // First paint shows every strip at 0; the next frame moves them, so the
   // initial roll (and the roll back after hiding) is a real transition.
@@ -39,11 +45,14 @@ export default function RollingNumber({
     if (hidden) {
       const instant =
         document.visibilityState === "hidden" || matchMedia("(prefers-reduced-motion: reduce)").matches;
-      const t = setTimeout(() => setMasked(true), instant ? 0 : ROLL_MS);
+      const t = setTimeout(() => {
+        setMasked(true);
+        // So the next show starts its strips at 0 and rolls up.
+        setReady(false);
+      }, instant ? 0 : HIDE_MS);
       return () => clearTimeout(t);
     }
     setMasked(false);
-    setReady(false);
     const id = requestAnimationFrame(() => setReady(true));
     // A hidden tab never fires rAF: show the value rather than zeros.
     if (document.visibilityState === "hidden") setReady(true);
@@ -52,7 +61,7 @@ export default function RollingNumber({
 
   if (masked && hidden) {
     return (
-      <span className="roll">
+      <span className="roll roll-mask">
         <span className="sr-only">Hidden amount</span>
         <span aria-hidden="true">{MASK}</span>
       </span>
@@ -62,7 +71,7 @@ export default function RollingNumber({
   const text = format(value);
   const chars = Array.from(text);
   return (
-    <span className="roll">
+    <span className="roll" data-hiding={hidden || undefined}>
       <span className="sr-only">{hidden ? "Hidden amount" : text}</span>
       <span aria-hidden="true">
         {chars.map((c, i) => {
