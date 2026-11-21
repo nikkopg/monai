@@ -413,7 +413,7 @@ export default function OverviewPage() {
                 )}
                 {netWorthData.fx_excluded?.map((e) => (
                   <div key={e.name}>
-                    {e.name}: {fmtAmount(e.native_balance, e.currency)}
+                    {e.name}: <span className="amt">{fmtAmount(e.native_balance, e.currency)}</span>
                   </div>
                 ))}
               </div>
@@ -430,7 +430,7 @@ export default function OverviewPage() {
             >
               {summary.unconverted_count} USD row
               {summary.unconverted_count === 1 ? "" : "s"} unconverted (
-              {fmtAmount(summary.unconverted_usd ?? 0, "USD")})
+              <span className="amt">{fmtAmount(summary.unconverted_usd ?? 0, "USD")}</span>)
             </div>
           )}
 

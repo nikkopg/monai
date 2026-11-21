@@ -371,17 +371,17 @@ export default function PlatformDetailPage() {
           >
             <div style={statCard}>
               <div style={statLabel}>Subtotal</div>
-              <div style={statValue}>{fmtPlain(detail.subtotal)}</div>
+              <div className="amt" style={statValue}>{fmtPlain(detail.subtotal)}</div>
             </div>
             <div style={statCard}>
               <div style={statLabel}>Realized</div>
-              <div style={{ ...statValue, color: pnlColor(totalRealized) }}>
+              <div className="amt" style={{ ...statValue, color: pnlColor(totalRealized) }}>
                 {fmtSigned(totalRealized)}
               </div>
             </div>
             <div style={statCard}>
               <div style={statLabel}>Unrealized</div>
-              <div style={{ ...statValue, color: pnlColor(totalUnrealized) }}>
+              <div className="amt" style={{ ...statValue, color: pnlColor(totalUnrealized) }}>
                 {fmtSigned(totalUnrealized)}
               </div>
             </div>
@@ -505,6 +505,7 @@ export default function PlatformDetailPage() {
                         </span>
                       </span>
                       <span
+                        className="amt"
                         style={{
                           flex: 1,
                           textAlign: "right",
@@ -545,6 +546,7 @@ export default function PlatformDetailPage() {
                             : "–"}
                       </span>
                       <span
+                        className="amt"
                         style={{
                           flex: 1.2,
                           textAlign: "right",
@@ -563,6 +565,7 @@ export default function PlatformDetailPage() {
                             : "–"}
                       </span>
                       <span
+                        className="amt"
                         style={{
                           flex: 1,
                           textAlign: "right",
@@ -574,6 +577,7 @@ export default function PlatformDetailPage() {
                         {fmtSigned(h.realized_pnl)}
                       </span>
                       <span
+                        className="amt"
                         style={{
                           flex: 1,
                           textAlign: "right",
@@ -595,7 +599,7 @@ export default function PlatformDetailPage() {
                             : "–"}
                       </span>
                       <span
-                        className="plat-sub"
+                        className="plat-sub amt"
                         style={{
                           fontSize: "var(--fs-xs, 12px)",
                           color: muted,
@@ -668,6 +672,7 @@ export default function PlatformDetailPage() {
                       {sideLabel(e.event_type)}
                     </span>
                     <span
+                      className="amt"
                       style={{
                         flex: 1,
                         textAlign: "right",

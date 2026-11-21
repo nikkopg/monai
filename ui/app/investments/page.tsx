@@ -677,7 +677,7 @@ export default function InvestmentsPage() {
                           >
                             {s.label}
                           </span>
-                          <span style={{ fontVariantNumeric: "tabular-nums" }}>
+                          <span className="amt" style={{ fontVariantNumeric: "tabular-nums" }}>
                             {fmtShort(s.value, "IDR")}
                           </span>
                           <span style={{ color: muted }}>
@@ -873,7 +873,7 @@ export default function InvestmentsPage() {
                             </Link>
                           )}
                         </span>
-                        <span style={{ flex: 1.2, textAlign: "right", whiteSpace: "nowrap" }}>
+                        <span className="amt" style={{ flex: 1.2, textAlign: "right", whiteSpace: "nowrap" }}>
                           {fmtPlain(tg.subtotal)}
                         </span>
                         <span className="inv-wide" style={{ flex: 2.6 }} />
@@ -962,7 +962,7 @@ export default function InvestmentsPage() {
                             </span>
                           </span>
                           <span
-                            className="inv-wide"
+                            className="inv-wide amt"
                             style={{
                               flex: 1,
                               textAlign: "right",
@@ -994,6 +994,7 @@ export default function InvestmentsPage() {
                                 : "–"}
                           </span>
                           <span
+                            className="amt"
                             style={{
                               flex: 1.2,
                               textAlign: "right",

@@ -87,6 +87,7 @@ export default function AllocationPieChart({
             ))}
           </Pie>
           <Tooltip
+            wrapperClassName="amt"
             formatter={(value) => fmt(value)}
             contentStyle={{
               background: "#ffffff",

@@ -118,7 +118,7 @@ export default function ClosedPositions({
                 <td colSpan={2} style={cell}>
                   {name}
                 </td>
-                <td style={{ ...cell, textAlign: "right", color: pnlColor(sum) }}>{fmtSigned(sum)}</td>
+                <td className="amt" style={{ ...cell, textAlign: "right", color: pnlColor(sum) }}>{fmtSigned(sum)}</td>
                 <td style={cell} />
               </tr>,
               ...list.map((r) =>
@@ -169,7 +169,7 @@ export default function ClosedPositions({
                   <tr key={r.id}>
                     <td>{r.ticker}</td>
                     <td style={{ textAlign: "right" }}>{r.close_date}</td>
-                    <td style={{ textAlign: "right", color: pnlColor(r.realized_pnl) }}>
+                    <td className="amt" style={{ textAlign: "right", color: pnlColor(r.realized_pnl) }}>
                       {fmtSigned(r.realized_pnl)}
                     </td>
                     <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
