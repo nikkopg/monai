@@ -6,6 +6,7 @@ import {
   LEDGER_CHANGED_MSG,
   NETWORK_FAIL_MSG,
   hhmm,
+  recordsHref,
   type InboxProposal,
   type ProposalRow,
 } from "../app/lib/inbox";
@@ -722,7 +723,8 @@ test.describe("approve", () => {
     await expect(approveBtn(card)).toContainText("…");
     await expect(rejectBtn(card)).toHaveAttribute("aria-disabled", "true");
     release();
-    await expect(statusOf(page, ids.a)).toHaveText("✓ Approved · " + hhmm(NOW));
+    // 261121-kwu T3 adds the Records link to the settled status.
+    await expect(statusOf(page, ids.a)).toHaveText("✓ Approved · " + hhmm(NOW) + " · View in Records");
     await expect(card.getByText("3 added", { exact: true })).toBeVisible();
     await expect(statusOf(page, ids.a)).toBeFocused();
     await expect(live(page)).toHaveText("Proposal approved: Add 3 transactions");
@@ -1703,5 +1705,32 @@ test.describe("261121-kwu T2: ledger duplicates start skipped in the Inbox", () 
     const card = art(page, "Add 1 transaction to Account A");
     await rejectBtn(card).click();
     await expect.poll(() => mock.sent("POST", "/reject").length).toBe(1);
+  });
+});
+
+test.describe("261121-kwu T3: approved cards link to Records", () => {
+  test("approving shows View in Records, scoped to the account and the rows' dates", async ({ page }) => {
+    await mockInbox(page, { list: [oneRow()] });
+    await page.route("**/api/cashflow/summary**", (route) =>
+      route.fulfill({ json: { accounts: [{ id: 3, name: "Account A", currency: "IDR", current_balance: 0 }] } }) // pii-ok synthetic
+    );
+    await openInbox(page);
+    const card = byId(page, ids.c);
+    await approveBtn(card).click();
+    const link = card.getByRole("link", { name: "View in Records" });
+    await expect(link).toHaveAttribute("href", "/records?account_id=3&date_from=2026-10-07&date_to=2026-10-07");
+  });
+
+  test("a transfer between two accounts links to its date only; a row with no known account or date links to /records", () => {
+    const accounts = new Map([
+      [3, { id: 3, name: "Account A", currency: "IDR", current_balance: 0 }],
+      [4, { id: 4, name: "Account B", currency: "IDR", current_balance: 0 }],
+    ]);
+    expect(recordsHref(transferProposal(), accounts)).toBe("/records?date_from=2026-10-07&date_to=2026-10-07");
+    // A balance adjustment carries the account id itself, so it needs no lookup.
+    expect(recordsHref(balanceAdjustmentProposal(), new Map())).toBe("/records?account_id=3");
+    // A row naming an account the list doesn't have, with no usable date, can't be scoped.
+    const unknown = proposal({ payload: { operation: "add_transaction", rows: [txRow({ after: { account: "Nowhere", date: null } })] } });
+    expect(recordsHref(unknown, accounts)).toBe("/records");
   });
 });

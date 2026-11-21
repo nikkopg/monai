@@ -537,3 +537,47 @@ export function sourceLine(row: ProposalRow): string | null {
   const raw = row.after?.raw_line;
   return isUploadRowFlagged(row) && typeof raw === "string" && raw !== "" ? `From the file: ${raw}` : null;
 }
+
+/**
+ * Where an approved proposal's rows land in Records (261121-kwu): one account
+ * when every row touches the same known account, and the rows' date range.
+ * Unknown accounts or dates widen the link rather than guess.
+ */
+export function recordsHref(p: InboxProposal, accounts: ReadonlyMap<number, InboxAccount>): string {
+  const byName = new Map(Array.from(accounts.values()).map((a) => [a.name, a.id] as [string, number]));
+  const ids = new Set<number | null>();
+  const days: string[] = [];
+  const addDay = (v: unknown) => {
+    const d = String(v ?? "").slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) days.push(d);
+  };
+  const addAccount = (v: unknown) =>
+    ids.add(typeof v === "number" ? v : typeof v === "string" ? byName.get(v) ?? null : null);
+  for (const r of p.payload.rows ?? []) {
+    if (p.operation === "add_transaction") {
+      if (r.skip) continue;
+      addAccount(r.after?.account);
+      addDay(r.after?.date);
+    } else if (p.operation === "add_transfer") {
+      const legs = r.after as { leg_a?: Record<string, unknown>; leg_b?: Record<string, unknown> } | null;
+      addAccount(legs?.leg_a?.account);
+      addAccount(legs?.leg_b?.account);
+      addDay(legs?.leg_a?.date);
+    } else if (p.operation === "edit_transaction" || p.operation === "delete_transaction") {
+      addAccount(r.before?.account_id);
+      addDay(r.before?.date);
+    } else if (p.operation === "add_balance_adjustment") {
+      addAccount(r.account_id);
+    }
+  }
+  const q = new URLSearchParams();
+  const only = ids.size === 1 ? Array.from(ids)[0] : null;
+  if (only != null) q.set("account_id", String(only));
+  if (days.length > 0) {
+    days.sort();
+    q.set("date_from", days[0]);
+    q.set("date_to", days[days.length - 1]);
+  }
+  const s = q.toString();
+  return s ? `/records?${s}` : "/records";
+}

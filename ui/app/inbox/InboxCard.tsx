@@ -9,6 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import ProposalDiff from "../components/ProposalDiff";
 import TransferLine from "../components/TransferLine";
 import { extractDetail, fmtPlain } from "../lib/api";
@@ -33,6 +34,7 @@ import {
   mapActionResponse,
   mergeSkip,
   pendingStatus,
+  recordsHref,
   proposalFlagText,
   relativeAge,
   rowProvenance,
@@ -463,7 +465,15 @@ export default function InboxCard({
       statusColor = c.ink;
     }
   } else if (card.phase === "approved") {
-    status = "✓ Approved · " + hhmm(card.settledAt ?? nowMs);
+    // A way to see what was just written (261121-kwu); undo is still Records' row menu.
+    status = (
+      <>
+        {"✓ Approved · " + hhmm(card.settledAt ?? nowMs) + " · "}
+        <Link href={recordsHref(p, accounts)} style={{ color: c.green, textDecoration: "underline" }}>
+          View in Records
+        </Link>
+      </>
+    );
     statusColor = c.green;
   } else if (card.phase === "approvedElsewhere") {
     status = "✓ Approved elsewhere";
