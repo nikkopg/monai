@@ -313,7 +313,8 @@ test.describe("P2 records (261115-oax)", () => {
       }
     }
 
-    // Filters.
+    // Filters (behind the phone toggle since 261121-efd F005).
+    await card.getByRole("button", { name: /^Filters/ }).click();
     for (const s of await card.locator("select").all()) expect((await s.boundingBox())!.width).toBeGreaterThanOrEqual(150);
     const min = (await card.getByPlaceholder("Min amount").boundingBox())!;
     const max = (await card.getByPlaceholder("Max amount").boundingBox())!;
@@ -1344,6 +1345,7 @@ test.describe("antislop 001 T4 (261120-r0k)", () => {
     await page.route("**/api/transactions?*", (route) => route.fulfill(json(full)));
     await page.goto("/records");
     await expect(page.getByPlaceholder("Search merchant or notes…")).toBeVisible();
+    await page.getByRole("button", { name: /^Filters/ }).click();
     expect(await hits44(page.locator("label.tap44", { hasText: "Show transfers" }))).toBe(true);
     expect(await hits44(page.getByRole("button", { name: "Load 100 more" }))).toBe(true);
 
@@ -1415,5 +1417,32 @@ test.describe("antislop 001 T6 (261120-r0k)", () => {
       return c;
     });
     expect(cursor).toBe("not-allowed");
+  });
+});
+
+// ===========================================================================
+// Design review 2026-11-21 (quick 261121-efd).
+// ===========================================================================
+test.describe("design review 261121-efd", () => {
+  test("F001/F005: phone record names keep their width; filters wait behind a toggle", async ({ page }) => {
+    await mockRecords(page);
+    await page.goto("/records");
+    const search = page.getByPlaceholder("Search merchant or notes…");
+    await expect(search).toBeVisible();
+
+    const names = page.locator("div.rec-row .rec-text > :first-child");
+    await expect(names.first()).toBeVisible();
+    for (const w of await names.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().width)))
+      expect(w).toBeGreaterThan(100);
+
+    const toggle = page.getByRole("button", { name: /^Filters/ });
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByLabel("Filter by account")).toBeHidden();
+    await expect(page.getByText("Show transfers")).toBeHidden();
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await expect(page.getByLabel("Filter by account")).toBeVisible();
+    await page.getByLabel("Filter by type").selectOption("expense");
+    await expect(toggle).toHaveText("Filters (1)");
   });
 });

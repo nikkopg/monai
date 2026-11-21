@@ -332,10 +332,12 @@ html {
   .rec-text {
     display: contents !important;
   }
+  /* Half the row: with a 0 basis the 150px meta line also fitted on line 1 and
+     squeezed the name to one letter (design review 2026-11-21 F001). */
   .rec-text > :first-child {
     flex-grow: 1;
     flex-shrink: 1;
-    flex-basis: 0;
+    flex-basis: 50%;
     min-width: 0;
   }
   .rec-text > :last-child {
@@ -358,6 +360,15 @@ html {
     flex-shrink: 1 !important;
     flex-basis: 80px !important;
     min-width: 0 !important;
+  }
+  /* Search stays; the rest waits behind the Filters toggle (F005). */
+  .rec-filter-toggle {
+    display: inline-flex !important;
+  }
+  .rec-filters:not([data-open="true"]) > select,
+  .rec-filters:not([data-open="true"]) > input[type="number"],
+  .rec-filters:not([data-open="true"]) > label.tap44 {
+    display: none !important;
   }
 }
 

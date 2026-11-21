@@ -307,6 +307,9 @@ function RecordsInner() {
   const [amountMin, setAmountMin] = useState("");
   const [amountMax, setAmountMax] = useState("");
   const [showTransfers, setShowTransfers] = useState(true);
+  // Phone only: filters other than search sit behind a toggle (F005).
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const activeFilters = [accountId, category, type, amountMin, amountMax].filter(Boolean).length + (showTransfers ? 0 : 1);
 
   const [txs, setTxs] = useState<Tx[]>([]);
   const [offset, setOffset] = useState(0);
@@ -751,6 +754,7 @@ function RecordsInner() {
           {selectedIds.size === 0 ? (
             <div
               className="rec-filters"
+              data-open={filtersOpen}
               style={{
                 display: "flex",
                 flexWrap: "wrap",
@@ -770,6 +774,16 @@ function RecordsInner() {
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
               />
+              <button
+                type="button"
+                className="rec-filter-toggle tap44"
+                aria-expanded={filtersOpen}
+                aria-controls="rec-account"
+                onClick={() => setFiltersOpen((o) => !o)}
+                style={{ ...input, display: "none", width: "auto", alignItems: "center", cursor: "pointer" }}
+              >
+                {activeFilters ? `Filters (${activeFilters})` : "Filters"}
+              </button>
               <label htmlFor="rec-account" className="sr-only">Filter by account</label>
               <select
                 id="rec-account"
