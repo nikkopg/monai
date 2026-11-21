@@ -20,6 +20,7 @@ import {
   serverOffset,
   type CardPhase,
   type HeldCard,
+  type InboxAccount,
   type InboxProposal,
   type ProposalRow,
 } from "../lib/inbox";
@@ -64,6 +65,26 @@ export default function InboxPage() {
         const tree: Node[] = await r.json();
         // "Uncategorized" is the select's empty option, so drop the system node of that name.
         if (!cancelled) setCategories(flat(tree ?? []).filter((n) => n !== "Uncategorized"));
+      } catch {
+        // leave empty
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Account names and balances, so edit and balance cards say what they replace
+  // (261121-kwu). Any failure leaves the map empty and the cards fall back to ids.
+  const [accounts, setAccounts] = useState<ReadonlyMap<number, InboxAccount>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/cashflow/summary?period=this_month");
+        if (!r.ok) return;
+        const list: InboxAccount[] = (await r.json())?.accounts ?? [];
+        if (!cancelled) setAccounts(new Map(list.map((a) => [a.id, a])));
       } catch {
         // leave empty
       }
@@ -262,6 +283,7 @@ export default function InboxPage() {
               onRows={onRows}
               announce={announce}
               categories={categories}
+              accounts={accounts}
             />
           </li>
         ))}

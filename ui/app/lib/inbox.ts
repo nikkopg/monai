@@ -71,6 +71,12 @@ export type CardPhase =
   | "superseded"
   | "vanished";
 
+/**
+ * An account as the Inbox needs it to name what a proposal touches (261121-kwu):
+ * read from GET /cashflow/summary, the only endpoint that carries current_balance.
+ */
+export type InboxAccount = { id: number; name: string; currency: string; current_balance: number | null };
+
 export type HeldCard = { proposal: InboxProposal; phase: CardPhase; settledAt?: number };
 
 export type ActionOutcome =

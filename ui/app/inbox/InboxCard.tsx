@@ -45,6 +45,7 @@ import {
   type CardPhase,
   type DuplicateFlag,
   type HeldCard,
+  type InboxAccount,
   type ProposalRow,
 } from "../lib/inbox";
 import { fmtAmountSigned } from "../lib/money";
@@ -64,6 +65,8 @@ type Props = {
   onRows: (id: string, rows: ProposalRow[]) => void;
   announce: (msg: string) => void;
   categories: string[];
+  /** Accounts by id, to name what edits and balance adjustments touch; empty until loaded. */
+  accounts: ReadonlyMap<number, InboxAccount>;
 };
 
 const c = tokens.color;
@@ -234,6 +237,7 @@ export default function InboxCard({
   onRows,
   announce,
   categories,
+  accounts,
 }: Props) {
   const p = card.proposal;
   const id = p.id;
@@ -748,9 +752,7 @@ export default function InboxCard({
             )}
           </>
         ) : op === "add_balance_adjustment" ? (
-          <div style={{ fontSize: "var(--fs-body, 14px)", color: c.ink }}>
-            Set account #{text(rows[0]?.account_id)} balance to {fmtAbsolute(rows[0]?.target_balance)}
-          </div>
+          <BalanceLine row={rows[0]} accounts={accounts} />
         ) : op === "add_coupon" ? (
           <CouponBody
             after={rows[0]?.after ?? {}}
@@ -775,6 +777,9 @@ export default function InboxCard({
                 {text(rows[0]?.after?.source_account_name)}. Record any coupon for it first; a closed bond takes no
                 more coupons.
               </p>
+            )}
+            {(op === "edit_transaction" || op === "delete_transaction") && (
+              <TargetLine before={rows[0]?.before} accounts={accounts} />
             )}
             <ProposalDiff
               rows={rows.map(({ duplicates: _d, skip: _s, ...diffRow }) => diffRow)}
@@ -862,5 +867,58 @@ export default function InboxCard({
         </p>
       )}
     </article>
+  );
+}
+
+// The transaction an edit or delete changes, so the diff is never judged blind
+// (261121-kwu): `before` is the whole row (backend _tx_to_dict).
+function TargetLine({
+  before,
+  accounts,
+}: {
+  before: Record<string, unknown> | null | undefined;
+  accounts: ReadonlyMap<number, InboxAccount>;
+}) {
+  if (!before) return null;
+  const acc = accounts.get(Number(before.account_id));
+  const parts = [
+    fmtRowDate(before.date),
+    text(before.merchant) || null,
+    acc ? acc.name : before.account_id != null ? `account #${text(before.account_id)}` : null,
+    `${fmtSigned(before.amount)}${before.currency && before.currency !== "IDR" ? ` ${text(before.currency)}` : ""}`,
+  ].filter(Boolean);
+  return (
+    <p style={{ fontSize: "var(--fs-body, 14px)", color: c.ink, margin: "0 0 10px" }}>
+      <span style={{ color: c.muted3 }}>Transaction: </span>
+      {parts.join(" · ")}
+    </p>
+  );
+}
+
+// A balance adjustment overwrites an account's balance: name the account and
+// show what it is now and how much moves (261121-kwu). Ids only as a fallback.
+function BalanceLine({
+  row,
+  accounts,
+}: {
+  row: ProposalRow | undefined;
+  accounts: ReadonlyMap<number, InboxAccount>;
+}) {
+  const acc = accounts.get(Number(row?.account_id));
+  const target = Number(row?.target_balance);
+  const now = acc?.current_balance;
+  const known = acc != null && now != null && Number.isFinite(target);
+  return (
+    <div style={{ fontSize: "var(--fs-body, 14px)", color: c.ink }}>
+      <div>
+        Set {acc ? acc.name : `account #${text(row?.account_id)}`} balance to {fmtAbsolute(row?.target_balance)}
+        {acc && acc.currency !== "IDR" ? ` ${acc.currency}` : ""}
+      </div>
+      {known && (
+        <div style={{ marginTop: 4, color: c.muted3, fontSize: "var(--fs-xs, 12px)" }}>
+          Now {fmtAbsolute(now)} · change {fmtSigned(target - (now as number))}
+        </div>
+      )}
+    </div>
   );
 }

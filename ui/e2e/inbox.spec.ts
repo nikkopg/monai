@@ -1626,3 +1626,38 @@ test.describe("suggested category", () => {
     await expect(card.getByText("Suggested", { exact: true })).toHaveCount(0);
   });
 });
+
+// ===========================================================================
+// 261121-kwu: Inbox review fixes. Synthetic accounts and proposals only.
+// ===========================================================================
+const ACCOUNTS = [
+  { id: 3, name: "Cash Contoh", currency: "IDR", current_balance: 1250000 }, // pii-ok synthetic
+  { id: 4, name: "Bank Contoh", currency: "IDR", current_balance: 5000000 }, // pii-ok synthetic
+];
+async function mockAccounts(page: Page) {
+  await page.route("**/api/cashflow/summary**", (route) => route.fulfill({ json: { accounts: ACCOUNTS } }));
+}
+
+test.describe("261121-kwu T1: cards say what they replace", () => {
+  test("balance adjustment names the account, its balance now and the change", async ({ page }) => {
+    await mockInbox(page, { list: [balanceAdjustmentProposal()] });
+    await mockAccounts(page);
+    await openInbox(page);
+    const card = art(page, "Adjust balance");
+    await expect(card.getByText("Set Cash Contoh balance to -250,000")).toBeVisible();
+    await expect(card.getByText("Now 1,250,000 · change -1,500,000")).toBeVisible();
+    await expect(card).not.toContainText("account #");
+  });
+
+  test("edit card shows the transaction it changes", async ({ page }) => {
+    const before = { id: 7, date: "2026-10-06", amount: "-35000.00", currency: "IDR", merchant: "Kopi Contoh", category: "Food", account_id: 3 }; // pii-ok synthetic
+    await mockInbox(page, {
+      list: [editProposal({ payload: { operation: "edit_transaction", rows: [{ id: 7, before, after: { ...before, merchant: "Warung Contoh" } }] } })],
+    });
+    await mockAccounts(page);
+    await openInbox(page);
+    const card = art(page, "Edit 1 transaction");
+    await expect(card.getByText("Transaction:")).toBeVisible();
+    await expect(card).toContainText("6 Oct 2026 · Kopi Contoh · Cash Contoh · -35,000");
+  });
+});
