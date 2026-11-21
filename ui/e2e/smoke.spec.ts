@@ -38,6 +38,8 @@ test.describe("route rendering", () => {
   });
 
   test("/ and the old /cashflow land on /overview", async ({ page }) => {
+    // Two cold routes plus /overview can outlast 30s of dev-server compiling.
+    test.slow();
     for (const path of ["/", "/cashflow"]) {
       await page.goto(path);
       await expect(page).toHaveURL(/\/overview$/);
