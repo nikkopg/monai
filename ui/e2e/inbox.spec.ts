@@ -55,9 +55,12 @@ const batch3 = (o: Partial<InboxProposal> = {}) =>
       operation: "add_transaction",
       rows: [
         txRow({ after: { notes: "Synthetic note" } }),
+        // Decided: the owner chose to include it, so the 261121-kwu ledger-duplicate
+        // default (start skipped) does not apply and these tests keep checking rendering.
         txRow({
           after: { merchant: "Toko Contoh", amount: "-120000.00", category: "Groceries" },
           duplicates: [{ ...flagTx }],
+          skip: false,
         }),
         txRow({
           after: { merchant: "Gaji Contoh", amount: "250000.00" },
@@ -286,6 +289,8 @@ test.describe("card rows", () => {
       txRow({
         after: { merchant: `Toko Contoh ${i + 1}` },
         duplicates: i === 9 ? [{ ...flagTx }] : [],
+        // Decided, so the title stays "Add 12" (the 261121-kwu default skips undecided ledger duplicates).
+        skip: i === 9 ? false : undefined,
       })
     );
     await mockInbox(page, {
@@ -1659,5 +1664,44 @@ test.describe("261121-kwu T1: cards say what they replace", () => {
     const card = art(page, "Edit 1 transaction");
     await expect(card.getByText("Transaction:")).toBeVisible();
     await expect(card).toContainText("6 Oct 2026 · Kopi Contoh · Cash Contoh · -35,000");
+  });
+});
+
+test.describe("261121-kwu T2: ledger duplicates start skipped in the Inbox", () => {
+  const flagged = () =>
+    proposal({
+      payload: {
+        operation: "add_transaction",
+        rows: [txRow(), txRow({ after: { merchant: "Toko Contoh", amount: "-120000.00" }, duplicates: [{ ...flagTx }] })],
+      },
+    });
+
+  test("an undecided ledger duplicate shows skipped, says why, and Approve saves the skip first", async ({ page }) => {
+    const mock = await mockInbox(page, { list: [flagged()] });
+    await openInbox(page);
+    const card = art(page, "Add 1 transaction to Account A");
+    await expect(card.getByText("Skipped by default because it matches an existing record. Include it if it's new.")).toBeVisible();
+    await expect(card.getByRole("button", { name: "Include row 2: Toko Contoh, -120,000" })).toBeVisible();
+    await approveBtn(card).click();
+    await expect.poll(() => mock.sent("POST", "/approve").length).toBe(1);
+    const patches = mock.sent("PATCH", "/rows/1");
+    expect(patches.map((r) => r.body)).toEqual([{ skip: true }]);
+  });
+
+  test("Include sends an explicit choice and clears the default note", async ({ page }) => {
+    const mock = await mockInbox(page, { list: [flagged()] });
+    await openInbox(page);
+    const card = art(page, "Add 1 transaction to Account A");
+    await card.getByRole("button", { name: "Include row 2: Toko Contoh, -120,000" }).click();
+    await expect.poll(() => mock.sent("PATCH", "/rows/1").map((r) => r.body)).toEqual([{ skip: false }]);
+    await expect(card.getByText("Skipped by default")).toHaveCount(0);
+  });
+
+  test("Reject on a default skip goes straight through", async ({ page }) => {
+    const mock = await mockInbox(page, { list: [flagged()] });
+    await openInbox(page);
+    const card = art(page, "Add 1 transaction to Account A");
+    await rejectBtn(card).click();
+    await expect.poll(() => mock.sent("POST", "/reject").length).toBe(1);
   });
 });

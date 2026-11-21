@@ -246,6 +246,8 @@ export default function InboxCard({
   const live = card.phase === "live";
   const locked = isLocked(p);
   const skippedCount = rows.filter((r) => r.skip === true).length;
+  // Skips the owner chose; a default skip (261121-kwu) is not a choice to protect on Reject.
+  const chosenSkips = rows.filter((r) => r.skip === true && !r.skip_default).length;
   const allSkipped = op === "add_transaction" && rows.length > 0 && skippedCount === rows.length;
 
   const [busy, setBusy] = useState<Busy>(null);
@@ -318,6 +320,16 @@ export default function InboxCard({
   async function approve() {
     if (blocked || allSkipped) return;
     await act("approve", async () => {
+      // Rows skipped by default are only skipped in this view until saved (261121-kwu).
+      for (let i = 0; i < rows.length; i++) {
+        if (!rows[i].skip_default) continue;
+        const s = await fetch(`/api/proposals/${id}/rows/${i}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", ...INBOX_SURFACE_HEADER },
+          body: JSON.stringify({ skip: true }),
+        });
+        if (!s.ok) return fail(s);
+      }
       const r = await fetch(`/api/proposals/${id}/approve`, {
         method: "POST",
         headers: INBOX_SURFACE_HEADER,
@@ -331,7 +343,7 @@ export default function InboxCard({
 
   async function reject() {
     if (blocked) return;
-    if (skippedCount >= 1 && !confirmDiscard) {
+    if (chosenSkips >= 1 && !confirmDiscard) {
       setConfirmDiscard(true);
       return;
     }
@@ -705,6 +717,11 @@ export default function InboxCard({
                       <tr key={`f${i}`} className="inbox-flag-row">
                         <td colSpan={7} style={{ padding: "0 8px 12px" }}>
                           {flags.length > 0 && <DuplicateFlags flags={flags} selfId={id} onPageIds={onPageIds} />}
+                          {row.skip_default && row.skip && (
+                            <div style={{ marginTop: 4, fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>
+                              Skipped by default because it matches an existing record. Include it if it&apos;s new.
+                            </div>
+                          )}
                           {prov.map((item, k) => (
                             <div key={k} style={{ marginTop: 4 }}>
                               <span style={warmChip}>{item.chip}</span>{" "}
@@ -801,8 +818,8 @@ export default function InboxCard({
           {confirmDiscard ? (
             <>
               <span style={{ fontSize: "var(--fs-body, 14px)", color: c.ink }}>
-                Discard this proposal and your skip choices on {skippedCount}{" "}
-                {skippedCount === 1 ? "row" : "rows"}?
+                Discard this proposal and your skip choices on {chosenSkips}{" "}
+                {chosenSkips === 1 ? "row" : "rows"}?
               </span>
               <button
                 type="button"

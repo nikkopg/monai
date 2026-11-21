@@ -14,6 +14,7 @@ import { useVisiblePoll } from "../lib/useVisiblePoll";
 import { INBOX_SURFACE_HEADER } from "../lib/approverAllowlist";
 import {
   APPROVER_KEY_PAGE_MSG,
+  defaultSkipLedgerDuplicates,
   hhmm,
   liveCount,
   mergePoll,
@@ -98,7 +99,7 @@ export default function InboxPage() {
     url: "/api/proposals?status=pending",
     intervalMs: 10_000,
     headers: INBOX_SURFACE_HEADER,
-    parse: (json) => (Array.isArray(json) ? (json as InboxProposal[]) : null),
+    parse: (json) => (Array.isArray(json) ? (json as InboxProposal[]).map(defaultSkipLedgerDuplicates) : null),
     onData: (list, dateHeader, startedAt) => {
       const now = Date.now();
       // A poll sent before an action on a card finished carries that card's

@@ -28,6 +28,8 @@ export type ProposalRow = {
   target_balance?: string;
   duplicates?: DuplicateFlag[];
   skip?: boolean;
+  /** Client-only: skipped because it matches a ledger record and the owner hasn't decided (261121-kwu). Never sent. */
+  skip_default?: boolean;
   /** Upload rows whose category came from the owner's merchant history; the owner's edit clears it. */
   category_suggested?: boolean;
 };
@@ -354,13 +356,32 @@ export function serverOffset(dateHeader: string | null, localNowMs: number): num
 }
 
 /**
+ * Inbox default (261121-kwu): an add_transaction row that matches an existing
+ * ledger record, and that the owner has not decided on, starts skipped. Flags
+ * against other proposals stay advisory. `skip_default` marks the rows Approve
+ * must save as skipped first, so the server writes exactly what the card shows.
+ */
+export function defaultSkipLedgerDuplicates(p: InboxProposal): InboxProposal {
+  if (p.operation !== "add_transaction") return p;
+  const rows = p.payload.rows ?? [];
+  const undecidedLedgerDup = (r: ProposalRow) =>
+    r.skip == null && (r.duplicates ?? []).some((f) => f.kind === "transaction");
+  if (!rows.some(undecidedLedgerDup)) return p;
+  return {
+    ...p,
+    payload: { ...p.payload, rows: rows.map((r) => (undecidedLedgerDup(r) ? { ...r, skip: true, skip_default: true } : r)) },
+  };
+}
+
+/**
  * Copy only the boolean `skip` flag from a PATCH response onto the held rows.
  * The response carries no `duplicates`, so replacing rows would drop the chips.
  */
 export function mergeSkip(held: ProposalRow[], resp: ProposalRow[]): ProposalRow[] {
   return held.map((row, i) => {
     const skip = resp[i]?.skip;
-    return typeof skip === "boolean" ? { ...row, skip } : row;
+    // A saved choice replaces the default, so drop the client-only marker.
+    return typeof skip === "boolean" ? { ...row, skip, skip_default: undefined } : row;
   });
 }
 
