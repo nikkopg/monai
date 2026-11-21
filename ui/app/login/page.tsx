@@ -34,7 +34,6 @@ export default function LoginPage({ searchParams }: { searchParams: Record<strin
             <span style={{ fontFamily: tokens.font.serif, fontSize: 30, letterSpacing: "-0.5px", lineHeight: 1 }}>monai</span>
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: t.green }} />
           </div>
-          <div style={text(12, t.muted2, { letterSpacing: ".12em", textTransform: "uppercase", marginBottom: 4 })}>Sign in</div>
           <h1 style={{ fontFamily: tokens.font.serif, fontWeight: 400, fontSize: 40, lineHeight: 1.1, letterSpacing: "-0.5px", margin: "0 0 6px" }}>
             Welcome back
           </h1>

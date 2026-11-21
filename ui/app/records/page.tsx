@@ -709,17 +709,6 @@ function RecordsInner() {
         }}
       >
         <div>
-          <div
-            style={{
-              fontSize: "var(--fs-xs, 12px)",
-              letterSpacing: ".12em",
-              textTransform: "uppercase",
-              color: tokens.color.muted2,
-              marginBottom: 6,
-            }}
-          >
-            Ledger
-          </div>
           <h1
             style={{
               fontFamily: tokens.font.serif,

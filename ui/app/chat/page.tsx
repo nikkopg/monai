@@ -1137,7 +1137,9 @@ function ChatInner() {
   // After a load or a send (or while following), bring the newest message into view;
   // otherwise growing content raises the Jump to latest pill.
   useEffect(() => {
-    if (loading) return;
+    // The starter view has nothing to follow; scrolling it pushed "Chats ▾" off
+    // the top of a phone screen (F004).
+    if (loading || messages.length === 0) return;
     if (scrollNextRef.current || followingRef.current) {
       scrollNextRef.current = false;
       scrollToLatest();
@@ -1603,17 +1605,6 @@ function ChatInner() {
             >
               Chats <span aria-hidden="true">{drawerOpen ? "▴" : "▾"}</span>
             </button>
-            <div
-              style={{
-                fontSize: "var(--fs-xs, 12px)",
-                letterSpacing: ".12em",
-                textTransform: "uppercase",
-                color: tokens.color.muted3,
-                marginBottom: 6,
-              }}
-            >
-              Assistant
-            </div>
             <h1
               style={{
                 fontFamily: tokens.font.serif,

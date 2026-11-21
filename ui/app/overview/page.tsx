@@ -344,15 +344,16 @@ export default function OverviewPage() {
               hero
               header={(change) => (
             <div>
-              <div
+              <h2
                 style={{
                   fontSize: "var(--fs-body, 13px)",
                   color: tokens.color.inkTextMuted,
-                  marginBottom: 10,
+                  margin: "0 0 10px",
+                  fontWeight: 400,
                 }}
               >
                 Net worth
-              </div>
+              </h2>
               {netWorthError ? (
                 <div style={{ fontSize: "var(--fs-body, 14px)", color: "#e6a99c" }}>
                   {netWorthError}
@@ -455,7 +456,7 @@ export default function OverviewPage() {
                   marginBottom: 12,
                 }}
               >
-                <div style={{ fontSize: "var(--fs-h3, 14px)", fontWeight: 600 }}>Cashflow</div>
+                <h2 style={{ fontSize: "var(--fs-h3, 14px)", fontWeight: 600, margin: 0 }}>Cashflow</h2>
                 <Pills
                   small
                   label="Period"

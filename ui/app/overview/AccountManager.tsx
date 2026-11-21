@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { card, input, btn, label, tokens } from "../styles";
+import { sectionTitle } from "../investments/sectionStyles";
 import { extractDetail } from "../lib/api";
 import RowMenu from "../components/RowMenu";
 import ConfirmDialog from "./ConfirmDialog";
@@ -180,7 +181,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
 
   return (
     <section style={card}>
-      <label style={label}>Accounts</label>
+      <h2 style={{ ...sectionTitle, marginBottom: 12 }}>Accounts</h2>
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--fs-body, 13px)" }}>
         <tbody>
           {accounts.map((a) => (

@@ -316,17 +316,6 @@ export default function InvestmentsPage() {
   return (
     <div className="tab-in" style={{ padding: "40px 44px 60px" }}>
       <div style={{ marginBottom: 28 }}>
-        <div
-          style={{
-            fontSize: "var(--fs-xs, 12px)",
-            letterSpacing: ".12em",
-            textTransform: "uppercase",
-            color: tokens.color.muted3,
-            marginBottom: 6,
-          }}
-        >
-          Portfolio
-        </div>
         <h1
           style={{
             fontFamily: tokens.font.serif,

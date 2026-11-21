@@ -41,10 +41,11 @@ type SaveState = {
   message?: string;
 };
 
+// h2: each card is a section of the page (F008); margin reset from the h2 default.
 const cardTitle: React.CSSProperties = {
   fontSize: "var(--fs-h3, 15px)",
   fontWeight: 600,
-  marginBottom: 4,
+  margin: "0 0 4px",
 };
 const cardSub: React.CSSProperties = {
   fontSize: "var(--fs-body, 13px)",
@@ -233,17 +234,6 @@ export default function SettingsPage() {
   return (
     <div className="tab-in" style={{ maxWidth: 720, margin: "0 auto", padding: "40px 44px 60px" }}>
       <div style={{ marginBottom: 28 }}>
-        <div
-          style={{
-            fontSize: "var(--fs-xs, 12px)",
-            letterSpacing: ".12em",
-            textTransform: "uppercase",
-            color: tokens.color.muted2,
-            marginBottom: 6,
-          }}
-        >
-          Configuration
-        </div>
         <h1
           style={{
             fontFamily: tokens.font.serif,
@@ -266,7 +256,7 @@ export default function SettingsPage() {
 
       {/* Card 1: LLM Provider & Model */}
       <div style={card}>
-        <div style={cardTitle}>LLM Provider &amp; Model</div>
+        <h2 style={cardTitle}>LLM Provider &amp; Model</h2>
         <div style={cardSub}>Which engine answers your questions.</div>
         <form onSubmit={saveProvider}>
           <div id="set-provider" style={fieldLabel}>Provider</div>
@@ -343,7 +333,7 @@ export default function SettingsPage() {
 
       {/* Card 2: API Keys */}
       <div style={card}>
-        <div style={cardTitle}>API Keys</div>
+        <h2 style={cardTitle}>API Keys</h2>
         <div style={cardSub}>
           Stored encrypted. Leave blank to keep the current key.
         </div>
@@ -389,7 +379,7 @@ export default function SettingsPage() {
 
       {/* Card 3: Categories — expandable tree manager (D-16) */}
       <div style={card}>
-        <div style={cardTitle}>Categories</div>
+        <h2 style={cardTitle}>Categories</h2>
         <div style={cardSub}>Manage the category hierarchy used across cashflow and chat.</div>
         <CategoryManager onChanged={() => {}} />
       </div>
@@ -414,7 +404,7 @@ export default function SettingsPage() {
 
       {/* Card 4: Preferences */}
       <div style={{ ...card, marginBottom: 0 }}>
-        <div style={cardTitle}>Preferences</div>
+        <h2 style={cardTitle}>Preferences</h2>
         <form onSubmit={savePreferences}>
           <div
             style={{

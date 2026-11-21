@@ -805,13 +805,15 @@ test.describe("D2 dock clearance (261115-s37)", () => {
 // Captured at HEAD (f372f33) before any ui/app edit: the 1280 type histogram of
 // `main` and the desktop spot values for each page. The phone type scale is
 // phone-only, so these must stay green through every task.
+// 261121-efd T4: each page's 12px count drops by one, the uppercase label above the h1;
+// on Settings the 12px Accounts label also became a 14px h2.
 const S0: Record<string, { hist: Record<string, number>; spot: DesktopSpot } | undefined> = {
-  investments: { hist: {"12px": 30, "13px": 9, "14px": 15, "16px": 3, "17px": 1, "40px": 1, "52px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "0px"}, "pillH": 32} }, // pii-ok synthetic
-  platform: { hist: {"12px": 16, "13px": 3, "14px": 16, "28px": 3, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": null, "pillH": null} }, // pii-ok synthetic
-  records: { hist: {"12px": 8, "13px": 5, "14px": 12, "16px": 3, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic
-  inbox: { hist: {"12px": 19, "14px": 17, "20px": 2, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "0px"}, "pillH": null} }, // pii-ok synthetic
-  chat: { hist: {"12px": 7, "14px": 11, "15px": 2, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": null, "pillH": null} }, // pii-ok synthetic
-  settings: { hist: {"11px": 1, "12px": 16, "13px": 9, "13.3333px": 1, "14px": 27, "15px": 6, "16px": 4, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic
+  investments: { hist: {"12px": 29, "13px": 9, "14px": 15, "16px": 3, "17px": 1, "40px": 1, "52px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "0px"}, "pillH": 32} }, // pii-ok synthetic
+  platform: { hist: {"12px": 15, "13px": 3, "14px": 16, "28px": 3, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": null, "pillH": null} }, // pii-ok synthetic
+  records: { hist: {"12px": 7, "13px": 5, "14px": 12, "16px": 3, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic
+  inbox: { hist: {"12px": 18, "14px": 17, "20px": 2, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "0px"}, "pillH": null} }, // pii-ok synthetic
+  chat: { hist: {"12px": 6, "14px": 11, "15px": 2, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": null, "pillH": null} }, // pii-ok synthetic
+  settings: { hist: {"11px": 1, "12px": 14, "13px": 9, "13.3333px": 1, "14px": 28, "15px": 6, "16px": 4, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic
 };
 
 async function expectDesktopUnchanged(page: Page, key: string) {
@@ -1460,6 +1462,38 @@ test.describe("design review 261121-efd", () => {
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
     await expect(open).toBeFocused();
+  });
+
+  test("F004/F008/F009/F010: chat starter stays at the top, headings name sections, no labels above titles", async ({ page }) => {
+    await mockChatEmpty(page);
+    await page.goto("/chat");
+    await expect(page.getByRole("heading", { level: 1, name: "Ask about your money" })).toBeVisible();
+    await page.waitForTimeout(300);
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
+    await expect(page.getByRole("button", { name: /^Chats/ })).toBeInViewport();
+
+    await mockSettings(page);
+    await page.goto("/settings");
+    for (const name of ["LLM Provider & Model", "API Keys", "Categories", "Accounts", "Platforms"])
+      await expect(page.getByRole("heading", { level: 2, name })).toBeVisible();
+
+    await mockPlatform(page);
+    await page.goto("/investments/7");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("ZZ Exchange");
+    await expect(page).toHaveTitle("ZZ Exchange · monai");
+
+    // No small uppercase label sits above any page title.
+    for (const path of ["/records", "/settings", "/investments/7"]) {
+      if (path === "/records") await mockRecords(page);
+      await page.goto(path);
+      const h1 = page.getByRole("heading", { level: 1 });
+      await expect(h1).toBeVisible();
+      expect(await h1.evaluate((h) => {
+        const prev = (h.parentElement?.previousElementSibling ?? h.previousElementSibling) as HTMLElement | null;
+        const own = h.previousElementSibling as HTMLElement | null;
+        return [own, prev].some((e) => e && getComputedStyle(e).textTransform === "uppercase");
+      })).toBe(false);
+    }
   });
 });
 

@@ -235,6 +235,12 @@ export default function PlatformDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [platformId]);
 
+  // The layout's "Investments · monai" names every platform tab alike (F009).
+  const platformName = detail?.platform_name;
+  useEffect(() => {
+    if (platformName) document.title = `${platformName} · monai`;
+  }, [platformName]);
+
   // Platform-wide totals — sum of each holding's own realized/unrealized.
   const totalRealized =
     (detail?.holdings.reduce((a, h) => a + h.realized_pnl, 0) ?? 0) +
@@ -325,40 +331,31 @@ export default function PlatformDetailPage() {
             }}
           >
             <div>
-              <div
-                style={{
-                  fontSize: "var(--fs-xs, 12px)",
-                  letterSpacing: ".12em",
-                  textTransform: "uppercase",
-                  color: tokens.color.muted3,
-                  marginBottom: 6,
-                }}
-              >
-                Platform
-              </div>
-              <h1
-                style={{
-                  fontFamily: tokens.font.serif,
-                  fontWeight: 400,
-                  fontSize: "var(--fs-title, 40px)",
-                  margin: 0,
-                  letterSpacing: "-.5px",
-                }}
-              >
-                {detail.platform_name}
+              {/* The kind sits beside the h1, not inside it, so the heading reads as the name alone (F008). */}
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                <h1
+                  style={{
+                    fontFamily: tokens.font.serif,
+                    fontWeight: 400,
+                    fontSize: "var(--fs-title, 40px)",
+                    margin: 0,
+                    letterSpacing: "-.5px",
+                  }}
+                >
+                  {detail.platform_name}
+                </h1>
                 {detail.kind && (
                   <span
                     style={{
                       fontSize: "var(--fs-xs, 12px)",
                       color: muted,
-                      marginLeft: 8,
                       fontFamily: tokens.font.sans,
                     }}
                   >
                     {detail.kind}
                   </span>
                 )}
-              </h1>
+              </div>
             </div>
           </div>
 

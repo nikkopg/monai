@@ -228,7 +228,6 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
         fontFamily: tokens.font.sans,
       }}
     >
-      <h2 className="sr-only">Chats</h2>
       <button
         ref={newRef}
         type="button"
@@ -272,8 +271,10 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
           const hid = `${uid}-g${gi}`;
           return (
             <div key={name} style={{ marginBottom: 24 }}>
-              <h3
+              {/* Not a heading: the sidebar comes before the page h1, and the nav and each list are already named (F008). */}
+              <div
                 id={hid}
+                className="thread-group"
                 style={{
                   fontSize: "var(--fs-xs, 12px)",
                   fontWeight: 600,
@@ -285,7 +286,7 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
                 }}
               >
                 {name}
-              </h3>
+              </div>
               <ul
                 aria-labelledby={hid}
                 style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 4 }}

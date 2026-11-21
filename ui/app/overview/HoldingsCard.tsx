@@ -121,7 +121,7 @@ export default function HoldingsCard({ data }: { data: HoldingsData }) {
         minHeight: 520,
       }}
     >
-      <div style={{ fontSize: "var(--fs-h3, 14px)", fontWeight: 600, minHeight: 30, marginBottom: 12, display: "flex", alignItems: "center" }}>
+      <h2 style={{ fontSize: "var(--fs-h3, 14px)", fontWeight: 600, minHeight: 30, margin: "0 0 12px", display: "flex", alignItems: "center" }}>
         {view === "main" ? (
           "Holdings"
         ) : (
@@ -133,7 +133,7 @@ export default function HoldingsCard({ data }: { data: HoldingsData }) {
             {view === "liquid" ? "Liquid" : "Investment"}
           </span>
         )}
-      </div>
+      </h2>
 
       {view === "liquid" && (
         <div style={{ display: "flex", justifyContent: "center", margin: "-4px 0 6px" }}>

@@ -110,7 +110,6 @@ test.describe("Platform detail shell (PLAT-01, D-08)", () => {
     await page.goto("/investments/1");
 
     await expect(page.getByRole("link", { name: "← Investments" })).toBeVisible();
-    await expect(page.getByText("Platform", { exact: true })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Binance" })).toBeVisible();
     await expect(page.getByText("crypto app", { exact: true })).toBeVisible();
 

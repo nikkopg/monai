@@ -341,7 +341,7 @@ test.describe("thread sidebar (THRD-02, D-20)", () => {
       { id: sid(5), title: "ZZTest old", updated_at: ago(45) },
     ]);
     await page.goto("/chat");
-    const headers = page.getByTestId("thread-sidebar").locator("h3");
+    const headers = page.getByTestId("thread-sidebar").locator(".thread-group");
     await expect(headers).toHaveText(["Today", "Yesterday", "Previous 7 days", "Previous 30 days", "Older"]);
     await expect(rowsOf(page)).toHaveCount(5);
     await expect(rowsOf(page).nth(3)).toContainText("Untitled chat");
@@ -468,7 +468,7 @@ test.describe("thread sidebar (THRD-02, D-20)", () => {
     await expect(trigger).toBeFocused();
 
     await trigger.click();
-    await page.getByTestId("thread-sidebar").locator("h3").first().click();
+    await page.getByTestId("thread-sidebar").locator(".thread-group").first().click();
     await expect(items).toHaveCount(0);
 
     await trigger.click();

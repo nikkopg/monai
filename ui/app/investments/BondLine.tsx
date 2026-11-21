@@ -81,9 +81,9 @@ export function CouponSchedule({
   }
   return (
     <div className="card-tight" style={{ ...card, marginTop: 14 }}>
-      <h3 style={{ margin: "0 0 6px", fontSize: "var(--fs-body, 14px)", fontWeight: 600 }}>
+      <h2 style={{ margin: "0 0 6px", fontSize: "var(--fs-body, 14px)", fontWeight: 600 }}>
         {`Coupon schedule · ${ticker}`}
-      </h3>
+      </h2>
       <div style={{ fontSize: xs, color: tokens.color.muted3 }}>
         {"Realized from coupons "}
         <b style={{ color: tokens.color.green, fontVariantNumeric: "tabular-nums" }}>

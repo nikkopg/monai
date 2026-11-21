@@ -276,17 +276,6 @@ export default function InboxPage() {
       </div>
 
       <div style={{ marginBottom: 32 }}>
-        <div
-          style={{
-            fontSize: "var(--fs-xs, 12px)",
-            color: c.muted3,
-            textTransform: "uppercase",
-            letterSpacing: ".12em",
-            marginBottom: 8,
-          }}
-        >
-          Approvals
-        </div>
         <h1
           style={{
             fontFamily: tokens.font.serif,
