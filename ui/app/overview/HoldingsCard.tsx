@@ -291,7 +291,6 @@ function Row({
         }}
       >
         <b
-          className="amt"
           title={row.title}
           style={{
             fontWeight: 600,

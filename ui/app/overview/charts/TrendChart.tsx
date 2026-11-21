@@ -114,7 +114,7 @@ export default function TrendChart({
           >
             <XAxis dataKey="title" hide />
             <YAxis hide domain={["dataMin", "dataMax"]} />
-            <Tooltip wrapperClassName="amt" cursor={{ fill: tokens.color.borderInner }} content={<CashFlowTooltip />} />
+            <Tooltip cursor={{ fill: tokens.color.borderInner }} content={<CashFlowTooltip />} />
             {selectedPoint && (
               <ReferenceArea x1={selectedPoint.title} x2={selectedPoint.title} fill={tokens.color.borderInner} fillOpacity={1} />
             )}

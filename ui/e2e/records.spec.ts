@@ -690,8 +690,7 @@ test.describe("Records USD rows (Phase 44 D-13, D-14)", () => {
     await expect(noRate.locator("xpath=../..")).not.toHaveAttribute("title", /.*/);
 
     // The IDR row is untouched: signed amount only, no secondary line, no title.
-    // Scoped to the amount cells: the day's Net total can be the same figure.
-    const idr = page.locator(".rec-amt").getByText(signed(-25000), { exact: true });
+    const idr = page.getByText(signed(-25000), { exact: true });
     await expect(idr).toHaveCount(1);
     await expect(idr).not.toHaveAttribute("title", /.*/);
     await expect(page.getByText("≈")).toHaveCount(1);

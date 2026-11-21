@@ -88,7 +88,6 @@ export default function CategoryDonut({ data }: { data: CategoryGroup[] }) {
                 })}
               </Pie>
               <Tooltip
-                wrapperClassName="amt"
                 formatter={(value) => fmt(value)}
                 contentStyle={{
                   background: tokens.color.card,
@@ -136,7 +135,7 @@ export default function CategoryDonut({ data }: { data: CategoryGroup[] }) {
             >
               {r.name || "–"}
             </span>
-            <span className="amt" style={{ fontWeight: 500, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+            <span style={{ fontWeight: 500, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
               {fmtAmount(r.total, "IDR")}
             </span>
             <span

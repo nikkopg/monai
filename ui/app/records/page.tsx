@@ -216,7 +216,7 @@ function LedgerRowShell({
         </span>
       </span>
       <div
-        className="rec-amt amt"
+        className="rec-amt"
         title={amountTitle}
         style={{
           fontSize: "var(--fs-body, 14px)",
@@ -1026,7 +1026,7 @@ function RecordsInner() {
                           color: net >= 0 ? tokens.color.green : tokens.color.terracotta,
                         }}
                       >
-                        Net <span className="amt">{unconverted > 0 && unconverted === dayRows.length ? "–" : fmtAmountSigned(net, "IDR")}</span>
+                        Net {unconverted > 0 && unconverted === dayRows.length ? "–" : fmtAmountSigned(net, "IDR")}
                         {unconverted > 0 && (
                           <span style={{ fontSize: "var(--fs-xs, 12px)", fontWeight: 400, color: tokens.color.terracottaText }}>
                             {" · "}

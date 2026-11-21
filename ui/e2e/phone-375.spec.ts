@@ -808,11 +808,10 @@ test.describe("D2 dock clearance (261115-s37)", () => {
 // 261121-efd T4: each page's 12px count drops by one, the uppercase label above the h1;
 // on Settings the 12px Accounts label also became a 14px h2. T5 then gives each role
 // one desktop size (xs 12, body 14, h3 15, pill 13), so the stray 11 and 13px move.
-// 261121-fwp: Records' day Net figure is its own .amt span (+1 at 12px).
 const S0: Record<string, { hist: Record<string, number>; spot: DesktopSpot } | undefined> = {
   investments: { hist: {"12px": 18, "13px": 11, "14px": 22, "15px": 2, "16px": 3, "17px": 1, "40px": 1, "52px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "0px"}, "pillH": 32} }, // pii-ok synthetic
   platform: { hist: {"12px": 15, "13px": 2, "14px": 17, "28px": 3, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": null, "pillH": null} }, // pii-ok synthetic
-  records: { hist: {"12px": 8, "14px": 17, "16px": 3, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic
+  records: { hist: {"12px": 7, "14px": 17, "16px": 3, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic
   inbox: { hist: {"12px": 18, "14px": 17, "20px": 2, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "0px"}, "pillH": null} }, // pii-ok synthetic
   chat: { hist: {"12px": 6, "14px": 11, "15px": 2, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": null, "pillH": null} }, // pii-ok synthetic
   settings: { hist: {"12px": 15, "13px": 3, "13.3333px": 1, "14px": 32, "15px": 8, "16px": 4, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic
@@ -1566,14 +1565,6 @@ test.describe("hide amounts (261121-fwp)", () => {
     await page.reload();
     await expect(page.getByRole("button", { name: "Show amounts" })).toBeVisible();
     await expect(page.locator(".hero-head > div").first()).toContainText("••••••");
-
-    // The same setting blurs amounts elsewhere: Records rows and day totals.
-    await mockRecords(page);
-    await page.goto("/records");
-    const amts = page.locator(".rec-amt");
-    await expect(amts.first()).toBeVisible();
-    for (const f of await page.locator(".amt").evaluateAll((els) => els.map((e) => getComputedStyle(e).filter)))
-      expect(f).toContain("blur");
   });
 });
 

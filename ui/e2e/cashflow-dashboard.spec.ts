@@ -912,9 +912,8 @@ test.describe("phone width, 375px (261115-msv)", () => {
   // S0 (261116-s7w): at 1280 nothing moves. Captured at HEAD (f372f33) before any ui/app edit.
   // 12px went 39 -> 38 when the "Overview" eyebrow above the h1 was removed.
   // 261121-efd T5: one desktop size per role (xs 12, body 14, h3 15, pill 13), pills 1px taller.
-  // 261121-fwp: amounts wrapped in their own .amt spans add three 12px text elements.
   const S0_CASHFLOW: { hist: Record<string, number>; spot: DesktopSpot; lowerGap: string; heroPx: string } | undefined =
-    {"hist": {"12px": 33, "13px": 8, "14px": 9, "15px": 4, "16px": 2, "17px": 1, "18px": 2, "24px": 1, "40px": 1, "52px": 1}, "spot": {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "0px"}, "pillH": 25}, "lowerGap": "18px", "heroPx": "52px"};
+    {"hist": {"12px": 30, "13px": 8, "14px": 9, "15px": 4, "16px": 2, "17px": 1, "18px": 2, "24px": 1, "40px": 1, "52px": 1}, "spot": {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "0px"}, "pillH": 25}, "lowerGap": "18px", "heroPx": "52px"};
   test("S0: Cashflow at 1280 is unchanged (261116-s7w)", async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await expect(page.getByRole("region", { name: "Holdings", exact: true })).toBeVisible();

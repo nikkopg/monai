@@ -46,8 +46,7 @@ export function BondLine({ bond }: { bond: BondInfo }) {
         <>
           {bond.next_coupon_date && bond.net != null && (
             <span style={muted}>
-              {`Next coupon ${fmtDayMonth(bond.next_coupon_date)} · `}
-              <span className="amt">{fmtPlain(bond.net)}</span>
+              {`Next coupon ${fmtDayMonth(bond.next_coupon_date)} · ${fmtPlain(bond.net)}`}
               {bond.coupon_account_name ? ` to ${bond.coupon_account_name}` : ""}
             </span>
           )}
@@ -87,7 +86,7 @@ export function CouponSchedule({
       </h2>
       <div style={{ fontSize: xs, color: tokens.color.muted3 }}>
         {"Realized from coupons "}
-        <b className="amt" style={{ color: tokens.color.green, fontVariantNumeric: "tabular-nums" }}>
+        <b style={{ color: tokens.color.green, fontVariantNumeric: "tabular-nums" }}>
           {`+${fmtPlain(total)}`}
         </b>
         {` (${received.length} paid)`}
@@ -108,8 +107,7 @@ export function CouponSchedule({
           >
             <span>{fmtDayMonthYear(r.date)}</span>
             <span style={{ fontVariantNumeric: "tabular-nums", textAlign: "right" }}>
-              <span className="amt">{fmtPlain(r.amount)}</span>
-              {` · ${r.tag}`}
+              {`${fmtPlain(r.amount)} · ${r.tag}`}
             </span>
           </div>
         ))}
