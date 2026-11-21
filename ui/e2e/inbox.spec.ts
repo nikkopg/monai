@@ -242,7 +242,7 @@ test.describe("card rows", () => {
     await openInbox(page);
     const card = art(page, T3);
     await expect(card).toBeVisible();
-    await expect(card.locator("caption")).toHaveText("Rows in this proposal");
+    await expect(card.locator("caption")).toHaveText("Proposed · not saved yet");
     await expect(card.getByRole("columnheader")).toHaveText([
       "#",
       "Date",
@@ -1364,7 +1364,7 @@ test.describe("a11y structure", () => {
     }
 
     const table = byId(page, ids.a).locator("table");
-    await expect(table.locator("caption")).toHaveText("Rows in this proposal");
+    await expect(table.locator("caption")).toHaveText("Proposed · not saved yet");
     await expect(table.locator('th[scope="col"]')).toHaveCount(7);
   });
 
@@ -1386,7 +1386,8 @@ test.describe("a11y structure", () => {
     const card = byId(page, ids.a);
     await expect(card).toBeVisible();
 
-    expect(await css(card.getByText(/^Proposed /), "color")).toBe(RGB.muted3);
+    // The age line, not the 261121-m17 table caption "Proposed · not saved yet".
+    expect(await css(card.getByText(/^Proposed (?!·)/), "color")).toBe(RGB.muted3);
     const chip = card.getByText("Claude", { exact: true });
     expect(await css(chip, "color")).toBe(RGB.muted3);
     expect(await css(chip, "background-color")).toBe(RGB.tintNeutral);
@@ -1747,5 +1748,17 @@ test.describe("261121-m17: Inbox next findings", () => {
     await expect(card.locator(".inbox-footer")).toHaveAttribute("aria-busy", "true");
     release();
     await expect(statusOf(page, ids.c)).toHaveText("Rejected · nothing changed");
+  });
+});
+
+test.describe("261121-m17 T3: overwrite and proposal cues", () => {
+  test("edits and balance adjustments carry Changes existing data; additions don't; expiry is explained", async ({ page }) => {
+    await mockInbox(page, { list: [balanceAdjustmentProposal(), editProposal({ id: ids.c }), oneRow({ id: ids.b })] });
+    await openInbox(page);
+    await expect(art(page, "Adjust balance").getByText("Changes existing data")).toBeVisible();
+    await expect(art(page, "Edit 1 transaction").getByText("Changes existing data")).toBeVisible();
+    await expect(byId(page, ids.b).getByText("Changes existing data")).toHaveCount(0);
+    await expect(byId(page, ids.b).locator("caption")).toHaveText("Proposed · not saved yet");
+    await expect(page.getByText("Chat proposals expire after 15 minutes, Claude's and uploads after 48 hours.", { exact: false })).toBeVisible();
   });
 });

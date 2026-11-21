@@ -108,6 +108,14 @@ const included = (rows: ProposalRow[]) => rows.filter((r) => r.skip !== true).le
 const skippedCount = (rows: ProposalRow[]) => rows.length - included(rows);
 
 // Fixed (count-free) effect labels from the UI-SPEC "Approve Label Rules" table.
+/**
+ * Operations that change or remove something already in the ledger, rather
+ * than add to it (261121-kwu/m17): the card gets a "Changes existing data" chip.
+ */
+export function changesExisting(operation: string): boolean {
+  return /^(edit|delete|rename|merge)_/.test(operation) || operation === "add_balance_adjustment";
+}
+
 const FIXED_LABEL: Record<string, string> = {
   add_transfer: "Add 1 transfer",
   add_account: "Add account",

@@ -314,6 +314,11 @@ export default function InboxPage() {
           Everything waiting for your say-so. Nothing changes until you approve.
           {cards !== null && cards.length > 0 && ` ${liveCount(cards)} waiting.`}
         </p>
+        {/* TTLs from backend/proposals.py (261121-m17). */}
+        <p style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3, margin: "4px 0 0" }}>
+          Chat proposals expire after 15 minutes, Claude&apos;s and uploads after 48 hours. An expired proposal
+          changes nothing.
+        </p>
       </div>
 
       {loaded && poll.offline && (

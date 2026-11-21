@@ -33,6 +33,7 @@ import {
   KIND_LABEL,
   mapActionResponse,
   mergeSkip,
+  changesExisting,
   pendingStatus,
   recordsHref,
   proposalFlagText,
@@ -536,6 +537,7 @@ export default function InboxCard({
             {cardTitle(op, rows)}
           </h2>
           <span style={neutralChip}>{sourceLabel(p.channel)}</span>
+          {changesExisting(op) && <span style={warmChip}>Changes existing data</span>}
         </div>
         <span
           id={`inbox-status-${id}`}
@@ -626,7 +628,18 @@ export default function InboxCard({
         {op === "add_transaction" ? (
           <>
             <table id={`inbox-rows-${id}`} className="inbox-table" style={{ borderCollapse: "collapse", width: "100%" }}>
-              <caption className="sr-only">Rows in this proposal</caption>
+              {/* Visible so proposed rows never read as saved records (261121-m17). */}
+              <caption
+                style={{
+                  captionSide: "top",
+                  textAlign: "left",
+                  fontSize: "var(--fs-xs, 12px)",
+                  color: c.muted3,
+                  paddingBottom: 6,
+                }}
+              >
+                Proposed · not saved yet
+              </caption>
               <thead>
                 <tr>
                   <th scope="col" style={th}>#</th>
