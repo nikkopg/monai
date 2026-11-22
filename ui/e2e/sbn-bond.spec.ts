@@ -712,7 +712,7 @@ test.describe("bond inbox (261117-rw1)", () => {
     ).toBeVisible();
     await expect(page.getByRole("button", { name: "Approve: Record coupon" })).toBeVisible();
     await expect(page.getByRole("button", { name: "Reject and discard" })).toBeVisible();
-    await expect(page.getByText("Waiting for you", { exact: true })).toHaveCount(2); // header and footer
+    await expect(page.getByText("Waiting for you", { exact: true })).toHaveCount(1); // header only (261121-q4n)
     await expect(page.getByText(/expires in/)).toHaveCount(0);
     await expect(page.getByText(/^Expected/)).toHaveCount(0);
   });

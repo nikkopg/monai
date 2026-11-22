@@ -319,6 +319,13 @@ export default function InboxPage() {
           Chat proposals expire after 15 minutes, Claude&apos;s and uploads after 48 hours. An expired proposal
           changes nothing.
         </p>
+        {cards !== null &&
+          cards.some((h) => h.phase === "live" && h.proposal.channel === "mcp" && !!h.proposal.code) && (
+            <p style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3, margin: "4px 0 0" }}>
+              A proposal from Claude carries a code. Tell Claude the code to approve it there; you don&apos;t need it
+              to approve here.
+            </p>
+          )}
       </div>
 
       {loaded && poll.offline && (

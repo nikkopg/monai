@@ -522,8 +522,8 @@ test.describe("code chip", () => {
     await expect(code).toHaveText(/^[0-9A-HJKMNP-TV-Z]{6}$/);
     await expect(art(page, "Add 1 transaction to Account B").getByRole("code")).toHaveCount(0);
     await expect(
-      page.getByText("Tell Claude this code to approve it there. You don't need it to approve here.")
-    ).toBeVisible();
+      page.getByText("A proposal from Claude carries a code. Tell Claude the code to approve it there; you don't need it to approve here.")
+    ).toHaveCount(1);
 
     const copy = page.getByRole("button", { name: "Copy confirm code" });
     await expect(copy).toHaveText("Copy code");
@@ -1780,5 +1780,48 @@ test.describe("261121-m17 T4: chat provenance", () => {
     await expect(byId(page, ids.b)).toBeVisible();
     await expect(byId(page, ids.b).getByText("From your chat:")).toHaveCount(0);
     await expect(byId(page, ids.b).getByRole("link", { name: "View chat" })).toHaveCount(0);
+  });
+});
+
+// ===========================================================================
+// 261121-q4n: the remaining review findings. Synthetic accounts and proposals only.
+// ===========================================================================
+test.describe("261121-q4n: remaining Inbox findings", () => {
+  test("a transfer shows each account's balance now and after", async ({ page }) => {
+    const x = transferProposal();
+    x.payload.rows[0].after = {
+      leg_a: { account: "Bank Contoh", amount: "-50000.00", date: "2026-10-07" },
+      leg_b: { account: "Cash Contoh", amount: "50000.00" },
+    };
+    await mockInbox(page, { list: [x] });
+    await mockAccounts(page);
+    await openInbox(page);
+    await expect(art(page, "Add 1 transfer").getByTestId("inbox-transfer-balances")).toHaveText(
+      "Bank Contoh 5,000,000 → 4,950,000 · Cash Contoh 1,250,000 → 1,300,000"
+    );
+  });
+
+  test("a ledger-duplicate flag links to Records on that day; the status shows once", async ({ page }) => {
+    await mockInbox(page, { list: [batch3(), other()] });
+    await openInbox(page);
+    const card = art(page, T3);
+    await expect(card.getByRole("link", { name: "View in Records" })).toHaveAttribute(
+      "href",
+      "/records?date_from=2026-10-06&date_to=2026-10-06"
+    );
+    await expect(card.getByText(/^Waiting for you/)).toHaveCount(1);
+    // Reject sits at the far end of the footer, away from Approve.
+    const footer = await card.locator(".inbox-footer").boundingBox();
+    const reject = await rejectBtn(card).boundingBox();
+    expect((reject as { x: number; width: number }).x + (reject as { width: number }).width).toBeGreaterThan(
+      (footer as { x: number; width: number }).x + (footer as { width: number }).width - 2
+    );
+  });
+
+  test("the code note is in the intro only while a Claude proposal waits", async ({ page }) => {
+    await mockInbox(page, { list: [transferProposal({ channel: "chat", code: undefined })] });
+    await openInbox(page);
+    await expect(art(page, "Add 1 transfer")).toBeVisible();
+    await expect(page.getByText(/A proposal from Claude carries a code/)).toHaveCount(0);
   });
 });

@@ -136,7 +136,20 @@ function DuplicateFlags({
         {flags.map((flag, k) => (
           <li key={k}>
             {flag.kind === "transaction" ? (
-              transactionFlagText(flag)
+              <>
+                {transactionFlagText(flag)}
+                {/^\d{4}-\d{2}-\d{2}/.test(String(flag.date)) && (
+                  <>
+                    {" · "}
+                    <Link
+                      href={`/records?date_from=${String(flag.date).slice(0, 10)}&date_to=${String(flag.date).slice(0, 10)}`}
+                      style={{ color: c.ink, textDecoration: "underline" }}
+                    >
+                      View in Records
+                    </Link>
+                  </>
+                )}
+              </>
             ) : (
               <>
                 {proposalFlagText(flag)}
@@ -635,10 +648,12 @@ export default function InboxCard({
               <span style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>Select the code and press Ctrl+C</span>
             )}
           </div>
-          <p style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3, margin: "8px 0 0" }}>
-            Tell Claude this code to approve it there. You don't need it to approve here.
-            {locked && " Claude can no longer approve this with the code. You still can."}
-          </p>
+          {/* What the code is for is said once, in the page intro (261121-q4n). */}
+          {locked && (
+            <p style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3, margin: "8px 0 0" }}>
+              Claude can no longer approve this with the code. You still can.
+            </p>
+          )}
         </>
       )}
 
@@ -804,6 +819,7 @@ export default function InboxCard({
         ) : op === "add_transfer" ? (
           <>
             <TransferLine legA={transfer?.leg_a} legB={transfer?.leg_b} showRate />
+            <TransferBalances legA={transfer?.leg_a} legB={transfer?.leg_b} accounts={accounts} />
             {flagsOf(rows[0]).length > 0 && (
               <div style={{ marginTop: 8 }}>
                 <DuplicateFlags flags={flagsOf(rows[0])} selfId={id} onPageIds={onPageIds} />
@@ -901,19 +917,17 @@ export default function InboxCard({
                   {ALL_SKIPPED_MSG}
                 </span>
               )}
+              {/* Far from Approve so a slip doesn't land on it; the status lives in the header only (261121-q4n). */}
               <button
                 type="button"
                 ref={rejectRef}
-                style={{ ...btnGhost, minHeight: 40, ...gated(blocked) }}
+                style={{ ...btnGhost, minHeight: 40, marginLeft: "auto", ...gated(blocked) }}
                 aria-disabled={blocked}
                 aria-describedby={blockedDescribedBy}
                 onClick={() => void reject()}
               >
                 {busy === "reject" ? "Rejecting…" : "Reject and discard"}
               </button>
-              <span style={{ marginLeft: "auto", fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>
-                {pendingStatus(expiresMs, nowMs)}
-              </span>
             </>
           )}
         </div>
@@ -980,6 +994,34 @@ function BalanceLine({
           Now {fmtAbsolute(now)} · change {fmtSigned(target - (now as number))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Each side's balance now and after the transfer (261121-q4n). Legs name their
+// account; one we can't match, or one with no balance, is left out.
+function TransferBalances({
+  legA,
+  legB,
+  accounts,
+}: {
+  legA: Record<string, unknown> | undefined;
+  legB: Record<string, unknown> | undefined;
+  accounts: ReadonlyMap<number, InboxAccount>;
+}) {
+  const byName = new Map(Array.from(accounts.values()).map((a) => [a.name, a] as [string, InboxAccount]));
+  const side = (leg: Record<string, unknown> | undefined, sign: number) => {
+    const acc = byName.get(text(leg?.account));
+    const amount = Math.abs(Number(leg?.amount));
+    if (!acc || acc.current_balance == null || !Number.isFinite(amount)) return null;
+    const ccy = acc.currency !== "IDR" ? ` ${acc.currency}` : "";
+    return `${acc.name} ${fmtAbsolute(acc.current_balance)} → ${fmtAbsolute(acc.current_balance + sign * amount)}${ccy}`;
+  };
+  const parts = [side(legA, -1), side(legB, 1)].filter(Boolean);
+  if (parts.length === 0) return null;
+  return (
+    <div data-testid="inbox-transfer-balances" style={{ marginTop: 4, fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>
+      {parts.join(" · ")}
     </div>
   );
 }

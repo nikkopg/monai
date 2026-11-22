@@ -464,6 +464,11 @@ button:disabled, select:disabled, input:disabled, textarea:disabled, [aria-disab
   outline: 2px solid #3d8c63;
   outline-offset: 2px;
 }
+/* A card reached through a "Go to that proposal" link (261121-q4n); Back returns to the flag. */
+article[id^="proposal-"]:target {
+  outline: 2px solid #3d8c63;
+  outline-offset: 4px;
+}
 
 .sr-only {
   position: absolute;
