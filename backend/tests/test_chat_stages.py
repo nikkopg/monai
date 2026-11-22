@@ -48,3 +48,27 @@ def test_unknown_cases_show_no_loading_stage(monkeypatch):
     assert _run(SimpleNamespace(model="claude-haiku")) is None  # not Ollama
     _fake_client(monkeypatch, error=ConnectionError("down"))
     assert _run(Ollama(model="gemma4:e2b")) is None  # no answer
+
+
+async def test_cold_model_loads_before_the_run(monkeypatch):
+    """A model not in memory: a loading step, the load, then the run's thinking step."""
+    import backend.query as q
+    from backend.tests.chat_stubs import StubLLM, _collect, _install_stub_workflow, _payloads
+
+    order = []
+
+    async def not_loaded(llm):
+        return False
+
+    async def load(llm):
+        order.append("load")
+
+    monkeypatch.setattr(q, "_ollama_loaded", not_loaded)
+    monkeypatch.setattr(q, "_ollama_load", load)
+    _install_stub_workflow(monkeypatch, StubLLM())
+
+    payloads = _payloads(await _collect(q.agent_stream("synthetic question")))
+    steps = [p.get("stage") for p in payloads if p.get("type") == "step"]
+    assert steps[:2] == ["loading", "thinking"], payloads
+    assert order == ["load"]
+    assert [p["type"] for p in payloads][-1] == "answer"

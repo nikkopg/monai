@@ -624,6 +624,14 @@ async def _ollama_loaded(llm) -> bool | None:
     return any(m.model in (name, want) for m in listed.models)
 
 
+async def _ollama_load(llm) -> None:
+    """Load the model into Ollama's memory (an empty prompt only loads it)."""
+    import ollama
+
+    await asyncio.wait_for(
+        ollama.AsyncClient(host=llm.base_url).generate(model=llm.model, prompt=""), 600.0)
+
+
 async def agent_stream(
     question: str,
     *,
@@ -655,8 +663,8 @@ async def agent_stream(
 
     Event types emitted:
       data: {"type": "step", "msg": "thinking…", "stage": "thinking"}
-        (first, a local Ollama model not yet in memory: stage "loading", msg
-         "loading the model…", then stage "thinking" once it is in)
+        (before it, for a local Ollama model not yet in memory: stage "loading",
+         msg "loading the model…", while the run waits for the load)
       data: {"type": "token", "delta": ..., "iteration": n}   (one per streamed delta)
       data: {"type": "tool_start", "call_id": "c{iteration}-{n}", "tool": ..., "args": ...,
              "iteration": n}
@@ -711,6 +719,20 @@ async def agent_stream(
             workflow = await asyncio.to_thread(_get_agent_workflow, tool_names)
         known = tool_names | {t.metadata.name for t in ext_tools or ()}
         model, provider = _llm_label(workflow)
+        # 261122-cpg: load a local model before the run, so a cold load (~100 s
+        # from a slow disk) counts against none of the run's time limits.
+        llm = getattr(next(iter(getattr(workflow, "agents", {}).values()), None), "llm", None)
+        if await _ollama_loaded(llm) is False:
+            yield _sse({"type": "step", "msg": "loading the model…", "stage": "loading"})
+            load = asyncio.create_task(_ollama_load(llm))
+            try:
+                while not load.done():
+                    if not (await asyncio.wait({load}, timeout=ping_interval))[0]:
+                        yield ": ping\n\n"
+            finally:
+                load.cancel()
+            if not load.cancelled() and load.exception():
+                _log_failure(load.exception())  # the run itself reports what's wrong
         if run is not None and run.stopped:  # Stop landed before run.handler existed (CR-04)
             yield _DONE
             return
@@ -740,25 +762,6 @@ async def agent_stream(
     # unique (Ollama sets id == tool name), so pair a result to its call by content.
     pending: dict[tuple[str, str], deque] = {}
 
-    THINKING = {"type": "step", "msg": "thinking…", "stage": "thinking"}
-    llm = getattr(next(iter(getattr(workflow, "agents", {}).values()), None), "llm", None)
-    loading = await _ollama_loaded(llm) is False
-
-    async def watch_load() -> None:
-        # Ollama doesn't report load progress: poll until the model is listed.
-        nonlocal loading
-        for _ in range(600):
-            await asyncio.sleep(1.0)
-            if await _ollama_loaded(llm) is not False:
-                break
-        loading = False
-        queue.put_nowait(_sse(THINKING))
-
-    loader = None
-    if loading:
-        queue.put_nowait(_sse({"type": "step", "msg": "loading the model…", "stage": "loading"}))
-        loader = asyncio.create_task(watch_load())
-
     def emit_error(code: str, idle_seconds: float | None = None) -> None:
         nonlocal terminal
         terminal = True
@@ -781,8 +784,8 @@ async def agent_stream(
                         if isinstance(event, AgentInput):
                             iteration += 1
                             n_in_iter = 0
-                            if not loading:  # watch_load says thinking once it's in
-                                queue.put_nowait(_sse(THINKING))
+                            queue.put_nowait(_sse(
+                                {"type": "step", "msg": "thinking…", "stage": "thinking"}))
 
                         elif isinstance(event, AgentStream):
                             # Only the delta: never the cumulative response, the
@@ -927,8 +930,6 @@ async def agent_stream(
             if not terminal:
                 emit_error(classify_error(e))
         finally:
-            if loader is not None:
-                loader.cancel()
             queue.put_nowait(None)
 
     producer = asyncio.create_task(produce())
