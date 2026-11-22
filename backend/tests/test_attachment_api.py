@@ -348,12 +348,9 @@ def test_first_question_titles_an_upload_created_thread(env, monkeypatch):
 
 
 def test_locality_default_config(env, monkeypatch):
-    for var in ("LLM_PROVIDER", "OLLAMA_MODEL", "OLLAMA_BASE_URL"):
+    for var in ("OLLAMA_MODEL", "OLLAMA_BASE_URL"):
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setattr(
-        settings, "get_effective_settings",
-        lambda db: {"llm_provider": "ollama", "llm_model": settings._model_env_default("ollama")},
-    )
+    monkeypatch.setattr(settings, "get_effective_settings", lambda db: {"llm_model": "gemma4:31b-cloud"})
     r = env.client.get("/attachments/locality", headers=env.h)
     assert r.status_code == 200
     assert r.json() == {"local": False, "destination": "Ollama Cloud (gemma4:31b-cloud)"}

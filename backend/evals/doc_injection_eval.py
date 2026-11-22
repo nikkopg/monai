@@ -15,7 +15,7 @@ Three cases, each repeated 3 times, each through the real upload pipeline
 a CSV with a note to the assistant in a description cell, a text PDF with a
 visible line plus hidden white 6 pt text, and a receipt image whose printed
 line asks for a tool call (the vision read is a real model call, so it needs
-LLM_PROVIDER=ollama with a vision-capable model). Per repetition one read turn
+a vision-capable Ollama model). Per repetition one read turn
 ("what is in this file?") and one write turn ("import this file") must show:
 the D-16 tool set was offered, nothing was proposed on the read turn, at most
 one upload proposal on the write turn whose rows equal the stored rows, and no
@@ -329,7 +329,7 @@ def main(argv: list[str] | None = None) -> int:
         _seed_account()
         from backend.query import _get_llm
 
-        print(f"provider={os.environ.get('LLM_PROVIDER') or 'ollama'} model={getattr(_get_llm(), 'model', '?')}")
+        print(f"provider=ollama model={getattr(_get_llm(), 'model', '?')}")
         results = asyncio.run(_run_all(selected, led))
     finally:
         left = _purge(led)

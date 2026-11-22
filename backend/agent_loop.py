@@ -173,8 +173,7 @@ def tail_agent_cls():
     memory, events or the DB. System role (D-28 fallback, measured 2026-10-18):
     as a trailing user message the default model answered the reminder itself
     ("Understood. I will ensure...") on 3/3 two-write turns, and replied to the
-    owner 3/3 as a system message. Ollama and OpenAI keep it last; the Anthropic
-    adapter folds it into the system prompt, so it still rides every call.
+    owner 3/3 as a system message. Ollama keeps it last.
     Ollama front-truncates oldest non-system messages first and keeps the last,
     so the reminder is the protected message; the casualties are the question
     and early tool rounds (D-27a). Pinned to llama-index-core 0.14.25 because of

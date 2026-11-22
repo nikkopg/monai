@@ -5,7 +5,7 @@ What this is: a standalone script, NOT a pytest test and NOT collected by
 default pytest or CI (backend/evals/ sits outside pyproject.toml's
 testpaths). It sends ~26 scripted questions through backend.query.agent_stream
 — the real, production agent loop — driven by whatever real LLM is
-configured via LLM_PROVIDER / the matching model env var. It runs only
+configured (Ollama, OLLAMA_MODEL or the Settings model). It runs only
 against monai_test, never the live monai database; a module-top guard
 refuses to proceed otherwise, before any backend import.
 
@@ -1775,10 +1775,9 @@ async def _run_all_cases(selected: list[dict], proposal_ids: list[str]) -> list[
 def _header_line() -> str:
     from backend.query import _get_llm
 
-    provider = os.environ.get("LLM_PROVIDER") or "ollama"
     model = getattr(_get_llm(), "model", "?")
     db = make_url(os.environ["DATABASE_URL"]).database
-    return f"provider={provider} model={model} db={db}"
+    return f"provider=ollama model={model} db={db}"
 
 
 # ---------------------------------------------------------------------------

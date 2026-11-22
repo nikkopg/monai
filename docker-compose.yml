@@ -29,7 +29,6 @@ services:
     network_mode: host
     environment:
       DATABASE_URL: postgresql+psycopg://monai:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set - add it to .env}@127.0.0.1:5434/monai
-      LLM_PROVIDER: ollama
       OLLAMA_BASE_URL: http://127.0.0.1:11434
       OLLAMA_MODEL: gemma4:31b-cloud
       OLLAMA_EMBED_MODEL: gemma4:31b-cloud

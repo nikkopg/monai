@@ -656,28 +656,13 @@ def _convert_ollama(ms):
     return Ollama(model="example-model:7b")._convert_to_ollama_messages(ms)
 
 
-def _convert_openai(ms):
-    from llama_index.llms.openai.utils import to_openai_message_dicts
-
-    return to_openai_message_dicts(ms)
-
-
-def _convert_anthropic(ms):
-    from llama_index.llms.anthropic.utils import messages_to_anthropic_messages
-
-    return messages_to_anthropic_messages(ms)  # (messages, system_prompt)
-
-
 @pytest.mark.parametrize(
     "pkg,convert",
-    [("llama_index.llms.ollama", _convert_ollama),
-     ("llama_index.llms.openai", _convert_openai),
-     ("llama_index.llms.anthropic", _convert_anthropic)],
+    [("llama_index.llms.ollama", _convert_ollama)],
 )
 def test_adapter_trailing_system(pkg, convert):
     """D-28: a trailing system reminder after a tool message survives conversion.
-    Ollama and OpenAI keep it as the last message; Anthropic folds it into the
-    system prompt."""
+    Ollama keeps it as the last message."""
     pytest.importorskip(pkg)
     from llama_index.core.base.llms.types import ToolCallBlock
     from llama_index.core.llms import ChatMessage
@@ -693,9 +678,6 @@ def test_adapter_trailing_system(pkg, convert):
         ChatMessage(role="system", content=TAIL_REMINDER),
     ]
     out = convert(msgs)
-    if pkg == "llama_index.llms.anthropic":
-        assert TAIL_REMINDER in str(out[1])
-        return
     last = out[-1]
     role = last["role"] if isinstance(last, dict) else last.role
     assert role == "system"

@@ -189,8 +189,6 @@ from backend.tools import (
     _spending_by_category,
 )
 from backend.settings import (
-    KEY_ANTHROPIC_API_KEY,
-    KEY_OPENAI_API_KEY,
     get_effective_settings,
     mask_key,
     upsert_settings,
@@ -1679,15 +1677,7 @@ def write_settings(patch: SettingsUpdate, db: Session = Depends(get_session)):
     # settings change with no audit trail.
     changed_llm = upsert_settings(db, patch.model_dump(exclude_none=True), commit=False)
 
-    # Audit trail: masked-only, never the raw key values (T-03-14). A blank
-    # key field means "keep existing" (upsert skips it), so omit it from the
-    # audit rather than record a misleading mask_key("") -> null.
     audit_after = patch.model_dump(exclude_none=True)
-    for key_field in (KEY_ANTHROPIC_API_KEY, KEY_OPENAI_API_KEY):
-        if audit_after.get(key_field):
-            audit_after[key_field] = mask_key(audit_after[key_field])
-        else:
-            audit_after.pop(key_field, None)
     db.add(AuditLog(entity="settings", entity_id=None, operation="update",
                     before=None, after=audit_after))
     db.commit()
@@ -1695,7 +1685,7 @@ def write_settings(patch: SettingsUpdate, db: Session = Depends(get_session)):
     if changed_llm:
         from backend.config import configure_llm
         from backend.query import reset_engine
-        configure_llm(overrides=get_effective_settings(db, raw_keys=True))
+        configure_llm(overrides=get_effective_settings(db))
         reset_engine()
 
     return get_effective_settings(db)

@@ -324,7 +324,7 @@ def test_llm_label_maps_class_to_provider():
 
     from backend.query import _llm_label
 
-    for cls_name, provider in (("Ollama", "ollama"), ("Anthropic", "claude"), ("OpenAI", "openai")):
+    for cls_name, provider in (("Ollama", "ollama"), ("Anthropic", None)):  # only Ollama since 261122-rmp
         llm = type(cls_name, (), {"model": "example-model:7b"})()
         wf = SimpleNamespace(agents={"Agent": SimpleNamespace(llm=llm)})
         assert _llm_label(wf) == ("example-model:7b", provider)

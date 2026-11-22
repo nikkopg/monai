@@ -376,7 +376,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         from backend.query import _get_llm
 
-        print(f"provider={os.environ.get('LLM_PROVIDER') or 'ollama'} model={getattr(_get_llm(), 'model', '?')}")
+        print(f"provider=ollama model={getattr(_get_llm(), 'model', '?')}")
         results = asyncio.run(_run_all(selected, led))
     finally:
         left = _purge(led)

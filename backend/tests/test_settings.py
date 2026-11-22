@@ -1,17 +1,17 @@
 """
-Settings endpoint tests — GET/PUT /settings (UI-03, UI-04).
+Settings endpoint tests — GET/PUT /settings (UI-03, UI-04; Ollama-only since 261122-rmp).
 
-Defines the contract before the implementation exists (RED). Covers:
-  - GET returns effective settings with masked keys only, no raw key fields
+Covers:
+  - GET returns the model and preferences only (no provider, no API keys)
   - PUT requires MONAI_API_KEY auth (401 without it)
-  - PUT updates provider/model and a subsequent GET reflects the change
-  - Keys are always masked (bullet-last4), never returned raw
-  - Blank/absent key on PUT keeps the previously stored key (no clobber)
+  - PUT updates the model and a subsequent GET reflects the change
+  - an old client's llm_provider / API key fields are ignored
   - base_currency / price_data_source persist across a fresh GET
-  - reset_engine() is invoked exactly once when an LLM field changes, and
+  - reset_engine() is invoked exactly once when the model changes, and
     NOT invoked when only preference fields change
+  - GET /settings/ollama-models lists installed models (261122-omp)
 
-All tests use the live Postgres via the shared `client`/`api_key` fixtures
+All tests use the test Postgres via the shared `client`/`api_key` fixtures
 (conftest.py) — no mocking of the DB, only of backend.query.reset_engine
 where the call-count invariant is asserted.
 """
@@ -25,21 +25,13 @@ import pytest
 
 
 def test_get_settings_returns_defaults(client, authed):
-    """GET /settings returns 200 with the effective settings shape."""
+    """GET /settings returns the Ollama model and the preferences, nothing else
+    (Ollama is the only provider since 261122-rmp)."""
     resp = client.get("/settings")
     assert resp.status_code == 200
     body = resp.json()
-
-    assert "llm_provider" in body
-    assert "llm_model" in body
-    assert body.get("base_currency") == "IDR"
-    assert "price_data_source" in body
-
-    # Masked key fields present; raw key fields must never appear.
-    assert "anthropic_api_key_masked" in body
-    assert "openai_api_key_masked" in body
-    assert "anthropic_api_key" not in body
-    assert "openai_api_key" not in body
+    assert set(body) == {"llm_model", "base_currency", "price_data_source"}
+    assert body["base_currency"] == "IDR"
 
 
 # ---------------------------------------------------------------------------
@@ -63,80 +55,29 @@ def test_put_settings_requires_key(client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# PUT /settings — provider/model update round-trip
+# PUT /settings — model update round-trip
 # ---------------------------------------------------------------------------
 
 
-def test_put_updates_provider_and_get_reflects(client, api_key, authed):
-    """Authenticated PUT changing provider/model is reflected on a fresh GET."""
+def test_put_updates_model_and_get_reflects(client, api_key, authed):
+    """Authenticated PUT changing the model is reflected on a fresh GET."""
+    resp = client.put("/settings", json={"llm_model": "zz-local:1b"}, headers={"MONAI_API_KEY": api_key})
+    assert resp.status_code == 200
+    assert resp.json()["llm_model"] == "zz-local:1b"
+    assert client.get("/settings").json()["llm_model"] == "zz-local:1b"
+
+
+def test_removed_provider_fields_are_ignored(client, api_key, authed):
+    """An old client's llm_provider or API key is ignored, never stored or echoed."""
+    before = client.get("/settings").json()
     resp = client.put(
         "/settings",
-        json={"llm_provider": "claude", "llm_model": "claude-haiku-4-5-20251001"},
+        json={"llm_provider": "claude", "anthropic_api_key": "sk-zz-ignored-1234"},
         headers={"MONAI_API_KEY": api_key},
     )
     assert resp.status_code == 200
-    assert resp.json()["llm_provider"] == "claude"
-
-    get_resp = client.get("/settings")
-    assert get_resp.status_code == 200
-    assert get_resp.json()["llm_provider"] == "claude"
-
-
-# ---------------------------------------------------------------------------
-# Key masking — never raw
-# ---------------------------------------------------------------------------
-
-
-def test_key_is_masked_never_raw(client, api_key, authed):
-    """PUT a raw API key; GET must return only the masked bullet-last4 form."""
-    raw_key = "sk-ant-super-secret-1234"
-    resp = client.put(
-        "/settings",
-        json={"anthropic_api_key": raw_key},
-        headers={"MONAI_API_KEY": api_key},
-    )
-    assert resp.status_code == 200
-
-    get_resp = client.get("/settings")
-    assert get_resp.status_code == 200
-    body = get_resp.json()
-
-    masked = body["anthropic_api_key_masked"]
-    assert masked is not None
-    assert masked.endswith(raw_key[-4:])
-    assert masked != raw_key
-
-    # Raw key string must not appear anywhere in the response body.
-    assert raw_key not in get_resp.text
-
-
-# ---------------------------------------------------------------------------
-# Blank key on PUT keeps existing stored key
-# ---------------------------------------------------------------------------
-
-
-def test_blank_key_keeps_existing(client, api_key, authed):
-    """A blank/absent key field on PUT must not clobber a previously stored key."""
-    raw_key = "sk-ant-keepme-5678"
-    first = client.put(
-        "/settings",
-        json={"anthropic_api_key": raw_key},
-        headers={"MONAI_API_KEY": api_key},
-    )
-    assert first.status_code == 200
-
-    # Blank string means "keep existing" per plan semantics.
-    second = client.put(
-        "/settings",
-        json={"anthropic_api_key": ""},
-        headers={"MONAI_API_KEY": api_key},
-    )
-    assert second.status_code == 200
-
-    get_resp = client.get("/settings")
-    masked = get_resp.json()["anthropic_api_key_masked"]
-    assert masked is not None
-    assert masked.endswith(raw_key[-4:])
+    assert resp.json() == before
+    assert "sk-zz-ignored-1234" not in resp.text
 
 
 # ---------------------------------------------------------------------------
@@ -161,70 +102,12 @@ def test_preferences_persist(client, api_key, authed):
 
 
 # ---------------------------------------------------------------------------
-# reset_engine invoked exactly once on LLM-field change, not on prefs-only
+# reset_engine invoked exactly once on a model change, not on prefs-only
 # ---------------------------------------------------------------------------
 
 
-def test_provider_switch_without_model_resets_model(client, api_key, authed):
-    """Switching llm_provider without sending llm_model must reset the model to
-    the new provider's default, not leave the old provider's model in effect
-    (WR-03)."""
-    # First pin a claude model.
-    first = client.put(
-        "/settings",
-        json={"llm_provider": "claude", "llm_model": "claude-haiku-4-5-20251001"},
-        headers={"MONAI_API_KEY": api_key},
-    )
-    assert first.status_code == 200
-    assert first.json()["llm_model"] == "claude-haiku-4-5-20251001"
-
-    # Now switch provider only — no llm_model field. The stale claude model
-    # must not carry over into the openai provider.
-    second = client.put(
-        "/settings",
-        json={"llm_provider": "openai"},
-        headers={"MONAI_API_KEY": api_key},
-    )
-    assert second.status_code == 200
-    body = second.json()
-    assert body["llm_provider"] == "openai"
-    assert body["llm_model"] != "claude-haiku-4-5-20251001"
-
-    get_resp = client.get("/settings")
-    assert get_resp.json()["llm_model"] != "claude-haiku-4-5-20251001"
-
-
-def test_blank_key_put_audit_omits_key_field(client, api_key):
-    """A blank 'keep existing' key on PUT must not be recorded as a cleared key
-    (mask_key("") -> null) in the audit log — the field is omitted (WR-04)."""
-    from backend.db import SessionLocal
-    from backend.models import AuditLog
-
-    resp = client.put(
-        "/settings",
-        json={"anthropic_api_key": "", "base_currency": "IDR"},
-        headers={"MONAI_API_KEY": api_key},
-    )
-    assert resp.status_code == 200
-
-    db = SessionLocal()
-    try:
-        latest = (
-            db.query(AuditLog)
-            .filter(AuditLog.entity == "settings")
-            .order_by(AuditLog.id.desc())
-            .first()
-        )
-    finally:
-        db.close()
-
-    assert latest is not None
-    # The blank key must be absent entirely, never present as null.
-    assert "anthropic_api_key" not in (latest.after or {})
-
-
 def test_llm_change_resets_engine(client, api_key, monkeypatch):
-    """reset_engine() is called exactly once on an LLM-field PUT, never on
+    """reset_engine() is called exactly once on a model PUT, never on
     a preferences-only PUT."""
     import backend.query as query_mod
 
@@ -235,20 +118,12 @@ def test_llm_change_resets_engine(client, api_key, monkeypatch):
 
     monkeypatch.setattr(query_mod, "reset_engine", _fake_reset_engine)
 
-    resp = client.put(
-        "/settings",
-        json={"llm_provider": "ollama", "llm_model": "gemma4:31b-cloud"},
-        headers={"MONAI_API_KEY": api_key},
-    )
+    resp = client.put("/settings", json={"llm_model": "gemma4:31b-cloud"}, headers={"MONAI_API_KEY": api_key})
     assert resp.status_code == 200
     assert calls["count"] == 1
 
     # Preferences-only change must NOT trigger another reset.
-    resp2 = client.put(
-        "/settings",
-        json={"base_currency": "IDR"},
-        headers={"MONAI_API_KEY": api_key},
-    )
+    resp2 = client.put("/settings", json={"base_currency": "IDR"}, headers={"MONAI_API_KEY": api_key})
     assert resp2.status_code == 200
     assert calls["count"] == 1
 
@@ -258,15 +133,14 @@ def test_get_llm_rebuilds_from_effective_settings_after_reset(monkeypatch):
     from backend import query, settings
 
     seen = []
-    monkeypatch.setattr(settings, "get_effective_settings",
-                        lambda db, raw_keys=False: {"llm_provider": "ollama", "llm_model": "zz-local:1b"})
+    monkeypatch.setattr(settings, "get_effective_settings", lambda db: {"llm_model": "zz-local:1b"})
     monkeypatch.setattr(query, "configure_llm", lambda overrides=None: seen.append(overrides))
     query.reset_engine()
     try:
         query._get_llm()
     finally:
         query.reset_engine()
-    assert seen == [{"llm_provider": "ollama", "llm_model": "zz-local:1b"}]
+    assert seen == [{"llm_model": "zz-local:1b"}]
 
 
 # ---------------------------------------------------------------------------

@@ -773,24 +773,21 @@ def _is_loopback(base_url: str) -> bool:
 
 def locality(provider: str, model: str, base_url: str) -> dict:
     """{"local": bool, "destination": str | None}; destination names where the file would be sent."""
-    if provider == "ollama":
-        if not _CLOUD_TAG.search(model) and _is_loopback(base_url):
-            return {"local": True, "destination": None}
-        dest = f"Ollama Cloud ({model})" if _CLOUD_TAG.search(model) else f"Ollama at {_host(base_url)} ({model})"
-    else:
-        dest = {"claude": "Anthropic", "openai": "OpenAI"}.get(provider, provider) + f" ({model})"
+    # provider is always "ollama" since 261122-rmp; kept for the target tuple's shape.
+    if not _CLOUD_TAG.search(model) and _is_loopback(base_url):
+        return {"local": True, "destination": None}
+    dest = f"Ollama Cloud ({model})" if _CLOUD_TAG.search(model) else f"Ollama at {_host(base_url)} ({model})"
     return {"local": False, "destination": dest}
 
 
 def llm_target(db: Session) -> tuple[str, str, str]:
-    """(provider, model, base URL) of the configured LLM.
+    """("ollama", model, base URL) of the configured LLM.
 
-    Provider and model come from the effective settings (the Settings page
-    overrides env); the base URL from OLLAMA_BASE_URL, the same default
-    configure_llm uses.
+    The model comes from the effective settings (the Settings page overrides
+    env); the base URL from OLLAMA_BASE_URL, the same default configure_llm uses.
     """
     eff = settings.get_effective_settings(db)
-    return eff["llm_provider"], eff["llm_model"], os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    return "ollama", eff["llm_model"], os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 
 def current_locality(db: Session) -> dict:
@@ -908,10 +905,8 @@ def read_vision_json(content: str) -> ReceiptRead:
 def vision_capable(provider: str, model: str, base_url: str) -> bool:
     """Whether the model can read images: Ollama's /api/show capabilities list "vision".
 
-    Claude and OpenAI models are assumed able (A4). A failed probe is False.
+    A failed probe is False.
     """
-    if provider != "ollama":
-        return True
     import httpx
 
     try:

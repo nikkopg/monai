@@ -170,7 +170,7 @@ def _get_llm():
         from backend.db import get_session_sync
         from backend.settings import get_effective_settings
         with get_session_sync() as db:
-            configure_llm(overrides=get_effective_settings(db, raw_keys=True))
+            configure_llm(overrides=get_effective_settings(db))
         from llama_index.core import Settings
         _llm = Settings.llm
     return _llm
@@ -399,17 +399,16 @@ def _get_agent_workflow(tool_names: frozenset[str] | None = None):
 
 _TIMEOUT_NAMES = {"TimeoutException", "APITimeoutError", "WorkflowTimeoutError"}
 _CONNECTION_NAMES = {"ConnectError", "APIConnectionError", "NetworkError"}
-_PROVIDER_BY_CLASS = {"Ollama": "ollama", "Anthropic": "claude", "OpenAI": "openai"}
+_PROVIDER_BY_CLASS = {"Ollama": "ollama"}  # the only provider since 261122-rmp
 
 
 def classify_error(exc: BaseException) -> str:
     """Map a provider/workflow exception to a typed error code.
 
     Duck-typed (status_code on the exception or its .response, plus MRO class
-    names) so no provider SDK is imported — only one is ever configured.
+    names) so no provider SDK is imported.
     Codes: rate_limit, provider_unavailable, timeout, auth, connection,
-    unknown. Timeout is checked first: openai/anthropic APITimeoutError
-    subclasses APIConnectionError. Non-positive status codes (ollama mid-stream
+    unknown. Timeout is checked first. Non-positive status codes (ollama mid-stream
     errors carry -1) are ignored.
     """
     names = {c.__name__ for c in type(exc).__mro__}

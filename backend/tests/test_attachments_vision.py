@@ -219,11 +219,6 @@ def test_vision_capable_probes_ollama_show(monkeypatch):
     assert att.vision_capable("ollama", "m", "http://h:1") is False
 
 
-def test_vision_capable_cloud_providers_need_no_call(monkeypatch):
-    monkeypatch.setattr(httpx, "post", lambda *a, **k: pytest.fail("no call expected"))
-    assert att.vision_capable("claude", "m", "") is True and att.vision_capable("openai", "m", "") is True
-
-
 def test_vision_capable_connection_error_false_and_logs_class_only(monkeypatch, caplog):
     def post(*a, **k):
         raise httpx.ConnectError("zz-secret-detail")
