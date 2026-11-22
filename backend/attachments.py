@@ -878,7 +878,7 @@ class ReceiptRead(BaseModel):
     """The only shape accepted from the model; unknown keys are dropped."""
 
     model_config = ConfigDict(extra="ignore")
-    date: str
+    date: str | None = None  # missing -> the upload date, flagged (261122-rdt)
     total: str
     merchant: str | None = None
     currency: str | None = None
@@ -962,13 +962,19 @@ async def read_receipt(images: list[bytes], *, kind: str, account_currency: str,
     except ValueError:
         # a JSON object with the wrong shape stays askable; a refusal sentence is not a reading
         return refuse("The reading could not be understood.", text if text.startswith("{") else "")
-    if not _ISO_DATE.fullmatch(r.date.strip()):
-        return refuse("The receipt date could not be read.", text)
-    try:
-        day = date.fromisoformat(r.date.strip()).isoformat()
-    except ValueError:
-        return refuse("The receipt date could not be read.", text)
     assumptions = []
+    if not (r.date or "").strip():
+        # Owner decision 261122-rdt: a small model often returns no date; keep the
+        # reading, date it today and say so. A garbled date below still refuses.
+        day = query._today().isoformat()
+        assumptions.append("Date not read from the receipt; used the upload date. Check it.")
+    elif not _ISO_DATE.fullmatch(r.date.strip()):
+        return refuse("The receipt date could not be read.", text)
+    else:
+        try:
+            day = date.fromisoformat(r.date.strip()).isoformat()
+        except ValueError:
+            return refuse("The receipt date could not be read.", text)
     raw = (r.currency or "").strip()
     cur = normalise_currency(raw)
     if raw == "$" or (not raw and account_currency != "IDR"):

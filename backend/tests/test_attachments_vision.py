@@ -122,6 +122,21 @@ def test_fenced_reading_becomes_one_flagged_row(llm):
     assert p.text.startswith("{") and "```" not in p.text
 
 
+@pytest.mark.parametrize("dated", [{"date": None}, {"date": " "}, {}])
+def test_missing_date_uses_the_upload_date_flagged(llm, monkeypatch, dated):
+    """261122-rdt (owner decision): no date read -> today's date and an assumption, not a refusal."""
+    import datetime
+
+    monkeypatch.setattr("backend.query._today", lambda: datetime.date(2026, 4, 2))
+    reading = {k: v for k, v in READING.items() if k != "date"} | dated
+    p = read(llm, reading)
+    assert p.status == "llm_read"
+    (row,) = p.rows
+    assert (row["date"], row["amount"]) == ("2026-04-02", "-50500")
+    assert row["assumptions"] == ["Date not read from the receipt; used the upload date. Check it."]
+    assert row["llm_read"] is True
+
+
 def test_items_that_dont_add_up_are_advisory(llm):
     bad = {**READING, "items": [{"name": "ZZ tea", "amount": "20.500"}, {"name": "ZZ rice", "amount": "19.500"}]}
     p = read(llm, bad)
