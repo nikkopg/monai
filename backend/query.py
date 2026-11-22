@@ -603,6 +603,27 @@ def _log_failure(exc: BaseException) -> None:
     logger.warning("chat run failed: %s: %s", type(exc).__name__, exc)
 
 
+async def _ollama_loaded(llm) -> bool | None:
+    """Whether a local Ollama has this model in memory (its /api/ps list).
+
+    None when that can't be told: not Ollama, a cloud model (never in /api/ps),
+    or no answer within 2 s. A caller then shows no loading stage.
+    """
+    from llama_index.llms.ollama import Ollama
+
+    name = getattr(llm, "model", None)
+    if not isinstance(llm, Ollama) or not isinstance(name, str) or "cloud" in name:
+        return None
+    want = name if ":" in name.rsplit("/", 1)[-1] else f"{name}:latest"
+    try:
+        import ollama
+
+        listed = await asyncio.wait_for(ollama.AsyncClient(host=llm.base_url).ps(), 2.0)
+    except Exception:
+        return None
+    return any(m.model in (name, want) for m in listed.models)
+
+
 async def agent_stream(
     question: str,
     *,
@@ -633,7 +654,9 @@ async def agent_stream(
     arrives (D-10).
 
     Event types emitted:
-      data: {"type": "step", "msg": "thinking…"}
+      data: {"type": "step", "msg": "thinking…", "stage": "thinking"}
+        (first, a local Ollama model not yet in memory: stage "loading", msg
+         "loading the model…", then stage "thinking" once it is in)
       data: {"type": "token", "delta": ..., "iteration": n}   (one per streamed delta)
       data: {"type": "tool_start", "call_id": "c{iteration}-{n}", "tool": ..., "args": ...,
              "iteration": n}
@@ -717,6 +740,25 @@ async def agent_stream(
     # unique (Ollama sets id == tool name), so pair a result to its call by content.
     pending: dict[tuple[str, str], deque] = {}
 
+    THINKING = {"type": "step", "msg": "thinking…", "stage": "thinking"}
+    llm = getattr(next(iter(getattr(workflow, "agents", {}).values()), None), "llm", None)
+    loading = await _ollama_loaded(llm) is False
+
+    async def watch_load() -> None:
+        # Ollama doesn't report load progress: poll until the model is listed.
+        nonlocal loading
+        for _ in range(600):
+            await asyncio.sleep(1.0)
+            if await _ollama_loaded(llm) is not False:
+                break
+        loading = False
+        queue.put_nowait(_sse(THINKING))
+
+    loader = None
+    if loading:
+        queue.put_nowait(_sse({"type": "step", "msg": "loading the model…", "stage": "loading"}))
+        loader = asyncio.create_task(watch_load())
+
     def emit_error(code: str, idle_seconds: float | None = None) -> None:
         nonlocal terminal
         terminal = True
@@ -739,7 +781,8 @@ async def agent_stream(
                         if isinstance(event, AgentInput):
                             iteration += 1
                             n_in_iter = 0
-                            queue.put_nowait(_sse({"type": "step", "msg": "thinking…"}))
+                            if not loading:  # watch_load says thinking once it's in
+                                queue.put_nowait(_sse(THINKING))
 
                         elif isinstance(event, AgentStream):
                             # Only the delta: never the cumulative response, the
@@ -884,6 +927,8 @@ async def agent_stream(
             if not terminal:
                 emit_error(classify_error(e))
         finally:
+            if loader is not None:
+                loader.cancel()
             queue.put_nowait(None)
 
     producer = asyncio.create_task(produce())
