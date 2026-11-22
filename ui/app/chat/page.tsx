@@ -40,6 +40,7 @@ import {
 } from "./extLabels";
 import SourceChips, { dedupeSources } from "./SourceChips";
 import type { Source } from "./labels";
+import StageLabel, { closePhases, enterPhase, stageTrail, type Phase, type Stage } from "./StageLabel";
 import {
   EMPTY_LANE,
   laneAppend,
@@ -77,7 +78,7 @@ type AsstItem = {
   createdAt: string | null;
   live: boolean; // answered in this view (state text "just now")
   stopRejected?: boolean;
-  stage?: "loading" | "thinking"; // 261122-cpg: last step stage while running
+  phases?: Phase[]; // 261122-stm: stage timeline of an answer given in this view
   seq?: number; // persisted position; live items have none and sit after any boundary
 };
 
@@ -483,6 +484,7 @@ function ChatInner() {
   const loadedRef = useRef<string | null>(null); // thread this view shows or is loading
   const loadSeqRef = useRef(0);
   const liveIdRef = useRef<string | null>(null); // assistant item of the run in view
+  const stageRef = useRef<Stage | null>(null); // 261122-stm: open phase, read per token
   const askedRef = useRef(""); // question of the run in view (REL-01 restore)
   const traceRef = useRef<TraceStep[]>([]);
   const terminalRef = useRef(false);
@@ -555,6 +557,7 @@ function ChatInner() {
       ...m,
       lane: { ...m.lane, draft: "", draftIteration: null },
       status: "error",
+      phases: closePhases(m.phases, Date.now()),
       error: err,
       proposals: proposals.map(toProposal),
       live: true,
@@ -583,17 +586,23 @@ function ChatInner() {
         router.replace("/chat?thread=" + msg.thread_id);
       }
     } else if (msg.type === "step" && (msg.stage === "loading" || msg.stage === "thinking")) {
+      stageRef.current = msg.stage;
       const stage = msg.stage;
-      updateLive((m) => ({ ...m, stage }));
+      updateLive((m) => ({ ...m, phases: enterPhase(m.phases, stage, Date.now()) }));
     } else if (
       msg.type === "token" &&
       typeof msg.delta === "string" &&
       typeof msg.iteration === "number"
     ) {
       tokenBuf.push(msg.delta, msg.iteration);
+      if (stageRef.current !== "answering" && msg.delta.trim()) {
+        stageRef.current = "answering";
+        updateLive((m) => ({ ...m, phases: enterPhase(m.phases, "answering", Date.now()) }));
+      }
     } else if (msg.type === "tool_start" && typeof msg.tool === "string") {
       // The narration so far becomes a working note, never the answer (lane rule).
       const pending = tokenBuf.take();
+      stageRef.current = "tool";
       const ev = {
         call_id: typeof msg.call_id === "string" ? msg.call_id : `t${Date.now()}`,
         tool: msg.tool,
@@ -604,7 +613,11 @@ function ChatInner() {
         const lane = pending.text
           ? laneAppend(m.lane, pending.text, pending.iteration ?? ev.iteration)
           : m.lane;
-        return { ...m, lane: laneToolStart(lane, ev, Date.now()) };
+        return {
+          ...m,
+          lane: laneToolStart(lane, ev, Date.now()),
+          phases: enterPhase(m.phases, "tool", Date.now(), ev.tool),
+        };
       });
     } else if (msg.type === "tool_result" && msg.step) {
       traceRef.current = [...traceRef.current, msg.step as TraceStep];
@@ -630,6 +643,7 @@ function ChatInner() {
           ...m,
           lane,
           status: "complete",
+          phases: closePhases(m.phases, Date.now()),
           text: typeof msg.text === "string" ? msg.text : "",
           model: {
             name: typeof msg.model === "string" ? msg.model : null,
@@ -746,6 +760,7 @@ function ChatInner() {
     tokenBuf.cancel();
     const aid = nextId("a");
     liveIdRef.current = aid;
+    stageRef.current = null;
     terminalRef.current = false;
     threadSeenRef.current = true;
     traceRef.current = [];
@@ -915,6 +930,7 @@ function ChatInner() {
       ? messages.slice(target).flatMap((m) => (m.kind === "assistant" ? m.proposals.map((p) => p.id) : []))
       : [];
     liveIdRef.current = aid;
+    stageRef.current = null;
     liveUserIdRef.current = uid;
     askedRef.current = q;
     terminalRef.current = false;
@@ -1037,6 +1053,7 @@ function ChatInner() {
       // Live view only (D-03a): the partial is never persisted, a reload loses it.
       stoppedPartial: m.status === "running" ? m.lane.draft + pending.text : "",
       status: "cancelled",
+      phases: closePhases(m.phases, Date.now()),
       text: "",
       error: null,
       model: null,
@@ -1321,6 +1338,8 @@ function ChatInner() {
     const isLast = index === messages.length - 1;
     const errCopy = m.error ? errorCopy(m.error) : null;
     const draft = m.lane.draft.trim() ? m.lane.draft : "";
+    const trailText =
+      m.phases && (m.status === "running" || m.status === "complete") ? stageTrail(m.phases) : "";
     const partial = m.stoppedPartial?.trim() ? m.stoppedPartial : "";
     const answerBox: React.CSSProperties = {
       color: tokens.color.ink,
@@ -1341,21 +1360,23 @@ function ChatInner() {
     );
     return (
       <div key={m.id} className="chat-msg">
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: trailText ? 4 : 16 }}>
           <span style={{ fontFamily: tokens.font.serif, fontSize: 18 }}>monai</span>
-          {m.status !== "error" && (
-            <span style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3 }}>
-              ·{" "}
-              {m.status === "cancelled"
-                ? "stopped"
-                : m.status === "complete"
-                ? answeredLabel(m)
-                : draft
-                ? "answering…"
-                : m.stage === "loading"
-                ? "loading the model…"
-                : "thinking…"}
-            </span>
+          {(m.status === "running" || m.status === "complete") && m.phases?.length ? (
+            <StageLabel phases={m.phases} running={m.status === "running"} />
+          ) : (
+            m.status !== "error" && (
+              <span style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3 }}>
+                ·{" "}
+                {m.status === "cancelled"
+                  ? "stopped"
+                  : m.status === "complete"
+                  ? answeredLabel(m)
+                  : draft
+                  ? "answering…"
+                  : "thinking…"}
+              </span>
+            )
           )}
           {m.status === "complete" && (
             <span
@@ -1374,6 +1395,11 @@ function ChatInner() {
             </span>
           )}
         </div>
+        {trailText && (
+          <div data-testid="stage-trail" style={{ marginBottom: 16, fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3, fontVariantNumeric: "tabular-nums" }}>
+            {trailText}
+          </div>
+        )}
 
         <ToolSteps
           timeline={m.lane.timeline}

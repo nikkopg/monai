@@ -38,23 +38,39 @@ async function ask(page: Page) {
 }
 
 test.describe("answer lane (streamed)", () => {
-  test("261122-cpg: header shows loading, then thinking, then answering", async ({ page }) => {
+  test("261122-cpg/stm: stages animate with timers, a trail, then answered in", async ({ page }) => {
+    const args = { period: "this_month" };
     await setup(page, [
       [
         run,
         { data: { type: "step", msg: "loading the model…", stage: "loading" }, at: 10 },
-        { data: { type: "step", msg: "thinking…", stage: "thinking" }, at: 1200 },
-        token("Draft", 2400),
-        answer("Done", 3600),
-        done(3620),
+        { data: { type: "step", msg: "thinking…", stage: "thinking" }, at: 1500 },
+        { data: { type: "tool_start", call_id: "c0-0", tool: "spending_total", args, iteration: 0 }, at: 2500 },
+        {
+          data: { type: "tool_result", call_id: "c0-0", step: { tool: "spending_total", args, result: {} }, ms: 40, sources: [] },
+          at: 3600,
+        },
+        { data: { type: "step", msg: "thinking…", stage: "thinking" }, at: 3700 },
+        token("Draft", 4800),
+        answer("Done", 6000),
+        done(6020),
       ],
     ]);
     await ask(page);
-    await expect(page.getByText("loading the model…")).toBeVisible();
-    await expect(page.getByText("thinking…")).toBeVisible();
-    await expect(page.getByText("loading the model…")).toHaveCount(0);
-    await expect(page.getByText("answering…")).toBeVisible();
+    const label = page.getByTestId("stage-label");
+    const trail = page.getByTestId("stage-trail");
+    await expect(label).toHaveText("loading the model…");
+    await expect(page.locator(".stage-bar")).toHaveCount(1);
+    await expect(label).toHaveText("thinking…");
+    await expect(page.locator(".stage-dots")).toHaveCount(1);
+    await expect(trail).toHaveText(/^loaded \d+s$/);
+    await expect(label).toHaveText(/^checking .+…$/);
+    await expect(label).toHaveText("answering…");
+    await expect(trail).toHaveText(/^loaded \d+s · thought \d+s · checked \d+s · thought \d+s$/);
     await expect(page.getByTestId("answer")).toHaveText("Done");
+    await expect(page.getByText(/^· answered in \d+s$/)).toBeVisible();
+    await expect(trail).toHaveText(/^loaded \d+s · thought \d+s · checked \d+s · thought \d+s$/);
+    await expect(label).toHaveCount(0);
   });
 
   test("draft renders live, then the authoritative answer replaces it", async ({ page }) => {
