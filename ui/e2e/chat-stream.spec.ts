@@ -38,6 +38,25 @@ async function ask(page: Page) {
 }
 
 test.describe("answer lane (streamed)", () => {
+  test("261122-cpg: header shows loading, then thinking, then answering", async ({ page }) => {
+    await setup(page, [
+      [
+        run,
+        { data: { type: "step", msg: "loading the model…", stage: "loading" }, at: 10 },
+        { data: { type: "step", msg: "thinking…", stage: "thinking" }, at: 1200 },
+        token("Draft", 2400),
+        answer("Done", 3600),
+        done(3620),
+      ],
+    ]);
+    await ask(page);
+    await expect(page.getByText("loading the model…")).toBeVisible();
+    await expect(page.getByText("thinking…")).toBeVisible();
+    await expect(page.getByText("loading the model…")).toHaveCount(0);
+    await expect(page.getByText("answering…")).toBeVisible();
+    await expect(page.getByTestId("answer")).toHaveText("Done");
+  });
+
   test("draft renders live, then the authoritative answer replaces it", async ({ page }) => {
     await setup(page, [
       [run, step, token("Draft one ", 100), token("two", 250), answer("Final **answer**", 1500), done(1520)],

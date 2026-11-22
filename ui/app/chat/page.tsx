@@ -77,6 +77,7 @@ type AsstItem = {
   createdAt: string | null;
   live: boolean; // answered in this view (state text "just now")
   stopRejected?: boolean;
+  stage?: "loading" | "thinking"; // 261122-cpg: last step stage while running
   seq?: number; // persisted position; live items have none and sit after any boundary
 };
 
@@ -581,6 +582,9 @@ function ChatInner() {
       if (paramRef.current !== msg.thread_id) {
         router.replace("/chat?thread=" + msg.thread_id);
       }
+    } else if (msg.type === "step" && (msg.stage === "loading" || msg.stage === "thinking")) {
+      const stage = msg.stage;
+      updateLive((m) => ({ ...m, stage }));
     } else if (
       msg.type === "token" &&
       typeof msg.delta === "string" &&
@@ -1348,6 +1352,8 @@ function ChatInner() {
                 ? answeredLabel(m)
                 : draft
                 ? "answering…"
+                : m.stage === "loading"
+                ? "loading the model…"
                 : "thinking…"}
             </span>
           )}
