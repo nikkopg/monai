@@ -334,3 +334,58 @@ test.describe("CategoryManager writes", () => {
     await expect.poll(() => body).not.toBeNull();
   });
 });
+
+// 261122-omp: the Ollama Model field picks from the models Ollama has installed.
+test.describe("Ollama model picker", () => {
+  const settings = {
+    llm_provider: "ollama",
+    llm_model: "example-model:7b",
+    anthropic_api_key_masked: null,
+    openai_api_key_masked: null,
+    base_currency: "IDR",
+    price_data_source: "manual",
+  };
+  const models = [
+    { name: "example-model:7b", size: 4_600_000_000, parameter_size: "7B" },
+    { name: "tiny-model:1b", size: 900_000_000, parameter_size: "1B" },
+  ];
+
+  async function mockSettings(page: Page, saved = settings, list: object[] | null = models) {
+    await page.route("**/api/settings", (route) => route.fulfill({ json: saved }));
+    await page.route("**/api/settings/ollama-models", (route) =>
+      list ? route.fulfill({ json: list }) : route.fulfill({ status: 502, json: { detail: "Couldn't reach Ollama." } })
+    );
+  }
+
+  test("lists installed models with size and keeps the saved one selected", async ({ page }) => {
+    await mockSettings(page);
+    await page.goto("/settings");
+    const field = page.locator("#set-model");
+    await expect(field.locator("option")).toHaveText(["example-model:7b · 7B · 4.6 GB", "tiny-model:1b · 1B · 0.9 GB"]);
+    await expect(field).toHaveValue("example-model:7b");
+    await field.selectOption("tiny-model:1b");
+    await expect(field).toHaveValue("tiny-model:1b");
+  });
+
+  test("a saved model that isn't installed stays, marked not installed", async ({ page }) => {
+    await mockSettings(page, { ...settings, llm_model: "gone-model:3b" });
+    await page.goto("/settings");
+    const field = page.locator("#set-model");
+    await expect(field.locator("option").first()).toHaveText("gone-model:3b (not installed)");
+    await expect(field).toHaveValue("gone-model:3b");
+  });
+
+  test("Ollama unreachable: the text field comes back with a note", async ({ page }) => {
+    await mockSettings(page, settings, null);
+    await page.goto("/settings");
+    await expect(page.getByTestId("model-note")).toHaveText("Couldn't reach Ollama, so type the model name.");
+    await expect(page.locator("input#set-model")).toHaveValue("example-model:7b");
+  });
+
+  test("claude keeps the plain text field", async ({ page }) => {
+    await mockSettings(page);
+    await page.goto("/settings");
+    await page.getByRole("button", { name: "claude", exact: true }).click();
+    await expect(page.locator("input#set-model")).toBeVisible();
+  });
+});

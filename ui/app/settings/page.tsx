@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { tokens, card, input, btn } from "../styles";
 import CategoryManager from "./CategoryManager";
 import SkillsCard from "./SkillsCard";
+import OllamaModelField, { type OllamaModel } from "./OllamaModelField";
 import ExternalMcpCard from "./ExternalMcpCard";
 import AccountManager, { type Account } from "../overview/AccountManager";
 import CsvUpload from "../overview/CsvUpload";
@@ -142,9 +143,15 @@ export default function SettingsPage() {
     }
   }, [loaded]);
 
+  // The last list the Ollama picker fetched: switching back to ollama picks an
+  // installed model rather than a default that may not be there.
+  const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
+
   function handleProviderChange(next: string) {
     setProvider(next);
-    setModel(DEFAULT_MODEL_BY_PROVIDER[next] ?? "");
+    const fallback = DEFAULT_MODEL_BY_PROVIDER[next] ?? "";
+    const installed = ollamaModels.map((m) => m.name);
+    setModel(next === "ollama" && installed.length && !installed.includes(fallback) ? installed[0] : fallback);
   }
 
   async function putSettings(
@@ -303,13 +310,17 @@ export default function SettingsPage() {
             })}
           </div>
           <label htmlFor="set-model" style={fieldLabel}>Model</label>
-          <input
-            id="set-model"
-            style={input}
-            type="text"
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-          />
+          {provider === "ollama" ? (
+            <OllamaModelField value={model} onChange={setModel} onModels={setOllamaModels} />
+          ) : (
+            <input
+              id="set-model"
+              style={input}
+              type="text"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+            />
+          )}
           <div
             style={{
               display: "flex",

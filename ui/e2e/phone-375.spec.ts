@@ -816,7 +816,7 @@ const S0: Record<string, { hist: Record<string, number>; spot: DesktopSpot } | u
   records: { hist: {"12px": 7, "14px": 18, "16px": 3, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic
   inbox: { hist: {"12px": 17, "14px": 17, "20px": 2, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "0px"}, "pillH": null} }, // pii-ok synthetic; 12px 20→17 in 261121-q4n (one status line per card, code note moved to the intro)
   chat: { hist: {"12px": 6, "14px": 11, "15px": 2, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": null, "pillH": null} }, // pii-ok synthetic
-  settings: { hist: {"12px": 15, "13px": 3, "13.3333px": 1, "14px": 32, "15px": 8, "16px": 4, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic
+  settings: { hist: {"12px": 16, "13px": 4, "13.3333px": 1, "14px": 32, "15px": 8, "16px": 4, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic // 261122-omp: +1 12px model note, +1 13px Refresh
 };
 
 async function expectDesktopUnchanged(page: Page, key: string) {
