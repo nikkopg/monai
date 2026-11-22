@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
+import { fmtRowDate } from "../app/lib/inbox";
 
 // ---------------------------------------------------------------------------
 // Phase 17 Plan 02 — RED e2e spec for the Records ledger (REC-01/02/03/05).
@@ -32,7 +33,7 @@ const signed = (n: number) =>
 // Noon on the LOCAL day: the page groups by the viewer's clock, so a UTC-day
 // date read as "Yesterday" whenever the run fell before the UTC midnight
 // (00:00-07:00 WIB). Local noon stays on the same calendar day in ISO for any
-// zone within ±12h, so `date.slice(0, 10)` labels still match.
+// zone within ±12h, so day labels still match.
 function localNoon(daysAgo: number): Date {
   const d = new Date();
   d.setHours(12, 0, 0, 0);
@@ -351,7 +352,7 @@ test.describe("Row options menu (quick 261011-mgj)", () => {
     await page.goto("/records");
     const tx = transactionsFixture().find((t) => t.id === 301)!;
     const opts = page.getByRole("button", {
-      name: `Record options: ${tx.merchant} on ${tx.date.slice(0, 10)}`,
+      name: `Record options: ${tx.merchant} on ${fmtRowDate(tx.date)}`,
       exact: true,
     });
 
@@ -386,7 +387,7 @@ test.describe("Row options menu (quick 261011-mgj)", () => {
     await page.goto("/records");
     const tx = transactionsFixture().find((t) => t.id === 301)!;
     await page
-      .getByRole("button", { name: `Record options: ${tx.merchant} on ${tx.date.slice(0, 10)}`, exact: true })
+      .getByRole("button", { name: `Record options: ${tx.merchant} on ${fmtRowDate(tx.date)}`, exact: true })
       .click();
     await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
     await page.getByRole("button", { name: "Delete", exact: true }).click();
@@ -520,7 +521,7 @@ test.describe("Record modal currency (Phase 44)", () => {
     await page.goto("/records");
     await page
       .getByRole("button", {
-        name: `Record options: ZZ44 Vendor on ${row.date.slice(0, 10)}`,
+        name: `Record options: ZZ44 Vendor on ${fmtRowDate(row.date)}`,
         exact: true,
       })
       .click();
@@ -777,7 +778,7 @@ test.describe("Records cross-currency pair (Phase 45 D-09)", () => {
     await expect(received.locator("xpath=..")).toContainText("100.00 USD");
     await expect(received.locator("xpath=..")).not.toContainText("≈");
     await expect(
-      page.getByText("1996-03-02 · Implied 1 USD = 16,310 IDR · ECB 16,250 (rate of 1 Mar 1996)", {
+      page.getByText("2 Mar 1996 · Implied 1 USD = 16,310 IDR · ECB 16,250 (rate of 1 Mar 1996)", {
         exact: true,
       })
     ).toHaveCount(1);
@@ -787,7 +788,7 @@ test.describe("Records cross-currency pair (Phase 45 D-09)", () => {
   test("cross-currency pair without a rate", async ({ page }) => {
     await open(page, pair({ fx_rate: null, fx_rate_date: null, amount_idr: null }));
     await expect(
-      page.getByText("1996-03-02 · Implied 1 USD = 16,310 IDR · ECB rate unavailable", { exact: true })
+      page.getByText("2 Mar 1996 · Implied 1 USD = 16,310 IDR · ECB rate unavailable", { exact: true })
     ).toHaveCount(1);
   });
 
@@ -797,7 +798,7 @@ test.describe("Records cross-currency pair (Phase 45 D-09)", () => {
     await expect(received).toHaveCount(1);
     await expect(received.locator("xpath=..")).toContainText("1,631,000");
     await expect(
-      page.getByText("1996-03-02 · Implied 1 USD = 16,310 IDR · ECB 16,250 (rate of 1 Mar 1996)", {
+      page.getByText("2 Mar 1996 · Implied 1 USD = 16,310 IDR · ECB 16,250 (rate of 1 Mar 1996)", {
         exact: true,
       })
     ).toHaveCount(1);

@@ -13,6 +13,7 @@ import RowMenu from "../components/RowMenu";
 import Skeleton, { Bone } from "../components/Skeleton";
 import { formatDateRange } from "../chat/labels";
 import { fmtAmount, fmtAmountSigned, fmtRateCompare, impliedRate, rateHover, sumIdr } from "../lib/money";
+import { fmtRowDate } from "../lib/inbox";
 
 // ---------------------------------------------------------------------------
 // Records ledger (REC-01/02/03/05) — date-grouped transaction history with a
@@ -548,11 +549,11 @@ function RecordsInner() {
       return (
         <LedgerRowShell
           key={tx.id}
-          name={`${tx.merchant || tx.category || "Transaction"} on ${tx.date.slice(0, 10)}`}
+          name={`${tx.merchant || tx.category || "Transaction"} on ${fmtRowDate(tx.date)}`}
           tint={tint}
           glyph={(tx.category || tx.merchant || "?").slice(0, 1).toUpperCase()}
           primary={tx.merchant || tx.category || "Transaction"}
-          meta={`${(tx.category || "Uncategorized") + (tx.is_transfer ? " · transfer" : "")} · ${tx.date.slice(0, 10)}`}
+          meta={`${(tx.category || "Uncategorized") + (tx.is_transfer ? " · transfer" : "")} · ${fmtRowDate(tx.date)}`}
           amountText={fmtAmountSigned(tx.amount, tx.currency)}
           {...usdSecondary(tx.currency, tx.amount_idr, tx.fx_rate, tx.fx_rate_date)}
           amountColor={tx.amount < 0 ? tokens.color.terracotta : tokens.color.green}
@@ -580,12 +581,12 @@ function RecordsInner() {
       const idrLeg = [legA, legB].find((l) => (l.currency ?? "IDR") === "IDR");
       const crossPair = usdLeg && idrLeg && usdLeg !== idrLeg;
       const implied = crossPair ? impliedRate(idrLeg.amount, usdLeg.amount) : null;
-      const baseMeta = legA.date.slice(0, 10);
+      const baseMeta = fmtRowDate(legA.date);
       const rateState = usdLeg?.fx_rate != null && usdLeg.fx_rate_date ? "ok" : "none";
       return (
         <LedgerRowShell
           key={legA.id}
-          name={`Transfer: ${accountName(outgoing.account_id)} → ${accountName(incoming.account_id)} on ${legA.date.slice(0, 10)}`}
+          name={`Transfer: ${accountName(outgoing.account_id)} → ${accountName(incoming.account_id)} on ${fmtRowDate(legA.date)}`}
           tint={tokens.color.tintNeutral}
           glyph="⇄"
           primary={`Transfer: ${accountName(outgoing.account_id)} → ${accountName(
@@ -635,7 +636,7 @@ function RecordsInner() {
     return (
       <LedgerRowShell
         key={legA.id}
-        name={`${legA.merchant || legA.category || "Transaction"} (transfer) on ${legA.date.slice(0, 10)}`}
+        name={`${legA.merchant || legA.category || "Transaction"} (transfer) on ${fmtRowDate(legA.date)}`}
         tint={tint}
         glyph={(legA.category || legA.merchant || "?").slice(0, 1).toUpperCase()}
         primary={
@@ -646,7 +647,7 @@ function RecordsInner() {
             </span>
           </>
         }
-        meta={`${legA.category || "Uncategorized"} · ${legA.date.slice(0, 10)}`}
+        meta={`${legA.category || "Uncategorized"} · ${fmtRowDate(legA.date)}`}
         amountText={fmtAmountSigned(legA.amount, legA.currency)}
         {...usdSecondary(legA.currency, legA.amount_idr, legA.fx_rate, legA.fx_rate_date)}
         amountColor={legA.amount < 0 ? tokens.color.terracotta : tokens.color.green}
