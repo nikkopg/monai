@@ -34,7 +34,7 @@ docker compose up -d --build
 
 Open http://127.0.0.1:3001. monai can only be reached from the computer it runs on; from another computer, use `ssh -L 3001:127.0.0.1:3001 you@your-server`.
 
-The assistant uses [Ollama](https://ollama.com) on your computer by default. You can switch to Claude or OpenAI in Settings.
+The assistant uses [Ollama](https://ollama.com), on your computer or Ollama Cloud. Pick the model in Settings.
 
 **3. Optional: connect another AI app.** In Claude Desktop (through `mcp-remote`) or Claude Code, add `http://127.0.0.1:8001/mcp` with your `MONAI_API_KEY`.
 

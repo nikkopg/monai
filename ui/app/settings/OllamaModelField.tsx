@@ -1,5 +1,5 @@
 "use client";
-// 261122-omp: the Model field for Ollama — a select of the models Ollama has
+// 261122-omp: the Model field — a select of the models Ollama has
 // installed, fetched from GET /api/settings/ollama-models. If Ollama can't be
 // reached, or lists nothing, the plain text field comes back so a name can
 // still be typed.
@@ -19,11 +19,9 @@ function optionLabel(m: OllamaModel): string {
 export default function OllamaModelField({
   value,
   onChange,
-  onModels,
 }: {
   value: string;
   onChange: (name: string) => void;
-  onModels?: (models: OllamaModel[]) => void;
 }) {
   const [models, setModels] = useState<OllamaModel[] | null>(null); // null: loading
   const [failed, setFailed] = useState(false);
@@ -36,7 +34,6 @@ export default function OllamaModelField({
       if (!r.ok) throw new Error(String(r.status));
       const list: OllamaModel[] = await r.json();
       setModels(list);
-      onModels?.(list);
     } catch {
       setModels([]);
       setFailed(true);

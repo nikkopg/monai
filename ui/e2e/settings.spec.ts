@@ -1,58 +1,29 @@
 import { test, expect, type Page } from "@playwright/test";
 
 // ---------------------------------------------------------------------------
-// Phase 3 Plan 03 — Settings page render spec.
-//
-// This spec MUST fail (RED) against the 03-01 placeholder (`ui/app/settings/
-// page.tsx` today renders only "Settings controls load here."). It asserts
-// the full three-card contract defined in 03-UI-SPEC.md:
-//   - three card section titles: "LLM Provider & Model", "API Keys",
-//     "Preferences"
-//   - three Save buttons with exact labels: "Save Provider", "Save Keys",
-//     "Save Preferences"
-//   - a provider <select> offering ollama / claude / openai
-//   - a price data source <select> offering coingecko / yfinance / manual
-//   - the masked-key helper text "Leave blank to keep the current key."
-//
-// These are frontend-only render assertions — no backend interaction is
-// required. The page must render its cards even if GET /api/settings fails
-// (no backend is guaranteed to be running in this sandbox).
+// Settings page render spec. Since 261122-rmp Ollama is the only provider:
+// a Model card (no provider switch, no API Keys card) and Preferences.
+// Frontend-only render assertions; no backend is needed.
 // ---------------------------------------------------------------------------
 
 test.describe("/settings page", () => {
-  test("renders the three card section titles", async ({ page }) => {
+  test("renders the Model and Preferences cards, no API Keys", async ({ page }) => {
     await page.goto("/settings");
-    await expect(
-      page.getByText("LLM Provider & Model", { exact: true })
-    ).toBeVisible();
-    await expect(page.getByText("API Keys", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 2, name: "Model", exact: true })).toBeVisible();
     await expect(page.getByText("Preferences", { exact: true })).toBeVisible();
+    await expect(page.getByText("API Keys", { exact: true })).toHaveCount(0);
   });
 
-  test("renders the three Save buttons with exact labels", async ({
-    page,
-  }) => {
+  test("renders the Save Model and Save Preferences buttons", async ({ page }) => {
     await page.goto("/settings");
-    await expect(
-      page.getByRole("button", { name: "Save Provider", exact: true })
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Save Keys", exact: true })
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Save Preferences", exact: true })
-    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Save Model", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Save Preferences", exact: true })).toBeVisible();
   });
 
-  test("provider segmented control offers ollama, claude, openai", async ({
-    page,
-  }) => {
+  test("offers no provider switch", async ({ page }) => {
     await page.goto("/settings");
-    // v1.1: provider is a segmented control (3 buttons), not a <select>.
     for (const p of ["ollama", "claude", "openai"]) {
-      await expect(
-        page.getByRole("button", { name: p, exact: true })
-      ).toBeVisible();
+      await expect(page.getByRole("button", { name: p, exact: true })).toHaveCount(0);
     }
   });
 
@@ -68,13 +39,6 @@ test.describe("/settings page", () => {
       (opts) => opts.map((o) => (o as HTMLOptionElement).value)
     );
     expect(values).toEqual(["coingecko", "yfinance", "manual"]);
-  });
-
-  test("shows the masked-key helper text", async ({ page }) => {
-    await page.goto("/settings");
-    await expect(
-      page.getByText("Leave blank to keep the current key.")
-    ).toBeVisible();
   });
 
   // quick 261011-mgj: every row action sits behind a ⋯ menu. Synthetic data,
@@ -338,10 +302,7 @@ test.describe("CategoryManager writes", () => {
 // 261122-omp: the Ollama Model field picks from the models Ollama has installed.
 test.describe("Ollama model picker", () => {
   const settings = {
-    llm_provider: "ollama",
     llm_model: "example-model:7b",
-    anthropic_api_key_masked: null,
-    openai_api_key_masked: null,
     base_currency: "IDR",
     price_data_source: "manual",
   };
@@ -380,12 +341,5 @@ test.describe("Ollama model picker", () => {
     await page.goto("/settings");
     await expect(page.getByTestId("model-note")).toHaveText("Couldn't reach Ollama, so type the model name.");
     await expect(page.locator("input#set-model")).toHaveValue("example-model:7b");
-  });
-
-  test("claude keeps the plain text field", async ({ page }) => {
-    await mockSettings(page);
-    await page.goto("/settings");
-    await page.getByRole("button", { name: "claude", exact: true }).click();
-    await expect(page.locator("input#set-model")).toBeVisible();
   });
 });

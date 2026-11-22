@@ -492,8 +492,7 @@ async function mockSettings(page: Page) {
   await page.route(
     "**/api/settings",
     get({
-      llm_provider: "ollama", llm_model: "zz-model", anthropic_api_key_masked: "", openai_api_key_masked: "",
-      base_currency: "IDR", price_data_source: "coingecko",
+      llm_model: "zz-model", base_currency: "IDR", price_data_source: "coingecko",
     }),
   );
 }
@@ -519,10 +518,10 @@ test.describe("P4 settings (261115-oax)", () => {
     }
     expect(checked).toBeGreaterThan(3);
 
-    // Provider control: "openai" is inside its card.
-    const openai = (await page.getByRole("button", { name: "openai", exact: true }).boundingBox())!;
-    const providerCard = (await page.getByText("LLM Provider & Model", { exact: true }).locator("..").boundingBox())!;
-    expect(openai.x + openai.width).toBeLessThanOrEqual(providerCard.x + providerCard.width);
+    // Model field: its Refresh button is inside the card (261122-rmp).
+    const refresh = (await page.getByRole("button", { name: "Refresh", exact: true }).boundingBox())!;
+    const modelCard = (await page.getByRole("heading", { level: 2, name: "Model", exact: true }).locator("..").boundingBox())!;
+    expect(refresh.x + refresh.width).toBeLessThanOrEqual(modelCard.x + modelCard.width);
 
     // System row: the menu button sits on the name's line, the note below it.
     const name = (await row.getByText("ZZ Adjustment", { exact: true }).boundingBox())!;
@@ -816,7 +815,7 @@ const S0: Record<string, { hist: Record<string, number>; spot: DesktopSpot } | u
   records: { hist: {"12px": 7, "14px": 18, "16px": 3, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic
   inbox: { hist: {"12px": 17, "14px": 17, "20px": 2, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "0px"}, "pillH": null} }, // pii-ok synthetic; 12px 20→17 in 261121-q4n (one status line per card, code note moved to the intro)
   chat: { hist: {"12px": 6, "14px": 11, "15px": 2, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": null, "pillH": null} }, // pii-ok synthetic
-  settings: { hist: {"12px": 16, "13px": 4, "13.3333px": 1, "14px": 32, "15px": 8, "16px": 4, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic // 261122-omp: +1 12px model note, +1 13px Refresh
+  settings: { hist: {"12px": 13, "13px": 1, "13.3333px": 1, "14px": 28, "15px": 7, "16px": 4, "40px": 1}, spot: {"framePad": "28px", "panelRadius": "22px", "panelBorder": "1px", "card": {"pad": "22px 24px", "radius": "18px", "mb": "18px"}, "pillH": null} }, // pii-ok synthetic // 261122-rmp: provider pills and API Keys card removed
 };
 
 async function expectDesktopUnchanged(page: Page, key: string) {
@@ -1070,13 +1069,7 @@ test.describe("S1 phone type scale (261116-s7w)", () => {
     const main = page.locator("main");
     expect(await smallText(main, 13)).toEqual([]);
     expect(await px(main.locator("h1"))).toBe(24);
-    expect(await px(page.getByText("LLM Provider & Model", { exact: true }))).toBe(16);
-    const seg = page.locator(".seg-fill button");
-    expect(await seg.count()).toBeGreaterThan(1);
-    for (const b of await seg.all()) {
-      expect((await b.boundingBox())!.height).toBeGreaterThanOrEqual(36);
-      expect(await b.evaluate((el) => getComputedStyle(el).fontSize)).toBe("14px");
-    }
+    expect(await px(page.getByRole("heading", { level: 2, name: "Model", exact: true }))).toBe(16);
     const controls = await main
       .locator("input:not([type=checkbox]):not([type=radio]):not([type=hidden]), select, textarea")
       .evaluateAll((els) => els.filter((e) => e.getBoundingClientRect().width > 0).map((e) => getComputedStyle(e).fontSize));
@@ -1165,7 +1158,7 @@ test.describe("Uniform phone pills", () => {
     const set = await measure(page);
 
     expect(inv.length).toBeGreaterThan(1);
-    expect(set.length).toBe(3);
+    expect(set.length).toBe(0); // the provider pills went with Claude/OpenAI (261122-rmp)
     for (const p of [...inv, ...set]) expect(p).toEqual({ h: 36, track: 44, fs: "14px", tap: true });
   });
 });
@@ -1298,9 +1291,8 @@ test.describe("antislop 001 T3 (261120-r0k)", () => {
     await mockSettings(page);
     await page.goto("/settings");
     await expect(page.locator(".cat-row").first()).toBeVisible();
-    for (const name of ["Model", "Anthropic API key", "OpenAI API key", "Base currency", "Price data source", "Import CSV"])
+    for (const name of ["Model", "Base currency", "Price data source", "Import CSV"])
       await expect(page.getByLabel(name, { exact: true })).toHaveCount(1);
-    await expect(page.getByRole("group", { name: "Provider" })).toBeVisible();
   });
 });
 
@@ -1329,7 +1321,7 @@ test.describe("antislop 001 T4 (261120-r0k)", () => {
     await mockSettings(page);
     await page.goto("/settings");
     await expect(page.locator(".cat-row").first()).toBeVisible();
-    for (const name of ["Save Provider", "Save Keys"]) expect(await hits44(page.getByRole("button", { name }))).toBe(true);
+    for (const name of ["Save Model", "Save Preferences"]) expect(await hits44(page.getByRole("button", { name }))).toBe(true);
     expect(await hits44(page.getByRole("button", { name: /^Category options: / }).first())).toBe(true);
 
     await mockPlatform(page);
@@ -1481,7 +1473,7 @@ test.describe("design review 261121-efd", () => {
 
     await mockSettings(page);
     await page.goto("/settings");
-    for (const name of ["LLM Provider & Model", "API Keys", "Categories", "Accounts", "Platforms"])
+    for (const name of ["Model", "Categories", "Accounts", "Platforms"])
       await expect(page.getByRole("heading", { level: 2, name })).toBeVisible();
 
     await mockPlatform(page);

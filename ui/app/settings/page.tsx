@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { tokens, card, input, btn } from "../styles";
 import CategoryManager from "./CategoryManager";
 import SkillsCard from "./SkillsCard";
-import OllamaModelField, { type OllamaModel } from "./OllamaModelField";
+import OllamaModelField from "./OllamaModelField";
 import ExternalMcpCard from "./ExternalMcpCard";
 import AccountManager, { type Account } from "../overview/AccountManager";
 import CsvUpload from "../overview/CsvUpload";
@@ -13,29 +13,19 @@ import PlatformManager, { type Platform } from "../investments/PlatformManager";
 
 // ---------------------------------------------------------------------------
 // Settings page — v1.1 "paper" redesign. Same three independently-saveable
-// cards (LLM Provider & Model, API Keys, Preferences), same GET/PUT
+// cards (Model, Preferences; API Keys and the provider switch went with
+// Claude/OpenAI in 261122-rmp), same GET/PUT
 // /api/settings wiring (the catch-all proxy injects MONAI_API_KEY server-side).
-// Provider is now a segmented control (UIR-07); the live-refresh toggle from
+// The live-refresh toggle from
 // the mockup is intentionally omitted — there is no backend field for it and
 // this milestone is presentation-only (a non-persisting toggle would be fake).
 // ---------------------------------------------------------------------------
 
 type SettingsOut = {
-  llm_provider: string;
   llm_model: string;
-  anthropic_api_key_masked: string | null;
-  openai_api_key_masked: string | null;
   base_currency: string;
   price_data_source: string;
 };
-
-const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
-  ollama: "gemma4:31b-cloud",
-  claude: "claude-haiku-4-5-20251001",
-  openai: "gpt-4o-mini",
-};
-
-const PROVIDERS = ["ollama", "claude", "openai"] as const;
 
 type SaveState = {
   status: "idle" | "saving" | "success" | "error";
@@ -63,17 +53,12 @@ const fieldLabel: React.CSSProperties = {
 export default function SettingsPage() {
   const [loadError, setLoadError] = useState(false);
 
-  const [provider, setProvider] = useState("ollama");
-  const [model, setModel] = useState(DEFAULT_MODEL_BY_PROVIDER.ollama);
-  const [providerState, setProviderState] = useState<SaveState>({
+  const [model, setModel] = useState("");
+  const [modelState, setModelState] = useState<SaveState>({
     status: "idle",
   });
 
-  const [anthropicMasked, setAnthropicMasked] = useState<string | null>(null);
-  const [openaiMasked, setOpenaiMasked] = useState<string | null>(null);
-  const [anthropicKey, setAnthropicKey] = useState("");
-  const [openaiKey, setOpenaiKey] = useState("");
-  const [keysState, setKeysState] = useState<SaveState>({ status: "idle" });
+
 
   const [baseCurrency, setBaseCurrency] = useState("IDR");
   const [priceDataSource, setPriceDataSource] = useState("coingecko");
@@ -115,10 +100,7 @@ export default function SettingsPage() {
         return;
       }
       const data: SettingsOut = await r.json();
-      setProvider(data.llm_provider);
       setModel(data.llm_model);
-      setAnthropicMasked(data.anthropic_api_key_masked);
-      setOpenaiMasked(data.openai_api_key_masked);
       setBaseCurrency(data.base_currency);
       setPriceDataSource(data.price_data_source);
     } catch {
@@ -142,17 +124,6 @@ export default function SettingsPage() {
       document.getElementById(window.location.hash.slice(1))?.scrollIntoView();
     }
   }, [loaded]);
-
-  // The last list the Ollama picker fetched: switching back to ollama picks an
-  // installed model rather than a default that may not be there.
-  const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([]);
-
-  function handleProviderChange(next: string) {
-    setProvider(next);
-    const fallback = DEFAULT_MODEL_BY_PROVIDER[next] ?? "";
-    const installed = ollamaModels.map((m) => m.name);
-    setModel(next === "ollama" && installed.length && !installed.includes(fallback) ? installed[0] : fallback);
-  }
 
   async function putSettings(
     body: Record<string, string>,
@@ -187,26 +158,10 @@ export default function SettingsPage() {
     }
   }
 
-  async function saveProvider(e: React.FormEvent) {
+  async function saveModel(e: React.FormEvent) {
     e.preventDefault();
-    setProviderState({ status: "idle" });
-    await putSettings(
-      { llm_provider: provider, llm_model: model },
-      setProviderState
-    );
-  }
-
-  async function saveKeys(e: React.FormEvent) {
-    e.preventDefault();
-    setKeysState({ status: "idle" });
-    const body: Record<string, string> = {};
-    if (anthropicKey) body.anthropic_api_key = anthropicKey;
-    if (openaiKey) body.openai_api_key = openaiKey;
-    const ok = await putSettings(body, setKeysState);
-    if (ok) {
-      setAnthropicKey("");
-      setOpenaiKey("");
-    }
+    setModelState({ status: "idle" });
+    await putSettings({ llm_model: model }, setModelState);
   }
 
   async function savePreferences(e: React.FormEvent) {
@@ -261,66 +216,13 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Card 1: LLM Provider & Model */}
+      {/* Card 1: Model (Ollama is the only provider since 261122-rmp) */}
       <div style={card}>
-        <h2 style={cardTitle}>LLM Provider &amp; Model</h2>
-        <div style={cardSub}>Which engine answers your questions.</div>
-        <form onSubmit={saveProvider}>
-          <div id="set-provider" style={fieldLabel}>Provider</div>
-          <div
-            role="group"
-            aria-labelledby="set-provider"
-            className="seg-fill pill-track"
-            style={{
-              display: "inline-flex",
-              background: tokens.color.sidebar,
-              border: `1px solid ${tokens.color.border2}`,
-              borderRadius: 12,
-              padding: 4,
-              marginBottom: 18,
-            }}
-          >
-            {PROVIDERS.map((p) => {
-              const active = provider === p;
-              return (
-                <button
-                  key={p}
-                  type="button"
-                  className="pill-btn"
-                  onClick={() => handleProviderChange(p)}
-                  style={{
-                    border: "none",
-                    borderRadius: 9,
-                    padding: "8px 18px",
-                    fontSize: "var(--fs-pill, 14px)",
-                    minHeight: "var(--pill-h, auto)",
-                    fontWeight: active ? 600 : 500,
-                    cursor: "pointer",
-                    color: active ? tokens.color.ink : tokens.color.muted,
-                    background: active ? "#fff" : "transparent",
-                    boxShadow: active
-                      ? "0 1px 2px rgba(40,34,24,.12)"
-                      : "none",
-                    transition: "background-color .2s ease, color .2s ease, box-shadow .2s ease",
-                  }}
-                >
-                  {p}
-                </button>
-              );
-            })}
-          </div>
+        <h2 style={cardTitle}>Model</h2>
+        <div style={cardSub}>The Ollama model that answers your questions.</div>
+        <form onSubmit={saveModel}>
           <label htmlFor="set-model" style={fieldLabel}>Model</label>
-          {provider === "ollama" ? (
-            <OllamaModelField value={model} onChange={setModel} onModels={setOllamaModels} />
-          ) : (
-            <input
-              id="set-model"
-              style={input}
-              type="text"
-              value={model}
-              onChange={(e) => setModel(e.target.value)}
-            />
-          )}
+          <OllamaModelField value={model} onChange={setModel} />
           <div
             style={{
               display: "flex",
@@ -331,59 +233,13 @@ export default function SettingsPage() {
           >
             <button
               className="tap44"
-              style={saveBtn(providerState)}
+              style={saveBtn(modelState)}
               type="submit"
-              disabled={providerState.status === "saving"}
+              disabled={modelState.status === "saving"}
             >
-              {providerState.status === "saving" ? "Saving…" : "Save Provider"}
+              {modelState.status === "saving" ? "Saving…" : "Save Model"}
             </button>
-            {statusMessage(providerState)}
-          </div>
-        </form>
-      </div>
-
-      {/* Card 2: API Keys */}
-      <div style={card}>
-        <h2 style={cardTitle}>API Keys</h2>
-        <div style={cardSub}>
-          Stored encrypted. Leave blank to keep the current key.
-        </div>
-        <form onSubmit={saveKeys}>
-          <label htmlFor="set-anthropic-key" style={fieldLabel}>Anthropic API key</label>
-          <input
-            id="set-anthropic-key"
-            style={{ ...input, marginBottom: 14 }}
-            type="password"
-            value={anthropicKey}
-            placeholder={anthropicMasked ? anthropicMasked : "sk-ant-..."}
-            onChange={(e) => setAnthropicKey(e.target.value)}
-          />
-          <label htmlFor="set-openai-key" style={fieldLabel}>OpenAI API key</label>
-          <input
-            id="set-openai-key"
-            style={input}
-            type="password"
-            value={openaiKey}
-            placeholder={openaiMasked ? openaiMasked : "sk-..."}
-            onChange={(e) => setOpenaiKey(e.target.value)}
-          />
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              marginTop: 18,
-            }}
-          >
-            <button
-              className="tap44"
-              style={saveBtn(keysState)}
-              type="submit"
-              disabled={keysState.status === "saving"}
-            >
-              {keysState.status === "saving" ? "Saving…" : "Save Keys"}
-            </button>
-            {statusMessage(keysState)}
+            {statusMessage(modelState)}
           </div>
         </form>
       </div>
