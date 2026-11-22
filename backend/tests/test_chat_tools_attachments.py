@@ -151,6 +151,21 @@ def test_foreign_thread_unset_thread_and_bad_id(env):
         tools.CURRENT_THREAD_ID.reset(tok)
 
 
+def test_empty_id_means_this_threads_newest_file(env):
+    """261122-aid: a small model may leave the id out; it gets this thread's newest file, never another's."""
+    db, t, other, *_ = env
+    assert chat_tools.read_attachment() == NO_ATT  # nothing on this thread yet
+    _att(env, thread=other)
+    assert chat_tools.propose_statement_rows("") == NO_ATT  # the other thread's file is never picked
+    _att(env)
+    newest = _att(env)
+    assert chat_tools.read_attachment()["attachment_id"] == str(newest.id)
+    assert chat_tools.read_attachment("  ")["attachment_id"] == str(newest.id)
+    got = chat_tools.propose_statement_rows()
+    assert got["tool"] == "propose_statement_rows" and got["row_count"] == len(ROWS)
+    assert db.get(Proposal, uuid.UUID(got["proposal_id"])).payload["attachment"]["id"] == str(newest.id)
+
+
 def test_read_never_calls_a_model(env, monkeypatch):
     import backend.query as query
 

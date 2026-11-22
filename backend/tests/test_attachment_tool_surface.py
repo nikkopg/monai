@@ -43,9 +43,10 @@ def test_attachment_tools_are_id_only():
     schemas = {e["name"]: e["fn_schema"] for e in _entries()}
     for schema in schemas.values():
         assert not {"db", "session", "token", "rows", "account"} & set(_all_keys(schema))
-    assert schemas["read_attachment"]["required"] == ["attachment_id"]
+    # 261122-aid: the id is optional (empty = this thread's newest file); still the only input.
+    assert "required" not in schemas["read_attachment"]
     assert set(schemas["read_attachment"]["properties"]) == {"attachment_id", "page"}
-    assert schemas["propose_statement_rows"]["required"] == ["attachment_id"]
+    assert "required" not in schemas["propose_statement_rows"]
     assert set(schemas["propose_statement_rows"]["properties"]) == {"attachment_id"}
     assert schemas["load_skill"]["required"] == ["name"]
     assert set(schemas["load_skill"]["properties"]) == {"name", "file"}

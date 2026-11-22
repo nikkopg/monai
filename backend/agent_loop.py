@@ -29,7 +29,11 @@ WRITE_RE = re.compile(
 
 # Phase 39 (D-16a): words that ask for a file's rows to be imported. Matched on the
 # owner's current question only, never on document text or history.
-ATTACH_RE = re.compile(r"\b(?:import|impor|propose|ajukan|upload|unggah|save|simpan|enter|submit)\w*", re.I)
+ATTACH_RE = re.compile(
+    r"\b(?:import|impor|propose|ajukan|upload|unggah|save|simpan|enter|submit|masuki?n|masukan)\w*"
+    r"|\bput\b.{0,60}?\bin(?:to)?\b",  # "put the rows from this pdf into my account" (261122-aid)
+    re.I,
+)
 
 _QUESTION_RE = re.compile(r"[^.?!\n]*\?")
 

@@ -705,6 +705,7 @@ def test_attachment_thread_read_question_gets_reads_plus_read_attachment(questio
     [
         "import this file", "propose the rows", "please add these to my account", "simpan ke Cash",
         "unggah", "upload these", "ajukan baris ini", "submit them", "enter these rows",
+        "put the transactions from this pdf into my account", "put these in Cash", "masukin ke Cash",
     ],
 )
 def test_attachment_thread_owner_ask_opens_the_proposer(question):
