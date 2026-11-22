@@ -41,6 +41,10 @@ services:
       # routes answer 503 (fail-closed). The frontend also receives it, for the
       # allowlisted proxy injection used by the Inbox.
       MONAI_APPROVER_KEY: ${MONAI_APPROVER_KEY:-}
+      # Optional. Comma-separated exact hostnames (besides loopback) that uploads, Inbox
+      # actions and MCP-server changes may come from, e.g. the tailnet name behind
+      # `tailscale serve`. Empty: loopback only.
+      MONAI_TRUSTED_HOSTS: ${MONAI_TRUSTED_HOSTS:-}
       MONAI_SKILLS_DIR: /app/skills
     volumes:
       # The owner's SKILL.md packs, read-only (Phase 40). Gitignored; the folder is kept via skills/.gitkeep.

@@ -272,6 +272,22 @@ test.describe("uploadOriginAllowed", () => {
   test("non-loopback Host is refused", () => {
     expect(uploadOriginAllowed("POST", path, new Headers({ host: "evil.example" }))).toBe(false);
   });
+  test("a MONAI_TRUSTED_HOSTS name passes; foreign Origin and cross-site still refused", () => {
+    const ts = "zz-box.tail0000.ts.net";
+    const prev = process.env.MONAI_TRUSTED_HOSTS;
+    const h = (x: Record<string, string>) => new Headers({ host: ts, ...x });
+    try {
+      expect(uploadOriginAllowed("POST", path, h({ "sec-fetch-site": "same-origin", origin: `https://${ts}` }))).toBe(false);
+      process.env.MONAI_TRUSTED_HOSTS = ` other.example , ${ts.toUpperCase()} `;
+      expect(uploadOriginAllowed("POST", path, h({ "sec-fetch-site": "same-origin", origin: `https://${ts}` }))).toBe(true);
+      expect(uploadOriginAllowed("POST", path, h({ origin: "https://evil.example" }))).toBe(false);
+      expect(uploadOriginAllowed("POST", path, h({ "sec-fetch-site": "cross-site" }))).toBe(false);
+      expect(uploadOriginAllowed("POST", path, new Headers({ host: "evil.ts.net" }))).toBe(false);
+    } finally {
+      if (prev === undefined) delete process.env.MONAI_TRUSTED_HOSTS;
+      else process.env.MONAI_TRUSTED_HOSTS = prev;
+    }
+  });
   test("other paths and methods are untouched", () => {
     const evil = hdr({ "sec-fetch-site": "cross-site" });
     expect(uploadOriginAllowed("POST", "import", evil)).toBe(true);

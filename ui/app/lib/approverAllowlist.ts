@@ -31,6 +31,19 @@ export function approverHeaderAllowed(method: string, path: string, search: stri
 // keep the 127.0.0.1 Host). Any other Host means DNS rebinding or a foreign proxy.
 const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
+/**
+ * Loopback plus MONAI_TRUSTED_HOSTS (comma-separated exact hostnames, e.g. the
+ * machine's tailnet name behind `tailscale serve`, 261122-tsh). Read per call,
+ * server-side only. Exact names, never a wildcard: anyone can mint a *.ts.net name.
+ */
+function trustedHosts(): Set<string> {
+  const extra = (process.env.MONAI_TRUSTED_HOSTS ?? "")
+    .split(",")
+    .map((h) => h.trim().toLowerCase())
+    .filter(Boolean);
+  return extra.length ? new Set(Array.from(LOCAL_HOSTS).concat(extra)) : LOCAL_HOSTS;
+}
+
 const hostnameOf = (origin: string): string | null => {
   try {
     return new URL(origin).hostname.toLowerCase();
@@ -41,19 +54,20 @@ const hostnameOf = (origin: string): string | null => {
 
 /**
  * True for a same-origin browser request (or a non-browser client) to a
- * loopback Host. Blocks DNS rebinding (the browser sends the attacker's Host)
+ * loopback or trusted Host. Blocks DNS rebinding (the browser sends the attacker's Host)
  * and cross-site form posts (Sec-Fetch-Site cross-site/same-site, or a foreign
  * Origin from browsers without Fetch Metadata).
  */
 export function isLocalSameOrigin(incoming: Headers): boolean {
+  const hosts = trustedHosts();
   const host = (incoming.get("host") ?? "").replace(/:\d+$/, "").toLowerCase();
-  if (!LOCAL_HOSTS.has(host)) return false;
+  if (!hosts.has(host)) return false;
   const site = incoming.get("sec-fetch-site");
   if (site !== null && site !== "same-origin" && site !== "none") return false;
   const origin = incoming.get("origin");
   if (origin !== null) {
     const o = hostnameOf(origin);
-    if (o === null || !LOCAL_HOSTS.has(o)) return false;
+    if (o === null || !hosts.has(o)) return false;
   }
   return true;
 }

@@ -25,6 +25,7 @@ chmod 600 .env
 - `MONAI_UI_PASSWORD` is your browser login (username `monai`).
 - `MONAI_API_KEY` lets other AI apps connect to monai.
 - `MONAI_APPROVER_KEY` is what approves changes. **Never give it to another app**, so no app can approve its own changes.
+- `MONAI_TRUSTED_HOSTS` (optional) lists other hostnames you open monai at, comma-separated, such as your tailnet name when you use `tailscale serve`. Without it, uploads and Inbox approvals only work at `127.0.0.1` or `localhost`.
 
 **2. Start it:**
 
