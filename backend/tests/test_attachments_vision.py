@@ -37,7 +37,8 @@ def test_jpeg_webp_png_accepted(fmt):
 
 def test_large_image_downscaled_keeping_aspect():
     (out,) = att.prepare_images(fx.receipt_png(size=(3000, 1000)), "image")
-    assert _open(out).size == (2000, 667)
+    # 1024 (261122-vis): a 1536 px image crashed the Vega 8 iGPU runner.
+    assert _open(out).size == (1024, 341)
 
 
 def test_pixel_cap_refuses_bomb(monkeypatch):
@@ -282,3 +283,4 @@ def test_idr_receipt_currency_rules(llm):
 def test_refused_receipt_made_exactly_one_vision_call(llm):
     p = read(llm, {**USD_READING, "currency": "$"}, currency="USD")
     assert p.status == "refused" and p.rows == [] and len(llm.calls) == 1
+

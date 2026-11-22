@@ -26,6 +26,7 @@ chmod 600 .env
 - `MONAI_API_KEY` lets other AI apps connect to monai.
 - `MONAI_APPROVER_KEY` is what approves changes. **Never give it to another app**, so no app can approve its own changes.
 - `MONAI_TRUSTED_HOSTS` (optional) lists other hostnames you open monai at, comma-separated, such as your tailnet name when you use `tailscale serve`. Without it, uploads and Inbox approvals only work at `127.0.0.1` or `localhost`.
+- `MONAI_VISION_MAX_SIDE` (optional, default 1024) is the longest side of an image sent to the model. Raise it if your GPU handles larger images; on a small iGPU a larger image can crash Ollama.
 
 **2. Start it:**
 

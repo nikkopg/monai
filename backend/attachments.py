@@ -806,7 +806,9 @@ def current_locality(db: Session) -> dict:
 
 MAX_IMAGE_PIXELS = 40_000_000
 MAX_VISION_PAGES = 5
-MAX_IMAGE_SIDE = 2000
+# 1024, not 2000 (261122-vis): on the Radeon Vega 8 iGPU a 1536 px image kills the
+# Ollama runner (vk::DeviceLostError) and 1024 reads fine. Raise it on stronger hardware.
+MAX_IMAGE_SIDE = max(256, int(os.getenv("MONAI_VISION_MAX_SIDE", "1024")))
 _RENDER_DPI = 150
 
 
@@ -861,7 +863,7 @@ def prepare_images(data: bytes, kind: str, password: str | None = None) -> list[
 # The vision read (D-02, D-11, D-11a, D-12)
 # ---------------------------------------------------------------------------
 
-VISION_TIMEOUT = 120
+VISION_TIMEOUT = 300  # a cold model load alone is 76-105 s on the iGPU box (261122-vis)
 VISION_PROMPT = (
     "Read this receipt or scanned document. Reply with JSON only and no other text, with the keys: "
     '"date" (YYYY-MM-DD), "total" (exactly as printed), "currency" (as printed, or null), '

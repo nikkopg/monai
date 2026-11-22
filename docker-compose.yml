@@ -42,6 +42,8 @@ services:
       # allowlisted proxy injection used by the Inbox.
       MONAI_APPROVER_KEY: ${MONAI_APPROVER_KEY:-}
       MONAI_SKILLS_DIR: /app/skills
+      # Longest image side sent to the vision model (default 1024; the Vega 8 iGPU crashes at 1536).
+      MONAI_VISION_MAX_SIDE: ${MONAI_VISION_MAX_SIDE:-1024}
     volumes:
       # The owner's SKILL.md packs, read-only (Phase 40). Gitignored; the folder is kept via skills/.gitkeep.
       - ./skills:/app/skills:ro
