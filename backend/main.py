@@ -1640,6 +1640,35 @@ def read_settings(db: Session = Depends(get_session)):
     return get_effective_settings(db)
 
 
+@app.get("/settings/ollama-models", dependencies=[Depends(require_api_key)])
+def ollama_models():
+    """Models installed in Ollama at OLLAMA_BASE_URL, for the Settings picker (261122-omp).
+
+    502 when Ollama doesn't answer; the UI then falls back to a typed name.
+    """
+    import os
+
+    import ollama
+
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    try:
+        listed = ollama.Client(host=base_url, timeout=5).list()
+    except Exception as e:
+        logger.warning("ollama model list failed: %s", type(e).__name__)
+        raise HTTPException(status_code=502, detail="Couldn't reach Ollama.")
+    return sorted(
+        (
+            {
+                "name": m.model,
+                "size": m.size,
+                "parameter_size": m.details.parameter_size if m.details else None,
+            }
+            for m in listed.models
+        ),
+        key=lambda m: m["name"],
+    )
+
+
 @app.put("/settings", response_model=SettingsOut, dependencies=[Depends(require_api_key)])
 def write_settings(patch: SettingsUpdate, db: Session = Depends(get_session)):
     """Partial-update settings (auth-protected). Blank/absent key fields keep the

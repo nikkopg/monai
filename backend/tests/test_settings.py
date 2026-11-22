@@ -267,3 +267,50 @@ def test_get_llm_rebuilds_from_effective_settings_after_reset(monkeypatch):
     finally:
         query.reset_engine()
     assert seen == [{"llm_provider": "ollama", "llm_model": "zz-local:1b"}]
+
+
+# ---------------------------------------------------------------------------
+# GET /settings/ollama-models — the Settings model picker (261122-omp)
+# ---------------------------------------------------------------------------
+
+
+def _fake_ollama(monkeypatch, models=None, error=None):
+    from types import SimpleNamespace
+
+    import ollama
+
+    class Fake:
+        def __init__(self, host=None, timeout=None):
+            pass
+
+        def list(self):
+            if error:
+                raise error
+            return SimpleNamespace(models=[
+                SimpleNamespace(model=n, size=s, details=SimpleNamespace(parameter_size=p))
+                for n, s, p in models
+            ])
+
+    monkeypatch.setattr(ollama, "Client", Fake)
+
+
+def test_ollama_models_lists_installed_sorted(client, authed, monkeypatch):
+    _fake_ollama(monkeypatch, [("zeta:1b", 900, "1B"), ("alpha:2b", 1800, "2B")])
+    r = client.get("/settings/ollama-models")
+    assert r.status_code == 200
+    assert r.json() == [
+        {"name": "alpha:2b", "size": 1800, "parameter_size": "2B"},
+        {"name": "zeta:1b", "size": 900, "parameter_size": "1B"},
+    ]
+
+
+def test_ollama_models_unreachable_is_502(client, authed, monkeypatch):
+    _fake_ollama(monkeypatch, error=ConnectionError("refused"))
+    r = client.get("/settings/ollama-models")
+    assert r.status_code == 502
+    assert r.json()["detail"] == "Couldn't reach Ollama."
+
+
+def test_ollama_models_requires_key(client, api_key, monkeypatch):
+    _fake_ollama(monkeypatch, [])
+    assert client.get("/settings/ollama-models").status_code == 401
