@@ -41,10 +41,6 @@ services:
       # routes answer 503 (fail-closed). The frontend also receives it, for the
       # allowlisted proxy injection used by the Inbox.
       MONAI_APPROVER_KEY: ${MONAI_APPROVER_KEY:-}
-      # Optional. Comma-separated exact hostnames (besides loopback) that uploads, Inbox
-      # actions and MCP-server changes may come from, e.g. the tailnet name behind
-      # `tailscale serve`. Empty: loopback only.
-      MONAI_TRUSTED_HOSTS: ${MONAI_TRUSTED_HOSTS:-}
       MONAI_SKILLS_DIR: /app/skills
     volumes:
       # The owner's SKILL.md packs, read-only (Phase 40). Gitignored; the folder is kept via skills/.gitkeep.
@@ -71,6 +67,10 @@ services:
       # Inbox list, approve, reject and row-skip requests and nothing else; it is never
       # exposed to the browser. Empty means Inbox actions answer with the approver-key message.
       MONAI_APPROVER_KEY: ${MONAI_APPROVER_KEY:-}
+      # Optional. Comma-separated exact hostnames (besides loopback) that uploads, Inbox
+      # actions and MCP-server changes may come from, e.g. the tailnet name behind
+      # `tailscale serve`. Empty: loopback only.
+      MONAI_TRUSTED_HOSTS: ${MONAI_TRUSTED_HOSTS:-}
       # Read only by ui/middleware.ts for HTTP Basic sign-in (user monai). Must differ from
       # both keys, or the UI answers 503. Never give it the client-inlined public prefix.
       MONAI_UI_PASSWORD: ${MONAI_UI_PASSWORD:?MONAI_UI_PASSWORD must be set - add it to .env}
