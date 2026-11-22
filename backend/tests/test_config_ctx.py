@@ -39,4 +39,5 @@ def test_ollama_gets_explicit_num_ctx(monkeypatch):
     monkeypatch.setattr(config, "OLLAMA_NUM_CTX", 12345)
     config.configure_llm({"llm_provider": "ollama"})
     assert Settings.llm.context_window == 12345
+    assert Settings.llm.thinking is False  # eval: 3x faster on the local iGPU
     assert Settings.llm._model_kwargs["num_ctx"] == 12345

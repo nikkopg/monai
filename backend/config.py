@@ -82,6 +82,9 @@ def configure_llm(overrides: dict | None = None) -> None:
         Settings.llm = Ollama(
             model=model, base_url=base_url, request_timeout=120.0,
             context_window=OLLAMA_NUM_CTX,
+            # Thinking off: on the local iGPU, gemma4:e2b ran the agent eval
+            # 3x faster (17.5 vs 53 min) at the same score (15 vs 14 of 26).
+            thinking=False,
         )
         Settings.embed_model = OllamaEmbedding(model_name=embed_model, base_url=base_url)
 
