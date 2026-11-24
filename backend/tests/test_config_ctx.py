@@ -39,5 +39,8 @@ def test_ollama_gets_explicit_num_ctx(monkeypatch):
     monkeypatch.setattr(config, "OLLAMA_NUM_CTX", 12345)
     config.configure_llm({})
     assert Settings.llm.context_window == 12345
+    # 261124-vto: the client must outlast the vision read, or it cuts it short at its own limit.
+    from backend.attachments import VISION_TIMEOUT
+    assert Settings.llm.request_timeout > VISION_TIMEOUT
     assert Settings.llm.thinking is False  # eval: 3x faster on the local iGPU
     assert Settings.llm._model_kwargs["num_ctx"] == 12345

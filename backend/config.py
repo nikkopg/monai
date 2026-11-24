@@ -8,12 +8,10 @@ Env vars:
   OLLAMA_EMBED_MODEL  (default: gemma4:31b-cloud)
   OLLAMA_BASE_URL     (default: http://localhost:11434)
   CHAT_IDLE_TIMEOUT_SECONDS  (default: 120) — chat run with no workflow event for
-                      this long is cancelled with error idle_timeout. 120, not
-                      90, to match Ollama's per-read request_timeout=120 (D-14a).
-                      The watchdog starts slightly before the provider's read,
-                      so on a fully hung call idle_timeout still fires first and
-                      the provider's own timeout code is not reached; set this
-                      above 120 if that code matters.
+                      this long is cancelled with error idle_timeout (D-14a).
+                      Below Ollama's per-read request_timeout=300, so on a fully
+                      hung call idle_timeout fires first and the provider's own
+                      timeout code is not reached.
   CHAT_HISTORY_TOKEN_BUDGET  (default: 6000) — caps replayed chat history
                       (chars/4 estimate, newest turns kept, whole pairs only).
   OLLAMA_NUM_CTX      (default: 32768) — sent as options.num_ctx instead of
@@ -70,7 +68,9 @@ def configure_llm(overrides: dict | None = None) -> None:
     embed_model = os.getenv("OLLAMA_EMBED_MODEL", "gemma4:31b-cloud")
     base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     Settings.llm = Ollama(
-        model=model, base_url=base_url, request_timeout=120.0,
+        # Above attachments.VISION_TIMEOUT, or this fires first and cuts the vision
+        # read short (261124-vto). Chat and compaction have the idle guard.
+        model=model, base_url=base_url, request_timeout=300.0,
         context_window=OLLAMA_NUM_CTX,
         # Thinking off: on the local iGPU, gemma4:e2b ran the agent eval
         # 3x faster (17.5 vs 53 min) at the same score (15 vs 14 of 26).

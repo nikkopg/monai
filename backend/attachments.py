@@ -863,7 +863,9 @@ def prepare_images(data: bytes, kind: str, password: str | None = None) -> list[
 # The vision read (D-02, D-11, D-11a, D-12)
 # ---------------------------------------------------------------------------
 
-VISION_TIMEOUT = 300  # a cold model load alone is 76-105 s on the iGPU box (261122-vis)
+# A cold model load alone is 76-105 s on the iGPU box (261122-vis). Kept under the
+# Ollama client's request_timeout (config.py) and the UI proxy's 300 s fetch limit.
+VISION_TIMEOUT = 280
 VISION_PROMPT = (
     "Read this receipt or scanned document. Reply with JSON only and no other text, with the keys: "
     '"date" (YYYY-MM-DD), "total" (exactly as printed), "currency" (as printed, or null), '
