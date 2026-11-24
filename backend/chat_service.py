@@ -20,6 +20,7 @@ session; none is held across the stream.
 import asyncio
 import json
 import logging
+import time
 import uuid
 
 import anyio
@@ -39,7 +40,7 @@ logger = logging.getLogger(__name__)
 def launch(
     run: query.Run, question: str, history: list | None = None,
     tool_names: frozenset[str] | None = None, compact: bool = False,
-    attachment_thread: bool = False,
+    attachment_thread: bool = False, import_id: str | None = None, read_id: str | None = None,
 ) -> None:
     """Seed the buffer with the `run` event and start the detached pump.
 
@@ -47,7 +48,8 @@ def launch(
     on `run.pump` (asyncio keeps only weak ones).
     """
     query.push(run, query._sse({"type": "run", "run_id": run.id}))
-    run.pump = asyncio.create_task(_pump(run, question, history, tool_names, compact, attachment_thread))
+    run.pump = asyncio.create_task(_pump(
+        run, question, history, tool_names, compact, attachment_thread, import_id, read_id))
 
 
 def title_from(text_: str, limit: int = 60) -> str:
@@ -175,7 +177,8 @@ def _begin_turn(
         db.execute(text("UPDATE threads SET updated_at = now() WHERE id = :t"), {"t": thread_id})
         atts = [
             dict(r) for r in db.execute(
-                text("SELECT id, filename, kind, parse_status, parse_note, meta, "
+                text("SELECT id, filename, kind, parse_status, parse_note, meta, message_id, "
+                     "extracted_text <> '' AS has_text, "
                      "jsonb_array_length(rows) AS row_count FROM attachments "
                      "WHERE thread_id = :t ORDER BY created_at, id"),
                 {"t": thread_id},
@@ -238,7 +241,9 @@ async def start_turn(
                 }
             ),
         )
-        launch(run, question, history, tool_names, compact=bool(to_compact), attachment_thread=bool(atts))
+        import_id, read_id = chat_tools.pick_files(question, atts, user_id)
+        launch(run, question, history, tool_names, compact=bool(to_compact), attachment_thread=bool(atts),
+               import_id=import_id, read_id=read_id)
     except BaseException:
         # Not via release_run: a never-finished run must not become _LAST.
         if query._ACTIVE.get(run.key) is run:
@@ -320,10 +325,37 @@ def _observe(state: dict, chunk: str) -> None:
         state.update(error=p.get("code"), model=p.get("model"), provider=p.get("provider"))
 
 
+async def _import_stream(run: query.Run, attachment_id: str):
+    """A plain import request, done by monai with no model call (261124-dfi): the same
+    events as a turn whose model called propose_statement_rows."""
+    tool, args = "propose_statement_rows", {"attachment_id": attachment_id}
+    yield query._sse({"type": "tool_start", "call_id": "c0-0", "tool": tool, "args": args, "iteration": 0})
+    t0 = time.monotonic()
+    result = await asyncio.to_thread(chat_tools.propose_statement_rows, attachment_id)
+    step = {"tool": tool, "args": args, "result": result}
+    if result.get("proposal_id"):
+        run.proposal_ids.append(str(result["proposal_id"]))
+        n = result["row_count"]
+        answer = (f"I put {n} row{'' if n == 1 else 's'} from the attached file in the Inbox. "
+                  "Check them there: nothing is recorded until you approve.")
+    else:
+        answer = result.get("error") or "This file's rows can't be proposed."
+    yield query._sse({"type": "tool_result", "step": step, "call_id": "c0-0",
+                      "ms": round((time.monotonic() - t0) * 1000), "sources": []})
+    proposals = await asyncio.to_thread(query._extract_proposals, [step])
+    first = proposals[0] if proposals else None
+    yield query._sse({
+        "type": "answer", "text": answer, "trace": [step], "model": None, "provider": None,
+        "proposals": proposals, "proposal_id": first["id"] if first else None,
+        "proposal_token": first["token"] if first else None,
+    })
+    yield query._DONE
+
+
 async def _pump(
     run: query.Run, question: str, history: list | None,
     tool_names: frozenset[str] | None = None, compact: bool = False,
-    attachment_thread: bool = False,
+    attachment_thread: bool = False, import_id: str | None = None, read_id: str | None = None,
 ) -> None:
     # create_task copied the context, so no reset is needed; tool executor
     # threads inherit the value (D-12a).
@@ -351,11 +383,17 @@ async def _pump(
                 query.push(run, chunk)
             if session.tools:
                 run.ext, kw["ext_tools"] = True, session.tools
+        if read_id:  # hand the model the stored reading; a small one rarely opens it (261124-dfi)
+            try:
+                history = [*(history or []), *await asyncio.to_thread(chat_tools.reading_messages, read_id)]
+            except Exception as e:  # the model can still open the file itself
+                logger.warning("reading hand-over failed: %s", type(e).__name__)
         # Attribute lookup on the module, never a from-import: tests and
         # test_auth monkeypatch backend.query.agent_stream.
-        async for chunk in query.agent_stream(
+        stream = _import_stream(run, import_id) if import_id else query.agent_stream(
             question, run=run, history=history, tool_names=tool_names, **kw
-        ):
+        )
+        async for chunk in stream:
             if chunk.startswith(":") or chunk == query._DONE:
                 continue  # pings are the subscriber's own; [DONE] is withheld to the end
             _observe(state, chunk)

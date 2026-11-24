@@ -24,6 +24,7 @@ ROWS = [
 META = {"opening": "5000000.00", "closing": "5049500.00", "invariant": "running balance verified",
         "summary": "2 rows, balance verified"}
 READ_Q = "what is in this file?"
+MIXED_Q = "import this file and tell me what is in it"  # reaches the model; a plain import does not (261124-dfi)
 
 
 @pytest.fixture(autouse=True)
@@ -94,7 +95,7 @@ async def test_binding_sets_message_id_and_reduces_tools(monkeypatch, world):
 
 async def test_taint_comes_from_the_database_not_the_request(monkeypatch, world):
     _, t, _, _, _ = world
-    got, _run = await _turn(monkeypatch, "import this file", t.id)  # no attachment_ids in the request
+    got, _run = await _turn(monkeypatch, MIXED_Q, t.id)  # no attachment_ids in the request
     assert got["tool_names"] == READ_TOOL_NAMES | {"read_attachment", "propose_statement_rows"}
 
 
@@ -194,7 +195,7 @@ async def test_question_about_a_file_is_answered_from_read_attachment(monkeypatc
 async def _propose_turn(monkeypatch, tid, aid, tool="propose_statement_rows", args=None):
     llm = StubLLM(mode="script", script=[[(tool, args if args is not None else {"attachment_id": str(aid)})]])
     _install_stub_workflow(monkeypatch, llm, extra_tools=chat_tools.CHAT_ONLY_TOOLS)
-    run = await chat_service.start_turn("import this file", tid, None, [aid])
+    run = await chat_service.start_turn(MIXED_Q, tid, None, [aid])
     answer = _of_type(_payloads(await _collect(q.run_stream(run))), "answer")[0]
     await run.pump
     return run, answer
@@ -270,5 +271,100 @@ async def test_regenerate_leaves_the_upload_proposal_pending(monkeypatch, world)
     db, t, _, a, _ = world
     run, answer = await _propose_turn(monkeypatch, t.id, a.id)
     pid = answer["proposals"][0]["id"]
-    got, _r = await _turn(monkeypatch, "import this file", t.id, replace_from=run.user_message_id)
+    got, _r = await _turn(monkeypatch, MIXED_Q, t.id, replace_from=run.user_message_id)
     assert db.execute(text("SELECT status FROM proposals WHERE id = :i"), {"i": pid}).scalar() == "pending"
+
+
+# ---------------------------------------------------------------------------
+# 261124-dfi: monai imports and opens a file itself; the model is not needed for it
+# ---------------------------------------------------------------------------
+
+
+def _twin(db, t, a, **kw):
+    """Another attachment on thread t, shaped like a."""
+    cols = {c.name: getattr(a, c.name) for c in Attachment.__table__.columns if c.name not in ("id", "created_at")}
+    row = Attachment(**{**cols, "thread_id": t.id, "message_id": None, **kw})
+    db.add(row)
+    db.commit()
+    return row
+
+
+async def _direct(monkeypatch, question, tid, ids=()):
+    """A turn whose agent_stream must not run; (run, payloads)."""
+    async def never(*a, **k):
+        raise AssertionError("the model ran")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(q, "agent_stream", never)
+    run = await chat_service.start_turn(question, tid, None, list(ids))
+    events = _payloads(await _collect(q.run_stream(run)))
+    await run.pump
+    return run, events
+
+
+async def test_plain_import_proposes_without_the_model(monkeypatch, client, api_key, world):
+    db, t, _, a, _ = world
+    run, events = await _direct(monkeypatch, "import this file", t.id, [a.id])
+    answer = _of_type(events, "answer")[0]
+    (p,) = answer["proposals"]
+    assert p["channel"] == "upload" and p["token"] is None and answer["proposal_token"] is None
+    assert "2 rows" in answer["text"] and "until you approve" in answer["text"]
+    row = db.execute(text("SELECT status, turn_id, payload FROM proposals WHERE id = :i"), {"i": p["id"]}).one()
+    assert row.status == "pending" and str(row.turn_id) == run.id
+    assert row.payload["attachment"]["id"] == str(a.id) and len(row.payload["rows"]) == len(a.rows)
+    d = client.get(f"/threads/{t.id}", headers={"MONAI_API_KEY": api_key}).json()  # the card survives a reload
+    assert d["messages"][-1]["parts"]["proposals"][0]["channel"] == "upload"
+    assert SECRET not in json.dumps(events)
+
+
+async def test_import_prefers_the_usable_file_and_this_messages_file(monkeypatch, world):
+    db, t, _, a, _ = world
+    _twin(db, t, a, parse_status="refused", parse_note="ZZ note", rows=[])
+    run, events = await _direct(monkeypatch, "propose the rows", t.id)  # one usable of two
+    assert _of_type(events, "answer")[0]["proposals"][0]["payload"]["attachment"]["id"] == str(a.id)
+    newer = _twin(db, t, a)
+    _, events = await _direct(monkeypatch, "import this", t.id, [newer.id])  # two usable, one on this message
+    pid = _of_type(events, "answer")[0]["proposals"][0]["id"]
+    got = db.execute(text("SELECT payload->'attachment'->>'id' FROM proposals WHERE id = :i"), {"i": pid}).scalar()
+    assert got == str(newer.id)
+    db.execute(text("DELETE FROM proposals WHERE id = :i"), {"i": pid})
+    db.commit()
+
+
+async def test_import_of_a_refused_file_answers_with_its_note(monkeypatch, world):
+    db, t, _, a, _ = world
+    bad = _twin(db, t, a, parse_status="refused", parse_note="ZZ note", rows=[])
+    _, events = await _direct(monkeypatch, "import this", t.id, [bad.id])
+    answer = _of_type(events, "answer")[0]
+    assert answer["proposals"] == [] and "ZZ note" in answer["text"]
+
+
+async def test_several_usable_files_stay_with_the_model(monkeypatch, world):
+    db, t, _, a, _ = world
+    _twin(db, t, a)
+    got, _run = await _turn(monkeypatch, "import this file", t.id)
+    assert "propose_statement_rows" in got["tool_names"]
+
+
+def _handed(got):
+    return [m for m in got["history"] if m.role.value == "tool"]
+
+
+async def test_the_reading_is_handed_over_only_as_a_tool_result(monkeypatch, world):
+    db, t, _, a, _ = world
+    got, _run = await _turn(monkeypatch, READ_Q, t.id)
+    (m,) = _handed(got)
+    assert got["history"][-1] is m and "<untrusted_document id=" in m.content and str(a.id) in m.content
+    for other in got["history"]:
+        if other is not m:
+            assert SECRET not in str(other.content)
+    assert db.execute(text("SELECT count(*) FROM messages WHERE thread_id = :t AND role NOT IN ('user','assistant')"),
+                      {"t": t.id}).scalar() == 0
+
+
+async def test_the_reading_is_not_handed_over_for_an_unrelated_question(monkeypatch, world):
+    _, t, _, a, _ = world
+    got, _run = await _turn(monkeypatch, "How much did I spend this month?", t.id)
+    assert _handed(got) == []
+    got, _run = await _turn(monkeypatch, "How much is this?", t.id, [a.id])  # sent with the file
+    assert len(_handed(got)) == 1

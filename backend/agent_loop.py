@@ -35,6 +35,48 @@ ATTACH_RE = re.compile(
     re.I,
 )
 
+# 261124-dfi: a PLAIN request to import the attached file, which monai then does itself
+# because small local models don't reliably call the proposer. Owner's current message
+# only. Anything selective, negated, numeric or combined with another ask is not plain
+# and goes to the model as before.
+_IMPORT_VERB_RE = re.compile(
+    r"\b(?:add|record|log|import|impor|propose|ajukan|upload|unggah|save|simpan|enter|submit|tambah|catat|"
+    r"masuk(?:kan|in|an))\w*|\bput\b.{0,60}?\bin(?:to)?\b", re.I)
+_IMPORT_OBJECT_RE = re.compile(
+    r"\b(?:this|these|it|them|that|those|files?|pdf|csv|images?|photos?|pictures?|receipts?|statements?|"
+    r"rows?|transactions?|attach\w*|ini|itu|nya|struk|nota|gambar|foto|berkas|dokumen|lampiran|baris|transaksi\w*)\b",
+    re.I)
+_POLITE_RE = re.compile(
+    r"^(?:(?:ok(?:ay)?|yes|ya|please|pls|tolong|can you|could you|would you|will you|bisa|boleh|coba)\b[\s,]*)+", re.I)
+_NOT_PLAIN_RE = re.compile(
+    r"\d|n['’]t\b|^(?:what|which|who|where|is|are|was|were|do|has|have|should|apa|siapa|mana)\b"
+    r"|\b(?:not|never|no|dont|cancel|undo|stop|without|except|only|but|just|unless|if|instead|before|after|"
+    r"first|last|second|half|some|did|does|why|how|when|tell|show|explain|summar\w*|total\w*|compare|list|"
+    r"delete|remove|edit|change|fix|update|correct|rename|merge|move|transfers?|adjust|split|categor\w*|label|"
+    r"notes?|budget|goal|chat|thread|conversation|jangan|tidak|ngg?ak|gak|belum|batal|kecuali|hanya|cuma|tanpa|"
+    r"kalau|jika|kenapa|mengapa|gimana|bagaimana|berapa|kapan|sudah|udah|hapus\w*|ubah|ganti|koreksi|kategori\w*|"
+    r"pindah\w*|jelaskan)\b", re.I)
+
+
+def wants_import(question: str) -> bool:
+    """Whether the owner's message is a plain "import the attached file" request."""
+    q = _POLITE_RE.sub("", (question or "").strip())
+    if not q or len(q) > 160 or _NOT_PLAIN_RE.search(q):
+        return False
+    m = _IMPORT_VERB_RE.search(q)
+    return bool(m and (_IMPORT_OBJECT_RE.search(q) or not (q[:m.start()] + q[m.end():]).strip(" .!?,")))
+
+
+_FILE_RE = re.compile(
+    r"\b(?:files?|pdf|csv|images?|photos?|pictures?|receipts?|statements?|documents?|attach\w*|scan\w*|"
+    r"struk|nota|gambar\w*|foto\w*|berkas|dokumen\w*|lampiran\w*)\b", re.I)
+
+
+def asks_about_file(question: str) -> bool:
+    """Whether the owner's message mentions the attached file."""
+    return bool(_FILE_RE.search(question or ""))
+
+
 _QUESTION_RE = re.compile(r"[^.?!\n]*\?")
 
 # What the LLM sees of a tool result is str(raw) (the Python repr), so the cap

@@ -30,7 +30,8 @@ from backend.tests.test_write_endpoints import _cleanup_account
 from backend.tools import READ_TOOL_NAMES, TOOLS
 
 READ_Q = "what is in this file?"
-WRITE_Q = "import this file"
+# Mixed on purpose: a plain import never reaches the model (261124-dfi).
+WRITE_Q = "import this file and tell me what is in it"
 READ_SET = sorted(READ_TOOL_NAMES | {"read_attachment"})
 WRITE_SET = sorted(READ_TOOL_NAMES | {"read_attachment", "propose_statement_rows"})
 DOCS = ["csv", "pdf", "image"]
@@ -162,6 +163,22 @@ async def test_write_turn_proposes_only_the_parsed_rows(lab, doc):
         assert {k: got[k] for k in ("date", "amount", "merchant", "category", "account")} == \
             {**{k: want[k] for k in ("date", "amount", "merchant", "category")}, "account": fx.EVAL_ACCOUNT}
         assert got["attachment_id"] == aid and got["sha256"]  # provenance rides on every row
+    assert (_count("transactions"), _count("audit_log")) == (tx, audit)
+
+
+@pytest.mark.parametrize("doc", DOCS)
+async def test_direct_import_never_calls_the_model(lab, doc):
+    """261124-dfi: a plain import takes only the parsed rows, whatever the document says."""
+    tx, audit = _count("transactions"), _count("audit_log")
+    tid, aid = lab.upload(doc)
+    run, _events, offered = await lab.turn(tid, "import this file")
+    assert offered == []
+    ((channel, payload),) = _proposals([run.id], aid)
+    with SessionLocal() as db:
+        stored = db.execute(text("SELECT rows FROM attachments WHERE id = :a"), {"a": aid}).scalar()
+    assert channel == "upload"
+    assert [r["after"]["amount"] for r in payload["rows"]] == [w["amount"] for w in stored]
+    assert all(r["after"]["account"] == fx.EVAL_ACCOUNT for r in payload["rows"])
     assert (_count("transactions"), _count("audit_log")) == (tx, audit)
 
 

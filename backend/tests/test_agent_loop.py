@@ -23,6 +23,7 @@ from sqlalchemy import text
 
 import backend.query as q
 from backend import chat_service, skills
+from backend import agent_loop
 from backend.agent_loop import tools_for_turn
 from backend.db import SessionLocal
 from backend.models import Message, Thread
@@ -1044,3 +1045,34 @@ async def test_recurring_groups_all_reach_the_model_but_sse_keeps_evidence(monke
     assert all(f"ZZ Sub {i:02d}" in second for i in range(20)) and "truncated" not in second
     result = _of_type(_payloads(lines), "tool_result")[0]["step"]["result"]
     assert len(result["groups"]) == 20 and len(result["groups"][0]["evidence"]) == 12
+
+
+# 261124-dfi: a plain import request is done by monai; everything else stays with the model.
+PLAIN_IMPORTS = [
+    "import this file", "add these transactions", "put the transactions from this pdf into my account",
+    "tolong catat transaksi di file ini", "propose the transaction from what you read", "propose the rows",
+    "can you import this?", "please add this to my account", "import", "yes import it", "simpan ini",
+]
+
+
+@pytest.mark.parametrize("question", PLAIN_IMPORTS)
+def test_plain_import_is_recognised_and_never_wider_than_the_proposer_gate(question):
+    assert agent_loop.wants_import(question)
+    assert tools_for_turn(question, attachment_thread=True) == ATT_ALL
+
+
+@pytest.mark.parametrize("question", [
+    "", "what is in this file?", "did you import this?", "how do I import this?", "don't import this",
+    "don\u2019t add this", "import only the groceries", "import all except Starbucks", "jangan import ini",
+    "import this file and tell me what is in it", "add 50000 for lunch", "what did I buy?",
+    "why can't you propose it?", "save this chat", "change the category", "add a note to this",
+    "What transaction you see from the attached image?",
+])
+def test_anything_else_is_not_a_plain_import(question):
+    assert not agent_loop.wants_import(question)
+
+
+def test_asks_about_file():
+    assert agent_loop.asks_about_file("What transaction you see from the attached image?")
+    assert agent_loop.asks_about_file("apa isi struk ini?")
+    assert not agent_loop.asks_about_file("How much did I spend this month?")

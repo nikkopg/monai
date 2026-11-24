@@ -151,6 +151,14 @@ def test_foreign_thread_unset_thread_and_bad_id(env):
         tools.CURRENT_THREAD_ID.reset(tok)
 
 
+def test_reading_states_the_currency_only_for_an_accepted_file(env):
+    a = _att(env)
+    assert "is in IDR" in chat_tools.read_attachment(str(a.id))["currency"]
+    bad = _att(env, status="refused", note="ZZ", rows=[])  # may be in another currency
+    assert "currency" not in chat_tools.read_attachment(str(bad.id))
+    assert "currency" not in chat_tools.read_attachment(str(_att(env, account=None).id))
+
+
 def test_empty_id_means_this_threads_newest_file(env):
     """261122-aid: a small model may leave the id out; it gets this thread's newest file, never another's."""
     db, t, other, *_ = env

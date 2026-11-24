@@ -25,6 +25,7 @@ from backend.db import get_session_sync
 from backend.mcp_writes import BatchRefused, UploadRow, _clean_text, propose_batch
 from backend.models import Account, Attachment
 
+_PROPOSABLE = ("ok", "llm_read")  # parse statuses whose rows can be proposed
 PAGE_CHARS = 6000  # repr of one page; the 8000-char result cap never trims a string
 _HARD_CUT = 1000  # a single longer line is cut here (worst case 6 repr chars per character)
 _NO_ATTACHMENT = {"error": "No such attachment in this chat."}
@@ -139,6 +140,11 @@ def read_attachment(attachment_id: str = "", page: int = 1) -> dict:
             "note": a.parse_note,
             "original_removed": a.purged_at is not None,
         }
+        # Small models label rupiah as USD (261124-dfi). Only for an accepted file: a refused
+        # one may be in another currency.
+        acct = db.get(Account, a.account_id) if a.account_id is not None else None
+        if acct is not None and a.parse_status in _PROPOSABLE:
+            out["currency"] = f"Every amount in this file is in {acct.currency or 'IDR'}. Never write another currency."
         if page == 1:
             out["stats"] = _stats(a.rows, a.meta)
         return out
@@ -182,6 +188,45 @@ def propose_statement_rows(attachment_id: str = "") -> dict:
             "summary": res["summary"],
             "note": "Waiting in the Inbox for the owner's review; nothing is recorded until they approve there.",
         }
+
+
+def pick_files(question: str, atts: list[dict], message_id) -> tuple[str | None, str | None]:
+    """(file to import without the model, file whose reading to hand the model); 261124-dfi.
+
+    Files sent with this message come first, else the whole thread's. Importing needs
+    exactly one proposable file (with none, the newest, so its refusal is the answer);
+    with several the model handles it. Decided by the owner's current message only.
+    """
+    from backend import agent_loop  # lazy: agent_loop reads this module's names
+
+    mine = [a for a in atts if a["message_id"] == message_id]
+    pool = mine or atts
+    if pool and agent_loop.wants_import(question):
+        ready = [a for a in pool if a["parse_status"] in _PROPOSABLE and a["row_count"]]
+        return (str((ready or pool)[-1]["id"]), None) if len(ready) < 2 else (None, None)
+    if mine or agent_loop.asks_about_file(question):
+        readable = [a for a in pool if a["has_text"]]
+        if readable:
+            return None, str(readable[-1]["id"])
+    return None, None
+
+
+def reading_messages(attachment_id: str) -> list:
+    """The file's first page as a read_attachment call and its result, for the end of the
+    history. Document text still reaches the model only as a tool message inside its
+    untrusted_document block (rule 15)."""
+    from llama_index.core.base.llms.types import ChatMessage, MessageRole, ToolCallBlock
+
+    result = read_attachment(attachment_id)
+    if "error" in result:
+        return []
+    args = {"attachment_id": attachment_id}
+    return [
+        ChatMessage(role=MessageRole.ASSISTANT, blocks=[
+            ToolCallBlock(tool_call_id="read_attachment", tool_name="read_attachment", tool_kwargs=args)]),
+        ChatMessage(role=MessageRole.TOOL, content=str(result),
+                    additional_kwargs={"tool_call_id": "read_attachment"}),
+    ]
 
 
 def load_skill(name: str, file: str | None = None) -> dict:
