@@ -204,6 +204,8 @@ def pick_files(question: str, atts: list[dict], message_id) -> tuple[str | None,
     if pool and agent_loop.wants_import(question):
         ready = [a for a in pool if a["parse_status"] in _PROPOSABLE and a["row_count"]]
         return (str((ready or pool)[-1]["id"]), None) if len(ready) < 2 else (None, None)
+    if pool and agent_loop.asks_why_refused(question) and all(a["parse_status"] == "refused" for a in pool):
+        return str(pool[-1]["id"]), None  # its stored reason is the answer; a refused file proposes nothing
     if mine or agent_loop.asks_about_file(question):
         readable = [a for a in pool if a["has_text"]]
         if readable:

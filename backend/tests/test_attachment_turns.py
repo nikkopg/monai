@@ -368,3 +368,14 @@ async def test_the_reading_is_not_handed_over_for_an_unrelated_question(monkeypa
     assert _handed(got) == []
     got, _run = await _turn(monkeypatch, "How much is this?", t.id, [a.id])  # sent with the file
     assert len(_handed(got)) == 1
+
+
+async def test_why_a_refused_file_was_refused_is_its_stored_note(monkeypatch, world):
+    db, t, _, a, _ = world
+    bad = _twin(db, t, a, parse_status="refused", parse_note="ZZ note", rows=[])
+    n = db.execute(text("SELECT count(*) FROM proposals")).scalar()
+    _, events = await _direct(monkeypatch, "Why it cant be proposed?", t.id, [bad.id])
+    assert "ZZ note" in _of_type(events, "answer")[0]["text"]
+    assert db.execute(text("SELECT count(*) FROM proposals")).scalar() == n
+    got, _run = await _turn(monkeypatch, "Why it cant be proposed?", t.id)  # a usable file is here too
+    assert "tool_names" in got

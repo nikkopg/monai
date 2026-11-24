@@ -1076,3 +1076,10 @@ def test_asks_about_file():
     assert agent_loop.asks_about_file("What transaction you see from the attached image?")
     assert agent_loop.asks_about_file("apa isi struk ini?")
     assert not agent_loop.asks_about_file("How much did I spend this month?")
+
+
+def test_asks_why_refused():
+    for q in ("Why it cant be proposed?", "why was it refused", "kenapa tidak bisa dicatat?"):
+        assert agent_loop.asks_why_refused(q)
+    for q in ("Why did I spend so much?", "propose the rows", "what is in this file?", ""):
+        assert not agent_loop.asks_why_refused(q)

@@ -67,6 +67,17 @@ def wants_import(question: str) -> bool:
     return bool(m and (_IMPORT_OBJECT_RE.search(q) or not (q[:m.start()] + q[m.end():]).strip(" .!?,")))
 
 
+# "Why can't it be proposed?": small models invent a reason instead of the file's stored one.
+_WHY_RE = re.compile(
+    r"\b(?:why|kenapa|mengapa|kok)\b.*\b(?:propos|import|impor|add|record|read|refus|reject|fail|accept|ajukan|"
+    r"catat|tambah|baca|tolak|gagal|di(?:impor|catat|tambah|baca|tolak|ajukan))\w*", re.I | re.S)
+
+
+def asks_why_refused(question: str) -> bool:
+    """Whether the owner asks why the attached file couldn't be read or proposed."""
+    return bool(_WHY_RE.search(question or ""))
+
+
 _FILE_RE = re.compile(
     r"\b(?:files?|pdf|csv|images?|photos?|pictures?|receipts?|statements?|documents?|attach\w*|scan\w*|"
     r"struk|nota|gambar\w*|foto\w*|berkas|dokumen\w*|lampiran\w*)\b", re.I)

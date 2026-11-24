@@ -137,6 +137,26 @@ def test_missing_date_uses_the_upload_date_flagged(llm, monkeypatch, dated):
     assert row["llm_read"] is True
 
 
+AMBIGUOUS = "The date could be day/month or month/day; read day first. Check it."
+
+
+@pytest.mark.parametrize("printed, day, flagged", [
+    ("14/03/2026", "2026-03-14", False),
+    ("14-03-2026 18:05", "2026-03-14", False),
+    ("14.3.2026", "2026-03-14", False),
+    ("03/14/2026", "2026-03-14", False),  # only a month-first date fits
+    ("2026/03/14", "2026-03-14", False),
+    ("05/05/2026", "2026-05-05", False),  # the same either way
+    ("05/03/2026", "2026-03-05", True),
+])
+def test_day_month_year_dates_follow_the_csv_rules(llm, printed, day, flagged):
+    """261125-rdf (owner decision)."""
+    p = read(llm, {**READING, "date": printed})
+    (row,) = p.rows
+    assert (p.status, row["date"]) == ("llm_read", day)
+    assert row["assumptions"] == ([AMBIGUOUS] if flagged else [])
+
+
 def test_items_that_dont_add_up_are_advisory(llm):
     bad = {**READING, "items": [{"name": "ZZ tea", "amount": "20.500"}, {"name": "ZZ rice", "amount": "19.500"}]}
     p = read(llm, bad)
@@ -165,7 +185,11 @@ def test_json_number_total_never_goes_through_binary_float(llm):
     [
         ("I can't read this image.", False),
         ('{"date": "2026-03-14", "items": []}', True),                      # no total
-        ({**READING, "date": "14/03/2026"}, True),                          # not ISO
+        ({**READING, "date": "31/02/2026"}, True),                          # not a real day
+        ({**READING, "date": "14/13/2026"}, True),                          # no such month either way
+        ({**READING, "date": "14/03/26"}, True),                            # two-digit year: could be yy/mm/dd
+        ({**READING, "date": "2026-03-145"}, True),                         # trailing digit
+        ({**READING, "date": "14 Maret"}, True),
         ({**READING, "date": "2026-02-30"}, True),                          # not a real day
         ({**READING, "total": "abc"}, True),
         ({**READING, "total": "0"}, True),
@@ -174,7 +198,7 @@ def test_json_number_total_never_goes_through_binary_float(llm):
 def test_invalid_reading_refused_with_fixed_note(llm, content, keeps_text):
     p = read(llm, content)
     assert p.status == "refused" and p.rows == [] and p.note
-    assert "abc" not in p.note and "14/03" not in p.note
+    assert "abc" not in p.note and "/" not in p.note
     assert bool(p.text) is keeps_text
 
 
