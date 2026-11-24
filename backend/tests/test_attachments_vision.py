@@ -165,6 +165,43 @@ def test_items_that_dont_add_up_are_advisory(llm):
     assert p.meta["items_sum_matches"] is False
 
 
+COMMAS = {**READING, "currency": None, "total": "45,480", "merchant": "ZZ Mart",
+          "items": [{"name": "ZZ a", "amount": "17,500"}, {"name": "ZZ b", "amount": "27,980"}]}
+
+
+def test_comma_thousands_rupiah_receipt(llm):
+    """261125-amt: 45,480 was read as 45.48."""
+    p = read(llm, COMMAS)
+    assert p.status == "llm_read" and p.rows[0]["amount"] == "-45480" and p.meta["items_sum_matches"] is True
+    p = read(llm, {**COMMAS, "paid": "50,000", "change": "4,520"})
+    assert p.status == "llm_read" and p.rows[0]["amount"] == "-45480"
+
+
+@pytest.mark.parametrize("wrong, note", [
+    ({"total": "50,000", "paid": "50,000", "change": "4,520"}, "cash paid"),
+    ({"total": "50,000", "change": "4,520"}, "cash paid"),  # items + change
+    ({"total": "250,000"}, "too far apart"),
+    ({"total": "4,520"}, "too far apart"),
+])
+def test_a_total_that_is_not_the_amount_due_is_refused(llm, wrong, note):
+    p = read(llm, {**COMMAS, **wrong})
+    assert p.status == "refused" and p.rows == [] and note in p.note and p.text
+
+
+@pytest.mark.parametrize("ok", [
+    {"total": "50,483"},                                          # 11% tax
+    {"total": "45,480", "paid": "45,480", "change": "0"},         # exact cash
+    {"total": "45,480", "paid": "45,480", "change": None},        # card
+    {"total": "90,000", "items": [{"name": "ZZ a", "amount": "17,500"}]},  # one price proves nothing
+    {"total": "90,000", "items": []},
+    {"paid": "50,000", "change": "4,520", "items": COMMAS["items"] + [{"name": "0.5X 90,000", "amount": "90,000"}]},  # paid - change
+    {"items": COMMAS["items"] + [{"name": "TOTAL:", "amount": "45,480"}, {"name": "Tunai", "amount": "50,000"},
+                                 {"name": "CHANGE", "amount": "4,520"}]},  # not prices
+])
+def test_ordinary_differences_still_propose(llm, ok):
+    assert read(llm, {**COMMAS, **ok}).status == "llm_read"
+
+
 def test_currency_missing_is_assumed_idr_and_foreign_is_refused(llm):
     p = read(llm, {**READING, "currency": None})
     assert p.status == "llm_read" and p.rows[0]["assumptions"] == ["Currency not printed; assumed IDR."]

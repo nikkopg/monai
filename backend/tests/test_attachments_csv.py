@@ -161,8 +161,12 @@ def test_generic_usd_csv_uses_dot_prior():
     # The note says what the parser did: it must not describe the IDR reading on a USD file.
     assert all(SEP_ASSUMPTION_DOT in r["assumptions"] and SEP_ASSUMPTION not in r["assumptions"] for r in p.rows)
     q = parse(AMBIGUOUS_CSV, cur="IDR")
-    assert [Decimal(r["amount"]) for r in q.rows] == [Decimal("-1.25"), Decimal("20")]
-    assert all(SEP_ASSUMPTION in r["assumptions"] and SEP_ASSUMPTION_DOT not in r["assumptions"] for r in q.rows)
+    # 261125-amt: rupiah printed with comma thousands is not a thousandth of itself; still flagged.
+    assert [Decimal(r["amount"]) for r in q.rows] == [Decimal("-1250"), Decimal("20000")]
+    assert all(SEP_ASSUMPTION_DOT in r["assumptions"] for r in q.rows)
+    dots = parse(AMBIGUOUS_CSV.replace("1,250", "1.250").replace("20,000", "20.000"), cur="IDR")
+    assert [Decimal(r["amount"]) for r in dots.rows] == [Decimal("-1250"), Decimal("20000")]
+    assert all(SEP_ASSUMPTION in r["assumptions"] and SEP_ASSUMPTION_DOT not in r["assumptions"] for r in dots.rows)
 
 
 def test_normalise_currency_tokens():

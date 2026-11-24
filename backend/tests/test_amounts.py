@@ -88,6 +88,21 @@ def test_default_is_the_tie_answer_and_evidence_wins():
     assert infer_decimal_sep_with_evidence([]) == (",", "none")
 
 
+@pytest.mark.parametrize("values, want", [
+    (["250,000"], "."), (["6,250", "14,370", "250,000", "None", "500"], "."),  # commas are thousands (261125-amt)
+    (["6.250", "250.000"], ","),
+    (["6,250", "6.250"], ","),       # mixed styles: the prior
+    (["0,125", "6,250"], ","),       # 0,125 can only be a decimal
+    (["1234,500"], ","), (["6,25", "6,250"], ","),
+    (["100", "500"], ","),
+])
+def test_comma_groups_of_three_are_thousands_without_other_evidence(values, want):
+    assert infer_decimal_sep(values) == want
+    if want == ".":
+        assert infer_decimal_sep_with_evidence(values) == (".", "none")  # still flagged
+        assert parse_amount("250,000", want) == Decimal(250000)
+
+
 def test_three_decimals_stay_exact_and_the_batch_refuses_them():
     from backend import mcp_writes
 
