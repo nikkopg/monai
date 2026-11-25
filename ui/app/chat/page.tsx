@@ -4,7 +4,7 @@ import { Fragment, Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { tokens, input, btnDark, btnGhost } from "../styles";
-import ConfirmDialog from "../cashflow/ConfirmDialog";
+import ConfirmDialog from "../overview/ConfirmDialog";
 import type { DiffRow } from "../components/ProposalDiff";
 import { hhmm } from "../lib/inbox";
 import { errorCopy } from "./errors";
@@ -40,6 +40,7 @@ import {
 } from "./extLabels";
 import SourceChips, { dedupeSources } from "./SourceChips";
 import type { Source } from "./labels";
+import StageLabel, { closePhases, enterPhase, stageTrail, type Phase, type Stage } from "./StageLabel";
 import {
   EMPTY_LANE,
   laneAppend,
@@ -77,6 +78,7 @@ type AsstItem = {
   createdAt: string | null;
   live: boolean; // answered in this view (state text "just now")
   stopRejected?: boolean;
+  phases?: Phase[]; // 261122-stm: stage timeline of an answer given in this view
   seq?: number; // persisted position; live items have none and sit after any boundary
 };
 
@@ -329,7 +331,7 @@ function EditBox({
         </button>
       </div>
       {error && (
-        <div role="alert" style={{ fontSize: 12, color: tokens.color.terracottaText }}>
+        <div role="alert" style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.terracottaText }}>
           {error}
         </div>
       )}
@@ -368,7 +370,7 @@ function ErrorBlock({
       <div style={{ fontSize: 16, fontWeight: 600, color: tokens.color.ink }}>{title}</div>
       <div
         style={{
-          fontSize: 14,
+          fontSize: "var(--fs-body, 14px)",
           fontWeight: 400,
           color: tokens.color.muted3,
           marginTop: 8,
@@ -378,7 +380,7 @@ function ErrorBlock({
         {body}
       </div>
       {model && (
-        <div style={{ fontSize: 12, color: tokens.color.muted3, marginTop: 8 }}>
+        <div style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3, marginTop: 8 }}>
           Model: {model}
         </div>
       )}
@@ -482,6 +484,7 @@ function ChatInner() {
   const loadedRef = useRef<string | null>(null); // thread this view shows or is loading
   const loadSeqRef = useRef(0);
   const liveIdRef = useRef<string | null>(null); // assistant item of the run in view
+  const stageRef = useRef<Stage | null>(null); // 261122-stm: open phase, read per token
   const askedRef = useRef(""); // question of the run in view (REL-01 restore)
   const traceRef = useRef<TraceStep[]>([]);
   const terminalRef = useRef(false);
@@ -554,6 +557,7 @@ function ChatInner() {
       ...m,
       lane: { ...m.lane, draft: "", draftIteration: null },
       status: "error",
+      phases: closePhases(m.phases, Date.now()),
       error: err,
       proposals: proposals.map(toProposal),
       live: true,
@@ -581,15 +585,24 @@ function ChatInner() {
       if (paramRef.current !== msg.thread_id) {
         router.replace("/chat?thread=" + msg.thread_id);
       }
+    } else if (msg.type === "step" && (msg.stage === "loading" || msg.stage === "thinking")) {
+      stageRef.current = msg.stage;
+      const stage = msg.stage;
+      updateLive((m) => ({ ...m, phases: enterPhase(m.phases, stage, Date.now()) }));
     } else if (
       msg.type === "token" &&
       typeof msg.delta === "string" &&
       typeof msg.iteration === "number"
     ) {
       tokenBuf.push(msg.delta, msg.iteration);
+      if (stageRef.current !== "answering" && msg.delta.trim()) {
+        stageRef.current = "answering";
+        updateLive((m) => ({ ...m, phases: enterPhase(m.phases, "answering", Date.now()) }));
+      }
     } else if (msg.type === "tool_start" && typeof msg.tool === "string") {
       // The narration so far becomes a working note, never the answer (lane rule).
       const pending = tokenBuf.take();
+      stageRef.current = "tool";
       const ev = {
         call_id: typeof msg.call_id === "string" ? msg.call_id : `t${Date.now()}`,
         tool: msg.tool,
@@ -600,7 +613,11 @@ function ChatInner() {
         const lane = pending.text
           ? laneAppend(m.lane, pending.text, pending.iteration ?? ev.iteration)
           : m.lane;
-        return { ...m, lane: laneToolStart(lane, ev, Date.now()) };
+        return {
+          ...m,
+          lane: laneToolStart(lane, ev, Date.now()),
+          phases: enterPhase(m.phases, "tool", Date.now(), ev.tool),
+        };
       });
     } else if (msg.type === "tool_result" && msg.step) {
       traceRef.current = [...traceRef.current, msg.step as TraceStep];
@@ -626,6 +643,7 @@ function ChatInner() {
           ...m,
           lane,
           status: "complete",
+          phases: closePhases(m.phases, Date.now()),
           text: typeof msg.text === "string" ? msg.text : "",
           model: {
             name: typeof msg.model === "string" ? msg.model : null,
@@ -742,6 +760,7 @@ function ChatInner() {
     tokenBuf.cancel();
     const aid = nextId("a");
     liveIdRef.current = aid;
+    stageRef.current = null;
     terminalRef.current = false;
     threadSeenRef.current = true;
     traceRef.current = [];
@@ -911,6 +930,7 @@ function ChatInner() {
       ? messages.slice(target).flatMap((m) => (m.kind === "assistant" ? m.proposals.map((p) => p.id) : []))
       : [];
     liveIdRef.current = aid;
+    stageRef.current = null;
     liveUserIdRef.current = uid;
     askedRef.current = q;
     terminalRef.current = false;
@@ -1033,6 +1053,7 @@ function ChatInner() {
       // Live view only (D-03a): the partial is never persisted, a reload loses it.
       stoppedPartial: m.status === "running" ? m.lane.draft + pending.text : "",
       status: "cancelled",
+      phases: closePhases(m.phases, Date.now()),
       text: "",
       error: null,
       model: null,
@@ -1137,7 +1158,9 @@ function ChatInner() {
   // After a load or a send (or while following), bring the newest message into view;
   // otherwise growing content raises the Jump to latest pill.
   useEffect(() => {
-    if (loading) return;
+    // The starter view has nothing to follow; scrolling it pushed "Chats ▾" off
+    // the top of a phone screen (F004).
+    if (loading || messages.length === 0) return;
     if (scrollNextRef.current || followingRef.current) {
       scrollNextRef.current = false;
       scrollToLatest();
@@ -1236,7 +1259,7 @@ function ChatInner() {
     : -1;
   const dividerText = boundary?.summarized
     ? "Earlier messages summarized"
-    : "Context cleared — earlier messages are not sent to the model";
+    : "Context cleared. Earlier messages are not sent to the model";
 
   // Ask again is the same regenerate through replace_from whenever the question is
   // saved (D-18); an unsaved, thread-less pair is replaced locally instead.
@@ -1293,7 +1316,7 @@ function ChatInner() {
     else void sendQuestion(text, { replaceFrom: editing.id, mode: "edit" });
   }
 
-  // /cashflow re-fetches its own list on mount. Mark the proposal applied here so
+  // /overview re-fetches its own list on mount. Mark the proposal applied here so
   // Regenerate / Edit lock for this point at once (D-19). Card and plan bar share it;
   // a card's own reject lands here too, so Approve all hides (D-17).
   function markStatus(msgId: string, pid: string, status: LiveStatus) {
@@ -1315,6 +1338,8 @@ function ChatInner() {
     const isLast = index === messages.length - 1;
     const errCopy = m.error ? errorCopy(m.error) : null;
     const draft = m.lane.draft.trim() ? m.lane.draft : "";
+    const trailText =
+      m.phases && (m.status === "running" || m.status === "complete") ? stageTrail(m.phases) : "";
     const partial = m.stoppedPartial?.trim() ? m.stoppedPartial : "";
     const answerBox: React.CSSProperties = {
       color: tokens.color.ink,
@@ -1335,25 +1360,29 @@ function ChatInner() {
     );
     return (
       <div key={m.id} className="chat-msg">
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: trailText ? 4 : 16 }}>
           <span style={{ fontFamily: tokens.font.serif, fontSize: 18 }}>monai</span>
-          {m.status !== "error" && (
-            <span style={{ fontSize: 12, color: tokens.color.muted3 }}>
-              ·{" "}
-              {m.status === "cancelled"
-                ? "stopped"
-                : m.status === "complete"
-                ? answeredLabel(m)
-                : draft
-                ? "answering…"
-                : "thinking…"}
-            </span>
+          {(m.status === "running" || m.status === "complete") && m.phases?.length ? (
+            <StageLabel phases={m.phases} running={m.status === "running"} />
+          ) : (
+            m.status !== "error" && (
+              <span style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3 }}>
+                ·{" "}
+                {m.status === "cancelled"
+                  ? "stopped"
+                  : m.status === "complete"
+                  ? answeredLabel(m)
+                  : draft
+                  ? "answering…"
+                  : "thinking…"}
+              </span>
+            )
           )}
           {m.status === "complete" && (
             <span
               title={m.model?.provider ?? undefined}
               style={{
-                fontSize: 12,
+                fontSize: "var(--fs-xs, 12px)",
                 lineHeight: 1.5,
                 color: tokens.color.muted3,
                 background: tokens.color.tintNeutral,
@@ -1366,6 +1395,11 @@ function ChatInner() {
             </span>
           )}
         </div>
+        {trailText && (
+          <div data-testid="stage-trail" style={{ marginBottom: 16, fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3, fontVariantNumeric: "tabular-nums" }}>
+            {trailText}
+          </div>
+        )}
 
         <ToolSteps
           timeline={m.lane.timeline}
@@ -1445,7 +1479,7 @@ function ChatInner() {
         {m.status === "cancelled" && (
           <div
             role="status"
-            style={{ fontSize: 14, color: tokens.color.muted3, lineHeight: 1.5, marginBottom: 16 }}
+            style={{ fontSize: "var(--fs-body, 14px)", color: tokens.color.muted3, lineHeight: 1.5, marginBottom: 16 }}
           >
             {stoppedLine(m)}
           </div>
@@ -1596,29 +1630,18 @@ function ChatInner() {
                 border: `1px solid ${tokens.color.border2}`,
                 borderRadius: tokens.radius.pill,
                 color: tokens.color.ink,
-                fontSize: 14,
+                fontSize: "var(--fs-body, 14px)",
                 fontWeight: 600,
                 cursor: "pointer",
               }}
             >
               Chats <span aria-hidden="true">{drawerOpen ? "▴" : "▾"}</span>
             </button>
-            <div
-              style={{
-                fontSize: 12,
-                letterSpacing: ".12em",
-                textTransform: "uppercase",
-                color: tokens.color.muted3,
-                marginBottom: 6,
-              }}
-            >
-              Assistant
-            </div>
             <h1
               style={{
                 fontFamily: tokens.font.serif,
                 fontWeight: 400,
-                fontSize: 40,
+                fontSize: "var(--fs-title, 40px)",
                 margin: 0,
                 letterSpacing: "-.5px",
               }}
@@ -1643,7 +1666,7 @@ function ChatInner() {
                 <div style={{ fontSize: 16, fontWeight: 600, color: tokens.color.ink }}>
                   {"That chat isn't available"}
                 </div>
-                <div style={{ fontSize: 14, color: tokens.color.muted3, marginTop: 4, lineHeight: 1.5 }}>
+                <div style={{ fontSize: "var(--fs-body, 14px)", color: tokens.color.muted3, marginTop: 4, lineHeight: 1.5 }}>
                   It may have been deleted. Start a new chat or pick one from the list.
                 </div>
               </div>
@@ -1661,7 +1684,7 @@ function ChatInner() {
 
             {!loading && !loadError && !asking && messages.length === 0 && (
               <div>
-                <p style={{ fontSize: 14, color: tokens.color.muted3, margin: "0 0 12px", lineHeight: 1.5 }}>
+                <p style={{ fontSize: "var(--fs-body, 14px)", color: tokens.color.muted3, margin: "0 0 12px", lineHeight: 1.5 }}>
                   Try one of these, or ask your own.
                 </p>
                 <div
@@ -1696,14 +1719,14 @@ function ChatInner() {
                         color: tokens.color.ink,
                       }}
                     >
-                      <div style={{ fontSize: 12, color: tokens.color.muted3, lineHeight: 1.5 }}>
+                      <div style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3, lineHeight: 1.5 }}>
                         {ex.caption}
                       </div>
-                      <div style={{ fontSize: 14, color: tokens.color.ink, lineHeight: 1.5 }}>
+                      <div style={{ fontSize: "var(--fs-body, 14px)", color: tokens.color.ink, lineHeight: 1.5 }}>
                         {ex.question}
                       </div>
                       {ex.caption === "Propose a change" && (
-                        <div style={{ fontSize: 12, color: tokens.color.muted3, marginTop: 4, lineHeight: 1.5 }}>
+                        <div style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3, marginTop: 4, lineHeight: 1.5 }}>
                           You approve it before anything changes.
                         </div>
                       )}
@@ -1804,7 +1827,7 @@ function ChatInner() {
                       style={{ display: "flex", alignItems: "center", gap: 12 }}
                     >
                       <span style={{ flex: 1, height: 1, background: tokens.color.border2 }} />
-                      <span style={{ fontSize: 12, color: tokens.color.muted3 }}>{dividerText}</span>
+                      <span style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3 }}>{dividerText}</span>
                       <span style={{ flex: 1, height: 1, background: tokens.color.border2 }} />
                     </div>
                   )}
@@ -1822,7 +1845,7 @@ function ChatInner() {
                   </ErrorBlock>
                 )}
                 {orphan && last?.kind === "user" && actionError?.userId === last.id && (
-                  <div role="alert" style={{ fontSize: 12, color: tokens.color.terracottaText }}>
+                  <div role="alert" style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.terracottaText }}>
                     {actionError.text}
                   </div>
                 )}
@@ -1850,6 +1873,7 @@ function ChatInner() {
 
           {/* Composer — sticky at the bottom of the scroll area */}
           <div
+            className="composer-sticky"
             style={{
               position: "sticky",
               bottom: 0,
@@ -1882,7 +1906,7 @@ function ChatInner() {
                     borderRadius: tokens.radius.pill,
                     boxShadow: tokens.shadow.card,
                     color: tokens.color.ink,
-                    fontSize: 14,
+                    fontSize: "var(--fs-body, 14px)",
                     fontWeight: 600,
                     padding: "0 16px",
                     minHeight: 36,
@@ -1902,7 +1926,7 @@ function ChatInner() {
                   position: "absolute",
                   bottom: "calc(100% + 4px)",
                   left: 0,
-                  fontSize: 13,
+                  fontSize: "var(--fs-xs, 13px)",
                   color: !slash && note?.error ? tokens.color.terracottaText : tokens.color.muted3,
                 }}
               >
@@ -1928,7 +1952,7 @@ function ChatInner() {
               onSubmit={submitAttach}
               pendingPassword={att.pendingPassword}
             />
-            <div style={{ display: "flex", gap: 10 }}>
+            <div className="composer-row" style={{ display: "flex", gap: 10 }}>
             <AttachToggle
               expanded={attachOpen}
               onToggle={() => setAttachOpen((o) => !o)}

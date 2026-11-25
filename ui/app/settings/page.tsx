@@ -5,52 +5,46 @@ import { useEffect, useState } from "react";
 import { tokens, card, input, btn } from "../styles";
 import CategoryManager from "./CategoryManager";
 import SkillsCard from "./SkillsCard";
+import OllamaModelField from "./OllamaModelField";
 import ExternalMcpCard from "./ExternalMcpCard";
-import AccountManager, { type Account } from "../cashflow/AccountManager";
+import AccountManager, { type Account } from "../overview/AccountManager";
+import CsvUpload from "../overview/CsvUpload";
+import PlatformManager, { type Platform } from "../investments/PlatformManager";
 
 // ---------------------------------------------------------------------------
 // Settings page — v1.1 "paper" redesign. Same three independently-saveable
-// cards (LLM Provider & Model, API Keys, Preferences), same GET/PUT
+// cards (Model, Preferences; API Keys and the provider switch went with
+// Claude/OpenAI in 261122-rmp), same GET/PUT
 // /api/settings wiring (the catch-all proxy injects MONAI_API_KEY server-side).
-// Provider is now a segmented control (UIR-07); the live-refresh toggle from
+// The live-refresh toggle from
 // the mockup is intentionally omitted — there is no backend field for it and
 // this milestone is presentation-only (a non-persisting toggle would be fake).
 // ---------------------------------------------------------------------------
 
 type SettingsOut = {
-  llm_provider: string;
   llm_model: string;
-  anthropic_api_key_masked: string | null;
-  openai_api_key_masked: string | null;
   base_currency: string;
   price_data_source: string;
 };
-
-const DEFAULT_MODEL_BY_PROVIDER: Record<string, string> = {
-  ollama: "gemma4:31b-cloud",
-  claude: "claude-haiku-4-5-20251001",
-  openai: "gpt-4o-mini",
-};
-
-const PROVIDERS = ["ollama", "claude", "openai"] as const;
 
 type SaveState = {
   status: "idle" | "saving" | "success" | "error";
   message?: string;
 };
 
+// h2: each card is a section of the page (F008); margin reset from the h2 default.
 const cardTitle: React.CSSProperties = {
-  fontSize: 15,
+  fontSize: "var(--fs-h3, 15px)",
   fontWeight: 600,
-  marginBottom: 4,
+  margin: "0 0 4px",
 };
 const cardSub: React.CSSProperties = {
-  fontSize: 13,
+  fontSize: "var(--fs-body, 13px)",
   color: tokens.color.muted,
   marginBottom: 16,
 };
 const fieldLabel: React.CSSProperties = {
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   color: tokens.color.muted2,
   marginBottom: 7,
   display: "block",
@@ -59,17 +53,12 @@ const fieldLabel: React.CSSProperties = {
 export default function SettingsPage() {
   const [loadError, setLoadError] = useState(false);
 
-  const [provider, setProvider] = useState("ollama");
-  const [model, setModel] = useState(DEFAULT_MODEL_BY_PROVIDER.ollama);
-  const [providerState, setProviderState] = useState<SaveState>({
+  const [model, setModel] = useState("");
+  const [modelState, setModelState] = useState<SaveState>({
     status: "idle",
   });
 
-  const [anthropicMasked, setAnthropicMasked] = useState<string | null>(null);
-  const [openaiMasked, setOpenaiMasked] = useState<string | null>(null);
-  const [anthropicKey, setAnthropicKey] = useState("");
-  const [openaiKey, setOpenaiKey] = useState("");
-  const [keysState, setKeysState] = useState<SaveState>({ status: "idle" });
+
 
   const [baseCurrency, setBaseCurrency] = useState("IDR");
   const [priceDataSource, setPriceDataSource] = useState("coingecko");
@@ -77,7 +66,7 @@ export default function SettingsPage() {
     status: "idle",
   });
 
-  // Accounts manager (moved here from the Cashflow page). AccountManager needs
+  // Accounts manager (moved here from the Overview page). AccountManager needs
   // each account's current_balance, which only GET /cashflow/summary returns
   // (the plain /accounts endpoint omits it); period is irrelevant to balances.
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -91,36 +80,50 @@ export default function SettingsPage() {
     }
   }
 
-  useEffect(() => {
-    loadAccounts();
-  }, []);
+  // Platforms manager (moved here from the Investments page).
+  const [platforms, setPlatforms] = useState<Platform[]>([]);
 
-  useEffect(() => {
-    async function loadSettings() {
-      try {
-        const r = await fetch("/api/settings");
-        if (!r.ok) {
-          setLoadError(true);
-          return;
-        }
-        const data: SettingsOut = await r.json();
-        setProvider(data.llm_provider);
-        setModel(data.llm_model);
-        setAnthropicMasked(data.anthropic_api_key_masked);
-        setOpenaiMasked(data.openai_api_key_masked);
-        setBaseCurrency(data.base_currency);
-        setPriceDataSource(data.price_data_source);
-      } catch {
-        setLoadError(true);
-      }
+  async function loadPlatforms() {
+    try {
+      const r = await fetch("/api/platforms");
+      if (r.ok) setPlatforms(await r.json());
+    } catch {
+      // non-fatal — the Platforms card just renders empty if this fails
     }
-    loadSettings();
+  }
+
+  async function loadSettings() {
+    try {
+      const r = await fetch("/api/settings");
+      if (!r.ok) {
+        setLoadError(true);
+        return;
+      }
+      const data: SettingsOut = await r.json();
+      setModel(data.llm_model);
+      setBaseCurrency(data.base_currency);
+      setPriceDataSource(data.price_data_source);
+    } catch {
+      setLoadError(true);
+    }
+  }
+
+  // The loaders catch their own errors, so Promise.all always resolves.
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => {
+    Promise.all([loadAccounts(), loadPlatforms(), loadSettings()]).then(() =>
+      setLoaded(true)
+    );
   }, []);
 
-  function handleProviderChange(next: string) {
-    setProvider(next);
-    setModel(DEFAULT_MODEL_BY_PROVIDER[next] ?? "");
-  }
+  // The cards above a hash target fill in after their fetches, so the
+  // browser's own hash jump lands too early; scroll once the data is in.
+  // CategoryManager's later growth above is absorbed by scroll anchoring.
+  useEffect(() => {
+    if (loaded && window.location.hash.length > 1) {
+      document.getElementById(window.location.hash.slice(1))?.scrollIntoView();
+    }
+  }, [loaded]);
 
   async function putSettings(
     body: Record<string, string>,
@@ -155,26 +158,10 @@ export default function SettingsPage() {
     }
   }
 
-  async function saveProvider(e: React.FormEvent) {
+  async function saveModel(e: React.FormEvent) {
     e.preventDefault();
-    setProviderState({ status: "idle" });
-    await putSettings(
-      { llm_provider: provider, llm_model: model },
-      setProviderState
-    );
-  }
-
-  async function saveKeys(e: React.FormEvent) {
-    e.preventDefault();
-    setKeysState({ status: "idle" });
-    const body: Record<string, string> = {};
-    if (anthropicKey) body.anthropic_api_key = anthropicKey;
-    if (openaiKey) body.openai_api_key = openaiKey;
-    const ok = await putSettings(body, setKeysState);
-    if (ok) {
-      setAnthropicKey("");
-      setOpenaiKey("");
-    }
+    setModelState({ status: "idle" });
+    await putSettings({ llm_model: model }, setModelState);
   }
 
   async function savePreferences(e: React.FormEvent) {
@@ -189,13 +176,13 @@ export default function SettingsPage() {
   function statusMessage(state: SaveState) {
     if (state.status === "success") {
       return (
-        <span style={{ color: tokens.color.green, fontSize: 12 }}>Saved.</span>
+        <span style={{ color: tokens.color.green, fontSize: "var(--fs-xs, 12px)" }}>Saved.</span>
       );
     }
     if (state.status === "error") {
       return (
-        <span style={{ color: tokens.color.terracotta, fontSize: 12 }}>
-          Save failed: {state.message}. Your previous settings are unchanged — try
+        <span style={{ color: tokens.color.terracotta, fontSize: "var(--fs-xs, 12px)" }}>
+          Save failed: {state.message}. Your previous settings are unchanged. Try
           again.
         </span>
       );
@@ -209,22 +196,11 @@ export default function SettingsPage() {
   return (
     <div className="tab-in" style={{ maxWidth: 720, margin: "0 auto", padding: "40px 44px 60px" }}>
       <div style={{ marginBottom: 28 }}>
-        <div
-          style={{
-            fontSize: 12,
-            letterSpacing: ".12em",
-            textTransform: "uppercase",
-            color: tokens.color.muted2,
-            marginBottom: 6,
-          }}
-        >
-          Configuration
-        </div>
         <h1
           style={{
             fontFamily: tokens.font.serif,
             fontWeight: 400,
-            fontSize: 40,
+            fontSize: "var(--fs-title, 40px)",
             margin: 0,
             letterSpacing: "-.5px",
           }}
@@ -235,61 +211,18 @@ export default function SettingsPage() {
 
       {loadError && (
         <div style={{ ...card, color: tokens.color.terracotta }}>
-          Couldn&apos;t load settings — check the backend is running and reload
+          Couldn&apos;t load settings. Check the backend is running and reload
           the page.
         </div>
       )}
 
-      {/* Card 1: LLM Provider & Model */}
+      {/* Card 1: Model (Ollama is the only provider since 261122-rmp) */}
       <div style={card}>
-        <div style={cardTitle}>LLM Provider &amp; Model</div>
-        <div style={cardSub}>Which engine answers your questions.</div>
-        <form onSubmit={saveProvider}>
-          <label style={fieldLabel}>Provider</label>
-          <div
-            style={{
-              display: "inline-flex",
-              background: tokens.color.sidebar,
-              border: `1px solid ${tokens.color.border2}`,
-              borderRadius: 12,
-              padding: 4,
-              marginBottom: 18,
-            }}
-          >
-            {PROVIDERS.map((p) => {
-              const active = provider === p;
-              return (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => handleProviderChange(p)}
-                  style={{
-                    border: "none",
-                    borderRadius: 9,
-                    padding: "8px 18px",
-                    fontSize: 14,
-                    fontWeight: active ? 600 : 500,
-                    cursor: "pointer",
-                    color: active ? tokens.color.ink : tokens.color.muted,
-                    background: active ? "#fff" : "transparent",
-                    boxShadow: active
-                      ? "0 1px 2px rgba(40,34,24,.12)"
-                      : "none",
-                    transition: "all .2s ease",
-                  }}
-                >
-                  {p}
-                </button>
-              );
-            })}
-          </div>
-          <label style={fieldLabel}>Model</label>
-          <input
-            style={input}
-            type="text"
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-          />
+        <h2 style={cardTitle}>Model</h2>
+        <div style={cardSub}>The Ollama model that answers your questions.</div>
+        <form onSubmit={saveModel}>
+          <label htmlFor="set-model" style={fieldLabel}>Model</label>
+          <OllamaModelField value={model} onChange={setModel} />
           <div
             style={{
               display: "flex",
@@ -299,70 +232,36 @@ export default function SettingsPage() {
             }}
           >
             <button
-              style={saveBtn(providerState)}
+              className="tap44"
+              style={saveBtn(modelState)}
               type="submit"
-              disabled={providerState.status === "saving"}
+              disabled={modelState.status === "saving"}
             >
-              {providerState.status === "saving" ? "Saving…" : "Save Provider"}
+              {modelState.status === "saving" ? "Saving…" : "Save Model"}
             </button>
-            {statusMessage(providerState)}
-          </div>
-        </form>
-      </div>
-
-      {/* Card 2: API Keys */}
-      <div style={card}>
-        <div style={cardTitle}>API Keys</div>
-        <div style={cardSub}>
-          Stored encrypted. Leave blank to keep the current key.
-        </div>
-        <form onSubmit={saveKeys}>
-          <label style={fieldLabel}>Anthropic API key</label>
-          <input
-            style={{ ...input, marginBottom: 14 }}
-            type="password"
-            value={anthropicKey}
-            placeholder={anthropicMasked ? anthropicMasked : "sk-ant-..."}
-            onChange={(e) => setAnthropicKey(e.target.value)}
-          />
-          <label style={fieldLabel}>OpenAI API key</label>
-          <input
-            style={input}
-            type="password"
-            value={openaiKey}
-            placeholder={openaiMasked ? openaiMasked : "sk-..."}
-            onChange={(e) => setOpenaiKey(e.target.value)}
-          />
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              marginTop: 18,
-            }}
-          >
-            <button
-              style={saveBtn(keysState)}
-              type="submit"
-              disabled={keysState.status === "saving"}
-            >
-              {keysState.status === "saving" ? "Saving…" : "Save Keys"}
-            </button>
-            {statusMessage(keysState)}
+            {statusMessage(modelState)}
           </div>
         </form>
       </div>
 
       {/* Card 3: Categories — expandable tree manager (D-16) */}
       <div style={card}>
-        <div style={cardTitle}>Categories</div>
+        <h2 style={cardTitle}>Categories</h2>
         <div style={cardSub}>Manage the category hierarchy used across cashflow and chat.</div>
         <CategoryManager onChanged={() => {}} />
       </div>
 
       {/* Card: Accounts — balances, rename/delete, adjust balance (moved from
-          the Cashflow page). AccountManager renders its own card section. */}
+          the Overview page). AccountManager renders its own card section. */}
       <AccountManager accounts={accounts} onChanged={loadAccounts} />
+
+      {/* Card: Import CSV (moved from the Overview page); an import changes
+          balances, so the accounts above reload. */}
+      <CsvUpload onImported={loadAccounts} />
+
+      {/* Card: Platforms (moved from the Investments page); add/edit/delete
+          reload the list. PlatformManager renders its own card section. */}
+      <PlatformManager platforms={platforms} onChanged={loadPlatforms} />
 
       {/* Card: Skills (Phase 40) */}
       <SkillsCard />
@@ -372,7 +271,7 @@ export default function SettingsPage() {
 
       {/* Card 4: Preferences */}
       <div style={{ ...card, marginBottom: 0 }}>
-        <div style={cardTitle}>Preferences</div>
+        <h2 style={cardTitle}>Preferences</h2>
         <form onSubmit={savePreferences}>
           <div
             style={{
@@ -384,8 +283,9 @@ export default function SettingsPage() {
             }}
           >
             <div>
-              <label style={fieldLabel}>Base currency</label>
+              <label htmlFor="set-base-currency" style={fieldLabel}>Base currency</label>
               <input
+                id="set-base-currency"
                 style={input}
                 type="text"
                 value={baseCurrency}
@@ -393,8 +293,9 @@ export default function SettingsPage() {
               />
             </div>
             <div>
-              <label style={fieldLabel}>Price data source</label>
+              <label htmlFor="set-price-source" style={fieldLabel}>Price data source</label>
               <select
+                id="set-price-source"
                 style={input}
                 value={priceDataSource}
                 onChange={(e) => setPriceDataSource(e.target.value)}
@@ -407,6 +308,7 @@ export default function SettingsPage() {
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <button
+              className="tap44"
               style={saveBtn(preferencesState)}
               type="submit"
               disabled={preferencesState.status === "saving"}

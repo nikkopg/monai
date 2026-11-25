@@ -1,22 +1,17 @@
 """
-Backend configuration — database URL and LLM provider.
+Backend configuration — database URL and the Ollama LLM (the only provider).
 
 Env vars:
   DATABASE_URL    (default: postgresql+psycopg://monai:$POSTGRES_PASSWORD@localhost:5434/monai;
                   falls back to the dev default when POSTGRES_PASSWORD is unset)
-  LLM_PROVIDER    ollama (default) | claude | openai
   OLLAMA_MODEL        (default: gemma4:31b-cloud)
   OLLAMA_EMBED_MODEL  (default: gemma4:31b-cloud)
   OLLAMA_BASE_URL     (default: http://localhost:11434)
-  CLAUDE_MODEL        (default: claude-haiku-4-5-20251001)
-  OPENAI_MODEL        (default: gpt-4o-mini)
   CHAT_IDLE_TIMEOUT_SECONDS  (default: 120) — chat run with no workflow event for
-                      this long is cancelled with error idle_timeout. 120, not
-                      90, to match Ollama's per-read request_timeout=120 (D-14a).
-                      The watchdog starts slightly before the provider's read,
-                      so on a fully hung call idle_timeout still fires first and
-                      the provider's own timeout code is not reached; set this
-                      above 120 if that code matters.
+                      this long is cancelled with error idle_timeout (D-14a).
+                      Below Ollama's per-read request_timeout=300, so on a fully
+                      hung call idle_timeout fires first and the provider's own
+                      timeout code is not reached.
   CHAT_HISTORY_TOKEN_BUDGET  (default: 6000) — caps replayed chat history
                       (chars/4 estimate, newest turns kept, whole pairs only).
   OLLAMA_NUM_CTX      (default: 32768) — sent as options.num_ctx instead of
@@ -58,54 +53,27 @@ OLLAMA_NUM_CTX = max(2048, int(os.getenv("OLLAMA_NUM_CTX", "32768")))
 
 
 def configure_llm(overrides: dict | None = None) -> None:
-    """Set LlamaIndex Settings.llm + embed_model from LLM_PROVIDER.
+    """Set LlamaIndex Settings.llm + embed_model to Ollama.
 
-    overrides: optional dict (e.g. backend.settings.get_effective_settings(db,
-    raw_keys=True)) whose values take precedence over the os.getenv() defaults
-    below. Keys consulted: llm_provider, llm_model, anthropic_api_key,
-    openai_api_key. Passing None (or omitting the argument) preserves the
-    original env-var-only behavior — the zero-arg call in query.py's
-    _get_llm() keeps working unchanged.
+    overrides: optional dict (e.g. backend.settings.get_effective_settings(db))
+    whose llm_model takes precedence over OLLAMA_MODEL. Passing None keeps the
+    env-var-only behavior.
     """
     from llama_index.core import Settings
+    from llama_index.embeddings.ollama import OllamaEmbedding
+    from llama_index.llms.ollama import Ollama
 
     overrides = overrides or {}
-
-    provider = (overrides.get("llm_provider") or os.getenv("LLM_PROVIDER", "ollama")).lower()
-
-    if provider == "ollama":
-        from llama_index.llms.ollama import Ollama
-        from llama_index.embeddings.ollama import OllamaEmbedding
-        model = overrides.get("llm_model") or os.getenv("OLLAMA_MODEL", "gemma4:31b-cloud")
-        embed_model = os.getenv("OLLAMA_EMBED_MODEL", "gemma4:31b-cloud")
-        base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-        Settings.llm = Ollama(
-            model=model, base_url=base_url, request_timeout=120.0,
-            context_window=OLLAMA_NUM_CTX,
-        )
-        Settings.embed_model = OllamaEmbedding(model_name=embed_model, base_url=base_url)
-
-    elif provider == "claude":
-        from llama_index.llms.anthropic import Anthropic
-        from llama_index.core.embeddings import MockEmbedding
-        # Claude has no embeddings API and no embedding-based retrieval is used
-        # by this app's tool-router agent (D-06 preserved); MockEmbedding avoids
-        # requiring an extra llama-index-embeddings-* package or an OpenAI key
-        # just to satisfy the Settings.embed_model singleton.
-        Settings.embed_model = MockEmbedding(embed_dim=1)
-        model = overrides.get("llm_model") or os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
-        api_key = overrides.get("anthropic_api_key") or os.getenv("ANTHROPIC_API_KEY")
-        Settings.llm = Anthropic(model=model, api_key=api_key)
-
-    elif provider == "openai":
-        from llama_index.llms.openai import OpenAI
-        from llama_index.embeddings.openai import OpenAIEmbedding
-        model = overrides.get("llm_model") or os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-        api_key = overrides.get("openai_api_key") or os.getenv("OPENAI_API_KEY")
-        Settings.llm = OpenAI(model=model, api_key=api_key)
-        Settings.embed_model = OpenAIEmbedding(api_key=api_key)
-
-    else:
-        raise ValueError(
-            f"Unknown LLM_PROVIDER={provider!r}. Valid: ollama, claude, openai"
-        )
+    model = overrides.get("llm_model") or os.getenv("OLLAMA_MODEL", "gemma4:31b-cloud")
+    embed_model = os.getenv("OLLAMA_EMBED_MODEL", "gemma4:31b-cloud")
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    Settings.llm = Ollama(
+        # Above attachments.VISION_TIMEOUT, or this fires first and cuts the vision
+        # read short (261124-vto). Chat and compaction have the idle guard.
+        model=model, base_url=base_url, request_timeout=300.0,
+        context_window=OLLAMA_NUM_CTX,
+        # Thinking off: on the local iGPU, gemma4:e2b ran the agent eval
+        # 3x faster (17.5 vs 53 min) at the same score (15 vs 14 of 26).
+        thinking=False,
+    )
+    Settings.embed_model = OllamaEmbedding(model_name=embed_model, base_url=base_url)

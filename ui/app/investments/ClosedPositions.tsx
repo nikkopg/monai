@@ -4,11 +4,15 @@
 // one record here (ticker, platform, realized P&L in IDR, close date). Its
 // holding and events are gone; the sale's cash stays in Records. A record can
 // be corrected (PUT) or deleted (DELETE); both are audited server-side.
+// Rendered inside the Holdings card's Closed view (no card or title of its
+// own), grouped under one row per platform; closed records carry no asset type.
 
 import { useState } from "react";
 
-import { tokens, card, input, btn } from "../styles";
+import { tokens, input, btn } from "../styles";
 import { extractDetail } from "../lib/api";
+import RowMenu from "../components/RowMenu";
+import { columnHeader, groupRow } from "./sectionStyles";
 
 export type ClosedPosition = {
   id: number;
@@ -28,9 +32,9 @@ const textBtn: React.CSSProperties = {
   background: "transparent",
   border: "none",
   padding: "4px 8px",
-  fontSize: 13,
+  fontSize: "var(--fs-body, 13px)",
   cursor: "pointer",
-  color: tokens.color.muted,
+  color: tokens.color.muted3,
 };
 
 export default function ClosedPositions({
@@ -44,8 +48,6 @@ export default function ClosedPositions({
   const [pnl, setPnl] = useState("");
   const [date, setDate] = useState("");
   const [error, setError] = useState<string | null>(null);
-
-  if (rows.length === 0) return null;
 
   async function call(r: ClosedPosition, verb: string, req: () => Promise<Response>) {
     setError(null);
@@ -85,101 +87,121 @@ export default function ClosedPositions({
     );
   };
 
+  if (rows.length === 0) {
+    return <p style={{ fontSize: "var(--fs-body, 14px)", color: tokens.color.muted3, margin: 0 }}>No closed positions yet.</p>;
+  }
+
+  // One group per platform, in first-seen order; the group row carries the realized sum.
+  const groups = new Map<string, ClosedPosition[]>();
+  for (const r of rows) {
+    const k = r.platform_name ?? "Deleted platform";
+    groups.set(k, [...(groups.get(k) ?? []), r]);
+  }
+
   return (
-    <div data-testid="closed-positions" style={{ ...card, marginTop: 24 }}>
-      <h2 style={{ fontSize: 16, margin: "0 0 12px" }}>Closed positions</h2>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+    <div data-testid="closed-positions">
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--fs-body, 14px)" }}>
         <thead>
-          <tr style={{ textAlign: "left", color: tokens.color.muted }}>
-            <th>Ticker</th>
-            <th>Platform</th>
-            <th style={{ textAlign: "right" }}>Realized P&amp;L (IDR)</th>
-            <th style={{ textAlign: "right" }}>Closed</th>
-            <th />
+          <tr style={{ textAlign: "left" }}>
+            <th style={columnHeader}>Asset</th>
+            <th style={{ ...columnHeader, textAlign: "right" }}>Closed</th>
+            <th style={{ ...columnHeader, textAlign: "right" }}>Realized P&amp;L (IDR)</th>
+            <th style={columnHeader} />
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) =>
-            editingId === r.id ? (
-              <tr key={r.id}>
-                <td>{r.ticker}</td>
-                <td>{r.platform_name ?? "Deleted platform"}</td>
-                <td style={{ textAlign: "right" }}>
-                  <input
-                    aria-label={`Realized P&L for ${r.ticker}`}
-                    style={{ ...input, width: 140 }}
-                    type="number"
-                    step="any"
-                    value={pnl}
-                    onChange={(e) => setPnl(e.target.value)}
-                  />
+          {Array.from(groups).map(([name, list]) => {
+            const sum = list.reduce((a, r) => a + r.realized_pnl, 0);
+            const cell = { ...groupRow, padding: "6px 8px" };
+            return [
+              <tr key={`g-${name}`}>
+                <td colSpan={2} style={cell}>
+                  {name}
                 </td>
-                <td style={{ textAlign: "right" }}>
-                  <input
-                    aria-label={`Close date for ${r.ticker}`}
-                    style={{ ...input, width: 150 }}
-                    type="date"
-                    value={date}
-                    onChange={(e) => setDate(e.target.value)}
-                  />
-                </td>
-                <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                  <button
-                    style={{ ...btn, padding: "4px 12px" }}
-                    aria-label={`Save ${r.ticker}`}
-                    disabled={!Number.isFinite(parseFloat(pnl)) || !date}
-                    onClick={() => save(r)}
-                  >
-                    Save
-                  </button>
-                  <button
-                    style={textBtn}
-                    aria-label={`Cancel editing ${r.ticker}`}
-                    onClick={() => {
-                      setEditingId(null);
-                      setError(null);
-                    }}
-                  >
-                    Cancel
-                  </button>
-                </td>
-              </tr>
-            ) : (
-              <tr key={r.id}>
-                <td>{r.ticker}</td>
-                <td>{r.platform_name ?? "Deleted platform"}</td>
-                <td style={{ textAlign: "right", color: pnlColor(r.realized_pnl) }}>
-                  {fmtSigned(r.realized_pnl)}
-                </td>
-                <td style={{ textAlign: "right" }}>{r.close_date}</td>
-                <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                  <button
-                    style={textBtn}
-                    aria-label={`Edit ${r.ticker}`}
-                    onClick={() => {
-                      setEditingId(r.id);
-                      setPnl(String(r.realized_pnl));
-                      setDate(r.close_date);
-                      setError(null);
-                    }}
-                  >
-                    Edit
-                  </button>
-                  <button
-                    style={{ ...textBtn, color: tokens.color.terracottaText }}
-                    aria-label={`Delete ${r.ticker}`}
-                    onClick={() => remove(r)}
-                  >
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            )
-          )}
+                <td style={{ ...cell, textAlign: "right", color: pnlColor(sum) }}>{fmtSigned(sum)}</td>
+                <td style={cell} />
+              </tr>,
+              ...list.map((r) =>
+                editingId === r.id ? (
+                  <tr key={r.id}>
+                    <td>{r.ticker}</td>
+                    <td style={{ textAlign: "right" }}>
+                      <input
+                        aria-label={`Close date for ${r.ticker}`}
+                        style={{ ...input, width: 150 }}
+                        type="date"
+                        value={date}
+                        onChange={(e) => setDate(e.target.value)}
+                      />
+                    </td>
+                    <td style={{ textAlign: "right" }}>
+                      <input
+                        aria-label={`Realized P&L for ${r.ticker}`}
+                        style={{ ...input, width: 140 }}
+                        type="number"
+                        step="any"
+                        value={pnl}
+                        onChange={(e) => setPnl(e.target.value)}
+                      />
+                    </td>
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                      <button
+                        style={{ ...btn, padding: "4px 12px" }}
+                        aria-label={`Save ${r.ticker}`}
+                        disabled={!Number.isFinite(parseFloat(pnl)) || !date}
+                        onClick={() => save(r)}
+                      >
+                        Save
+                      </button>
+                      <button
+                        style={textBtn}
+                        aria-label={`Cancel editing ${r.ticker}`}
+                        onClick={() => {
+                          setEditingId(null);
+                          setError(null);
+                        }}
+                      >
+                        Cancel
+                      </button>
+                    </td>
+                  </tr>
+                ) : (
+                  <tr key={r.id}>
+                    <td>{r.ticker}</td>
+                    <td style={{ textAlign: "right" }}>{r.close_date}</td>
+                    <td style={{ textAlign: "right", color: pnlColor(r.realized_pnl) }}>
+                      {fmtSigned(r.realized_pnl)}
+                    </td>
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                      <RowMenu
+                        label={`Closed position options: ${r.ticker}`}
+                        items={[
+                          {
+                            label: "Edit",
+                            onSelect: () => {
+                              setEditingId(r.id);
+                              setPnl(String(r.realized_pnl));
+                              setDate(r.close_date);
+                              setError(null);
+                            },
+                          },
+                          {
+                            label: "Delete",
+                            destructive: true,
+                            onSelect: () => remove(r),
+                          },
+                        ]}
+                      />
+                    </td>
+                  </tr>
+                )
+              ),
+            ];
+          })}
         </tbody>
       </table>
       {error && (
-        <p role="alert" style={{ color: tokens.color.terracottaText, fontSize: 13, margin: "8px 0 0" }}>
+        <p role="alert" style={{ color: tokens.color.terracottaText, fontSize: "var(--fs-body, 13px)", margin: "8px 0 0" }}>
           {error}
         </p>
       )}

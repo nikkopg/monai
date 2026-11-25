@@ -34,6 +34,7 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     Numeric,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -498,6 +499,17 @@ class Holding(Base):
     # Explicit CoinGecko coin-id override (Tier 1): disambiguates tickers that
     # map to multiple CoinGecko coins. None falls back to the fixed symbol map.
     coingecko_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # SBN bond terms (migration 024, quick 261117-rw1); all NULL for non-bonds. The CHECK
+    # (ck_holdings_bond_terms) lives in the DB only, like platforms.currency. No relationship
+    # on coupon_account_id, so Account.transactions stays unambiguous.
+    coupon_rate: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    coupon_floating: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    coupon_day: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    maturity_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    coupon_tax_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
+    coupon_account_id: Mapped[int | None] = mapped_column(
+        ForeignKey("accounts.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 class PortfolioEvent(Base):

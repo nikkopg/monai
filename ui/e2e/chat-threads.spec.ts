@@ -122,8 +122,8 @@ test.describe("rehydrated proposal cards (D-16, D-17, THRD-06)", () => {
     );
     await page.goto(`/chat?thread=${TID}`);
     await expect(page.getByText("Applied successfully.")).toBeVisible();
-    await expect(page.getByText("Rejected — no changes made.")).toBeVisible();
-    await expect(page.getByText("Expired — ask again to redo this")).toBeVisible();
+    await expect(page.getByText("Rejected. No changes made.")).toBeVisible();
+    await expect(page.getByText("Expired. Ask again to redo this")).toBeVisible();
     await expect(page.getByText("This proposal is no longer available.")).toBeVisible();
     await expect.poll(() => storedTokens(page)).toEqual([]);
   });
@@ -155,7 +155,7 @@ test.describe("persisted notices (THRD-07)", () => {
     await expect(
       page.getByLabel("Conversation").getByText("Stopped. No answer was kept. Proposals from this run were rejected.")
     ).toBeVisible();
-    await expect(page.getByText("Rejected — the run was stopped. No changes made.")).toBeVisible();
+    await expect(page.getByText("Rejected. The run was stopped. No changes made.")).toBeVisible();
     await expect(page.getByRole("button", { name: "Ask again" })).toHaveCount(1);
     await expect(alertBox(page).last().getByRole("button", { name: "Ask again" })).toBeVisible();
   });
@@ -341,7 +341,7 @@ test.describe("thread sidebar (THRD-02, D-20)", () => {
       { id: sid(5), title: "ZZTest old", updated_at: ago(45) },
     ]);
     await page.goto("/chat");
-    const headers = page.getByTestId("thread-sidebar").locator("h3");
+    const headers = page.getByTestId("thread-sidebar").locator(".thread-group");
     await expect(headers).toHaveText(["Today", "Yesterday", "Previous 7 days", "Previous 30 days", "Older"]);
     await expect(rowsOf(page)).toHaveCount(5);
     await expect(rowsOf(page).nth(3)).toContainText("Untitled chat");
@@ -468,7 +468,7 @@ test.describe("thread sidebar (THRD-02, D-20)", () => {
     await expect(trigger).toBeFocused();
 
     await trigger.click();
-    await page.getByTestId("thread-sidebar").locator("h3").first().click();
+    await page.getByTestId("thread-sidebar").locator(".thread-group").first().click();
     await expect(items).toHaveCount(0);
 
     await trigger.click();

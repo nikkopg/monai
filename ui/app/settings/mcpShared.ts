@@ -30,13 +30,13 @@ export const TRANSPORT_LABEL: Record<McpServer["transport"], string> = {
 export const commandLine = (command: string | null, args: string[]): string =>
   [command ?? "", ...(command === "npx" ? ["-y"] : []), ...args].join(" ");
 
-export const body14: React.CSSProperties = { fontSize: 14, lineHeight: 1.5 };
+export const body14: React.CSSProperties = { fontSize: "var(--fs-body, 14px)", lineHeight: 1.5 };
 export const small: React.CSSProperties = { ...body14, color: tokens.color.muted3 };
 export const errText: React.CSSProperties = { ...body14, color: tokens.color.terracottaText };
-export const hint: React.CSSProperties = { fontSize: 12, lineHeight: 1.5, color: tokens.color.muted3 };
+export const hint: React.CSSProperties = { fontSize: "var(--fs-xs, 12px)", lineHeight: 1.5, color: tokens.color.muted3 };
 export const fieldLabel: React.CSSProperties = { ...body14, fontWeight: 600, color: tokens.color.ink };
 export const blockLabel: React.CSSProperties = {
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   fontWeight: 600,
   lineHeight: 1.5,
   color: tokens.color.muted3,
@@ -56,7 +56,7 @@ export const panelBox: React.CSSProperties = {
   gap: 16,
 };
 export const panelHeading: React.CSSProperties = {
-  fontSize: 15,
+  fontSize: "var(--fs-h3, 15px)",
   fontWeight: 600,
   lineHeight: 1.3,
   margin: 0,
@@ -79,7 +79,7 @@ export const pre: React.CSSProperties = {
 };
 export const chipBase: React.CSSProperties = {
   display: "inline-block",
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   fontWeight: 600,
   lineHeight: 1.5,
   borderRadius: tokens.radius.pill,

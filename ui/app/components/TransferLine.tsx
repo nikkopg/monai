@@ -56,9 +56,9 @@ export default function TransferLine({
 
   return (
     <>
-      <div style={{ fontSize: 14, color: tokens.color.ink, overflowWrap: "anywhere" }}>{sentence}</div>
+      <div style={{ fontSize: "var(--fs-body, 14px)", color: tokens.color.ink, overflowWrap: "anywhere" }}>{sentence}</div>
       {showRate && implied !== null && (
-        <div aria-live="polite" style={{ marginTop: 4, fontSize: 12, color: tokens.color.muted3 }}>
+        <div aria-live="polite" style={{ marginTop: 4, fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3 }}>
           {fmtRateCompare(implied, ecb.rate, ecb.rateDate, ecb.status)}
         </div>
       )}

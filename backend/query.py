@@ -170,7 +170,7 @@ def _get_llm():
         from backend.db import get_session_sync
         from backend.settings import get_effective_settings
         with get_session_sync() as db:
-            configure_llm(overrides=get_effective_settings(db, raw_keys=True))
+            configure_llm(overrides=get_effective_settings(db))
         from llama_index.core import Settings
         _llm = Settings.llm
     return _llm
@@ -399,17 +399,16 @@ def _get_agent_workflow(tool_names: frozenset[str] | None = None):
 
 _TIMEOUT_NAMES = {"TimeoutException", "APITimeoutError", "WorkflowTimeoutError"}
 _CONNECTION_NAMES = {"ConnectError", "APIConnectionError", "NetworkError"}
-_PROVIDER_BY_CLASS = {"Ollama": "ollama", "Anthropic": "claude", "OpenAI": "openai"}
+_PROVIDER_BY_CLASS = {"Ollama": "ollama"}  # the only provider since 261122-rmp
 
 
 def classify_error(exc: BaseException) -> str:
     """Map a provider/workflow exception to a typed error code.
 
     Duck-typed (status_code on the exception or its .response, plus MRO class
-    names) so no provider SDK is imported — only one is ever configured.
+    names) so no provider SDK is imported.
     Codes: rate_limit, provider_unavailable, timeout, auth, connection,
-    unknown. Timeout is checked first: openai/anthropic APITimeoutError
-    subclasses APIConnectionError. Non-positive status codes (ollama mid-stream
+    unknown. Timeout is checked first. Non-positive status codes (ollama mid-stream
     errors carry -1) are ignored.
     """
     names = {c.__name__ for c in type(exc).__mro__}
@@ -603,6 +602,35 @@ def _log_failure(exc: BaseException) -> None:
     logger.warning("chat run failed: %s: %s", type(exc).__name__, exc)
 
 
+async def _ollama_loaded(llm) -> bool | None:
+    """Whether a local Ollama has this model in memory (its /api/ps list).
+
+    None when that can't be told: not Ollama, a cloud model (never in /api/ps),
+    or no answer within 2 s. A caller then shows no loading stage.
+    """
+    from llama_index.llms.ollama import Ollama
+
+    name = getattr(llm, "model", None)
+    if not isinstance(llm, Ollama) or not isinstance(name, str) or "cloud" in name:
+        return None
+    want = name if ":" in name.rsplit("/", 1)[-1] else f"{name}:latest"
+    try:
+        import ollama
+
+        listed = await asyncio.wait_for(ollama.AsyncClient(host=llm.base_url).ps(), 2.0)
+    except Exception:
+        return None
+    return any(m.model in (name, want) for m in listed.models)
+
+
+async def _ollama_load(llm) -> None:
+    """Load the model into Ollama's memory (an empty prompt only loads it)."""
+    import ollama
+
+    await asyncio.wait_for(
+        ollama.AsyncClient(host=llm.base_url).generate(model=llm.model, prompt=""), 600.0)
+
+
 async def agent_stream(
     question: str,
     *,
@@ -633,7 +661,9 @@ async def agent_stream(
     arrives (D-10).
 
     Event types emitted:
-      data: {"type": "step", "msg": "thinking…"}
+      data: {"type": "step", "msg": "thinking…", "stage": "thinking"}
+        (before it, for a local Ollama model not yet in memory: stage "loading",
+         msg "loading the model…", while the run waits for the load)
       data: {"type": "token", "delta": ..., "iteration": n}   (one per streamed delta)
       data: {"type": "tool_start", "call_id": "c{iteration}-{n}", "tool": ..., "args": ...,
              "iteration": n}
@@ -688,6 +718,20 @@ async def agent_stream(
             workflow = await asyncio.to_thread(_get_agent_workflow, tool_names)
         known = tool_names | {t.metadata.name for t in ext_tools or ()}
         model, provider = _llm_label(workflow)
+        # 261122-cpg: load a local model before the run, so a cold load (~100 s
+        # from a slow disk) counts against none of the run's time limits.
+        llm = getattr(next(iter(getattr(workflow, "agents", {}).values()), None), "llm", None)
+        if await _ollama_loaded(llm) is False:
+            yield _sse({"type": "step", "msg": "loading the model…", "stage": "loading"})
+            load = asyncio.create_task(_ollama_load(llm))
+            try:
+                while not load.done():
+                    if not (await asyncio.wait({load}, timeout=ping_interval))[0]:
+                        yield ": ping\n\n"
+            finally:
+                load.cancel()
+            if not load.cancelled() and load.exception():
+                _log_failure(load.exception())  # the run itself reports what's wrong
         if run is not None and run.stopped:  # Stop landed before run.handler existed (CR-04)
             yield _DONE
             return
@@ -739,7 +783,8 @@ async def agent_stream(
                         if isinstance(event, AgentInput):
                             iteration += 1
                             n_in_iter = 0
-                            queue.put_nowait(_sse({"type": "step", "msg": "thinking…"}))
+                            queue.put_nowait(_sse(
+                                {"type": "step", "msg": "thinking…", "stage": "thinking"}))
 
                         elif isinstance(event, AgentStream):
                             # Only the delta: never the cumulative response, the

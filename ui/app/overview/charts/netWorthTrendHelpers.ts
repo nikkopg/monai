@@ -13,7 +13,7 @@
 // (23.2 D-07).
 //
 // Self-check: node --experimental-strip-types
-//   ui/app/cashflow/charts/netWorthTrendHelpers.check.mjs
+//   ui/app/overview/charts/netWorthTrendHelpers.check.mjs
 
 // --- Types -------------------------------------------------------------
 
@@ -181,7 +181,7 @@ export function seamMonth(rows: NetWorthRow[]): string | null {
 
 // --- Tooltip -----------------------------------------------------------
 
-// D-09/D-10: exact month + value, "No data — reason" for a gapped half, and
+// D-09/D-10: exact month + value, "No data (reason)" for a gapped half, and
 // the investment as-of line on the newest honest point (D-13). The CTA never
 // appears in tooltip text.
 export function tooltipLines(row: NetWorthRow, mode: Mode, isNewest: boolean): string[] {
@@ -197,19 +197,19 @@ export function tooltipLines(row: NetWorthRow, mode: Mode, isNewest: boolean): s
       const codes = rowGapCodes(row);
       const text =
         codes.length > 0 ? codes.map((c) => reasonSentence(c)).join("; ") : reasonSentence(null);
-      lines.push(`No data — ${text}`);
+      lines.push(`No data (${text})`);
     }
   } else {
     if (row.liquid.honest && row.liquid.total !== null) {
       lines.push(`Liquid: ${fmtExact(row.liquid.total)}`);
     } else {
-      lines.push(`Liquid: No data — ${reasonSentence(row.liquid.gap_reason)}`);
+      lines.push(`Liquid: No data (${reasonSentence(row.liquid.gap_reason)})`);
     }
     if (row.investment.honest && row.investment.total !== null) {
       const suffix = row.investment.valuation_basis === "deposits" ? " (at cost)" : "";
       lines.push(`Investment: ${fmtExact(row.investment.total)}${suffix}`);
     } else {
-      lines.push(`Investment: No data — ${reasonSentence(row.investment.gap_reason)}`);
+      lines.push(`Investment: No data (${reasonSentence(row.investment.gap_reason)})`);
     }
   }
 

@@ -44,7 +44,7 @@ export function ProposalDiff({
 
   const batchSummary =
     rows.length > 1 ? (
-      <div style={{ fontSize: 12, ...dim, marginBottom: 10 }}>
+      <div style={{ fontSize: "var(--fs-xs, 12px)", ...dim, marginBottom: 10 }}>
         {rows.length} rows affected
       </div>
     ) : null;
@@ -53,7 +53,7 @@ export function ProposalDiff({
   const remainder = rows.length - displayRows.length;
 
   return (
-    <div style={{ fontSize: 14 }}>
+    <div style={{ fontSize: "var(--fs-body, 14px)" }}>
       {batchSummary}
       {displayRows.map((row, i) => {
         if (row.old_name !== undefined) {
@@ -85,7 +85,7 @@ export function ProposalDiff({
               {Object.entries(row.after).map(([k, v]) => (
                 <div key={k}>
                   <span style={dim}>{k}: </span>
-                  <span style={add}>{show(v ?? "—")}</span>
+                  <span style={add}>{show(v ?? "–")}</span>
                 </div>
               ))}
             </div>
@@ -97,7 +97,7 @@ export function ProposalDiff({
               {Object.entries(row.before).map(([k, v]) => (
                 <div key={k}>
                   <span style={dim}>{k}: </span>
-                  <span style={del}>{show(v ?? "—")}</span>
+                  <span style={del}>{show(v ?? "–")}</span>
                 </div>
               ))}
             </div>
@@ -109,7 +109,7 @@ export function ProposalDiff({
           );
           if (changedKeys.length === 0) {
             return (
-              <div key={i} style={{ ...dim, fontSize: 12 }}>
+              <div key={i} style={{ ...dim, fontSize: "var(--fs-xs, 12px)" }}>
                 (no field changes detected)
               </div>
             );
@@ -119,9 +119,9 @@ export function ProposalDiff({
               {changedKeys.map((k) => (
                 <div key={k}>
                   <span style={dim}>{k}: </span>
-                  <span style={del}>{show(row.before![k] ?? "—")}</span>
+                  <span style={del}>{show(row.before![k] ?? "–")}</span>
                   {" → "}
-                  <span style={add}>{show(row.after![k] ?? "—")}</span>
+                  <span style={add}>{show(row.after![k] ?? "–")}</span>
                 </div>
               ))}
             </div>
@@ -131,7 +131,7 @@ export function ProposalDiff({
         const fields = Object.entries(row);
         if (fields.length === 0) {
           return (
-            <div key={i} style={{ ...dim, fontSize: 12 }}>
+            <div key={i} style={{ ...dim, fontSize: "var(--fs-xs, 12px)" }}>
               (no row details)
             </div>
           );
@@ -141,14 +141,14 @@ export function ProposalDiff({
             {fields.map(([k, v]) => (
               <div key={k}>
                 <span style={dim}>{k}: </span>
-                <span>{show(v ?? "—")}</span>
+                <span>{show(v ?? "–")}</span>
               </div>
             ))}
           </div>
         );
       })}
       {remainder > 0 && (
-        <div style={{ ...dim, fontSize: 12, marginTop: 6 }}>
+        <div style={{ ...dim, fontSize: "var(--fs-xs, 12px)", marginTop: 6 }}>
           + {remainder} more row{remainder > 1 ? "s" : ""}
         </div>
       )}

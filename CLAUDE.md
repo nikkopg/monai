@@ -26,7 +26,7 @@ data without your say-so.
 ### Constraints
 
 - **Tech stack**: FastAPI + PostgreSQL + Next.js (App Router) — established Approach C stack; build on it, don't re-platform
-- **AI**: LlamaIndex abstraction with multi-provider config (Ollama local default / Claude / OpenAI) — agentic loop should build on this
+- **AI**: LlamaIndex over Ollama, the only provider (Claude/OpenAI removed 2026-11-22) — agentic loop should build on this
 - **Architecture**: Correctness-by-construction — the LLM selects/chains parameterized tools; it never emits SQL
 - **Safety**: All agent writes require explicit user confirmation before applying; validated; audit-logged
 - **Deployment**: Self-hosted via Docker Compose; single-user; local-first / privacy-respecting
@@ -55,9 +55,6 @@ data without your say-so.
 - LlamaIndex Core >=0.10.0 — LLM abstraction layer (`backend/query.py`, `poc/query.py`)
 - LlamaIndex Ollama LLM >=0.1.0 — local model integration
 - LlamaIndex Ollama Embeddings >=0.1.0 — local embeddings
-- LlamaIndex Anthropic LLM >=0.1.0 — Claude API integration
-- LlamaIndex OpenAI LLM >=0.1.0 — OpenAI API integration
-- LlamaIndex OpenAI Embeddings >=0.1.0 — OpenAI embeddings
 - SQLAlchemy >=2.0.0 — ORM and query builder (`backend/db.py`, `backend/models.py`)
 - psycopg[binary] >=3.1.0 — PostgreSQL driver (psycopg3)
 - Streamlit >=1.30.0 — PoC interactive UI (`poc/app.py`)
@@ -75,15 +72,10 @@ data without your say-so.
 - Ollama — external local LLM daemon, expected at `http://localhost:11434`
 ## Configuration
 - `DATABASE_URL` — PostgreSQL connection string (default: `postgresql+psycopg://monai:monai@localhost:5434/monai`)
-- `LLM_PROVIDER` — `ollama` (default) | `claude` | `openai`
 - `OLLAMA_MODEL` — default `gemma4:31b-cloud`
 - `OLLAMA_EMBED_MODEL` — default `gemma4:31b-cloud`
 - `OLLAMA_BASE_URL` — default `http://localhost:11434`
-- `CLAUDE_MODEL` — default `claude-haiku-4-5-20251001`
-- `OPENAI_MODEL` — default `gpt-4o-mini`
 - `MONAI_API` — Next.js backend proxy target (default: `http://127.0.0.1:8001`)
-- `ANTHROPIC_API_KEY` — required when `LLM_PROVIDER=claude`
-- `OPENAI_API_KEY` — required when `LLM_PROVIDER=openai`
 - `ui/tsconfig.json` — TypeScript config
 - `ui/next.config.js` — Next.js config with `/api/*` reverse proxy rewrites
 - `backend/Dockerfile` — Python 3.12-slim, installs `backend/requirements.txt`
@@ -132,7 +124,7 @@ data without your say-so.
 - Skips/anomalies logged at `WARNING` (currency mismatch, unparseable amount);
 ## Configuration
 - 12-factor: all config via environment variables with sensible defaults read in
-- Provider switch (`LLM_PROVIDER`) drives lazy, provider-specific imports inside
+- The model (`OLLAMA_MODEL`, overridden by the Settings page) is read in `configure_llm`; Ollama imports stay lazy inside it
 ## Comments & Documentation
 - Heavy use of *intent* comments explaining sign conventions, exclusivity of date
 - Docstrings describe return-tuple shapes precisely

@@ -67,15 +67,18 @@ export default function CsvUpload({ onImported }: Props) {
 
   return (
     <section style={card}>
-      <label style={label}>Import CSV</label>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 8 }}>
+      <label htmlFor="csv-file" style={label}>Import CSV</label>
+      <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
         <input
+          id="csv-file"
           type="file"
+          style={{ maxWidth: "100%" }}
           accept=".csv"
           onChange={(e) => setFile(e.target.files?.[0] ?? null)}
         />
         <button
           type="button"
+          className="tap44"
           style={btn}
           disabled={!file || uploading}
           onClick={handleUpload}
@@ -89,15 +92,15 @@ export default function CsvUpload({ onImported }: Props) {
         </div>
       )}
       {result && (
-        <div style={{ fontSize: 14, marginTop: 12 }}>
+        <div style={{ fontSize: "var(--fs-body, 14px)", marginTop: 12 }}>
           Parsed {result.parsed} · Inserted {result.inserted} ·{" "}
-          <span style={{ color: result.skipped > 0 ? "#b5503f" : "#8b8474" }}>
+          <span style={{ color: result.skipped > 0 ? "#b5503f" : "#716c5f" }}>
             Skipped {result.skipped}
           </span>
         </div>
       )}
       {error && (
-        <div style={{ color: "#b5503f", fontSize: 12, marginTop: 8 }}>{error}</div>
+        <div style={{ color: "#b5503f", fontSize: "var(--fs-xs, 12px)", marginTop: 8 }}>{error}</div>
       )}
     </section>
   );

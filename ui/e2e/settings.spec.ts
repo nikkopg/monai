@@ -1,58 +1,29 @@
 import { test, expect, type Page } from "@playwright/test";
 
 // ---------------------------------------------------------------------------
-// Phase 3 Plan 03 — Settings page render spec.
-//
-// This spec MUST fail (RED) against the 03-01 placeholder (`ui/app/settings/
-// page.tsx` today renders only "Settings controls load here."). It asserts
-// the full three-card contract defined in 03-UI-SPEC.md:
-//   - three card section titles: "LLM Provider & Model", "API Keys",
-//     "Preferences"
-//   - three Save buttons with exact labels: "Save Provider", "Save Keys",
-//     "Save Preferences"
-//   - a provider <select> offering ollama / claude / openai
-//   - a price data source <select> offering coingecko / yfinance / manual
-//   - the masked-key helper text "Leave blank to keep the current key."
-//
-// These are frontend-only render assertions — no backend interaction is
-// required. The page must render its cards even if GET /api/settings fails
-// (no backend is guaranteed to be running in this sandbox).
+// Settings page render spec. Since 261122-rmp Ollama is the only provider:
+// a Model card (no provider switch, no API Keys card) and Preferences.
+// Frontend-only render assertions; no backend is needed.
 // ---------------------------------------------------------------------------
 
 test.describe("/settings page", () => {
-  test("renders the three card section titles", async ({ page }) => {
+  test("renders the Model and Preferences cards, no API Keys", async ({ page }) => {
     await page.goto("/settings");
-    await expect(
-      page.getByText("LLM Provider & Model", { exact: true })
-    ).toBeVisible();
-    await expect(page.getByText("API Keys", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 2, name: "Model", exact: true })).toBeVisible();
     await expect(page.getByText("Preferences", { exact: true })).toBeVisible();
+    await expect(page.getByText("API Keys", { exact: true })).toHaveCount(0);
   });
 
-  test("renders the three Save buttons with exact labels", async ({
-    page,
-  }) => {
+  test("renders the Save Model and Save Preferences buttons", async ({ page }) => {
     await page.goto("/settings");
-    await expect(
-      page.getByRole("button", { name: "Save Provider", exact: true })
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Save Keys", exact: true })
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "Save Preferences", exact: true })
-    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "Save Model", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Save Preferences", exact: true })).toBeVisible();
   });
 
-  test("provider segmented control offers ollama, claude, openai", async ({
-    page,
-  }) => {
+  test("offers no provider switch", async ({ page }) => {
     await page.goto("/settings");
-    // v1.1: provider is a segmented control (3 buttons), not a <select>.
     for (const p of ["ollama", "claude", "openai"]) {
-      await expect(
-        page.getByRole("button", { name: p, exact: true })
-      ).toBeVisible();
+      await expect(page.getByRole("button", { name: p, exact: true })).toHaveCount(0);
     }
   });
 
@@ -68,13 +39,6 @@ test.describe("/settings page", () => {
       (opts) => opts.map((o) => (o as HTMLOptionElement).value)
     );
     expect(values).toEqual(["coingecko", "yfinance", "manual"]);
-  });
-
-  test("shows the masked-key helper text", async ({ page }) => {
-    await page.goto("/settings");
-    await expect(
-      page.getByText("Leave blank to keep the current key.")
-    ).toBeVisible();
   });
 
   // quick 261011-mgj: every row action sits behind a ⋯ menu. Synthetic data,
@@ -111,7 +75,7 @@ test.describe("/settings page", () => {
     await open(`Category options: ${cats[1].name}`);
     const del = page.getByRole("menuitem", { name: "Delete", exact: true });
     await expect(del).toHaveAttribute("aria-disabled", "true");
-    await expect(del).toHaveAttribute("title", "System category — can't be deleted.");
+    await expect(del).toHaveAttribute("title", "System category: can't be deleted.");
     await page.keyboard.press("Escape");
 
     await open(`Account options: ${accounts[0].name}`);
@@ -250,7 +214,7 @@ test.describe("AccountManager currency (Phase 44)", () => {
     await target.fill("62.34");
     await expect(preview).toHaveText("Adjustment: +12.34 USD");
     await target.fill("50.001");
-    await expect(preview).toHaveText("No change — target equals current balance.");
+    await expect(preview).toHaveText("No change: target equals current balance.");
     await expect(save).toBeDisabled();
     await target.fill("40");
     await expect(preview).toHaveText("Adjustment: −10.00 USD");
@@ -275,5 +239,107 @@ test.describe("AccountManager currency (Phase 44)", () => {
     await expect(target).toHaveValue("1000000");
     await target.fill("1500000");
     await expect(page.getByText("Adjustment: +Rp 500,000", { exact: true })).toBeVisible();
+  });
+});
+
+// Category edit and merge (moved here from cashflow-crud.spec.ts when the
+// manager left Cashflow). Synthetic data; every write is fulfilled by the test.
+test.describe("CategoryManager writes", () => {
+  const node = (id: number, name: string, tx_count = 0) => ({
+    id, name, parent_id: null, kind: "expense", color: null, effective_color: null,
+    icon: null, is_system: false, tx_count, children: [],
+  });
+
+  const mockGets = async (page: Page) => {
+    await page.route("**/api/categories", (route) =>
+      route.request().method() === "GET"
+        ? route.fulfill({ json: [node(1, "ZZTest Food", 3), node(2, "ZZTest Transport")] })
+        : route.fallback()
+    );
+    await page.route("**/api/cashflow/summary**", (route) => route.fulfill({ json: { accounts: [] } }));
+  };
+
+  test("Edit renames the category with PUT /api/categories/{id}", async ({ page }) => {
+    await mockGets(page);
+    let body: Record<string, unknown> | null = null;
+    await page.route("**/api/categories/1", (route) => {
+      if (route.request().method() !== "PUT") return route.fulfill({ status: 500, json: { detail: "blocked in test" } });
+      body = route.request().postDataJSON();
+      return route.fulfill({ json: { id: 1, name: "ZZTest Meals" } });
+    });
+    await page.goto("/settings");
+
+    await page.getByRole("button", { name: "Category options: ZZTest Food", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+    await page.locator("input[value='ZZTest Food']").fill("ZZTest Meals");
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+
+    await expect.poll(() => body?.name).toBe("ZZTest Meals");
+  });
+
+  test("Merge into… confirms with the affected count before posting", async ({ page }) => {
+    await mockGets(page);
+    let body: Record<string, unknown> | null = null;
+    await page.route("**/api/categories/merge", (route) => {
+      body = route.request().postDataJSON();
+      return route.fulfill({ json: { from_name: "ZZTest Food", into_name: "ZZTest Transport", affected_count: 3 } });
+    });
+    await page.goto("/settings");
+
+    await page.getByRole("button", { name: "Category options: ZZTest Food", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Merge into…", exact: true }).click();
+    await page.getByRole("button", { name: "Merge categories", exact: true }).click();
+    await expect(
+      page.getByText('Merge "ZZTest Food" into "ZZTest Transport"? 3 transactions will be updated. This can\'t be undone.')
+    ).toBeVisible();
+    expect(body).toBeNull();
+    await page.getByRole("button", { name: "Merge", exact: true }).click();
+
+    await expect.poll(() => body).not.toBeNull();
+  });
+});
+
+// 261122-omp: the Ollama Model field picks from the models Ollama has installed.
+test.describe("Ollama model picker", () => {
+  const settings = {
+    llm_model: "example-model:7b",
+    base_currency: "IDR",
+    price_data_source: "manual",
+  };
+  const models = [
+    { name: "example-model:7b", size: 4_600_000_000, parameter_size: "7B" },
+    { name: "tiny-model:1b", size: 900_000_000, parameter_size: "1B" },
+  ];
+
+  async function mockSettings(page: Page, saved = settings, list: object[] | null = models) {
+    await page.route("**/api/settings", (route) => route.fulfill({ json: saved }));
+    await page.route("**/api/settings/ollama-models", (route) =>
+      list ? route.fulfill({ json: list }) : route.fulfill({ status: 502, json: { detail: "Couldn't reach Ollama." } })
+    );
+  }
+
+  test("lists installed models with size and keeps the saved one selected", async ({ page }) => {
+    await mockSettings(page);
+    await page.goto("/settings");
+    const field = page.locator("#set-model");
+    await expect(field.locator("option")).toHaveText(["example-model:7b · 7B · 4.6 GB", "tiny-model:1b · 1B · 0.9 GB"]);
+    await expect(field).toHaveValue("example-model:7b");
+    await field.selectOption("tiny-model:1b");
+    await expect(field).toHaveValue("tiny-model:1b");
+  });
+
+  test("a saved model that isn't installed stays, marked not installed", async ({ page }) => {
+    await mockSettings(page, { ...settings, llm_model: "gone-model:3b" });
+    await page.goto("/settings");
+    const field = page.locator("#set-model");
+    await expect(field.locator("option").first()).toHaveText("gone-model:3b (not installed)");
+    await expect(field).toHaveValue("gone-model:3b");
+  });
+
+  test("Ollama unreachable: the text field comes back with a note", async ({ page }) => {
+    await mockSettings(page, settings, null);
+    await page.goto("/settings");
+    await expect(page.getByTestId("model-note")).toHaveText("Couldn't reach Ollama, so type the model name.");
+    await expect(page.locator("input#set-model")).toHaveValue("example-model:7b");
   });
 });

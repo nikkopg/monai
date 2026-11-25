@@ -39,7 +39,7 @@ const chipBase: React.CSSProperties = {
   minHeight: 32,
   maxWidth: "100%",
   padding: "0 12px",
-  fontSize: 14,
+  fontSize: "var(--fs-body, 14px)",
   color: tokens.color.ink,
   borderRadius: tokens.radius.pill,
   textDecoration: "none",
@@ -51,7 +51,7 @@ export default function SourceChips({ sources }: { sources: Source[] }) {
     <div style={{ marginBottom: 16 }}>
       <div
         style={{
-          fontSize: 12,
+          fontSize: "var(--fs-xs, 12px)",
           fontWeight: 600,
           textTransform: "uppercase",
           letterSpacing: ".12em",

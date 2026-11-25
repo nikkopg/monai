@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { card, input, btn, label, tokens } from "../styles";
+import { sectionTitle } from "../investments/sectionStyles";
 import { extractDetail } from "../lib/api";
 import RowMenu from "../components/RowMenu";
 import ConfirmDialog from "./ConfirmDialog";
@@ -180,8 +181,8 @@ export default function AccountManager({ accounts, onChanged }: Props) {
 
   return (
     <section style={card}>
-      <label style={label}>Accounts</label>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+      <h2 style={{ ...sectionTitle, marginBottom: 12 }}>Accounts</h2>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--fs-body, 13px)" }}>
         <tbody>
           {accounts.map((a) => (
             <tr key={a.id} style={{ borderTop: "1px solid #e7e1d5" }}>
@@ -201,7 +202,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
                     padding: "4px 8px",
                     background: tokens.color.tintNeutral,
                     color: tokens.color.muted3,
-                    fontSize: 12,
+                    fontSize: "var(--fs-xs, 12px)",
                     fontWeight: 600,
                     borderRadius: tokens.radius.pill,
                     whiteSpace: "nowrap",
@@ -217,7 +218,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
                     <button
                       type="button"
                       onClick={() => saveEdit(a.id)}
-                      style={{ ...btn, padding: "4px 10px", fontSize: 12, marginRight: 6 }}
+                      style={{ ...btn, padding: "4px 10px", fontSize: "var(--fs-xs, 12px)", marginRight: 6 }}
                     >
                       Save account
                     </button>
@@ -226,9 +227,9 @@ export default function AccountManager({ accounts, onChanged }: Props) {
                       onClick={() => setEditingId(null)}
                       style={{
                         background: "transparent",
-                        color: "#8b8474",
+                        color: "#716c5f",
                         border: "none",
-                        fontSize: 12,
+                        fontSize: "var(--fs-xs, 12px)",
                         cursor: "pointer",
                       }}
                     >
@@ -285,7 +286,7 @@ export default function AccountManager({ accounts, onChanged }: Props) {
               <option value="IDR">IDR</option>
               <option value="USD">USD</option>
             </select>
-            <button style={btn} type="submit">
+            <button className="tap44" style={btn} type="submit">
               Add account
             </button>
             <button
@@ -293,9 +294,9 @@ export default function AccountManager({ accounts, onChanged }: Props) {
               onClick={() => setAdding(false)}
               style={{
                 background: "transparent",
-                color: "#8b8474",
+                color: "#716c5f",
                 border: "none",
-                fontSize: 12,
+                fontSize: "var(--fs-xs, 12px)",
                 cursor: "pointer",
               }}
             >
@@ -303,14 +304,14 @@ export default function AccountManager({ accounts, onChanged }: Props) {
             </button>
           </form>
         ) : (
-          <button type="button" style={btn} onClick={() => setAdding(true)}>
+          <button type="button" className="tap44" style={btn} onClick={() => setAdding(true)}>
             Add account
           </button>
         )}
       </div>
 
       {error && (
-        <div style={{ color: "#b5503f", fontSize: 12, marginTop: 8 }}>{error}</div>
+        <div style={{ color: "#b5503f", fontSize: "var(--fs-xs, 12px)", marginTop: 8 }}>{error}</div>
       )}
 
       {deleteFlow.stage === "confirm" && (
@@ -324,14 +325,14 @@ export default function AccountManager({ accounts, onChanged }: Props) {
 
       {deleteFlow.stage === "reassign" && (
         <ConfirmDialog
-          message={`${deleteFlow.affectedCount} transactions use this account — choose a destination account to reassign them, or cancel.`}
+          message={`${deleteFlow.affectedCount} transactions use this account. Choose a destination account to reassign them, or cancel.`}
           confirmLabel="Reassign & delete"
           onCancel={() => setDeleteFlow({ stage: "idle" })}
           onConfirm={confirmReassignDelete}
           confirmDisabled={deleteFlow.targetId === ""}
         >
           {deleteFlow.targetId === "" ? (
-            <p style={{ fontSize: 12, margin: 0, color: tokens.color.terracottaText }}>
+            <p style={{ fontSize: "var(--fs-xs, 12px)", margin: 0, color: tokens.color.terracottaText }}>
               No other {ccy(deleteFlow.account)} account to move these records to.
             </p>
           ) : (

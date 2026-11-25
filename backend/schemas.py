@@ -6,7 +6,8 @@ from datetime import date as _date  # a `date: date | None = None` field would s
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_validator
+from fastapi.encoders import jsonable_encoder
+from pydantic import BaseModel, ConfigDict, Field, PlainSerializer, field_serializer, field_validator
 
 # ---------------------------------------------------------------------------
 # Shared money type
@@ -298,6 +299,17 @@ class TransferCreate(BaseModel):
     notes: str | None = None
 
 
+class BondTerms(BaseModel):
+    """SBN coupon terms (quick 261117-rw1). Decimals stay plain Decimal so model_dump(mode="json") yields strings."""
+
+    rate: Decimal = Field(..., gt=0, lt=100, decimal_places=2, description="Coupon rate, percent per year")
+    floating: bool = False
+    pay_day: int = Field(..., ge=1, le=28)
+    maturity_date: date
+    tax_pct: Decimal = Field(Decimal(10), ge=0, lt=100, decimal_places=2)
+    coupon_account_id: int
+
+
 class FundedBuyCreate(BaseModel):
     """Body for POST /portfolio-events/funded-buy (XFER-03)."""
 
@@ -319,6 +331,7 @@ class FundedBuyCreate(BaseModel):
     fee_kind: Literal["coin", "cash"] | None = Field(
         None, description="Required with a fee above 0; a cash fee is already inside cash_amount on a buy"
     )
+    bond: BondTerms | None = None
 
 
 class FundedSellCreate(BaseModel):
@@ -366,6 +379,7 @@ class HoldingCreate(BaseModel):
     asset_type: str | None = None
     platform_id: int = Field(..., description="Required — position identity is (ticker, platform_id)")
     coingecko_id: str | None = None
+    bond: BondTerms | None = None
 
 
 class HoldingUpdate(BaseModel):
@@ -378,6 +392,7 @@ class HoldingUpdate(BaseModel):
     asset_type: str | None = None
     platform_id: int | None = None
     coingecko_id: str | None = None
+    bond: BondTerms | None = None
 
 
 class HoldingOut(BaseModel):
@@ -416,8 +431,8 @@ class PortfolioSummary(BaseModel):
     """Composed GET /investments/summary payload (D-05, INV-06).
 
     Built from a plain dict (portfolio.portfolio_summary), not an ORM row.
-    Money fields inside `groups` are already Decimal; the dict passthrough keeps
-    them serialized as JSON numbers via portfolio.py's own shaping.
+    Money fields inside `groups` are Decimal; the JSON serializer below turns
+    them into numbers (None stays null), python-mode dumps keep Decimals.
     """
 
     groups: list  # [{platform_id, platform_name, kind, subtotal, holdings:[...]}]
@@ -426,6 +441,12 @@ class PortfolioSummary(BaseModel):
     total_unrealized_pnl: MoneyDecimal
     total_realized_pnl: MoneyDecimal
     as_of: str
+
+    # Untyped lists would emit their Decimals as strings; jsonable_encoder is the
+    # same encoding /platforms/{id}/detail applies to these dicts (Decimal -> number, None -> null).
+    @field_serializer("groups", "asset_type_groups", when_used="json")
+    def _groups_as_json(self, value: list):
+        return jsonable_encoder(value)
 
 
 class ValueHistoryPointOut(BaseModel):
@@ -723,6 +744,10 @@ class ProposalOut(BaseModel):
     status_changed_at: datetime
     supersedes_id: _uuid.UUID | None
     failed_attempts: int
+    # Chat provenance (261121-m17), filled by GET /proposals when message_id is
+    # set: the message's thread and the user request just before it (200 chars).
+    thread_id: _uuid.UUID | None = None
+    request: str | None = None
 
 
 class ProposalApproverOut(ProposalOut):
@@ -743,33 +768,30 @@ class ConfirmRequest(BaseModel):
 
 
 class RowSkipRequest(BaseModel):
-    """Body for PATCH /proposals/{id}/rows/{index}: skip and/or category.
+    """Body for PATCH /proposals/{id}/rows/{index}: skip and/or category (transaction batches),
+    or amount (a pending SBN coupon proposal, 261117-rw1; the only field it accepts).
 
     An explicit null (or blank) category clears it; leaving the key out leaves it alone.
     """
 
     skip: bool | None = None
     category: str | None = Field(default=None, max_length=255)
+    amount: Decimal | None = Field(default=None, gt=0, max_digits=18, decimal_places=2)
 
 
 # ---------------------------------------------------------------------------
 # Settings (UI-03, UI-04) — locked enums per app_settings design
 # ---------------------------------------------------------------------------
 
-_VALID_PROVIDERS = {"ollama", "claude", "openai"}
 _VALID_PRICE_SOURCES = {"coingecko", "yfinance", "manual"}
 
 
 class SettingsOut(BaseModel):
     """Effective settings response — built from a plain dict
     (get_effective_settings), never from an ORM row, so no from_attributes.
-    Raw key values NEVER appear here, only their masked derived forms.
     """
 
-    llm_provider: str
     llm_model: str
-    anthropic_api_key_masked: str | None = None
-    openai_api_key_masked: str | None = None
     base_currency: str
     price_data_source: str
 
@@ -781,23 +803,9 @@ class SettingsUpdate(BaseModel):
     (enforced server-side in backend.settings.upsert_settings).
     """
 
-    llm_provider: str | None = None
     llm_model: str | None = None
-    anthropic_api_key: str | None = None
-    openai_api_key: str | None = None
     base_currency: str | None = None
     price_data_source: str | None = None
-
-    @field_validator("llm_provider")
-    @classmethod
-    def _validate_llm_provider(cls, v: str | None) -> str | None:
-        # None/"" both mean "keep existing" (upsert_settings filters these out);
-        # only a non-empty, non-member value is rejected here.
-        if v and v not in _VALID_PROVIDERS:
-            raise ValueError(
-                f"Invalid llm_provider={v!r}. Valid: {sorted(_VALID_PROVIDERS)}"
-            )
-        return v
 
     @field_validator("price_data_source")
     @classmethod

@@ -9,9 +9,11 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import ProposalDiff from "../components/ProposalDiff";
 import TransferLine from "../components/TransferLine";
-import { extractDetail } from "../lib/api";
+import { extractDetail, fmtPlain } from "../lib/api";
+import { rateChip } from "../lib/bond";
 import { INBOX_SURFACE_HEADER } from "../lib/approverAllowlist";
 import {
   ALL_SKIPPED_MSG,
@@ -31,7 +33,9 @@ import {
   KIND_LABEL,
   mapActionResponse,
   mergeSkip,
+  changesExisting,
   pendingStatus,
+  recordsHref,
   proposalFlagText,
   relativeAge,
   rowProvenance,
@@ -44,6 +48,7 @@ import {
   type CardPhase,
   type DuplicateFlag,
   type HeldCard,
+  type InboxAccount,
   type ProposalRow,
 } from "../lib/inbox";
 import { fmtAmountSigned } from "../lib/money";
@@ -63,6 +68,8 @@ type Props = {
   onRows: (id: string, rows: ProposalRow[]) => void;
   announce: (msg: string) => void;
   categories: string[];
+  /** Accounts by id, to name what edits and balance adjustments touch; empty until loaded. */
+  accounts: ReadonlyMap<number, InboxAccount>;
 };
 
 const c = tokens.color;
@@ -70,13 +77,13 @@ const text = (v: unknown): string => (v === null || v === undefined ? "" : Strin
 
 const smallBtn: React.CSSProperties = {
   ...btnGhost,
-  fontSize: 14,
+  fontSize: "var(--fs-body, 14px)",
   padding: "4px 12px",
   minHeight: 32,
 };
 
 const chip: React.CSSProperties = {
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   fontWeight: 600,
   borderRadius: tokens.radius.pill,
   padding: "4px 12px",
@@ -92,17 +99,17 @@ const warmChip: React.CSSProperties = {
 
 const greenChip: React.CSSProperties = { ...chip, color: c.ink, background: c.tintGreen };
 const TONE = { green: greenChip, warm: warmChip, neutral: neutralChip };
-const sentenceStyle: React.CSSProperties = { fontSize: 14, color: c.muted3 };
+const sentenceStyle: React.CSSProperties = { fontSize: "var(--fs-body, 14px)", color: c.muted3 };
 
 const cell: React.CSSProperties = {
-  fontSize: 14,
+  fontSize: "var(--fs-body, 14px)",
   color: c.ink,
   padding: "12px 8px",
   borderTop: `1px solid ${c.borderInner}`,
   verticalAlign: "top",
 };
 const th: React.CSSProperties = {
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   fontWeight: 400,
   color: c.muted3,
   textAlign: "left",
@@ -125,11 +132,24 @@ function DuplicateFlags({
   return (
     <>
       <span style={warmChip}>{duplicateChipText(flags.length)}</span>
-      <ul style={{ fontSize: 12, color: c.muted3, listStyle: "none", margin: "4px 0 0", padding: 0 }}>
+      <ul style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3, listStyle: "none", margin: "4px 0 0", padding: 0 }}>
         {flags.map((flag, k) => (
           <li key={k}>
             {flag.kind === "transaction" ? (
-              transactionFlagText(flag)
+              <>
+                {transactionFlagText(flag)}
+                {/^\d{4}-\d{2}-\d{2}/.test(String(flag.date)) && (
+                  <>
+                    {" · "}
+                    <Link
+                      href={`/records?date_from=${String(flag.date).slice(0, 10)}&date_to=${String(flag.date).slice(0, 10)}`}
+                      style={{ color: c.ink, textDecoration: "underline" }}
+                    >
+                      View in Records
+                    </Link>
+                  </>
+                )}
+              </>
             ) : (
               <>
                 {proposalFlagText(flag)}
@@ -150,6 +170,77 @@ function DuplicateFlags({
   );
 }
 
+/** Scheduled coupon: the net amount, one sentence on how it was worked out, and Edit amount. */
+function CouponBody({
+  after,
+  editable,
+  editing,
+  draft,
+  blocked,
+  saving,
+  onEdit,
+  onDraft,
+  onSave,
+  onCancel,
+}: {
+  after: Record<string, unknown>;
+  editable: boolean;
+  editing: boolean;
+  draft: string;
+  blocked: boolean;
+  saving: boolean;
+  onEdit: () => void;
+  onDraft: (v: string) => void;
+  onSave: () => void;
+  onCancel: () => void;
+}) {
+  const amount = Number(after.amount);
+  const expected = Number(after.gross) - Number(after.tax);
+  const rate = Number(after.rate);
+  const sentence =
+    `${Number.isFinite(rate) ? rateChip(rate, after.floating === true) : "Coupon"} on ${fmtPlain(Number(after.nominal))}, ` +
+    `after ${text(after.tax_pct)}% tax. Records income on ${text(after.account)} and a coupon on ${text(after.ticker)}.`;
+  return (
+    <div>
+      <div
+        data-testid="inbox-coupon-amount"
+        style={{ fontFamily: tokens.font.serif, fontSize: 28, color: c.ink, fontVariantNumeric: "tabular-nums", overflowWrap: "anywhere" }}
+      >
+        +{fmtPlain(amount)} to {text(after.account)}
+      </div>
+      <p style={{ ...sentenceStyle, margin: "4px 0 0" }}>{sentence}</p>
+      {Number.isFinite(expected) && expected !== amount && (
+        <p style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3, margin: "4px 0 0" }}>Expected {fmtPlain(expected)}</p>
+      )}
+      {editable &&
+        (editing ? (
+          <div style={{ marginTop: 12, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+            <input
+              type="number"
+              inputMode="decimal"
+              min={0}
+              step="any"
+              aria-label="Coupon amount"
+              style={{ ...input, width: 160, ...gated(blocked) }}
+              value={draft}
+              onChange={(e) => onDraft(e.target.value)}
+            />
+            <button type="button" style={{ ...smallBtn, ...gated(blocked) }} aria-disabled={blocked} onClick={onSave}>
+              {saving ? "…" : "Save"}
+            </button>
+            <button type="button" style={smallBtn} onClick={onCancel}>
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button type="button" style={{ ...smallBtn, marginTop: 12 }} onClick={onEdit}>
+            Edit amount
+          </button>
+        ))}
+    </div>
+  );
+}
+
 export default function InboxCard({
   card,
   nowMs,
@@ -162,6 +253,7 @@ export default function InboxCard({
   onRows,
   announce,
   categories,
+  accounts,
 }: Props) {
   const p = card.proposal;
   const id = p.id;
@@ -170,6 +262,8 @@ export default function InboxCard({
   const live = card.phase === "live";
   const locked = isLocked(p);
   const skippedCount = rows.filter((r) => r.skip === true).length;
+  // Skips the owner chose; a default skip (261121-kwu) is not a choice to protect on Reject.
+  const chosenSkips = rows.filter((r) => r.skip === true && !r.skip_default).length;
   const allSkipped = op === "add_transaction" && rows.length > 0 && skippedCount === rows.length;
 
   const [busy, setBusy] = useState<Busy>(null);
@@ -178,6 +272,8 @@ export default function InboxCard({
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
   const [copyFallback, setCopyFallback] = useState(false);
+  const [editAmount, setEditAmount] = useState(false);
+  const [amountDraft, setAmountDraft] = useState("");
 
   const blocked = offline || busy !== null;
 
@@ -240,6 +336,16 @@ export default function InboxCard({
   async function approve() {
     if (blocked || allSkipped) return;
     await act("approve", async () => {
+      // Rows skipped by default are only skipped in this view until saved (261121-kwu).
+      for (let i = 0; i < rows.length; i++) {
+        if (!rows[i].skip_default) continue;
+        const s = await fetch(`/api/proposals/${id}/rows/${i}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", ...INBOX_SURFACE_HEADER },
+          body: JSON.stringify({ skip: true }),
+        });
+        if (!s.ok) return fail(s);
+      }
       const r = await fetch(`/api/proposals/${id}/approve`, {
         method: "POST",
         headers: INBOX_SURFACE_HEADER,
@@ -253,7 +359,7 @@ export default function InboxCard({
 
   async function reject() {
     if (blocked) return;
-    if (skippedCount >= 1 && !confirmDiscard) {
+    if (chosenSkips >= 1 && !confirmDiscard) {
       setConfirmDiscard(true);
       return;
     }
@@ -325,6 +431,22 @@ export default function InboxCard({
     });
   }
 
+  async function saveAmount() {
+    const n = Number(amountDraft);
+    if (blocked || amountDraft.trim() === "" || !Number.isFinite(n) || n <= 0) return;
+    await act(0, async () => {
+      const r = await fetch(`/api/proposals/${id}/rows/0`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...INBOX_SURFACE_HEADER },
+        body: JSON.stringify({ amount: n }),
+      });
+      if (!r.ok) return fail(r);
+      onRows(id, rows.map((row, k) => (k === 0 ? { ...row, after: { ...row.after, amount: String(n) } } : row)));
+      setEditAmount(false);
+      announce(`Coupon amount set to ${fmtPlain(n)}.`);
+    });
+  }
+
   async function copyCode(code: string) {
     try {
       await navigator.clipboard.writeText(code);
@@ -357,7 +479,15 @@ export default function InboxCard({
       statusColor = c.ink;
     }
   } else if (card.phase === "approved") {
-    status = "✓ Approved · " + hhmm(card.settledAt ?? nowMs);
+    // A way to see what was just written (261121-kwu); undo is still Records' row menu.
+    status = (
+      <>
+        {"✓ Approved · " + hhmm(card.settledAt ?? nowMs) + " · "}
+        <Link href={recordsHref(p, accounts)} style={{ color: c.green, textDecoration: "underline" }}>
+          View in Records
+        </Link>
+      </>
+    );
     statusColor = c.green;
   } else if (card.phase === "approvedElsewhere") {
     status = "✓ Approved elsewhere";
@@ -420,27 +550,47 @@ export default function InboxCard({
             {cardTitle(op, rows)}
           </h2>
           <span style={neutralChip}>{sourceLabel(p.channel)}</span>
+          {changesExisting(op) && <span style={warmChip}>Changes existing data</span>}
         </div>
         <span
           id={`inbox-status-${id}`}
           ref={statusRef}
           tabIndex={-1}
-          style={{ fontSize: 12, fontWeight: 600, color: statusColor }}
+          style={{ fontSize: "var(--fs-xs, 12px)", fontWeight: 600, color: statusColor }}
         >
           {status}
         </span>
       </div>
-      <div style={{ marginTop: 4, fontSize: 12, color: c.muted3 }}>
+      <div style={{ marginTop: 4, fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>
         Proposed {relativeAge(Date.parse(p.created_at), nowMs)}
       </div>
+      {/* Where a chat proposal came from (261121-m17), like an upload's file line. */}
+      {(p.request || p.thread_id) && (
+        <p style={{ fontSize: "var(--fs-body, 14px)", color: c.ink, margin: "8px 0 0" }}>
+          {p.request && (
+            <>
+              <span style={{ color: c.muted3 }}>From your chat: </span>
+              &ldquo;{p.request}&rdquo;
+            </>
+          )}
+          {p.thread_id && isUuid(p.thread_id) && (
+            <>
+              {p.request ? " · " : ""}
+              <Link href={`/chat?thread=${p.thread_id}`} style={{ color: c.ink, textDecoration: "underline" }}>
+                View chat
+              </Link>
+            </>
+          )}
+        </p>
+      )}
 
       {/* upload provenance: before the rows, so the trust statement is read first (D-23) */}
       {upload && badge && (
         <div style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
-          <span style={{ fontSize: 12, color: c.muted3 }}>File</span>
+          <span style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>File</span>
           <span
             data-testid="inbox-upload-file"
-            style={{ fontSize: 14, fontWeight: 600, color: c.ink, overflowWrap: "anywhere" }}
+            style={{ fontSize: "var(--fs-body, 14px)", fontWeight: 600, color: c.ink, overflowWrap: "anywhere" }}
           >
             {text(upload.filename)}
           </span>
@@ -467,13 +617,13 @@ export default function InboxCard({
       {live && p.channel === "mcp" && code && (
         <>
           <div style={{ marginTop: 16, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-            <span style={{ fontSize: 12, color: c.muted3 }}>Code</span>
+            <span style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>Code</span>
             <code
               ref={codeRef}
               tabIndex={0}
               style={{
                 fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
-                fontSize: 14,
+                fontSize: "var(--fs-body, 14px)",
                 fontWeight: 600,
                 letterSpacing: ".14em",
                 color: c.ink,
@@ -495,13 +645,15 @@ export default function InboxCard({
               {copied ? "Copied" : "Copy code"}
             </button>
             {copyFallback && (
-              <span style={{ fontSize: 12, color: c.muted3 }}>Select the code and press Ctrl+C</span>
+              <span style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>Select the code and press Ctrl+C</span>
             )}
           </div>
-          <p style={{ fontSize: 12, color: c.muted3, margin: "8px 0 0" }}>
-            Tell Claude this code to approve it there. You don't need it to approve here.
-            {locked && " Claude can no longer approve this with the code. You still can."}
-          </p>
+          {/* What the code is for is said once, in the page intro (261121-q4n). */}
+          {locked && (
+            <p style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3, margin: "8px 0 0" }}>
+              Claude can no longer approve this with the code. You still can.
+            </p>
+          )}
         </>
       )}
 
@@ -510,7 +662,18 @@ export default function InboxCard({
         {op === "add_transaction" ? (
           <>
             <table id={`inbox-rows-${id}`} className="inbox-table" style={{ borderCollapse: "collapse", width: "100%" }}>
-              <caption className="sr-only">Rows in this proposal</caption>
+              {/* Visible so proposed rows never read as saved records (261121-m17). */}
+              <caption
+                style={{
+                  captionSide: "top",
+                  textAlign: "left",
+                  fontSize: "var(--fs-xs, 12px)",
+                  color: c.muted3,
+                  paddingBottom: 6,
+                }}
+              >
+                Proposed · not saved yet
+              </caption>
               <thead>
                 <tr>
                   <th scope="col" style={th}>#</th>
@@ -540,9 +703,9 @@ export default function InboxCard({
                       <td className="inbox-c-date" style={{ ...cell, color: tone }}>{fmtRowDate(a.date)}</td>
                       <td className="inbox-c-merchant" style={{ ...cell, color: tone }}>
                         {skipped && <span style={{ ...neutralChip, marginRight: 8 }}>Skipped</span>}
-                        <span style={struck}>{text(a.merchant) || "—"}</span>
+                        <span style={struck}>{text(a.merchant) || "–"}</span>
                         {text(a.notes) !== "" && (
-                          <div style={{ fontSize: 12, color: c.muted3 }}>{text(a.notes)}</div>
+                          <div style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>{text(a.notes)}</div>
                         )}
                       </td>
                       <td className="inbox-c-account" style={{ ...cell, color: tone }}>{text(a.account)}</td>
@@ -611,14 +774,19 @@ export default function InboxCard({
                       <tr key={`f${i}`} className="inbox-flag-row">
                         <td colSpan={7} style={{ padding: "0 8px 12px" }}>
                           {flags.length > 0 && <DuplicateFlags flags={flags} selfId={id} onPageIds={onPageIds} />}
+                          {row.skip_default && row.skip && (
+                            <div style={{ marginTop: 4, fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>
+                              Skipped by default because it matches an existing record. Include it if it&apos;s new.
+                            </div>
+                          )}
                           {prov.map((item, k) => (
                             <div key={k} style={{ marginTop: 4 }}>
                               <span style={warmChip}>{item.chip}</span>{" "}
-                              <span style={{ fontSize: 12, color: c.muted3 }}>{item.line}</span>
+                              <span style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>{item.line}</span>
                             </div>
                           ))}
                           {src && (
-                            <div style={{ marginTop: 4, fontSize: 12, color: c.muted3, overflowWrap: "anywhere" }}>
+                            <div style={{ marginTop: 4, fontSize: "var(--fs-xs, 12px)", color: c.muted3, overflowWrap: "anywhere" }}>
                               {src}
                             </div>
                           )}
@@ -641,7 +809,7 @@ export default function InboxCard({
                   {expanded ? "Show fewer rows" : `Show all ${rows.length} rows`}
                 </button>
                 {!expanded && (
-                  <span style={{ fontSize: 12, color: c.muted3 }}>
+                  <span style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>
                     {rows.length - visibleRowIndices(rows, false).length} rows hidden
                   </span>
                 )}
@@ -651,6 +819,7 @@ export default function InboxCard({
         ) : op === "add_transfer" ? (
           <>
             <TransferLine legA={transfer?.leg_a} legB={transfer?.leg_b} showRate />
+            <TransferBalances legA={transfer?.leg_a} legB={transfer?.leg_b} accounts={accounts} />
             {flagsOf(rows[0]).length > 0 && (
               <div style={{ marginTop: 8 }}>
                 <DuplicateFlags flags={flagsOf(rows[0])} selfId={id} onPageIds={onPageIds} />
@@ -658,14 +827,40 @@ export default function InboxCard({
             )}
           </>
         ) : op === "add_balance_adjustment" ? (
-          <div style={{ fontSize: 14, color: c.ink }}>
-            Set account #{text(rows[0]?.account_id)} balance to {fmtAbsolute(rows[0]?.target_balance)}
-          </div>
-        ) : (
-          <ProposalDiff
-            rows={rows.map(({ duplicates: _d, skip: _s, ...diffRow }) => diffRow)}
-            dimColor={tokens.color.muted3}
+          <BalanceLine row={rows[0]} accounts={accounts} />
+        ) : op === "add_coupon" ? (
+          <CouponBody
+            after={rows[0]?.after ?? {}}
+            editable={live}
+            editing={editAmount}
+            draft={amountDraft}
+            blocked={blocked}
+            saving={busy === 0}
+            onEdit={() => {
+              setAmountDraft(text(rows[0]?.after?.amount));
+              setEditAmount(true);
+            }}
+            onDraft={setAmountDraft}
+            onSave={() => void saveAmount()}
+            onCancel={() => setEditAmount(false)}
           />
+        ) : (
+          <>
+            {p.channel === "schedule" && op === "add_funded_sell" && (
+              <p style={{ ...sentenceStyle, margin: "0 0 12px" }}>
+                Matured {fmtRowDate(rows[0]?.after?.date)}: sells {text(rows[0]?.after?.ticker)} at face value into{" "}
+                {text(rows[0]?.after?.source_account_name)}. Record any coupon for it first; a closed bond takes no
+                more coupons.
+              </p>
+            )}
+            {(op === "edit_transaction" || op === "delete_transaction") && (
+              <TargetLine before={rows[0]?.before} accounts={accounts} />
+            )}
+            <ProposalDiff
+              rows={rows.map(({ duplicates: _d, skip: _s, ...diffRow }) => diffRow)}
+              dimColor={tokens.color.muted3}
+            />
+          </>
         )}
       </div>
 
@@ -673,6 +868,8 @@ export default function InboxCard({
       {live && (
         <div
           className="inbox-footer"
+          // Say what a slow approve or reject is doing (261121-m17), not a bare "…".
+          aria-busy={busy === "approve" || busy === "reject" || undefined}
           style={{ marginTop: 16, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
           onKeyDown={(e) => {
             if (confirmDiscard && e.key === "Escape") setConfirmDiscard(false);
@@ -680,9 +877,9 @@ export default function InboxCard({
         >
           {confirmDiscard ? (
             <>
-              <span style={{ fontSize: 14, color: c.ink }}>
-                Discard this proposal and your skip choices on {skippedCount}{" "}
-                {skippedCount === 1 ? "row" : "rows"}?
+              <span style={{ fontSize: "var(--fs-body, 14px)", color: c.ink }}>
+                Discard this proposal and your skip choices on {chosenSkips}{" "}
+                {chosenSkips === 1 ? "row" : "rows"}?
               </span>
               <button
                 type="button"
@@ -713,39 +910,118 @@ export default function InboxCard({
                 onClick={() => void approve()}
               >
                 <span className="sr-only">Approve: </span>
-                {busy === "approve" ? "…" : allSkipped ? "Nothing left to add" : approveLabel(op, rows)}
+                {busy === "approve" ? "Applying…" : allSkipped ? "Nothing left to add" : approveLabel(op, rows)}
               </button>
               {allSkipped && (
-                <span id={`inbox-allskipped-${id}`} style={{ fontSize: 12, color: c.muted3 }}>
+                <span id={`inbox-allskipped-${id}`} style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>
                   {ALL_SKIPPED_MSG}
                 </span>
               )}
+              {/* Far from Approve so a slip doesn't land on it; the status lives in the header only (261121-q4n). */}
               <button
                 type="button"
                 ref={rejectRef}
-                style={{ ...btnGhost, minHeight: 40, ...gated(blocked) }}
+                style={{ ...btnGhost, minHeight: 40, marginLeft: "auto", ...gated(blocked) }}
                 aria-disabled={blocked}
                 aria-describedby={blockedDescribedBy}
                 onClick={() => void reject()}
               >
-                {busy === "reject" ? "…" : "Reject and discard"}
+                {busy === "reject" ? "Rejecting…" : "Reject and discard"}
               </button>
-              <span style={{ marginLeft: "auto", fontSize: 12, color: c.muted3 }}>
-                {pendingStatus(expiresMs, nowMs)}
-              </span>
             </>
           )}
         </div>
       )}
       {card.phase === "approved" && (
-        <div style={{ marginTop: 16, fontSize: 12, color: c.muted3 }}>{approvedFooter(op, rows)}</div>
+        <div style={{ marginTop: 16, fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>{approvedFooter(op, rows)}</div>
       )}
 
       {error && (
-        <p role="alert" style={{ fontSize: 12, color: c.terracotta, margin: "8px 0 0" }}>
+        <p role="alert" style={{ fontSize: "var(--fs-xs, 12px)", color: c.terracotta, margin: "8px 0 0" }}>
           {error}
         </p>
       )}
     </article>
+  );
+}
+
+// The transaction an edit or delete changes, so the diff is never judged blind
+// (261121-kwu): `before` is the whole row (backend _tx_to_dict).
+function TargetLine({
+  before,
+  accounts,
+}: {
+  before: Record<string, unknown> | null | undefined;
+  accounts: ReadonlyMap<number, InboxAccount>;
+}) {
+  if (!before) return null;
+  const acc = accounts.get(Number(before.account_id));
+  const parts = [
+    fmtRowDate(before.date),
+    text(before.merchant) || null,
+    acc ? acc.name : before.account_id != null ? `account #${text(before.account_id)}` : null,
+    `${fmtSigned(before.amount)}${before.currency && before.currency !== "IDR" ? ` ${text(before.currency)}` : ""}`,
+  ].filter(Boolean);
+  return (
+    <p style={{ fontSize: "var(--fs-body, 14px)", color: c.ink, margin: "0 0 10px" }}>
+      <span style={{ color: c.muted3 }}>Transaction: </span>
+      {parts.join(" · ")}
+    </p>
+  );
+}
+
+// A balance adjustment overwrites an account's balance: name the account and
+// show what it is now and how much moves (261121-kwu). Ids only as a fallback.
+function BalanceLine({
+  row,
+  accounts,
+}: {
+  row: ProposalRow | undefined;
+  accounts: ReadonlyMap<number, InboxAccount>;
+}) {
+  const acc = accounts.get(Number(row?.account_id));
+  const target = Number(row?.target_balance);
+  const now = acc?.current_balance;
+  const known = acc != null && now != null && Number.isFinite(target);
+  return (
+    <div style={{ fontSize: "var(--fs-body, 14px)", color: c.ink }}>
+      <div>
+        Set {acc ? acc.name : `account #${text(row?.account_id)}`} balance to {fmtAbsolute(row?.target_balance)}
+        {acc && acc.currency !== "IDR" ? ` ${acc.currency}` : ""}
+      </div>
+      {known && (
+        <div style={{ marginTop: 4, color: c.muted3, fontSize: "var(--fs-xs, 12px)" }}>
+          Now {fmtAbsolute(now)} · change {fmtSigned(target - (now as number))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Each side's balance now and after the transfer (261121-q4n). Legs name their
+// account; one we can't match, or one with no balance, is left out.
+function TransferBalances({
+  legA,
+  legB,
+  accounts,
+}: {
+  legA: Record<string, unknown> | undefined;
+  legB: Record<string, unknown> | undefined;
+  accounts: ReadonlyMap<number, InboxAccount>;
+}) {
+  const byName = new Map(Array.from(accounts.values()).map((a) => [a.name, a] as [string, InboxAccount]));
+  const side = (leg: Record<string, unknown> | undefined, sign: number) => {
+    const acc = byName.get(text(leg?.account));
+    const amount = Math.abs(Number(leg?.amount));
+    if (!acc || acc.current_balance == null || !Number.isFinite(amount)) return null;
+    const ccy = acc.currency !== "IDR" ? ` ${acc.currency}` : "";
+    return `${acc.name} ${fmtAbsolute(acc.current_balance)} → ${fmtAbsolute(acc.current_balance + sign * amount)}${ccy}`;
+  };
+  const parts = [side(legA, -1), side(legB, 1)].filter(Boolean);
+  if (parts.length === 0) return null;
+  return (
+    <div data-testid="inbox-transfer-balances" style={{ marginTop: 4, fontSize: "var(--fs-xs, 12px)", color: c.muted3 }}>
+      {parts.join(" · ")}
+    </div>
   );
 }

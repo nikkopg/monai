@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Route } from "@playwright/test";
+import { fmtRowDate } from "../app/lib/inbox";
 
 // ---------------------------------------------------------------------------
 // Phase 17 Plan 02 — RED e2e spec for the Records ledger (REC-01/02/03/05).
@@ -29,18 +30,23 @@ const money = (n: number) => new Intl.NumberFormat("en-US").format(Math.round(n)
 const signed = (n: number) =>
   new Intl.NumberFormat("en-US", { signDisplay: "always" }).format(Math.round(n));
 
-function isoAt(daysAgo: number): string {
+// Noon on the LOCAL day: the page groups by the viewer's clock, so a UTC-day
+// date read as "Yesterday" whenever the run fell before the UTC midnight
+// (00:00-07:00 WIB). Local noon stays on the same calendar day in ISO for any
+// zone within ±12h, so day labels still match.
+function localNoon(daysAgo: number): Date {
   const d = new Date();
-  d.setUTCHours(10, 0, 0, 0);
-  d.setUTCDate(d.getUTCDate() - daysAgo);
-  return d.toISOString();
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() - daysAgo);
+  return d;
+}
+
+function isoAt(daysAgo: number): string {
+  return localNoon(daysAgo).toISOString();
 }
 
 function weekdayLabel(daysAgo: number): string {
-  const d = new Date();
-  d.setUTCHours(10, 0, 0, 0);
-  d.setUTCDate(d.getUTCDate() - daysAgo);
-  return d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+  return localNoon(daysAgo).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 }
 
 function accountsFixture() {
@@ -244,6 +250,8 @@ test.describe("Multi-select + bulk actions (REC-03)", () => {
     // row's text; the row itself is the innermost/deepest matching div, i.e.
     // last in document order (Rule 3 test-authoring fix, 17-04).
     const row = page.locator("div", { hasText: "Warung Sate" }).last();
+    // Checkboxes show only in select mode (261121-m17).
+    await page.getByRole("button", { name: "Select", exact: true }).click();
     await row.locator('input[type="checkbox"]').check();
 
     await expect(page.getByText("1 selected", { exact: true })).toBeVisible();
@@ -252,7 +260,7 @@ test.describe("Multi-select + bulk actions (REC-03)", () => {
     // the bulk bar's.
     await expect(page.locator("button").filter({ hasText: "Recategorize" })).toBeVisible();
     await expect(page.locator("button").filter({ hasText: "Delete" }).first()).toBeVisible();
-    await expect(page.getByText("Cancel selection", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Done", exact: true })).toBeVisible();
 
     await page.locator("button").filter({ hasText: "Delete" }).first().click();
     await expect(
@@ -285,11 +293,16 @@ test.describe("Multi-select + bulk actions (REC-03)", () => {
     // row's text; the row itself is the innermost/deepest matching div, i.e.
     // last in document order (Rule 3 test-authoring fix, 17-04).
     const row = page.locator("div", { hasText: "Warung Sate" }).last();
+    // Checkboxes show only in select mode (261121-m17).
+    await page.getByRole("button", { name: "Select", exact: true }).click();
     await row.locator('input[type="checkbox"]').check();
 
-    const bulkBar = page.locator("div").filter({ hasText: "1 selected" }).last();
+    const bulkBar = page.locator(".rec-bulk");
+    // The category list shows only after Recategorize is pressed.
+    await expect(bulkBar.locator("select")).toHaveCount(0);
+    await bulkBar.getByRole("button", { name: "Recategorize" }).click();
     await bulkBar.locator("select").selectOption("Transport");
-    await bulkBar.locator("button").filter({ hasText: "Recategorize" }).click();
+    await bulkBar.getByRole("button", { name: "Apply" }).click();
 
     await expect.poll(() => recatBody?.category).toBe("Transport");
     await expect.poll(() => recatBody?.ids).toEqual([301]);
@@ -339,7 +352,7 @@ test.describe("Row options menu (quick 261011-mgj)", () => {
     await page.goto("/records");
     const tx = transactionsFixture().find((t) => t.id === 301)!;
     const opts = page.getByRole("button", {
-      name: `Record options: ${tx.merchant} on ${tx.date.slice(0, 10)}`,
+      name: `Record options: ${tx.merchant} on ${fmtRowDate(tx.date)}`,
       exact: true,
     });
 
@@ -361,6 +374,24 @@ test.describe("Row options menu (quick 261011-mgj)", () => {
       page.getByText("Delete this transaction? This can't be undone.")
     ).toBeHidden();
     await expect(opts).toBeFocused();
+  });
+
+  test("confirming a row Delete sends DELETE for that record", async ({ page }) => {
+    await mockRecords(page);
+    let deleted = false;
+    await page.route("**/api/transactions/301", async (route) => {
+      if (route.request().method() !== "DELETE") return route.fallback();
+      deleted = true;
+      await route.fulfill({ json: { status: "deleted" } });
+    });
+    await page.goto("/records");
+    const tx = transactionsFixture().find((t) => t.id === 301)!;
+    await page
+      .getByRole("button", { name: `Record options: ${tx.merchant} on ${fmtRowDate(tx.date)}`, exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
+    await page.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect.poll(() => deleted).toBe(true);
   });
 });
 
@@ -490,7 +521,7 @@ test.describe("Record modal currency (Phase 44)", () => {
     await page.goto("/records");
     await page
       .getByRole("button", {
-        name: `Record options: ZZ44 Vendor on ${row.date.slice(0, 10)}`,
+        name: `Record options: ZZ44 Vendor on ${fmtRowDate(row.date)}`,
         exact: true,
       })
       .click();
@@ -702,7 +733,7 @@ test.describe("Records USD rows (Phase 44 D-13, D-14)", () => {
 
     await expect(page.getByText(`Net ${signed(-225525)}`, { exact: true })).toBeVisible();
     await expect(page.getByText(/^Net -25,000 · 1 unconverted$/)).toBeVisible();
-    await expect(page.getByText(/^Net — · 1 unconverted$/)).toBeVisible();
+    await expect(page.getByText(/^Net – · 1 unconverted$/)).toBeVisible();
 
     const pair = page.getByText("25.50 USD", { exact: false });
     await expect(pair).toHaveCount(1);
@@ -747,7 +778,7 @@ test.describe("Records cross-currency pair (Phase 45 D-09)", () => {
     await expect(received.locator("xpath=..")).toContainText("100.00 USD");
     await expect(received.locator("xpath=..")).not.toContainText("≈");
     await expect(
-      page.getByText("1996-03-02 · Implied 1 USD = 16,310 IDR · ECB 16,250 (rate of 1 Mar 1996)", {
+      page.getByText("2 Mar 1996 · Implied 1 USD = 16,310 IDR · ECB 16,250 (rate of 1 Mar 1996)", {
         exact: true,
       })
     ).toHaveCount(1);
@@ -757,7 +788,7 @@ test.describe("Records cross-currency pair (Phase 45 D-09)", () => {
   test("cross-currency pair without a rate", async ({ page }) => {
     await open(page, pair({ fx_rate: null, fx_rate_date: null, amount_idr: null }));
     await expect(
-      page.getByText("1996-03-02 · Implied 1 USD = 16,310 IDR · ECB rate unavailable", { exact: true })
+      page.getByText("2 Mar 1996 · Implied 1 USD = 16,310 IDR · ECB rate unavailable", { exact: true })
     ).toHaveCount(1);
   });
 
@@ -767,7 +798,7 @@ test.describe("Records cross-currency pair (Phase 45 D-09)", () => {
     await expect(received).toHaveCount(1);
     await expect(received.locator("xpath=..")).toContainText("1,631,000");
     await expect(
-      page.getByText("1996-03-02 · Implied 1 USD = 16,310 IDR · ECB 16,250 (rate of 1 Mar 1996)", {
+      page.getByText("2 Mar 1996 · Implied 1 USD = 16,310 IDR · ECB 16,250 (rate of 1 Mar 1996)", {
         exact: true,
       })
     ).toHaveCount(1);

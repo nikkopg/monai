@@ -14,16 +14,19 @@ import { useVisiblePoll } from "../lib/useVisiblePoll";
 import { INBOX_SURFACE_HEADER } from "../lib/approverAllowlist";
 import {
   APPROVER_KEY_PAGE_MSG,
+  defaultSkipLedgerDuplicates,
   hhmm,
   liveCount,
   mergePoll,
   serverOffset,
   type CardPhase,
   type HeldCard,
+  type InboxAccount,
   type InboxProposal,
   type ProposalRow,
 } from "../lib/inbox";
 import { btnGhost, card as cardStyle, tokens } from "../styles";
+import Skeleton, { Bone } from "../components/Skeleton";
 
 const c = tokens.color;
 const OFFLINE_BANNER_ID = "inbox-offline-banner";
@@ -72,11 +75,31 @@ export default function InboxPage() {
     };
   }, []);
 
+  // Account names and balances, so edit and balance cards say what they replace
+  // (261121-kwu). Any failure leaves the map empty and the cards fall back to ids.
+  const [accounts, setAccounts] = useState<ReadonlyMap<number, InboxAccount>>(new Map());
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/cashflow/summary?period=this_month");
+        if (!r.ok) return;
+        const list: InboxAccount[] = (await r.json())?.accounts ?? [];
+        if (!cancelled) setAccounts(new Map(list.map((a) => [a.id, a])));
+      } catch {
+        // leave empty
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const poll = useVisiblePoll<InboxProposal[]>({
     url: "/api/proposals?status=pending",
     intervalMs: 10_000,
     headers: INBOX_SURFACE_HEADER,
-    parse: (json) => (Array.isArray(json) ? (json as InboxProposal[]) : null),
+    parse: (json) => (Array.isArray(json) ? (json as InboxProposal[]).map(defaultSkipLedgerDuplicates) : null),
     onData: (list, dateHeader, startedAt) => {
       const now = Date.now();
       // A poll sent before an action on a card finished carries that card's
@@ -201,15 +224,30 @@ export default function InboxPage() {
   if (cards === null) {
     body =
       poll.failures === 0 ? (
-        <div style={box}>
-          <p role="status" style={{ fontSize: 14, color: c.muted3, margin: 0 }}>
-            Loading your inbox…
-          </p>
-        </div>
+        <Skeleton label="Loading your inbox">
+          {[0, 1].map((i) => (
+            <div key={i} style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <Bone w={90} h={22} r={999} />
+                <Bone w={70} h={12} />
+              </div>
+              <Bone w="60%" h={16} />
+              <div style={{ display: "grid", gap: 10 }}>
+                <Bone w="100%" h={12} />
+                <Bone w="100%" h={12} />
+                <Bone w="100%" h={12} />
+              </div>
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+                <Bone w={96} h={40} r={10} />
+                <Bone w={96} h={40} r={10} />
+              </div>
+            </div>
+          ))}
+        </Skeleton>
       ) : (
         <div style={box}>
-          <p role="alert" style={{ fontSize: 14, color: c.terracotta, margin: "0 0 16px" }}>
-            Couldn't load your inbox — check the backend is running and try again.
+          <p role="alert" style={{ fontSize: "var(--fs-body, 14px)", color: c.terracotta, margin: "0 0 16px" }}>
+            Couldn't load your inbox. Check the backend is running and try again.
           </p>
           <button type="button" style={{ ...btnGhost, minHeight: 40 }} onClick={poll.refetchNow}>
             Try again
@@ -222,16 +260,16 @@ export default function InboxPage() {
         <h2 style={{ fontFamily: tokens.font.serif, fontSize: 20, fontWeight: 400, margin: 0 }}>
           All caught up.
         </h2>
-        <p style={{ fontSize: 14, color: c.muted3, margin: "8px 0 0" }}>
+        <p style={{ fontSize: "var(--fs-body, 14px)", color: c.muted3, margin: "8px 0 0" }}>
           Proposals from Claude and chat land here. Nothing is waiting for you.
         </p>
       </div>
     );
   } else {
     body = (
-      <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+      <ul className="fade-in" style={{ listStyle: "none", margin: 0, padding: 0 }}>
         {cards.map((h) => (
-          <li key={h.proposal.id} style={{ marginBottom: tokens.space.lg }}>
+          <li key={h.proposal.id} style={{ marginBottom: "var(--stack, 18px)" }}>
             <InboxCard
               card={h}
               nowMs={nowMs}
@@ -246,6 +284,7 @@ export default function InboxPage() {
               onRows={onRows}
               announce={announce}
               categories={categories}
+              accounts={accounts}
             />
           </li>
         ))}
@@ -260,32 +299,33 @@ export default function InboxPage() {
       </div>
 
       <div style={{ marginBottom: 32 }}>
-        <div
-          style={{
-            fontSize: 12,
-            color: c.muted3,
-            textTransform: "uppercase",
-            letterSpacing: ".12em",
-            marginBottom: 8,
-          }}
-        >
-          Approvals
-        </div>
         <h1
           style={{
             fontFamily: tokens.font.serif,
             fontWeight: 400,
-            fontSize: 40,
+            fontSize: "var(--fs-title, 40px)",
             margin: 0,
             letterSpacing: "-.5px",
           }}
         >
           Inbox
         </h1>
-        <p style={{ fontSize: 14, color: c.muted3, margin: "8px 0 0" }}>
+        <p style={{ fontSize: "var(--fs-body, 14px)", color: c.muted3, margin: "8px 0 0" }}>
           Everything waiting for your say-so. Nothing changes until you approve.
           {cards !== null && cards.length > 0 && ` ${liveCount(cards)} waiting.`}
         </p>
+        {/* TTLs from backend/proposals.py (261121-m17). */}
+        <p style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3, margin: "4px 0 0" }}>
+          Chat proposals expire after 15 minutes, Claude&apos;s and uploads after 48 hours. An expired proposal
+          changes nothing.
+        </p>
+        {cards !== null &&
+          cards.some((h) => h.phase === "live" && h.proposal.channel === "mcp" && !!h.proposal.code) && (
+            <p style={{ fontSize: "var(--fs-xs, 12px)", color: c.muted3, margin: "4px 0 0" }}>
+              A proposal from Claude carries a code. Tell Claude the code to approve it there; you don&apos;t need it
+              to approve here.
+            </p>
+          )}
       </div>
 
       {loaded && poll.offline && (
@@ -297,13 +337,13 @@ export default function InboxPage() {
             border: `1px solid ${c.border2}`,
             borderRadius: tokens.radius.md,
             padding: "12px 16px",
-            fontSize: 14,
+            fontSize: "var(--fs-body, 14px)",
             color: c.ink,
             marginBottom: 16,
           }}
         >
           Can't reach monai · retrying (last update{" "}
-          {poll.lastSuccessAt !== null ? hhmm(poll.lastSuccessAt) : "—"})
+          {poll.lastSuccessAt !== null ? hhmm(poll.lastSuccessAt) : "–"})
         </div>
       )}
 
@@ -314,7 +354,7 @@ export default function InboxPage() {
             ...cardStyle,
             padding: "12px 16px",
             marginBottom: 16,
-            fontSize: 14,
+            fontSize: "var(--fs-body, 14px)",
             color: c.terracotta,
           }}
         >

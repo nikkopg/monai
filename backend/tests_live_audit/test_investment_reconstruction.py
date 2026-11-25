@@ -527,7 +527,7 @@ def test_position_without_a_holdings_row_is_treated_as_closed(db_session):
     end_excl = _end_excl_for_month(current_month)
 
     snapshot_day = conn.execute(
-        text(recon._SNAPSHOT_DAY_SQL), {"start": month_start, "end_excl": end_excl}
+        text(recon._SNAPSHOT_DAYS_SQL), {"start": month_start, "end_excl": end_excl}
     ).scalar()
     assert snapshot_day is not None, "no snapshot in the current month -- test assumption stale"
 

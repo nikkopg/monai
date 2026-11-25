@@ -32,8 +32,10 @@ export const tokens = {
     // text
     text: "#23201b",
     textSoft: "#34302a",
-    muted: "#8b8474",
-    muted2: "#a49c8c",
+    // Text greys darkened to pass WCAG AA 4.5:1 on white, the panel and #f2efe8
+    // (were #8b8474 / #a49c8c, 2.5 to 3.7:1).
+    muted: "#716c5f",
+    muted2: "#767064",
     muted3: "#6f6857",
     // hairlines / borders
     border: "#e7e1d5",
@@ -83,9 +85,9 @@ export const tokens = {
 export const card: React.CSSProperties = {
   background: tokens.color.card,
   border: `1px solid ${tokens.color.border}`,
-  borderRadius: tokens.radius.lg,
-  padding: "22px 24px",
-  marginBottom: tokens.space.lg,
+  borderRadius: "var(--card-radius, 18px)",
+  padding: "var(--card-pad, 22px 24px)",
+  marginBottom: "var(--stack, 18px)",
 };
 
 export const input: React.CSSProperties = {
@@ -106,7 +108,7 @@ export const btn: React.CSSProperties = {
   border: "none",
   borderRadius: tokens.radius.sm,
   padding: "10px 22px",
-  fontSize: 14,
+  fontSize: "var(--fs-body, 14px)",
   cursor: "pointer",
   fontWeight: 600,
 };
@@ -118,7 +120,7 @@ export const btnDark: React.CSSProperties = {
   color: tokens.color.inkText,
   borderRadius: tokens.radius.pill,
   padding: "8px 16px",
-  fontSize: 13,
+  fontSize: "var(--fs-body, 13px)",
 };
 
 // Secondary / neutral button (Reject in the mockup).
@@ -130,7 +132,7 @@ export const btnGhost: React.CSSProperties = {
 };
 
 export const label: React.CSSProperties = {
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   color: tokens.color.muted2,
   marginBottom: 7,
   display: "block",
@@ -174,6 +176,16 @@ export const categoryPalette: { name: string; hex: string }[] = [
   { name: "Investments", hex: "#c9973f" },
   { name: "Income", hex: tokens.color.greenDark },
   { name: "Others", hex: chartColors[5] },
-  { name: "Transfer", hex: tokens.color.muted2 },
-  { name: "Uncategorized", hex: tokens.color.muted },
+  // Swatches, not text: the old lighter greys, and saved categories store these exact hexes.
+  { name: "Transfer", hex: "#a49c8c" },
+  { name: "Uncategorized", hex: "#8b8474" },
 ];
+
+// Warm one-line note strip (Cashflow net-worth notice, Investments rate/stale strip).
+export const notice: React.CSSProperties = {
+  background: tokens.color.tintWarm,
+  borderRadius: tokens.radius.sm,
+  padding: "8px 16px",
+  fontSize: "var(--fs-xs, 12px)",
+  lineHeight: 1.5,
+};

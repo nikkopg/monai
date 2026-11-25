@@ -237,9 +237,9 @@ function summaryFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     totals: { income: 5_000_000, expense: 2_000_000, net: 3_000_000 },
     by_category: [
-      ["Food & Drinks", 1_200_000],
-      ["Transport", 500_000],
-      ["Shopping", 300_000],
+      { id: 1, name: "Food & Drinks", color: null, icon: null, total: 1_200_000, children: [] }, // pii-ok synthetic
+      { id: 2, name: "Transport", color: null, icon: null, total: 500_000, children: [] }, // pii-ok synthetic
+      { id: 3, name: "Shopping", color: null, icon: null, total: 300_000, children: [] }, // pii-ok synthetic
     ],
     accounts: [
       { id: 1, name: "Cash", current_balance: 4_000_000, period_net: 1_500_000 },
@@ -323,11 +323,45 @@ async function mockPage(page: Page, history: HistoryFn = defaultHistory) {
 }
 
 test.describe("net worth trend card", () => {
+  test("loading: page skeleton with the drawing line, then the chart's own line until history lands (261115-hfb)", async ({
+    page,
+  }) => {
+    await mockPage(page);
+    let releaseSummary!: () => void;
+    let releaseHistory!: () => void;
+    const summaryGate = new Promise<void>((r) => (releaseSummary = r));
+    const historyGate = new Promise<void>((r) => (releaseHistory = r));
+    await page.route("**/api/cashflow/summary**", async (route) => {
+      await summaryGate;
+      await route.fallback();
+    });
+    await page.route("**/api/cashflow/networth-history**", async (route) => {
+      await historyGate;
+      await route.fallback();
+    });
+    await page.goto("/overview");
+
+    const pageSkel = page.getByRole("status", { name: "Loading your cashflow" });
+    await expect(pageSkel).toBeVisible();
+    await expect(pageSkel.locator(".draw-line")).toHaveCount(1);
+
+    releaseSummary();
+    await expect(pageSkel).toHaveCount(0);
+    const region = page.getByRole("region", { name: "Net worth trend", exact: true });
+    const chartSkel = region.getByRole("status", { name: "Loading net worth history" });
+    await expect(chartSkel).toBeVisible();
+    await expect(chartSkel.locator(".draw-line")).toHaveCount(1);
+
+    releaseHistory();
+    await expect(chartSkel).toHaveCount(0);
+    await expect(region.locator("g.recharts-line")).toHaveCount(1);
+  });
+
   test("renders one honest dot and no caption text under the chart", async ({
     page,
   }) => {
     const requestedMonths = await mockPage(page);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
 
     const region = page.getByRole("region", { name: "Net worth trend", exact: true });
     await expect(region).toBeVisible();
@@ -348,13 +382,48 @@ test.describe("net worth trend card", () => {
     expect(requestedMonths[0]).toBe("12");
   });
 
+  test("change line runs first to last plotted total and follows the range", async ({ page }) => {
+    const honest = (month: string, total: number) =>
+      nwRow(month, {
+        liquid: { total: total / 2, honest: true },
+        investment: { total: total / 2, honest: true, as_of_date: `${month}-28` },
+        total,
+        honest: true,
+      });
+    await mockPage(page, (months) =>
+      months === "12"
+        ? {
+            status: 200,
+            rows: [
+              nwRow("2025-12", { liquid: { gap_reason: "fx_unavailable" }, gap: "both_halves_gapped" }),
+              honest("2026-01", 100000000),
+              honest("2026-02", 92500000),
+            ],
+          }
+        : months === "600"
+          ? { status: 200, rows: [honest("2021-03", 10000), honest("2026-02", 92500000)] }
+          : defaultHistory(months)
+    );
+    await page.goto("/overview");
+
+    const change = page.getByTestId("hero-change");
+    // The gapped month is skipped: the change starts at the first plotted one.
+    await expect(change).toHaveText("▼7.5%-7,500,000 · since Jan 2026");
+    // 3Y has a single honest month, so there is nothing to compare.
+    await page.getByRole("button", { name: "3Y", exact: true }).click();
+    await expect(change).toHaveCount(0);
+    // A tiny first balance would give a % in the millions: amount only.
+    await page.getByRole("button", { name: "All", exact: true }).click();
+    await expect(change).toHaveText("+92,490,000 · since Mar 2021"); // pii-ok synthetic
+  });
+
   test("zero honest months still renders the card with no caption text", async ({
     page,
   }) => {
     await mockPage(page, (months) =>
       months === "12" ? { status: 200, rows: allGapped1Y() } : defaultHistory(months)
     );
-    await page.goto("/cashflow");
+    await page.goto("/overview");
 
     const region = page.getByRole("region", { name: "Net worth trend", exact: true });
     await expect(region).toBeVisible();
@@ -367,7 +436,7 @@ test.describe("net worth trend card", () => {
     page,
   }) => {
     const requestedMonths = await mockPage(page);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
 
     const region = page.getByRole("region", { name: "Net worth trend", exact: true });
     // Wait for the 1Y dot before recording the baseline request count.
@@ -388,7 +457,9 @@ test.describe("net worth trend card", () => {
     // Cache proof (D-03) without relying on networkidle, which can be flaky
     // under the Next dev server's hot-reload socket: the loading placeholder
     // never reappears and no new "12" request is issued.
-    await expect(region.getByText("Loading net worth history…")).toHaveCount(0);
+    await expect(
+      region.getByRole("status", { name: "Loading net worth history" })
+    ).toHaveCount(0);
     const finalTwelveCount = requestedMonths.filter((m) => m === "12").length;
     expect(finalTwelveCount).toBe(initialTwelveCount);
     await expect(
@@ -409,7 +480,7 @@ test.describe("net worth trend card", () => {
     page,
   }) => {
     const requestedMonths = await mockPage(page);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
 
     const region = page.getByRole("region", { name: "Net worth trend", exact: true });
     await expect(region.locator("circle.recharts-line-dot")).toHaveCount(1);
@@ -437,7 +508,7 @@ test.describe("net worth trend card", () => {
     page,
   }) => {
     await mockPage(page);
-    await page.goto("/cashflow");
+    await page.goto("/overview");
 
     const region = page.getByRole("region", { name: "Net worth trend", exact: true });
     await expect(region.locator("circle.recharts-line-dot")).toHaveCount(1);
@@ -464,7 +535,7 @@ test.describe("net worth trend card", () => {
     await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
     await expect(tooltip).toBeVisible();
     await expect(tooltip).toContainText(
-      "No data — the historical FX rate could not be verified for these months"
+      "No data (the historical FX rate could not be verified for these months"
     );
   });
 
@@ -472,11 +543,11 @@ test.describe("net worth trend card", () => {
     page,
   }) => {
     await mockPage(page, () => ({ status: 500, rows: [] }));
-    await page.goto("/cashflow");
+    await page.goto("/overview");
 
     const region = page.getByRole("region", { name: "Net worth trend", exact: true });
     await expect(region).toContainText(
-      "Couldn't load net worth history — check the backend is running and reload the page."
+      "Couldn't load net worth history. Check the backend is running and reload the page."
     );
     await expect(
       region.getByRole("button", { name: "3Y", exact: true })
@@ -491,7 +562,7 @@ test.describe("net worth trend card", () => {
         ? { status: 200, rows: archival1Y(), liquid_drift_estimate: 8000000 }
         : defaultHistory(m)
     );
-    await page.goto("/cashflow");
+    await page.goto("/overview");
 
     const region = page.getByRole("region", { name: "Net worth trend", exact: true });
     await expect(region).toBeVisible();
@@ -535,5 +606,21 @@ test.describe("net worth trend card", () => {
 
     // The mode switch reused the cached rows — no new history request.
     expect(requestedMonths.length).toBe(historyRequestsBefore);
+  });
+
+  test("375px: the seam line stays, its Market value label is hidden (261115-msv F3)", async ({
+    page,
+  }) => {
+    await mockPage(page, (m) =>
+      m === "12" ? { status: 200, rows: archival1Y() } : defaultHistory(m)
+    );
+    await page.goto("/overview");
+    const region = page.getByRole("region", { name: "Net worth trend", exact: true });
+    // Visible at 1280, so the hidden check below cannot pass vacuously.
+    await expect(region.locator(".recharts-label")).toBeVisible();
+
+    await page.setViewportSize({ width: 375, height: 812 });
+    await expect(region.locator(".recharts-reference-line")).toHaveCount(1);
+    await expect(region.locator(".recharts-label")).toBeHidden();
   });
 });

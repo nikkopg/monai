@@ -666,6 +666,32 @@ def test_trend_partial_snapshot_flips_gap(db):
         db.rollback()
 
 
+def test_trend_uses_latest_complete_day_in_month(db):
+    # Month 4's last snapshot (day 20) misses X; an earlier complete day 10 is used instead.
+    from datetime import timedelta
+
+    from backend.models import PortfolioValueHistory
+
+    try:
+        x, plat = _trend_seed(db, [(5, True), (4, False), (3, True), (2, False), (1, False)])
+        _, y_only = _trend(db)
+        assert y_only[_mkey(4)] == Decimal("3500")  # carried from month 5 while month 4 gaps
+        day10 = _month_start(4) + timedelta(days=9)
+        y = next(r for r in db.query(PortfolioValueHistory).filter(PortfolioValueHistory.platform_id == plat)
+                 if r.ticker != x).ticker
+        db.add(PortfolioValueHistory(snapshot_date=day10, ticker=x, platform_id=plat,
+                                     quantity=10, market_value=1600, cost_basis=0, currency="IDR"))
+        db.add(PortfolioValueHistory(snapshot_date=day10, ticker=y, platform_id=plat,
+                                     quantity=20, market_value=2100, cost_basis=0, currency="IDR"))
+        db.flush()
+        raw, carried = _trend(db)
+        m4 = next(r for r in raw if r["month"] == _mkey(4))
+        assert m4["honest"] is True and m4["as_of_date"] == day10, m4
+        assert carried[_mkey(4)] == Decimal("3700")
+    finally:
+        db.rollback()
+
+
 # ---------------------------------------------------------------------------
 # Task 3: required liquid account, and Add holding positions can trade
 # ---------------------------------------------------------------------------

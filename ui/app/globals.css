@@ -1,9 +1,9 @@
 /* v1.1 "paper" redesign — shell responsiveness (UIR-10).
    Most page grids use CSS `auto-fit minmax(...)` inline so they stack on narrow
    viewports without media queries. These rules handle the app shell itself:
-   trim the frame padding on tablets, and collapse the sidebar to an icon rail
-   on phones so the content area stays usable. `!important` is required to win
-   over the inline styles the shell is built with. */
+   trim the frame padding on tablets, and swap the sidebar for the floating
+   dock on phones so the content area stays usable. `!important` is required to
+   win over the inline styles the shell is built with. */
 
 @media (max-width: 760px) {
   .app-frame {
@@ -15,36 +15,424 @@
   }
 }
 
+/* Phone type scale (261116-s7w), option B of phone-scale-mock.html. Every
+   converted inline site names its role with a var() and a px fallback; the
+   desktop values now come from the :root block below (261121-efd F006).
+   Source order matters: this block follows the 760px block so its
+   .app-frame/.app-panel overrides win. */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  /* Browser surfaces in the paper palette (design review 2026-11-21 F012). */
+  color-scheme: light;
+  scrollbar-color: #cfc6b6 transparent;
+}
+::selection {
+  background: rgba(47, 111, 79, 0.2);
+}
+/* Fixed-width digits everywhere, so amounts and rolling numbers do not wobble
+   as their digits change (F007). */
+body {
+  font-variant-numeric: tabular-nums;
+}
+/* Desktop type scale (F006). The inline fallbacks had drifted to 11, 12 and
+   13px for xs, 13 and 14 for body, 14 and 15 for h3; one value per role now.
+   The phone block below overrides these. */
+:root {
+  --fs-xs: 12px;
+  --fs-body: 14px;
+  --fs-h3: 15px;
+  --fs-pill: 13px;
+}
 @media (max-width: 560px) {
-  .app-sidebar {
-    width: 66px !important;
-    padding: 18px 10px !important;
+  :root {
+    --fs-xs: 13px;
+    --fs-body: 15px;
+    --fs-h3: 16px;
+    --fs-pill: 14px;
+    --pill-h: 36px;
+    --fs-title: 24px;
+    --fs-hero: clamp(28px, 10.2vw, 38px);
+    --card-pad: 18px;
+    --card-radius: 16px;
+    --stack: 14px;
   }
-  .app-sidebar .brand-word,
-  .app-sidebar .menu-label,
-  .app-sidebar .nav-label,
-  .app-sidebar .footer-card {
-    display: none !important;
+  /* Full-bleed: the 8px inset and the rounded panel cost 16px of width. */
+  .app-frame {
+    padding: 0 !important;
   }
-  .app-sidebar .nav-item {
-    justify-content: center !important;
-    padding: 11px 0 !important;
+  .app-panel {
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
   }
-  /* Pending badge stays visible on the icon rail (never in the display:none list). */
-  .app-sidebar .nav-badge {
-    position: absolute !important;
-    top: 4px;
-    right: 4px;
-    margin: 0 !important;
+  /* 16px stops iOS zooming on focus; !important beats the inline fontSize. */
+  input:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=hidden]),
+  select,
+  textarea {
+    font-size: 16px !important;
+  }
+  /* Recharts writes tick and label sizes as SVG attributes (kept numeric 12 in
+     the components); author CSS beats those. */
+  .recharts-cartesian-axis-tick-value,
+  .recharts-label {
+    font-size: 13px;
   }
 }
 
-/* Below 340px the 44px page gutters leave cards too narrow for an amount
-   (37 IN-03). Chat's own 16px rule further down wins for the chat column. */
-@media (max-width: 339px) {
+/* Phone dock (261115-s37): the dock is always in the DOM and CSS picks one of
+   the two navs, so server and client markup match. Its inline style sets no
+   display, so these rules need no !important. */
+.app-dock {
+  display: none;
+}
+@media (max-width: 560px) {
+  .app-dock {
+    display: flex;
+  }
+  .app-sidebar {
+    display: none !important;
+  }
+}
+/* Light focus ring on the dark dock; the global green ring is under 3:1 on ink
+   (261115-s37). The menu link sits on a white card and keeps the green ring. */
+.dock-item:focus-visible {
+  outline-color: #f2efe8;
+}
+.dock-menu-item:hover {
+  background: #f7f5f1;
+}
+
+/* Below 561px (phones) the 44px page gutters leave cards too narrow for an
+   amount (37 IN-03, 261115-msv). Covers every .tab-in page; Chat's own 16px
+   rule further down still wins for the chat column. The old Investments-only
+   rule was folded in here.
+   261115-s37: this is also the one place every page gets clearance under the
+   floating dock (--dock-clear is the single knob). Chat's later
+   .chat-column-inner rule overrides the bottom padding on purpose: the sticky
+   composer carries Chat's clearance (.composer-sticky below). */
+@media (max-width: 560px) {
+  :root {
+    --dock-clear: calc(84px + env(safe-area-inset-bottom));
+  }
   .tab-in {
     padding-left: 16px !important;
     padding-right: 16px !important;
+    padding-bottom: var(--dock-clear) !important;
+  }
+}
+
+/* Investments Holdings rows. The layout keys on the Holdings card's content
+   width (container `holdings` on the section), not the viewport: the nav rail,
+   page padding and card padding decide what fits (261115-e3k).
+   810px and up: all 5 columns. 520-809px: rows stay single-line, Units and
+   Price fold into the units x price sub-line and the header keeps
+   Asset/Value/Return. Below 520px: rows stack into ticker + the menu,
+   staleness, Value left / Return right, units x price (261114-s6g).
+   Children are addressed by DOM position: 1 Asset, 2 Units, 3 Price, 4 Value,
+   5 Return, 6 menu cell, 7 sub-line (the order the usd-positions spec's
+   `> span` indexes pin).
+   Calibration: 810 and 520 were measured on worst-case synthetic rows
+   (staleness "Price as of 317d ago * coingecko", a 10-digit IDR value, 8-dp
+   units). The 5-column layout broke at 802 (staleness over Units) and the mid
+   layout at 510 (staleness over a 10-digit Value). Re-measure if the staleness
+   label, the money formats or the column flex ratios change. The 18px
+   menu-cell height is the measured ticker line height (14px Hanken Grotesk);
+   re-measure it if the ticker font changes. */
+.inv-sub {
+  display: none;
+}
+.inv-holdings {
+  container-type: inline-size;
+  container-name: holdings;
+}
+@container holdings (max-width: 809px) {
+  .inv-wide {
+    display: none !important;
+  }
+  .inv-row {
+    flex-wrap: wrap;
+  }
+  .inv-sub {
+    display: block;
+  }
+}
+@container holdings (max-width: 519px) {
+  .inv-head {
+    display: none !important;
+  }
+  .inv-row {
+    column-gap: 16px;
+    row-gap: 6px;
+  }
+  /* The large basis leaves room for only the menu on line 1, so Value wraps.
+     Longhands: the build drops !important from a flex shorthand holding calc(). */
+  .inv-row > :nth-child(1) {
+    flex-grow: 1 !important;
+    flex-basis: calc(100% - 64px) !important;
+  }
+  .inv-row > :nth-child(4) {
+    order: 1;
+    flex: 1 1 0 !important;
+    text-align: left !important;
+  }
+  .inv-row > :nth-child(5) {
+    order: 1;
+    flex: 1 1 0 !important;
+  }
+  /* Ticker-line tall, so the 36/44px button centres on the ticker. */
+  .inv-row > :nth-child(6) {
+    flex: 0 0 auto !important;
+    align-self: flex-start;
+    height: 18px;
+    align-items: center;
+  }
+  .inv-sub {
+    order: 2;
+  }
+}
+/* Phone tickers are 15px (--fs-body), a 20px line, so the menu cell grows
+   with them. Re-measured at 375 (261116-s7w T3). The 810 / 520 thresholds are
+   unchanged: the phone scale only applies at 560px and below, where the
+   Holdings container is at most 492px, so it always takes the stacked layout. */
+@media (max-width: 560px) {
+  .inv-row > :nth-child(6) {
+    height: 20px;
+  }
+}
+
+/* Platform page rows (261115-oax P1). Same idea as .inv-holdings: the layout
+   keys on the table card's content width (container `plat`), threshold 519px
+   like holdings. Children are addressed by DOM position.
+   PnL row (.plat-row): 1 Ticker, 2 Qty, 3 Avg cost, 4 Price, 5 Value,
+   6 Realized, 7 Unrealized, 8 .plat-sub (qty x avg cost, hidden on wide
+   cards). Stacked: ticker line, Value left / Unrealized right, qty x avg cost,
+   Realized with a CSS label (no DOM text duplicated). Qty, Avg cost and Price
+   columns are dropped; the first two live in the sub-line.
+   Event row (.plat-ev): 1 Date, 2 Ticker, 3 Side, 4 Qty, 5 Price, 6 menu cell.
+   Stacked: ticker + menu, then Side / Qty / Price, then Date.
+   Flex overrides use longhands (the build drops !important from a flex
+   shorthand holding calc()). */
+.plat-sub {
+  display: none;
+}
+.plat-table {
+  container-type: inline-size;
+  container-name: plat;
+}
+@container plat (max-width: 519px) {
+  .plat-head {
+    display: none !important;
+  }
+  /* The hidden header leaves the first row's hairline at the top of the card. */
+  .plat-head + .plat-row,
+  .plat-head + .plat-ev {
+    border-top: none !important;
+  }
+  .plat-row,
+  .plat-ev {
+    flex-wrap: wrap;
+    column-gap: 16px;
+    row-gap: 6px;
+  }
+  .plat-row > :nth-child(1) {
+    flex-basis: 100% !important;
+  }
+  .plat-row > :nth-child(2),
+  .plat-row > :nth-child(3),
+  .plat-row > :nth-child(4) {
+    display: none !important;
+  }
+  .plat-row > :nth-child(5),
+  .plat-row > :nth-child(7) {
+    order: 1;
+    flex-grow: 1 !important;
+    flex-shrink: 1 !important;
+    flex-basis: auto !important;
+    white-space: nowrap;
+  }
+  .plat-row > :nth-child(5) {
+    text-align: left !important;
+  }
+  .plat-row > :nth-child(8) {
+    display: block;
+    order: 2;
+    white-space: nowrap;
+  }
+  .plat-row > :nth-child(6) {
+    order: 3;
+    flex-basis: 100% !important;
+    text-align: left !important;
+    white-space: nowrap;
+  }
+  .plat-row > :nth-child(6)::before {
+    content: "Realized ";
+    font-weight: 400;
+    color: #6f6857;
+  }
+  .plat-ev > :nth-child(2) {
+    flex-grow: 1 !important;
+    flex-basis: calc(100% - 64px) !important;
+  }
+  .plat-ev > :nth-child(6) {
+    flex-grow: 0 !important;
+    flex-shrink: 0 !important;
+    flex-basis: auto !important;
+  }
+  .plat-ev > :nth-child(3) {
+    order: 1;
+    flex-grow: 0 !important;
+    flex-shrink: 0 !important;
+    flex-basis: auto !important;
+  }
+  .plat-ev > :nth-child(4),
+  .plat-ev > :nth-child(5) {
+    order: 1;
+    flex-grow: 0 !important;
+    flex-basis: auto !important;
+    white-space: nowrap;
+  }
+  .plat-ev > :nth-child(4) {
+    text-align: left !important;
+  }
+  .plat-ev > :nth-child(5) {
+    margin-left: auto;
+  }
+  .plat-ev > :nth-child(1) {
+    order: 2;
+    flex-basis: 100% !important;
+  }
+}
+/* The three stat tiles become one card of label / value rows on phones
+   (261115-oax P1). Hex values are literal copies of styles.ts tokens: #fff
+   card, #e7e1d5 border, #f0ece3 borderInner. */
+@media (max-width: 560px) {
+  .plat-stats {
+    gap: 0 !important;
+    background: #fff;
+    border: 1px solid #e7e1d5;
+    border-radius: 16px;
+    padding: 4px 16px;
+  }
+  .plat-stats > div {
+    border: none !important;
+    border-radius: 0 !important;
+    background: none !important;
+    padding: 10px 0 !important;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: baseline;
+    column-gap: 12px;
+  }
+  .plat-stats > div + div {
+    border-top: 1px solid #f0ece3 !important;
+  }
+  .plat-stats > div > :first-child {
+    margin-bottom: 0 !important;
+  }
+  .plat-stats > div > :last-child {
+    font-size: 18px !important;
+    white-space: nowrap;
+    margin-left: auto;
+  }
+}
+
+/* Records rows and filters on phones (261115-oax P2). The audit's single top
+   line (checkbox, avatar, merchant, amount, menu) needs about 260px but a phone
+   card has about 206, so the merchant keeps line 1 and the meta and amount move
+   below. .rec-text becomes display: contents so its primary and meta spans are
+   row items. Flex overrides are longhands, as the .inv-row rules. */
+@media (max-width: 560px) {
+  .rec-row {
+    flex-wrap: wrap;
+    column-gap: 10px !important;
+    row-gap: 4px;
+  }
+  .rec-text {
+    display: contents !important;
+  }
+  /* Half the row: with a 0 basis the 150px meta line also fitted on line 1 and
+     squeezed the name to one letter (design review 2026-11-21 F001). */
+  .rec-text > :first-child {
+    flex-grow: 1;
+    flex-shrink: 1;
+    flex-basis: 50%;
+    min-width: 0;
+  }
+  .rec-text > :last-child {
+    order: 1;
+    flex-grow: 1;
+    flex-shrink: 1;
+    flex-basis: 150px;
+  }
+  .rec-amt {
+    order: 1;
+    margin-left: auto;
+  }
+  .rec-filters > select {
+    flex-grow: 1 !important;
+    flex-shrink: 1 !important;
+    flex-basis: 100% !important;
+  }
+  .rec-filters > input[type="number"] {
+    flex-grow: 1 !important;
+    flex-shrink: 1 !important;
+    flex-basis: 80px !important;
+    min-width: 0 !important;
+  }
+  /* Select mode's bulk bar (261121-m17): the category select takes its own
+     line so the buttons wrap instead of running off the card. */
+  .rec-bulk .rec-bulk-select {
+    flex-basis: 100% !important;
+    width: auto !important;
+    margin-left: 0 !important;
+  }
+  /* Search stays; the rest waits behind the Filters toggle (F005). */
+  .rec-filter-toggle {
+    display: inline-flex !important;
+  }
+  .rec-filters:not([data-open="true"]) > select,
+  .rec-filters:not([data-open="true"]) > input[type="number"],
+  .rec-filters:not([data-open="true"]) > label.tap44 {
+    display: none !important;
+  }
+}
+
+/* Modal forms go to one column on phones (261115-oax P3): `1fr` columns cannot
+   shrink below the date input's intrinsic width, which starved Amount. */
+@media (max-width: 560px) {
+  .form-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* Settings rows on phones (261115-oax P4). The provider control fills its card,
+   category rows wrap so the system note drops under the name (lined up past the
+   arrow) and the menu stays on the name line. */
+@media (max-width: 560px) {
+  .seg-fill {
+    display: flex !important;
+  }
+  .seg-fill > button {
+    flex-grow: 1 !important;
+    flex-basis: 0 !important;
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+  }
+  .cat-row {
+    flex-wrap: wrap;
+  }
+  /* Basis 0 lets arrow, chip, name, badge and menu share line 1; a long name wraps. */
+  .cat-name {
+    flex-grow: 1;
+    flex-basis: 0;
+    min-width: 0;
+  }
+  .cat-note {
+    order: 1;
+    flex-basis: 100%;
+    margin-left: 18px !important;
   }
 }
 
@@ -52,9 +440,34 @@
    because CSS cannot import styles.ts: #2f6f4f green, #6f6857 muted3,
    #f0ece3 hairline. */
 
+/* Form controls don't inherit font-family by default; without this, buttons
+   and inputs fall back to the browser font instead of Hanken Grotesk (the
+   mockup's rule, never carried over). */
+input, select, button, textarea {
+  font-family: inherit;
+}
+
+/* Base cursor: every control shows it is clickable once, here, instead of
+   relying on inline cursor styles (native selects had none). Disabled controls
+   say so. */
+button:not(:disabled), a[href], select:not(:disabled), summary, label[for],
+[role="button"], [role="tab"], [role="switch"] {
+  cursor: pointer;
+}
+button:disabled, select:disabled, input:disabled, textarea:disabled, [aria-disabled="true"] {
+  cursor: not-allowed;
+}
+
+/* One green that is >= 3:1 on both white (4.09) and the ink hero cards (3.96);
+   the brand green #2f6f4f was 2.71:1 on ink. */
 :focus-visible {
-  outline: 2px solid #2f6f4f;
+  outline: 2px solid #3d8c63;
   outline-offset: 2px;
+}
+/* A card reached through a "Go to that proposal" link (261121-q4n); Back returns to the flag. */
+article[id^="proposal-"]:target {
+  outline: 2px solid #3d8c63;
+  outline-offset: 4px;
 }
 
 .sr-only {
@@ -114,7 +527,7 @@
   .inbox-c-skip { grid-area: skip; justify-self: start; margin-top: 8px; }
   .inbox-c-account,
   .inbox-c-category {
-    font-size: 12px;
+    font-size: var(--fs-xs, 12px);
     color: #6f6857;
   }
   .inbox-c-category::before {
@@ -183,6 +596,29 @@
   .chat-column-inner {
     padding: 24px 16px 40px !important;
   }
+  /* 261115-s37: the composer's panel background runs down behind the dock, so
+     no message shows between them and Ask sits above the dock while pinned. */
+  .composer-sticky {
+    padding-bottom: var(--dock-clear) !important;
+  }
+}
+/* The composer text box takes its own line on phones, Attach left and Ask right
+   below it (261115-oax P5). Buttons no longer stretch to the input's height. */
+@media (max-width: 560px) {
+  .composer-row {
+    flex-wrap: wrap;
+  }
+  .composer-row > input {
+    order: -1;
+    flex-grow: 1;
+    flex-basis: 100%;
+  }
+  .composer-row > .action-wrap:last-child {
+    margin-left: auto;
+  }
+  .composer-row button {
+    min-height: 44px;
+  }
 }
 
 /* Scrim only exists for the drawer; never over the desktop layout. */
@@ -195,6 +631,71 @@
   }
 }
 
+/* Phone pills: every toggle (Pills, Settings provider) is one size. 36px visible,
+   with ::before stretching the hit area to 44px through the track's padding and
+   border; .pill-btn.coarse-tap outranks the 44px touch rule. The dark track gets
+   a transparent border so it matches the light one's height. */
+@media (max-width: 560px) {
+  .pill-track { padding: 3px !important; gap: 2px !important; }
+  .pill-track[data-dark] { border: 1px solid transparent !important; }
+  .pill-btn, .pill-btn.coarse-tap {
+    min-height: 36px !important;
+    height: 36px;
+    padding: 0 14px !important;
+    position: relative;
+  }
+  .pill-btn::before { content: ""; position: absolute; inset: -4px 0; }
+}
+
+/* .tap44: an invisible hit area of at least 44 x 44, centred on a control
+   that is visually smaller (arrows, row menus, small buttons, back links).
+   Touch only; desktop size and layout are untouched. */
+@media (pointer: coarse) {
+  .tap44 { position: relative; }
+  .tap44::before {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+    /* Above a positioned neighbour it overlaps by a few px (the platform back
+       link's header). No .tap44 control sits within 22px of another control. */
+    z-index: 1;
+  }
+}
+
+/* Settings category expand arrow: a bare 14px button; on touch an invisible
+   ::before widens the tap area to 44 x 45. */
+.cat-expand {
+  position: relative;
+  width: 14px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  line-height: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+@media (pointer: coarse) {
+  .cat-expand::before { content: ""; position: absolute; inset: -14px -15px; }
+}
+
+/* Hero range and metric pills (Net worth, Investments Total value): stacked
+   at the top right beside the total. The total gives way (its sub-lines wrap)
+   until the card is too narrow for the big number, then the pills drop under
+   it in a row. Card width, not window width: the sidebar and the Allocation
+   card change it. */
+.hero-head { flex-wrap: nowrap; }
+.hero-head > :first-child { flex: 1 1 auto; min-width: 0; }
+.hero-pills { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+@container hero (max-width: 440px) {
+  .hero-head { flex-wrap: wrap; }
+  .hero-pills { flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
+}
+
 /* Markdown answers (37-04): inline margins cannot express first/last-child or
    nested-list rules, so these use !important to beat the inline styles. */
 .md > :first-child { margin-top: 0 !important; }
@@ -204,8 +705,11 @@
 
 /* Tool steps (37-05). */
 @media (pointer: coarse) {
-  .coarse-tap { min-height: 44px; }
+  /* !important: investments controls set an inline minHeight 32 that would win. */
+  .coarse-tap { min-height: 44px !important; }
 }
+/* Sign-in button hover: literal tokens.color.greenDark (inline styles cannot hover). */
+.login-submit:hover { background: #23543c !important; }
 .source-chip:hover { background: #f2efe8 !important; text-decoration: underline; }
 .step-toggle:hover .step-label { text-decoration: underline; }
 .steps-toggle:hover { color: #23201b !important; }
@@ -222,3 +726,132 @@
 .action-tooltip { display: none; position: absolute; bottom: calc(100% + 4px); left: 0; }
 .action-wrap:hover .action-tooltip,
 .action-wrap:focus-within .action-tooltip { display: block; }
+
+/* Cashflow lower row: the two cards (Cashflow, Holdings) wrap at 300px, but
+   once the panel reaches its full 1240px they stay side by side even with the
+   sidebar open, at equal widths. */
+.cf-lower { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+@media (min-width: 1280px) {
+  .cf-lower { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+/* Trims the inline card padding to 16px on phones. Cashflow, the platform page,
+   Records and Investments share it (261115-msv F1, 261115-oax). */
+@media (max-width: 560px) {
+  .card-tight { padding: var(--card-pad) !important; border-radius: var(--card-radius) !important; }
+  /* The cards always stack below 561px (two 300px columns need more than 600px
+     of content), so the Holdings card sizes to its rows. */
+  .cf-holdings { contain: none !important; min-height: 0 !important; }
+}
+/* Below about 320px of chart width the seam label sits on the line, so hide
+   it; the seam line itself stays (261115-msv F3). 299 became 319 when the
+   full-bleed phone frame widened the chart to 307px at 375 and the label went
+   to 13px (261116-s7w). */
+.nw-chart { container-type: inline-size; container-name: nw-chart; }
+@container nw-chart (max-width: 319px) {
+  .recharts-label { display: none; }
+}
+
+/* RollingNumber: each digit is a 0–9 strip (::before, so the digits never
+   enter the DOM text) shifted by --d tenths of its height. The box takes the
+   width of its own target digit (an invisible ::after copy), so spacing and
+   letter-spacing match plain text in fonts without tabular figures; the strip
+   is centred over it and clipped only vertically. It never wraps (261115-msv). */
+/* Hide amounts (261121-fwp), hero cards only: the headline figures roll their
+   digits to 0 while fading out over 0.5s (RollingNumber HIDE_MS), then the dots
+   fade in. The smaller amounts on the cards turn to dots directly. */
+.roll[data-hiding] { opacity: 0; transition: opacity 0.5s cubic-bezier(0.3, 0, 0.7, 1); }
+.roll-mask { animation: roll-mask-in 0.3s ease-out; }
+@keyframes roll-mask-in { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .roll[data-hiding] { transition: none; }
+  .roll-mask { animation: none; }
+}
+.roll { display: inline-flex; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.roll-digit,
+.roll-char {
+  display: inline-block;
+  height: 1.15em;
+  line-height: 1.15;
+  vertical-align: top;
+}
+.roll-char { overflow: hidden; white-space: pre; } /* pre keeps the space in "3.2K USD" */
+.roll-char::before { content: attr(data-c); }
+.roll-digit {
+  position: relative;
+  overflow-x: visible;
+  overflow-y: clip;
+}
+.roll-digit::after { content: attr(data-d); visibility: hidden; }
+.roll-digit::before {
+  content: "0\A 1\A 2\A 3\A 4\A 5\A 6\A 7\A 8\A 9";
+  white-space: pre;
+  position: absolute;
+  top: 0;
+  left: 50%;
+  text-align: center;
+  transform: translate(-50%, calc(var(--d, 0) * -10%));
+  transition: transform 0.8s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .roll-digit::before { transition: none; }
+  /* Pills carry an inline colour transition; reduced motion means no animation at all. */
+  .pill-btn { transition: none !important; }
+}
+
+/* Loading skeletons (261115-hfb). Bones take their colour and motion from an
+   ancestor class, not from props: the Skeleton wrapper sets .pulse (Investments,
+   Cashflow) or .shimmer (everywhere else), and an ink hero sets .bone-dark.
+   Hex values copy the styles.ts tokens borderInner (#f0ece3), panel (#f7f5f1)
+   and chipGreenText (#9fdcb6); #2f2b25 is the mock's dark bone, no token. */
+.bone { display: block; max-width: 100%; background-color: #f0ece3; }
+.bone-dark .bone { background-color: #2f2b25; }
+.shimmer .bone {
+  background-image: linear-gradient(90deg, transparent 0, #f7f5f1 50%, transparent 100%);
+  background-size: 220% 100%;
+  background-repeat: no-repeat;
+  animation: sweep 1.4s ease-in-out infinite;
+}
+.pulse .bone { animation: breathe 1.6s ease-in-out infinite; }
+.draw-line { display: block; }
+.draw-line path {
+  fill: none;
+  stroke: #9fdcb6;
+  stroke-width: 2.4;
+  stroke-dasharray: 1200;
+  stroke-dashoffset: 1200;
+  vector-effect: non-scaling-stroke;
+  animation: draw 1.8s ease-in-out infinite;
+}
+.fade-in { animation: fadein 0.3s ease-out; }
+@keyframes sweep { from { background-position: 160% 0; } to { background-position: -60% 0; } }
+@keyframes breathe { 50% { opacity: 0.55; } }
+@keyframes draw {
+  0% { stroke-dashoffset: 1200; opacity: 1; }
+  70% { stroke-dashoffset: 0; opacity: 1; }
+  100% { stroke-dashoffset: 0; opacity: 0; }
+}
+@keyframes fadein { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .bone, .draw-line path { animation: none !important; }
+  .draw-line path { stroke-dashoffset: 0; }
+}
+
+/* 261122-cpg/stm: Chat stage animation (wave label, loading bar, thinking dots, answer caret). */
+.stage-ch { display: inline-block; white-space: pre; animation: stage-wave 1.6s ease-in-out infinite; }
+@keyframes stage-wave { 0%, 100% { opacity: 0.45; } 50% { opacity: 1; } }
+.stage-bar { position: relative; display: inline-block; width: 28px; height: 3px; border-radius: 2px; overflow: hidden; background: #e2dccd; }
+.stage-bar i { position: absolute; left: -40%; width: 40%; height: 100%; background: #2f6f4f; animation: stage-slide 1.2s ease-in-out infinite; }
+@keyframes stage-slide { to { left: 100%; } }
+.stage-dots i { display: inline-block; width: 5px; height: 5px; margin: 0 1.5px; border-radius: 50%; background: #2f6f4f; animation: stage-bob 1.2s ease-in-out infinite; }
+.stage-dots i:nth-child(2) { animation-delay: 0.15s; }
+.stage-dots i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes stage-bob { 0%, 100% { transform: translateY(0); opacity: 0.4; } 40% { transform: translateY(-3px); opacity: 1; } }
+[data-testid="answer"][aria-busy="true"] > :last-child > :last-child::after {
+  content: ""; display: inline-block; width: 2px; height: 1em; margin-left: 2px; vertical-align: -2px;
+  background: #2f6f4f; animation: stage-blink 1s steps(1) infinite;
+}
+@keyframes stage-blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .stage-ch, .stage-bar i, .stage-dots i, [data-testid="answer"][aria-busy="true"] > :last-child > :last-child::after { animation: none; }
+  .stage-bar i { left: 30%; }
+}

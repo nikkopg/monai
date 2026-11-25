@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { tokens, card, dangerBtn } from "../styles";
+import Skeleton, { Bone } from "../components/Skeleton";
 import McpServerForm, { UnpinnedWarning } from "./McpServerForm";
 import McpToolReview from "./McpToolReview";
 import {
@@ -323,7 +324,7 @@ export default function ExternalMcpCard() {
 
   return (
     <div id="external-mcp" style={card} data-testid="external-mcp-card">
-      <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>External MCP servers</div>
+      <div style={{ fontSize: "var(--fs-h3, 15px)", fontWeight: 600, marginBottom: 4 }}>External MCP servers</div>
       <div style={{ ...small, marginBottom: 16 }}>
         Connect tools from other MCP servers. Each server is off until you review and enable it, and every tool asks
         before it runs.
@@ -387,7 +388,11 @@ export default function ExternalMcpCard() {
             </button>
           </div>
         ) : rows === null ? (
-          <div style={small}>Loading servers…</div>
+          <Skeleton label="Loading servers" style={{ display: "grid", gap: 10 }}>
+            <Bone w="70%" h={14} />
+            <Bone w="55%" h={14} />
+            <Bone w="62%" h={14} />
+          </Skeleton>
         ) : rows.length === 0 ? (
           <div data-testid="mcp-empty">
             <div style={{ ...body14, fontWeight: 600, color: tokens.color.ink }}>No external servers yet.</div>

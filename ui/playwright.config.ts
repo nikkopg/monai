@@ -1,3 +1,4 @@
+import { createHmac, pbkdf2Sync } from "node:crypto";
 import { existsSync } from "node:fs";
 
 import { defineConfig, devices } from "@playwright/test";
@@ -28,6 +29,17 @@ const baseURL = `http://127.0.0.1:${PORT}`;
 // it never reaches a direct backend call (inbox-live).
 export const UI_PASSWORD = "e2e-ui-password-synthetic-0003"; // pii-ok synthetic
 
+// Browser pages cannot carry the Basic header above (`send: "always"` only
+// applies to the `request` fixture, and an unauthenticated page now redirects to
+// /login instead of answering a 401 challenge), so every context starts signed
+// in with the session cookie. Same format as signSession in app/lib/basicAuth.ts
+// (<exp>.<HMAC-SHA256 under a PBKDF2 key; WebCrypto derives a 64-byte HMAC key>).
+function sessionToken(password: string): string {
+  const exp = String(Math.floor(Date.now() / 1000) + 12 * 3600);
+  const key = pbkdf2Sync(password, "monai-ui-session-v1", 600000, 64, "sha256");
+  return `${exp}.${createHmac("sha256", key).update(exp).digest("base64url")}`;
+}
+
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
@@ -35,11 +47,20 @@ export default defineConfig({
   use: {
     baseURL,
     httpCredentials: { username: "monai", password: UI_PASSWORD, origin: baseURL, send: "always" },
+    storageState: {
+      cookies: [
+        { name: "monai_session", value: sessionToken(UI_PASSWORD), domain: "127.0.0.1", path: "/", expires: -1, httpOnly: true, secure: false, sameSite: "Strict" },
+      ],
+      origins: [],
+    },
     trace: "retain-on-failure",
   },
   webServer: {
     command: `npx next dev -H 127.0.0.1 -p ${PORT}`,
-    url: baseURL,
+    // Unauthenticated /api answers 401 (accepted as "up") without reaching the
+    // backend. "/" now redirects, and Playwright follows the dev server's
+    // absolute redirect to localhost, which is not bound.
+    url: `${baseURL}/api/ping`,
     env: { MONAI_UI_PASSWORD: UI_PASSWORD },
     // Never reuse a foreign server in CI; locally, reuse only a server we
     // ourselves started on this dedicated port. Run with CI=1 so a server that

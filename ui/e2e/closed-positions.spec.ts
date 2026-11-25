@@ -72,22 +72,51 @@ async function mockPage(page: Page, rows: Row[]) {
   });
 }
 
+async function openClosed(page: Page) {
+  await page.goto("/investments");
+  await page.getByRole("group", { name: "Holdings view" }).getByRole("button", { name: "Closed", exact: true }).click();
+}
+
+async function choose(page: Page, ticker: string, item: string) {
+  await page.getByRole("button", { name: `Closed position options: ${ticker}`, exact: true }).click();
+  await page.getByRole("menuitem", { name: item, exact: true }).click();
+}
+
 test.describe("closed positions list", () => {
   test("renders ticker, platform and signed realized value", async ({ page }) => {
     await mockPage(page, rowsFixture());
-    await page.goto("/investments");
+    await openClosed(page);
     const list = page.getByTestId("closed-positions");
     await expect(list).toBeVisible();
     await expect(list.getByText("ZZ1", { exact: true })).toBeVisible();
-    await expect(list.getByText("Plat A", { exact: true })).toHaveCount(2);
+    await expect(list.getByText("Plat A", { exact: true })).toHaveCount(1);
+    await expect(list.getByText("+85,000", { exact: true })).toBeVisible();
     await expect(list.getByText("+125,000", { exact: true })).toBeVisible();
     await expect(list.getByText("-40,000", { exact: true })).toBeVisible();
+    const th = list.getByRole("columnheader", { name: "Asset", exact: true });
+    await expect(th).toHaveCSS("font-size", "12px");
+    await expect(th).toHaveCSS("font-weight", "400");
+    await expect(th).toHaveCSS("color", "rgb(111, 104, 87)");
+    await expect(list.getByRole("button", { name: "Closed position options: ZZ1", exact: true })).toBeVisible();
   });
 
-  test("renders nothing when there are no closed positions", async ({ page }) => {
-    await mockPage(page, []);
+  test("section titles share one h2 style", async ({ page }) => {
+    await mockPage(page, rowsFixture());
     await page.goto("/investments");
-    await expect(page.getByText("Platforms", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 2 })).toHaveCount(2);
+    for (const name of ["Allocation", "Holdings"]) {
+      const h = page.getByRole("heading", { level: 2, name, exact: true });
+      await expect(h).toBeVisible();
+      // --fs-h3 is 15px on desktop since 261121-efd T5 (was a 14px fallback).
+      await expect(h).toHaveCSS("font-size", "15px");
+      await expect(h).toHaveCSS("font-weight", "600");
+    }
+  });
+
+  test("Closed view says when there are none", async ({ page }) => {
+    await mockPage(page, []);
+    await openClosed(page);
+    await expect(page.getByText("No closed positions yet.")).toBeVisible();
     await expect(page.getByTestId("closed-positions")).toHaveCount(0);
   });
 
@@ -99,8 +128,8 @@ test.describe("closed positions list", () => {
         put = { url: req.url(), body: req.postDataJSON() };
       }
     });
-    await page.goto("/investments");
-    await page.getByRole("button", { name: "Edit ZZ1" }).click();
+    await openClosed(page);
+    await choose(page, "ZZ1", "Edit");
     await page.getByLabel("Realized P&L for ZZ1").fill("99000");
     await page.getByLabel("Close date for ZZ1").fill("2026-03-05");
     await page.getByRole("button", { name: "Save ZZ1" }).click();
@@ -126,8 +155,8 @@ test.describe("closed positions list", () => {
       }
       await route.fallback();
     });
-    await page.goto("/investments");
-    await page.getByRole("button", { name: "Edit ZZ1" }).click();
+    await openClosed(page);
+    await choose(page, "ZZ1", "Edit");
     await page.getByLabel("Realized P&L for ZZ1").fill("1");
     await page.getByRole("button", { name: "Save ZZ1" }).click();
     await expect(page.getByText(/some backend message/)).toBeVisible();
@@ -144,8 +173,8 @@ test.describe("closed positions list", () => {
       message = d.message();
       await d.accept();
     });
-    await page.goto("/investments");
-    await page.getByRole("button", { name: "Delete ZZ2" }).click();
+    await openClosed(page);
+    await choose(page, "ZZ2", "Delete");
 
     await expect.poll(() => deleted).toBeTruthy();
     expect(message).toMatch(/realized P&L leaves the total/i);
@@ -161,8 +190,8 @@ test.describe("closed positions list", () => {
       if (req.method() === "DELETE") deleted = true;
     });
     page.on("dialog", (d) => d.dismiss());
-    await page.goto("/investments");
-    await page.getByRole("button", { name: "Delete ZZ2" }).click();
+    await openClosed(page);
+    await choose(page, "ZZ2", "Delete");
     await expect(page.getByText("ZZ2", { exact: true })).toBeVisible();
     expect(deleted).toBe(false);
   });

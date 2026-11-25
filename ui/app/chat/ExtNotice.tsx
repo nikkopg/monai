@@ -26,7 +26,7 @@ export function ExtNotices({ notices }: { notices: ExtNotice[] }) {
               margin: "0 0 8px",
               paddingLeft: 12,
               borderLeft: `3px solid ${tokens.color.border2}`,
-              fontSize: 14,
+              fontSize: "var(--fs-body, 14px)",
               lineHeight: 1.5,
               color: tokens.color.muted3,
               overflowWrap: "anywhere",
@@ -63,7 +63,7 @@ export function ExtFooter({ slugs }: { slugs: string[] }) {
   return (
     <p
       data-testid="ext-footer"
-      style={{ margin: "8px 0 0", fontSize: 14, lineHeight: 1.5, color: tokens.color.muted3, overflowWrap: "anywhere" }}
+      style={{ margin: "8px 0 0", fontSize: "var(--fs-body, 14px)", lineHeight: 1.5, color: tokens.color.muted3, overflowWrap: "anywhere" }}
     >
       <span style={{ fontWeight: 600, color: tokens.color.ink }}>Used external tools:</span> {slugs.join(", ")}. External
       results are unverified.

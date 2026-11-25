@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 
 import { tokens, card, input, btn, btnGhost, categoryPalette } from "../styles";
-import ConfirmDialog from "../cashflow/ConfirmDialog";
+import ConfirmDialog from "../overview/ConfirmDialog";
 import RowMenu from "../components/RowMenu";
+import useDialog from "../components/useDialog";
 
 // ---------------------------------------------------------------------------
 // CategoryManager (Settings) — recursive tree manager for the category
@@ -108,9 +110,10 @@ async function extractDetail(r: Response): Promise<string> {
 }
 
 const badgeStyle: React.CSSProperties = {
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
+  // muted text on the border tint was 2.85:1; on tint2 it passes 4.5:1.
   color: tokens.color.muted,
-  background: tokens.color.border,
+  background: "#f2efe8",
   borderRadius: tokens.radius.pill,
   padding: "2px 8px",
   marginLeft: 8,
@@ -242,7 +245,7 @@ export default function CategoryManager({ onChanged }: Props) {
           // (Pitfall 3) — so no reassign CTA is offered here, only the
           // corrective instruction.
           setError(
-            `Couldn't delete category: ${affectedCount} transactions and ${childCount} subcategories use this category — remove or re-parent the subcategories first. Nothing was changed.`
+            `Couldn't delete category: ${affectedCount} transactions and ${childCount} subcategories use this category. Remove or re-parent the subcategories first. Nothing was changed.`
           );
           setDeleteFlow({ stage: "idle" });
           return;
@@ -338,7 +341,7 @@ export default function CategoryManager({ onChanged }: Props) {
           height: 22,
           borderRadius: tokens.radius.pill,
           background: hexToRgba(hex, 0.16),
-          fontSize: 13,
+          fontSize: "var(--fs-body, 13px)",
           flexShrink: 0,
         }}
       >
@@ -429,10 +432,10 @@ export default function CategoryManager({ onChanged }: Props) {
           placeholder="emoji"
           onChange={(e) => setEditFlow({ ...editFlow, icon: e.target.value })}
         />
-        <button type="button" style={{ ...btn, padding: "4px 10px", fontSize: 12 }} onClick={saveAdd}>
+        <button type="button" style={{ ...btn, padding: "4px 10px", fontSize: "var(--fs-xs, 12px)" }} onClick={saveAdd}>
           Save
         </button>
-        <button type="button" style={{ ...btnGhost, padding: "4px 10px", fontSize: 12 }} onClick={cancelEdit}>
+        <button type="button" style={{ ...btnGhost, padding: "4px 10px", fontSize: "var(--fs-xs, 12px)" }} onClick={cancelEdit}>
           Cancel
         </button>
       </div>
@@ -458,29 +461,38 @@ export default function CategoryManager({ onChanged }: Props) {
             gap: tokens.space.xs,
           }}
         >
-          <span
-            role={isExpandable ? "button" : undefined}
-            onClick={isExpandable ? () => toggle(node.id) : undefined}
-            style={{
-              width: 14,
-              display: "inline-block",
-              textAlign: "center",
-              cursor: isExpandable ? "pointer" : "default",
-              color: tokens.color.muted2,
-              fontSize: 10,
-              transform: isExpanded ? "rotate(90deg)" : "none",
-              transition: "transform .15s ease",
-            }}
-          >
-            {isExpandable ? "▶" : ""}
-          </span>
+          {isExpandable ? (
+            // A real button: Tab, Enter/Space, a name and aria-expanded; .cat-expand
+            // keeps the 14px look and widens the tap area to 44px on touch.
+            <button
+              type="button"
+              className="cat-expand"
+              aria-expanded={isExpanded}
+              aria-label={`${isExpanded ? "Collapse" : "Expand"} ${node.name}`}
+              onClick={() => toggle(node.id)}
+              style={{ color: tokens.color.muted2, fontSize: "var(--fs-xs, 12px)" }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  display: "inline-block",
+                  transform: isExpanded ? "rotate(90deg)" : "none",
+                  transition: "transform .15s ease",
+                }}
+              >
+                ▶
+              </span>
+            </button>
+          ) : (
+            <span style={{ width: 14, display: "inline-block" }} />
+          )}
 
           {renderChip(node)}
 
           {activeEdit ? (
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", flex: 1 }}>
               {activeEdit.node.is_system ? (
-                <span style={{ fontSize: 13, marginLeft: 4 }}>{activeEdit.node.name}</span>
+                <span style={{ fontSize: "var(--fs-body, 13px)", marginLeft: 4 }}>{activeEdit.node.name}</span>
               ) : (
                 <input
                   style={{ ...input, width: 180 }}
@@ -495,20 +507,20 @@ export default function CategoryManager({ onChanged }: Props) {
                 placeholder="emoji"
                 onChange={(e) => setEditFlow({ ...activeEdit, icon: e.target.value })}
               />
-              <button type="button" style={{ ...btn, padding: "4px 10px", fontSize: 12 }} onClick={saveEdit}>
+              <button type="button" style={{ ...btn, padding: "4px 10px", fontSize: "var(--fs-xs, 12px)" }} onClick={saveEdit}>
                 Save
               </button>
-              <button type="button" style={{ ...btnGhost, padding: "4px 10px", fontSize: 12 }} onClick={cancelEdit}>
+              <button type="button" style={{ ...btnGhost, padding: "4px 10px", fontSize: "var(--fs-xs, 12px)" }} onClick={cancelEdit}>
                 Cancel
               </button>
             </div>
           ) : (
             <>
-              <span style={{ fontSize: 13, fontWeight: 400, marginLeft: 4 }}>{node.name}</span>
+              <span className="cat-name" style={{ fontSize: "var(--fs-body, 13px)", fontWeight: 400, marginLeft: 4 }}>{node.name}</span>
               <span style={badgeStyle}>{node.tx_count}</span>
               {node.is_system && (
-                <span style={{ fontSize: 11, color: tokens.color.muted2, marginLeft: 8 }}>
-                  System category — can&apos;t be deleted.
+                <span className="cat-note" style={{ fontSize: "var(--fs-xs, 11px)", color: tokens.color.muted2, marginLeft: 8 }}>
+                  System category: can&apos;t be deleted.
                 </span>
               )}
               <div style={{ marginLeft: "auto", paddingRight: 8 }}>
@@ -523,7 +535,7 @@ export default function CategoryManager({ onChanged }: Props) {
                       ? {
                           label: "Delete",
                           disabled: true,
-                          title: "System category — can't be deleted.",
+                          title: "System category: can't be deleted.",
                           onSelect: () => {},
                         }
                       : {
@@ -549,25 +561,26 @@ export default function CategoryManager({ onChanged }: Props) {
       {loaded && tree.length === 0 ? (
         <div>
           <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 8 }}>No categories yet.</div>
-          <div style={{ color: tokens.color.muted, fontSize: 14 }}>
+          <div style={{ color: tokens.color.muted, fontSize: "var(--fs-body, 14px)" }}>
             Categories are created automatically during setup, or add your first one below.
           </div>
         </div>
       ) : (
-        <div>{tree.map((node) => renderRow(node, 0))}</div>
+        // Reserve room while the list loads so the cards below do not jump (F003).
+        <div style={{ minHeight: loaded ? undefined : 400 }}>{tree.map((node) => renderRow(node, 0))}</div>
       )}
 
       {editFlow.mode === "add" && editFlow.parentId === null ? (
         renderAddRow(0)
       ) : (
         <div style={{ marginTop: 12 }}>
-          <button type="button" style={btn} onClick={() => startAdd(null)}>
+          <button type="button" className="tap44" style={btn} onClick={() => startAdd(null)}>
             Add category
           </button>
         </div>
       )}
 
-      {error && <div style={{ color: tokens.color.terracotta, fontSize: 12, marginTop: 8 }}>{error}</div>}
+      {error && <div style={{ color: tokens.color.terracotta, fontSize: "var(--fs-xs, 12px)", marginTop: 8 }}>{error}</div>}
 
       {deleteFlow.stage === "confirm" && (
         <ConfirmDialog
@@ -580,7 +593,7 @@ export default function CategoryManager({ onChanged }: Props) {
 
       {deleteFlow.stage === "reassign" && (
         <ConfirmDialog
-          message={`${deleteFlow.affectedCount} transactions use this category — choose a destination category to reassign them, or cancel.`}
+          message={`${deleteFlow.affectedCount} transactions use this category. Choose a destination category to reassign them, or cancel.`}
           confirmLabel="Reassign & delete"
           onCancel={() => setDeleteFlow({ stage: "idle" })}
           onConfirm={confirmReassignDelete}
@@ -602,23 +615,8 @@ export default function CategoryManager({ onChanged }: Props) {
       )}
 
       {mergeFlow.stage === "picking" && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(15,17,21,0.72)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 200,
-          }}
-          onClick={() => setMergeFlow({ stage: "idle" })}
-        >
-          <div
-            style={{ ...card, maxWidth: 360, width: "100%", padding: 24, margin: 0 }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p style={{ fontSize: 14, margin: "0 0 16px", color: tokens.color.text }}>
+        <MergePicker onClose={() => setMergeFlow({ stage: "idle" })}>
+            <p id="merge-picker-title" style={{ fontSize: "var(--fs-body, 14px)", margin: "0 0 16px", color: tokens.color.text }}>
               Merge &quot;{mergeFlow.from.name}&quot; into which category?
             </p>
             <select
@@ -643,7 +641,7 @@ export default function CategoryManager({ onChanged }: Props) {
                   color: tokens.color.muted,
                   border: "none",
                   padding: "8px 16px",
-                  fontSize: 14,
+                  fontSize: "var(--fs-body, 14px)",
                   cursor: "pointer",
                 }}
               >
@@ -653,8 +651,7 @@ export default function CategoryManager({ onChanged }: Props) {
                 Merge categories
               </button>
             </div>
-          </div>
-        </div>
+        </MergePicker>
       )}
 
       {mergeFlow.stage === "confirming" && (
@@ -666,5 +663,37 @@ export default function CategoryManager({ onChanged }: Props) {
         />
       )}
     </>
+  );
+}
+
+// The merge picker's modal shell: a named dialog with focus, Escape and Tab
+// handling (design review 2026-11-21 F002).
+function MergePicker({ onClose, children }: { onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null);
+  useDialog(ref, onClose);
+  return (
+    <div
+      ref={ref}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="merge-picker-title"
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(15,17,21,0.72)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 200,
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{ ...card, maxWidth: 360, width: "100%", padding: 24, margin: 0 }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {children}
+      </div>
+    </div>
   );
 }

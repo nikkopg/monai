@@ -111,7 +111,7 @@ export async function confirmProposal(
     });
     if (r.ok) return { ok: true };
     const d = await r.json().catch(() => ({}));
-    if (r.status === 410) return { ok: false, text: "Expired — ask again to redo this" };
+    if (r.status === 410) return { ok: false, text: "Expired. Ask again to redo this" };
     return { ok: false, text: d.detail || `Error ${r.status}` };
   } catch (e: unknown) {
     return { ok: false, text: e instanceof Error ? e.message : "Network error" };
@@ -279,7 +279,7 @@ export default function ProposalCard({
 
   const small: React.CSSProperties = {
     color: tokens.color.muted3,
-    fontSize: 14,
+    fontSize: "var(--fs-body, 14px)",
     lineHeight: 1.5,
   };
 
@@ -294,7 +294,7 @@ export default function ProposalCard({
   const expiryLine =
     !expired && expiresAt ? (
       <span
-        style={{ marginLeft: "auto", fontSize: 12, color: tokens.color.muted3 }}
+        style={{ marginLeft: "auto", fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3 }}
       >
         expires {hhmm(expiresAt.getTime())} · in{" "}
         {remMs < 60000 ? "under 1" : Math.floor(remMs / 60000)} min
@@ -305,7 +305,7 @@ export default function ProposalCard({
     <div style={cardStyle}>
       <div
         style={{
-          fontSize: 11,
+          fontSize: "var(--fs-xs, 11px)",
           letterSpacing: ".1em",
           textTransform: "uppercase",
           color: tokens.color.green,
@@ -329,25 +329,25 @@ export default function ProposalCard({
       )}
       {expired && (
         <div style={{ ...small, marginTop: 10 }}>
-          Expired — ask again to redo this
+          Expired. Ask again to redo this
         </div>
       )}
       {view === "applied" && (
-        <div style={{ color: tokens.color.green, fontSize: 14, marginTop: 10 }}>
+        <div style={{ color: tokens.color.green, fontSize: "var(--fs-body, 14px)", marginTop: 10 }}>
           Applied successfully.
         </div>
       )}
       {view === "rejected" && (
         <div style={{ ...small, marginTop: 10 }}>
           {stopCopy
-            ? "Rejected — the run was stopped. No changes made."
-            : "Rejected — no changes made."}
+            ? "Rejected. The run was stopped. No changes made."
+            : "Rejected. No changes made."}
         </div>
       )}
       {/* A plan-bar error is stale once the card leaves pending or retries itself. */}
       {(error ?? shownExternal) && (
         <div
-          style={{ color: tokens.color.terracottaText, fontSize: 12, marginTop: 8 }}
+          style={{ color: tokens.color.terracottaText, fontSize: "var(--fs-xs, 12px)", marginTop: 8 }}
         >
           {error ?? shownExternal}
         </div>

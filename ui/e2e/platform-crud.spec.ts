@@ -2,6 +2,8 @@ import { test, expect, type Page } from "@playwright/test";
 
 // ---------------------------------------------------------------------------
 // Phase 16 Plan 01 (Wave 0) — platform-crud.spec.ts (PLAT-02).
+// PlatformManager now lives on Settings (#platforms), reached from the
+// Investments Holdings menu (quick 261115-bi5).
 //
 // Structural mirror of cashflow-crud.spec.ts's "account reassign-then-delete"
 // test — route-mocked, no live backend. Pins CRUD parity for PlatformManager:
@@ -52,6 +54,23 @@ async function mockInvestments(page: Page) {
   });
 }
 
+// The cards above Platforms fill in after their fetches; slow (and synthetic)
+// replies make the page grow after load, as it does live, so the hash jump
+// can only land if the page scrolls once its data is in.
+async function mockSlowCards(page: Page) {
+  const slow = (body: unknown) => async (route: import("@playwright/test").Route) => {
+    await new Promise((r) => setTimeout(r, 600));
+    await route.fulfill({ json: body as object });
+  };
+  const cat = (id: number) => ({
+    id, name: `ZZTest Category ${id}`, parent_id: null, kind: "expense", color: null,
+    effective_color: null, icon: null, is_system: false, tx_count: 0, children: [],
+  });
+  const acct = (id: number) => ({ id, name: `ZZTest Account ${id}`, current_balance: 0, type: "liquid" });
+  await page.route("**/api/categories*", slow(Array.from({ length: 40 }, (_, i) => cat(i + 1))));
+  await page.route("**/api/cashflow/summary**", slow({ accounts: [1, 2, 3, 4].map(acct) }));
+}
+
 test.describe("platform CRUD parity (PLAT-02)", () => {
   test("Add a platform posts name and kind to POST /api/platforms", async ({
     page,
@@ -71,8 +90,8 @@ test.describe("platform CRUD parity (PLAT-02)", () => {
       await route.fallback();
     });
 
-    await page.goto("/investments");
-    await expect(page.getByText("Platforms", { exact: true })).toBeVisible();
+    await page.goto("/settings");
+    await expect(page.locator("#platforms").getByRole("heading", { name: "Platforms" })).toBeVisible();
     await page.getByRole("button", { name: "Add platform", exact: true }).click();
     await page.getByPlaceholder("Platform name").fill("IBKR");
     await page.getByPlaceholder("e.g. brokerage, crypto app").fill("brokerage");
@@ -104,17 +123,13 @@ test.describe("platform CRUD parity (PLAT-02)", () => {
       await route.fallback();
     });
 
-    await page.goto("/investments");
+    await page.goto("/settings");
     // Pin the row by stable position, not by name text: clicking Edit swaps the
     // name text node for an <input value="Binance">, and Playwright's hasText
     // ignores input values, so a hasText:"Binance" locator would resolve to 0
     // rows after the first click. Binance is id:1 (first row of the Platforms
     // section) in mockInvestments.
-    const binanceRow = page
-      .locator("section")
-      .filter({ hasText: "Platforms" })
-      .locator("tbody tr")
-      .first();
+    const binanceRow = page.locator("#platforms tbody tr").first();
     await page
       .getByRole("button", { name: "Platform options: Binance", exact: true })
       .click();
@@ -160,7 +175,7 @@ test.describe("platform CRUD parity (PLAT-02)", () => {
       await route.fallback();
     });
 
-    await page.goto("/investments");
+    await page.goto("/settings");
     await page
       .getByRole("button", { name: "Platform options: Binance", exact: true })
       .click();
@@ -168,11 +183,48 @@ test.describe("platform CRUD parity (PLAT-02)", () => {
     await expect(
       page.getByText("Delete this platform? This can't be undone.")
     ).toBeVisible();
-    await page.locator("button").filter({ hasText: "Delete" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Delete", exact: true }).click();
 
     await expect(page.getByText(/holdings use this platform/)).toBeVisible();
     await page.getByRole("button", { name: "Reassign & delete" }).click();
 
     await expect.poll(() => reassignCalled).toBe(true);
+  });
+
+  test("Settings lists platforms in the Platforms section", async ({ page }) => {
+    await mockInvestments(page);
+    await page.goto("/settings");
+    const section = page.locator("#platforms");
+    await expect(section.getByRole("heading", { name: "Platforms" })).toBeVisible();
+    // The name cell also holds the kind, so match the row, not an exact text.
+    await expect(section.locator("tbody tr").filter({ hasText: "Binance" })).toBeVisible();
+    await expect(section.locator("tbody tr").filter({ hasText: "Stockbit" })).toBeVisible();
+  });
+
+  test("Investments ⋯ Manage platforms opens Settings at Platforms", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 600 });
+    await mockSlowCards(page);
+    await mockInvestments(page);
+    await page.goto("/investments");
+    await page.getByRole("button", { name: "Holdings options", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Manage platforms", exact: true }).click();
+    await expect(page).toHaveURL(/\/settings#platforms$/);
+    // Only judge the scroll once the slow cards above have filled in.
+    await expect(page.getByText("ZZTest Account 4").first()).toBeAttached();
+    await expect(page.getByText("ZZTest Category 40").first()).toBeAttached();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+    await expect(page.locator("#platforms").getByRole("heading", { name: "Platforms" })).toBeInViewport();
+  });
+
+  test("Settings #platforms deep link scrolls the Platforms section into view", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 600 });
+    await mockSlowCards(page);
+    await mockInvestments(page);
+    await page.goto("/settings#platforms");
+    // Only judge the scroll once the slow cards above have filled in.
+    await expect(page.getByText("ZZTest Account 4").first()).toBeAttached();
+    await expect(page.getByText("ZZTest Category 40").first()).toBeAttached();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+    await expect(page.locator("#platforms").getByRole("heading", { name: "Platforms" })).toBeInViewport();
   });
 });

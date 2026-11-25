@@ -12,11 +12,16 @@ import {
 } from "recharts";
 
 import { tokens, card } from "../../styles";
+import Pills from "../../components/Pills";
+import Skeleton, { DrawLine } from "../../components/Skeleton";
+import HeroChange from "../../components/HeroChange";
+import { useHideAmounts } from "../../components/HideAmounts";
 import {
   visibleRows,
   toPlotPoints,
   tooltipLines,
   seamMonth,
+  monthLabel,
   RANGE_MONTHS,
   type Range,
   type Mode,
@@ -36,11 +41,11 @@ import {
 // gapped (null-valued) month would otherwise hide the tooltip entirely.
 // `filterNull={false}` keeps the null-valued payload entry, and its
 // `.payload` is still the full plot point, so NetWorthTooltip can render the
-// D-09 "No data — reason" text on a gap month (a planning correction to
+// D-09 "No data (reason)" text on a gap month (a planning correction to
 // 23-RESEARCH.md Pitfall 1's mouse-index workaround, which doesn't hold on
 // this installed version).
 //
-// Every Line below also sets `isAnimationActive={false}`. The automated
+// Every Line below sets `isAnimationActive={!hidden}`. The automated
 // browser pane reports `visibilityState: hidden` and never fires
 // requestAnimationFrame, so a rAF-gated line-draw animation would look blank
 // there (23-RESEARCH Pitfall 2) even though it renders fine on a real reload.
@@ -56,7 +61,7 @@ import {
 // ---------------------------------------------------------------------------
 
 const LOAD_ERROR =
-  "Couldn't load net worth history — check the backend is running and reload the page.";
+  "Couldn't load net worth history. Check the backend is running and reload the page.";
 
 const RANGE_OPTIONS: { value: Range; label: string }[] = [
   { value: "1Y", label: "1Y" },
@@ -68,54 +73,6 @@ const MODE_OPTIONS: { value: Mode; label: string }[] = [
   { value: "total", label: "Total" },
   { value: "split", label: "Split" },
 ];
-
-function Pills<T extends string>({
-  options,
-  value,
-  onChange,
-}: {
-  options: { value: T; label: string }[];
-  value: T;
-  onChange: (v: T) => void;
-}) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        gap: 6,
-        background: "#efece4",
-        border: `1px solid ${tokens.color.border2}`,
-        borderRadius: 999,
-        padding: 4,
-      }}
-    >
-      {options.map((opt) => {
-        const active = value === opt.value;
-        return (
-          <button
-            key={opt.value}
-            type="button"
-            aria-pressed={active}
-            onClick={() => onChange(opt.value)}
-            style={{
-              border: "none",
-              borderRadius: 999,
-              padding: "7px 15px",
-              fontSize: 13,
-              fontWeight: active ? 600 : 500,
-              cursor: "pointer",
-              color: active ? tokens.color.inkText : tokens.color.muted,
-              background: active ? tokens.color.ink : "transparent",
-              transition: "all .2s ease",
-            }}
-          >
-            {opt.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 function NetWorthTooltip({
   mode,
@@ -140,7 +97,7 @@ function NetWorthTooltip({
         background: tokens.color.card,
         border: `1px solid ${tokens.color.border2}`,
         borderRadius: 10,
-        fontSize: 12,
+        fontSize: "var(--fs-xs, 12px)",
         color: tokens.color.text,
         padding: "8px 10px",
         lineHeight: 1.5,
@@ -155,15 +112,27 @@ function NetWorthTooltip({
   );
 }
 
-export default function NetWorthTrendChart() {
+// `hero` draws the chart inside the dark net worth card on Cashflow: `header`
+// (the label and total) sits left of the pills, the chart is shorter and the
+// lines use the on-ink colours. The default is the standalone light card.
+// `header` gets the range's change line (first to last plotted total) to place
+// under the total; it is null until two months plot.
+export default function NetWorthTrendChart({
+  hero = false,
+  header,
+}: {
+  hero?: boolean;
+  header?: (change: React.ReactNode) => React.ReactNode;
+}) {
+  // Hide amounts drops the tooltip, which would show the totals.
+  const [hideAmounts] = useHideAmounts();
   const [range, setRange] = useState<Range>("1Y");
   const [mode, setMode] = useState<Mode>("total");
   const [cache, setCache] = useState<Partial<Record<Range, { rows: NetWorthRow[] }>>>({});
   const [error, setError] = useState<string | null>(null);
 
-  // ponytail: this cache is never invalidated by writes elsewhere on the page
-  // (e.g. a CSV import), only by a full page reload. Upgrade path: source a
-  // refresh key from refreshAll if a write-then-see-it-here gap ever matters.
+  // The Cashflow page has no writes of its own (CSV import lives in Settings),
+  // so this cache only needs to last for the page's mount.
   useEffect(() => {
     if (cache[range]) return;
     setError(null);
@@ -187,22 +156,47 @@ export default function NetWorthTrendChart() {
   const showSeam = seam !== null && shown.some((r) => r.month === seam);
   const hasTotalAtCost = points.some((p) => p.totalAtCost !== null);
   const hasInvestmentAtCost = points.some((p) => p.investmentAtCost !== null);
+  const plotted = points.filter((p) => p.total !== null);
+  const change =
+    plotted.length >= 2 ? (
+      <HeroChange
+        from={plotted[0].total!}
+        to={plotted[plotted.length - 1].total!}
+        since={monthLabel(plotted[0].month)}
+      />
+    ) : null;
   const newestMonth = rows && rows.length > 0 ? rows[rows.length - 1].month : undefined;
+  const totalStroke = hero ? tokens.color.chipGreenText : tokens.color.ink;
+  const liquidStroke = hero ? tokens.color.chipGreenText : tokens.color.green;
+  const tickFill = hero ? tokens.color.inkTextMuted : tokens.color.muted2;
+  const chartHeight = hero ? 120 : 170;
+  // Lines draw in like the 6-month chart's, except in a hidden tab (the
+  // automated browser pane), where rAF never fires and they would stay blank.
+  const hidden = typeof document !== "undefined" && document.visibilityState === "hidden";
 
   return (
-    <section aria-label="Net worth trend" style={card}>
+    <section
+      aria-label="Net worth trend"
+      style={hero ? { display: "flex", flexDirection: "column", height: "100%", containerType: "inline-size", containerName: "hero" } : card}
+    >
       <div
+        // Hero: .hero-head puts the pills beside the total, under it in a narrow card (globals.css).
+        className={hero ? "hero-head" : undefined}
         style={{
           display: "flex",
           justifyContent: "space-between",
-          alignItems: "center",
+          alignItems: hero ? "flex-start" : "center",
+          // Wrap, so in a narrow card the pills drop below the title instead
+          // of running past the card's edge.
+          flexWrap: hero ? undefined : "wrap",
+          gap: hero ? "10px 16px" : 16,
           marginBottom: 6,
         }}
       >
-        <div style={{ fontSize: 14, fontWeight: 600 }}>Net worth trend</div>
-        <div style={{ display: "flex", gap: 10 }}>
-          <Pills options={RANGE_OPTIONS} value={range} onChange={setRange} />
-          <Pills options={MODE_OPTIONS} value={mode} onChange={setMode} />
+        {hero ? header?.(change) : <div style={{ fontSize: "var(--fs-h3, 14px)", fontWeight: 600 }}>Net worth trend</div>}
+        <div className={hero ? "hero-pills" : undefined} style={hero ? undefined : { display: "flex", flexWrap: "wrap", gap: 10 }}>
+          <Pills options={RANGE_OPTIONS} value={range} onChange={setRange} dark={hero} />
+          <Pills options={MODE_OPTIONS} value={mode} onChange={setMode} dark={hero} />
         </div>
       </div>
 
@@ -211,7 +205,7 @@ export default function NetWorthTrendChart() {
           style={{
             display: "flex",
             gap: 16,
-            fontSize: 12,
+            fontSize: "var(--fs-xs, 12px)",
             color: tokens.color.muted,
             marginTop: 8,
           }}
@@ -221,7 +215,7 @@ export default function NetWorthTrendChart() {
               style={{
                 width: 14,
                 height: 2,
-                background: tokens.color.green,
+                background: liquidStroke,
                 display: "inline-block",
               }}
             />
@@ -244,76 +238,75 @@ export default function NetWorthTrendChart() {
       {!rows && error ? (
         <div
           style={{
-            fontSize: 12,
+            fontSize: "var(--fs-xs, 12px)",
             lineHeight: 1.5,
-            color: tokens.color.terracotta,
+            color: hero ? "#e6a99c" : tokens.color.terracotta,
             marginTop: 8,
           }}
         >
           {error}
         </div>
       ) : !rows ? (
-        <div
-          style={{
-            height: 170,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 12,
-            color: tokens.color.muted,
-          }}
+        <Skeleton
+          label="Loading net worth history"
+          style={{ marginTop: hero ? "auto" : 0 }}
         >
-          Loading net worth history…
-        </div>
+          <DrawLine height={chartHeight} />
+        </Skeleton>
       ) : (
         <>
-          <div style={{ width: "100%", height: 170 }}>
+          <div className="nw-chart" style={{ width: "100%", height: chartHeight, marginTop: hero ? "auto" : 0 }}>
             <ResponsiveContainer>
               <LineChart data={points} margin={{ top: 8, right: 6, left: 6, bottom: 0 }}>
                 <XAxis
                   dataKey="month"
-                  tick={{ fill: tokens.color.muted2, fontSize: 11 }}
+                  tick={{ fill: tickFill, fontSize: 12 }}
                   axisLine={false}
                   tickLine={false}
+                  minTickGap={hero ? 24 : 5}
                 />
                 <YAxis
+                  hide={hero}
+                  domain={hero ? ["auto", "auto"] : undefined}
                   orientation="right"
                   tickFormatter={(v: number) => `${Math.round(v / 1_000_000)}M`}
-                  tick={{ fill: tokens.color.muted2, fontSize: 11 }}
+                  tick={{ fill: tickFill, fontSize: 12 }}
                   axisLine={false}
                   tickLine={false}
                   width={40}
                 />
-                <Tooltip
-                  filterNull={false}
-                  isAnimationActive={false}
-                  content={<NetWorthTooltip mode={mode} newestMonth={newestMonth} />}
-                />
+                {!hideAmounts && (
+                  <Tooltip
+                    filterNull={false}
+                    isAnimationActive={false}
+                    content={<NetWorthTooltip mode={mode} newestMonth={newestMonth} />}
+                  />
+                )}
                 {mode === "total" ? (
                   <>
                     <Line
                       type="monotone"
                       dataKey="totalMarket"
                       name="Net worth"
-                      stroke={tokens.color.ink}
+                      stroke={totalStroke}
                       strokeWidth={2.4}
-                      dot={{ r: 2.5, fill: tokens.color.ink, strokeWidth: 0 }}
+                      dot={{ r: hero ? 2 : 2.5, fill: totalStroke, strokeWidth: 0 }}
                       activeDot={{ r: 3.5 }}
                       connectNulls={false}
-                      isAnimationActive={false}
+                      isAnimationActive={!hidden}
                     />
                     {hasTotalAtCost && (
                       <Line
                         type="monotone"
                         dataKey="totalAtCost"
                         name="Net worth (at cost)"
-                        stroke={tokens.color.ink}
+                        stroke={totalStroke}
                         strokeWidth={2.4}
                         strokeDasharray="5 5"
-                        dot={{ r: 2.5, fill: tokens.color.ink, strokeWidth: 0 }}
+                        dot={{ r: hero ? 2 : 2.5, fill: totalStroke, strokeWidth: 0 }}
                         activeDot={{ r: 3.5 }}
                         connectNulls={false}
-                        isAnimationActive={false}
+                        isAnimationActive={!hidden}
                       />
                     )}
                   </>
@@ -323,12 +316,12 @@ export default function NetWorthTrendChart() {
                       type="monotone"
                       dataKey="liquidTotal"
                       name="Liquid"
-                      stroke={tokens.color.green}
+                      stroke={liquidStroke}
                       strokeWidth={2.4}
-                      dot={{ r: 2.5, fill: tokens.color.green, strokeWidth: 0 }}
+                      dot={{ r: hero ? 2 : 2.5, fill: liquidStroke, strokeWidth: 0 }}
                       activeDot={{ r: 3.5 }}
                       connectNulls={false}
-                      isAnimationActive={false}
+                      isAnimationActive={!hidden}
                     />
                     <Line
                       type="monotone"
@@ -336,10 +329,10 @@ export default function NetWorthTrendChart() {
                       name="Investment"
                       stroke={tokens.color.gold}
                       strokeWidth={2.4}
-                      dot={{ r: 2.5, fill: tokens.color.gold, strokeWidth: 0 }}
+                      dot={{ r: hero ? 2 : 2.5, fill: tokens.color.gold, strokeWidth: 0 }}
                       activeDot={{ r: 3.5 }}
                       connectNulls={false}
-                      isAnimationActive={false}
+                      isAnimationActive={!hidden}
                     />
                     {hasInvestmentAtCost && (
                       <Line
@@ -349,10 +342,10 @@ export default function NetWorthTrendChart() {
                         stroke={tokens.color.gold}
                         strokeWidth={2.4}
                         strokeDasharray="5 5"
-                        dot={{ r: 2.5, fill: tokens.color.gold, strokeWidth: 0 }}
+                        dot={{ r: hero ? 2 : 2.5, fill: tokens.color.gold, strokeWidth: 0 }}
                         activeDot={{ r: 3.5 }}
                         connectNulls={false}
-                        isAnimationActive={false}
+                        isAnimationActive={!hidden}
                       />
                     )}
                   </>
@@ -360,13 +353,13 @@ export default function NetWorthTrendChart() {
                 {showSeam && (
                   <ReferenceLine
                     x={seam}
-                    stroke={tokens.color.border2}
+                    stroke={hero ? "rgba(242,239,232,.18)" : tokens.color.border2}
                     strokeWidth={1}
                     label={{
                       value: "Market value →",
                       position: "insideTopRight",
-                      fontSize: 11,
-                      fill: tokens.color.muted2,
+                      fontSize: 12,
+                      fill: tickFill,
                     }}
                   />
                 )}

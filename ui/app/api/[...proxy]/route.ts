@@ -27,7 +27,7 @@
 export const dynamic = "force-dynamic";
 
 import { NextRequest, NextResponse } from "next/server";
-import { basicDenial, checkBasicEnv } from "../../lib/basicAuth";
+import { basicDenial, checkGateEnv } from "../../lib/basicAuth";
 import { buildForwardHeaders, extOriginAllowed, uploadOriginAllowed } from "../../lib/approverAllowlist";
 import { isNullBodyStatus, isStreamPath } from "../../lib/proxyStream";
 
@@ -44,10 +44,10 @@ async function forwardRequest(
   req: NextRequest,
   segments: string[]
 ): Promise<NextResponse> {
-  // Same Basic verdict as middleware.ts, re-checked here so the key is never
+  // Same Basic-or-cookie verdict as middleware.ts, re-checked here so the key is never
   // injected without credentials even if the middleware is bypassed
   // (CVE-2025-29927, 40.1 CR-01).
-  const denial = basicDenial(await checkBasicEnv(req.headers.get("authorization")));
+  const denial = basicDenial(await checkGateEnv(req));
   if (denial) return new NextResponse(denial.body, denial.init);
 
   // Reconstruct target URL: backend + path segments + original query string

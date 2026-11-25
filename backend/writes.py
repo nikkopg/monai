@@ -215,7 +215,11 @@ def apply_add_balance_adjustment(
 def apply_edit_transaction(
     db: Session, tx_id: int, after: dict, before: dict | None, allow_paired: bool = False
 ) -> Transaction:
-    """Partial-update an existing transaction. None fields in `after` are left unchanged."""
+    """Partial-update an existing transaction. None fields in `after` are left unchanged.
+
+    Coupon link (261117-rw1): a new amount on a coupon's income leg also sets its dividend
+    event to quantity 1 x that amount (refused when not above 0). Funded buy/sell legs are left alone.
+    """
     tx = db.get(Transaction, tx_id)
     if tx is None:
         raise ValueError(f"Transaction {tx_id} not found during confirm")
@@ -224,6 +228,13 @@ def apply_edit_transaction(
             f"Transaction {tx_id} is one leg of transfer pair {tx.transfer_pair_id} — "
             "use the pair-aware transfer function, or pass allow_paired=True (D-04)"
         )
+    coupon_ev = None
+    if after.get("amount") is not None:
+        coupon_ev = db.query(PortfolioEvent).filter(
+            PortfolioEvent.transaction_id == tx_id, PortfolioEvent.event_type == "dividend"
+        ).one_or_none()
+        if coupon_ev is not None and Decimal(str(after["amount"])) <= 0:
+            raise ValueError("a coupon amount must be above 0; nothing was saved")
     if after.get("category") is not None:
         tx.category = after["category"]
         tx.category_id = resolve_category_id(db, after["category"])  # D-08 dual-write, re-resolve on change
@@ -235,6 +246,13 @@ def apply_edit_transaction(
         tx.notes = after["notes"]
     db.add(AuditLog(entity="transaction", entity_id=tx_id, operation="edit",
                     before=before, after=after))
+    if coupon_ev is not None:
+        ev_before = _portfolio_event_snapshot(coupon_ev)
+        coupon_ev.quantity, coupon_ev.price = Decimal("1"), tx.amount
+        db.add(AuditLog(entity="portfolio_event", entity_id=coupon_ev.id, operation="edit",
+                        before=ev_before, after=_portfolio_event_snapshot(coupon_ev)))
+        db.flush()  # LOAD-BEARING: autoflush=False, recompute's SELECT must see the edited event
+        _recompute_or_refuse(db, coupon_ev.ticker, coupon_ev.platform_id)
     return tx
 
 
@@ -277,7 +295,17 @@ def apply_delete_transaction_or_pair(db: Session, tx_id: int, before: dict | Non
     guard/primitive stays intact — this composes it with allow_paired=True and
     audits every leg. Returns the deleted ids. Does NOT commit (caller owns the
     transaction boundary, D-01).
+
+    Coupon link (261117-rw1): a coupon's income leg goes with its dividend event, via
+    apply_delete_portfolio_event (it deletes and audits the leg, then recomputes). The
+    coupling lives here, not in apply_delete_transaction, which that primitive calls.
     """
+    coupon_ev = db.query(PortfolioEvent).filter(
+        PortfolioEvent.transaction_id == tx_id, PortfolioEvent.event_type == "dividend"
+    ).one_or_none()
+    if coupon_ev is not None:
+        apply_delete_portfolio_event(db, coupon_ev.id, _portfolio_event_snapshot(coupon_ev))
+        return [tx_id]
     tx = db.get(Transaction, tx_id)
     if tx is not None and tx.transfer_pair_id is not None:
         legs = db.query(Transaction).filter(
@@ -436,6 +464,41 @@ def _fee_fields(event_type: str, after: dict) -> dict:
     return {"quantity": _fmt_qty(stored), "fee": _fmt_qty(fee), "fee_kind": kind}
 
 
+def _set_bond_terms(db: Session, holding: Holding, terms: dict) -> None:
+    """Validate SBN coupon terms and set the six Holding columns (quick 261117-rw1).
+
+    The single authority every bond write goes through; ValueError -> 422. It writes no
+    AuditLog of its own: each caller already audits a dict that contains the terms.
+    """
+    if holding.asset_type != "bond":
+        raise ValueError("Coupon terms need asset type bond; nothing was saved")
+    if holding.currency != "IDR":
+        raise ValueError("SBN bonds are IDR only; nothing was saved")
+    acct = db.get(Account, terms.get("coupon_account_id"))  # explicit FK check, never an IntegrityError
+    if acct is None or acct.type != "liquid" or acct.currency != "IDR":
+        raise ValueError("The coupon account must be a liquid IDR account; nothing was saved")
+    try:
+        rate = Decimal(str(terms["rate"]))
+        tax_pct = Decimal(str(terms.get("tax_pct", 10)))
+        pay_day = int(terms["pay_day"])
+        maturity = date.fromisoformat(str(terms["maturity_date"]))
+    except (KeyError, ValueError, InvalidOperation):
+        raise ValueError("Bond terms need a rate, pay day and maturity date; nothing was saved")
+    two = Decimal("0.01")
+    if not (rate.is_finite() and 0 < rate < 100 and rate == rate.quantize(two)):
+        raise ValueError("Coupon rate must be above 0 and below 100 with at most 2 decimals; nothing was saved")
+    if not (tax_pct.is_finite() and 0 <= tax_pct < 100 and tax_pct == tax_pct.quantize(two)):
+        raise ValueError("Tax must be 0 or more and below 100 with at most 2 decimals; nothing was saved")
+    if not 1 <= pay_day <= 28:
+        raise ValueError("Coupon pay day must be between 1 and 28; nothing was saved")
+    holding.coupon_rate = rate
+    holding.coupon_floating = bool(terms.get("floating", False))
+    holding.coupon_day = pay_day
+    holding.maturity_date = maturity
+    holding.coupon_tax_pct = tax_pct
+    holding.coupon_account_id = acct.id
+
+
 def apply_add_funded_buy(db: Session, after: dict) -> dict:
     """Insert a funded 'buy' — cash leg + portfolio event, one commit boundary (XFER-03).
 
@@ -480,7 +543,57 @@ def apply_add_funded_buy(db: Session, after: dict) -> dict:
         "currency": ev_ccy,
         "date": after.get("date"),
         "asset_type": after.get("asset_type"),
+        "bond": after.get("bond"),
         **fee_fields,
+    })
+    ev.source_account_id = tx.account_id
+    ev.transaction_id = tx.id  # both rows flushed by their primitives
+    return {"transaction": tx, "portfolio_event": ev}
+
+
+COUPON_CATEGORY = "Investment income"
+
+
+def apply_add_coupon(db: Session, after: dict) -> dict:
+    """Record one SBN coupon: an income transaction plus a linked dividend event (quick 261117-rw1).
+
+    Refs are validated first (account liquid IDR, position still held, amount positive), so a
+    refusal precedes every write and surfaces as ValueError -> 422, never an IntegrityError.
+    The transaction credits the coupon account (category 'Investment income', not a transfer,
+    so cashflow counts it as income); the dividend event is quantity 1 at the net amount, so
+    realized P&L rises by exactly that and quantity / avg cost stay put. Does NOT commit.
+    """
+    acct = db.get(Account, after["account_id"]) if after.get("account_id") is not None else None
+    if acct is None or acct.type != "liquid" or acct.currency != "IDR":
+        raise ValueError("The coupon account must be a liquid IDR account; nothing was saved")
+    ticker, platform_id = after["ticker"], after["platform_id"]
+    holding = db.query(Holding).filter(Holding.ticker == ticker, Holding.platform_id == platform_id).one_or_none()
+    if holding is None or holding.quantity <= 0:
+        raise ValueError(f"{ticker} is no longer held; a closed bond takes no coupon. Nothing was saved")
+    try:
+        amount = Decimal(str(after["amount"]))
+        day = date.fromisoformat(str(after["date"]))
+    except InvalidOperation:
+        raise ValueError("Coupon amount is not a number; nothing was saved")
+    if not amount.is_finite() or amount <= 0:
+        raise ValueError("Coupon amount must be above 0; nothing was saved")
+    tx = apply_add_transaction(db, {
+        "account": acct.name,
+        "amount": str(amount),
+        "currency": "IDR",
+        "category": COUPON_CATEGORY,
+        "merchant": f"Coupon {ticker}",
+        "is_transfer": False,
+        "date": day.isoformat(),
+    })
+    ev = apply_add_portfolio_event(db, {
+        "ticker": ticker,
+        "event_type": "dividend",
+        "quantity": "1",
+        "price": str(amount),
+        "platform_id": platform_id,
+        "currency": "IDR",
+        "date": day.isoformat(),
     })
     ev.source_account_id = tx.account_id
     ev.transaction_id = tx.id  # both rows flushed by their primitives
@@ -1024,6 +1137,14 @@ def apply_add_portfolio_event(db: Session, after: dict) -> PortfolioEvent:
         ).one_or_none()
         if holding is not None:
             holding.asset_type = after["asset_type"]
+    if after.get("bond") is not None:
+        db.flush()
+        holding = db.query(Holding).filter(
+            Holding.ticker == after["ticker"], Holding.platform_id == after["platform_id"]
+        ).one_or_none()
+        if holding is None:  # the recompute upserts the holding, so a missing row is a bug, not input
+            raise ValueError("Coupon terms need a holding; nothing was saved")
+        _set_bond_terms(db, holding, after["bond"])
     return ev
 
 
@@ -1078,6 +1199,9 @@ def apply_edit_portfolio_event(
     cash leg. An edit that leaves the event
     a sell and the position at exactly zero closes it (the event is then deleted,
     its cash leg kept); editing a buy never does. Does NOT commit.
+
+    Coupon link (261117-rw1): a funded dividend is an SBN coupon. It stays a dividend,
+    takes no cash_amount or fee, and its cash leg follows quantity x price.
     """
     ev = _load_editable_event(db, event_id)
     old_ticker = ev.ticker
@@ -1085,8 +1209,13 @@ def apply_edit_portfolio_event(
     was_negative = {t: _ledger_negative(db, t, ev.platform_id) for t in {old_ticker, new_ticker}}
     new_type = after.get("event_type") or ev.event_type
     funded = ev.transaction_id is not None
-    if funded and new_type == "dividend":
-        raise ValueError("a funded event must stay a buy or sell (its cash leg is linked)")
+    coupon = funded and ev.event_type == "dividend"  # a coupon's cash leg is its amount (261117-rw1)
+    if funded and "dividend" in (ev.event_type, new_type) and ev.event_type != new_type:
+        raise ValueError("a coupon stays a dividend and a funded trade stays a buy or sell (the cash leg is linked)")
+    if coupon and after.get("cash_amount") is not None:
+        raise ValueError("a coupon's cash follows its amount; edit the amount")
+    if coupon and ("fee" in after or "fee_kind" in after):
+        raise ValueError("a coupon has no fee")
     if after.get("cash_amount") is not None and not funded:
         raise ValueError("cash_amount can only be set on a funded event (no linked cash transaction)")
     if ("fee" in after or "fee_kind" in after) and not funded:
@@ -1118,7 +1247,10 @@ def apply_edit_portfolio_event(
     tx = db.get(Transaction, ev.transaction_id) if funded else None
     if tx is not None:
         tx_before = _transaction_snapshot(tx)
-        magnitude = abs(Decimal(str(after["cash_amount"]))) if after.get("cash_amount") is not None else abs(tx.amount)
+        if coupon:
+            magnitude = ev.quantity * ev.price
+        else:
+            magnitude = abs(Decimal(str(after["cash_amount"]))) if after.get("cash_amount") is not None else abs(tx.amount)
         new_amount = -magnitude if new_type == "buy" else magnitude
         new_dt = datetime.combine(ev.date, tx.date.time()) if tx.date else datetime.combine(ev.date, datetime.min.time())
         if new_amount != tx.amount or new_dt != tx.date:
@@ -1200,6 +1332,8 @@ def apply_add_holding(db: Session, after: dict) -> Holding:
     )
     db.add(holding)
     db.flush()  # LOAD-BEARING: populates holding.id before the AuditLog row below
+    if after.get("bond") is not None:
+        _set_bond_terms(db, holding, after["bond"])
     db.add(AuditLog(entity="holding", entity_id=holding.id, operation="add",
                     before=None, after=after))
     return holding
@@ -1233,6 +1367,8 @@ def apply_edit_holding(db: Session, holding_id: int, after: dict, before: dict |
         holding.platform_id = after["platform_id"]
     if after.get("coingecko_id") is not None:
         holding.coingecko_id = after["coingecko_id"]
+    if after.get("bond") is not None:
+        _set_bond_terms(db, holding, after["bond"])
     db.add(AuditLog(entity="holding", entity_id=holding_id, operation="edit",
                     before=before, after=after))
     return holding

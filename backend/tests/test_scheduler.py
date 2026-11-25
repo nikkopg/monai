@@ -177,6 +177,33 @@ def test_build_scheduler_registers_daily_job():
     assert job.max_instances == 1
 
 
+def test_snapshot_job_runs_once_at_boot():
+    # The app is often off at 01:00; a missed day is never backfilled.
+    from backend.scheduler import build_scheduler
+
+    job = build_scheduler().get_job("daily_portfolio_snapshot")
+    assert getattr(job, "next_run_time", None) is not None
+
+
+def test_refresh_today_snapshot_rewrites_changed_position(db_session):
+    from backend.models import Holding, PortfolioValueHistory
+    from backend.scheduler import refresh_today_snapshot_job
+
+    ticker = _random_ticker()
+    h = _add_holding(db_session, ticker, quantity=1, avg_cost=100)
+    _set_price(db_session, ticker, price=150)
+    db_session.add(PortfolioValueHistory(snapshot_date=_dt.date.today(), ticker=ticker, platform_id=h.platform_id,
+                                         quantity=1, market_value=150, cost_basis=100, currency="IDR"))
+    db_session.query(Holding).filter(Holding.id == h.id).update({"quantity": Decimal("3")})
+    db_session.commit()
+
+    refresh_today_snapshot_job()   # e.g. after a buy of 2 more
+
+    db_session.expire_all()
+    rows = _history_rows(db_session, ticker)
+    assert [(r.quantity, r.market_value) for r in rows] == [(Decimal("3"), Decimal("450.00"))]
+
+
 def test_build_scheduler_registers_purge_job():
     from backend.scheduler import build_scheduler
 
@@ -306,6 +333,20 @@ def test_build_scheduler_registers_fx_warm_job():
     assert job.max_instances == 1
     assert scheduler.get_job("daily_portfolio_snapshot") is not None
     assert scheduler.get_job("daily_attachment_purge") is not None
+
+
+def test_build_scheduler_registers_bond_proposals_job():
+    from backend.scheduler import build_scheduler
+
+    scheduler = build_scheduler()
+    job = scheduler.get_job("daily_bond_proposals")
+    assert job is not None
+    fields = {f.name: str(f) for f in job.trigger.fields}
+    assert (fields["hour"], fields["minute"]) == ("6", "0")
+    assert str(job.trigger.timezone) == "Asia/Jakarta"
+    assert (job.misfire_grace_time, job.coalesce, job.max_instances) == (3600, True, 1)
+    for other in ("daily_fx_warm", "daily_portfolio_snapshot", "daily_attachment_purge"):
+        assert scheduler.get_job(other) is not None
 
 
 def test_fx_warm_job_fills_window_with_one_range_call(fx_warm_env):

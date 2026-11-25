@@ -1,9 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import useDialog from "../components/useDialog";
 
 import { card, input, btn, label } from "../styles";
 import type { PlatformOption, HoldingRow } from "./page";
+import { assetLabel } from "../overview/holdings";
+import BondFields from "./BondFields";
+import { termsBody, termsFromInfo, termsValid, type BondTermsInput } from "../lib/bond";
 
 // ---------------------------------------------------------------------------
 // HoldingOverrideModal — D-03 direct override escape hatch. Sets a holding's
@@ -12,6 +16,10 @@ import type { PlatformOption, HoldingRow } from "./page";
 // "Add holding directly" text-link, not an equal-weight CTA. Dual-mode via
 // `editingHolding == null`: create -> POST /api/holdings, edit -> PUT
 // /api/holdings/{id}. Currency is fixed IDR (D-07), shown read-only.
+//
+// Quick 261117-rw1: asset type Bond (SBN) relabels Quantity to Nominal (IDR),
+// defaults avg cost to 1 and adds BondFields; the terms go out as `bond` (this
+// is also where a floating rate is edited when it resets).
 // ---------------------------------------------------------------------------
 
 type Props = {
@@ -21,7 +29,7 @@ type Props = {
   onSaved: () => void;
 };
 
-const ASSET_TYPES = ["crypto", "idx_stock", "mutual_fund", "other"] as const;
+const ASSET_TYPES = ["crypto", "idx_stock", "mutual_fund", "bond", "other"] as const;
 
 export default function HoldingOverrideModal({
   editingHolding,
@@ -55,6 +63,30 @@ export default function HoldingOverrideModal({
     editingHolding?.coingecko_id ?? ""
   );
 
+  const bondMode = assetType === "bond";
+  const [terms, setTerms] = useState<BondTermsInput>(termsFromInfo(editingHolding?.bond));
+  // IDR liquid accounts, fetched once and only when a bond is being set up.
+  const [coupAccounts, setCoupAccounts] = useState<{ id: number; name: string }[]>([]);
+  useEffect(() => {
+    if (!bondMode || coupAccounts.length > 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch("/api/accounts");
+        if (!r.ok) return;
+        const all: { id: number; name: string; type: string | null; currency: string | null }[] =
+          await r.json();
+        if (!cancelled)
+          setCoupAccounts(all.filter((a) => a.type === "liquid" && (a.currency ?? "IDR") === "IDR"));
+      } catch {
+        // the select stays empty and Save stays disabled
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bondMode, coupAccounts.length]);
+
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -73,6 +105,7 @@ export default function HoldingOverrideModal({
         coingecko_id: coingeckoId.trim() || null,
       };
       if (purchaseDate) body.purchase_date = purchaseDate;
+      if (bondMode) body.bond = termsBody(terms);
 
       const url = isEdit
         ? `/api/holdings/${editingHolding!.id}`
@@ -108,8 +141,17 @@ export default function HoldingOverrideModal({
     }
   }
 
+  // Dialog keyboard behaviour (F002): focus inside, Escape closes, Tab wraps.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  useDialog(dialogRef, saving ? null : onClose);
+
   return (
     <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
       style={{
         position: "fixed",
         inset: 0,
@@ -122,10 +164,19 @@ export default function HoldingOverrideModal({
       onClick={onClose}
     >
       <div
-        style={{ ...card, maxWidth: 480, width: "100%", padding: 32, margin: 0 }}
+        style={{
+          ...card,
+          maxWidth: 480,
+          width: "100%",
+          padding: 32,
+          margin: 0,
+          // The bond fields make the card taller than a phone: scroll inside it
+          // so Save stays reachable (261117-rw1).
+          ...(bondMode ? { maxHeight: "calc(100dvh - 32px)", overflowY: "auto" as const } : {}),
+        }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 style={{ fontSize: 20, fontWeight: 600, margin: "0 0 8px" }}>
+        <h2 id={titleId} style={{ fontSize: 20, fontWeight: 600, margin: "0 0 8px" }}>
           {isEdit ? "Save holding" : "Add holding directly"}
         </h2>
         <p
@@ -140,6 +191,7 @@ export default function HoldingOverrideModal({
         </p>
         <form onSubmit={handleSubmit}>
           <div
+            className="form-grid"
             style={{
               display: "grid",
               gridTemplateColumns: "1fr 1fr",
@@ -162,11 +214,14 @@ export default function HoldingOverrideModal({
               <select
                 style={input}
                 value={assetType}
-                onChange={(e) => setAssetType(e.target.value)}
+                onChange={(e) => {
+                  setAssetType(e.target.value);
+                  if (e.target.value === "bond" && !isEdit && avgCost === "") setAvgCost("1");
+                }}
               >
                 {ASSET_TYPES.map((t) => (
                   <option key={t} value={t}>
-                    {t}
+                    {assetLabel(t)}
                   </option>
                 ))}
               </select>
@@ -186,13 +241,13 @@ export default function HoldingOverrideModal({
                 ))}
               </select>
               {platforms.length === 0 && (
-                <p style={{ ...label, fontSize: 11, marginTop: 4, color: "#b5503f" }}>
+                <p style={{ ...label, fontSize: "var(--fs-xs, 11px)", marginTop: 4, color: "#b5503f" }}>
                   Add a platform first
                 </p>
               )}
             </div>
             <div>
-              <label style={label}>Quantity</label>
+              <label style={label}>{bondMode ? "Nominal (IDR)" : "Quantity"}</label>
               <input
                 style={input}
                 type="number"
@@ -226,6 +281,14 @@ export default function HoldingOverrideModal({
               <label style={label}>Currency</label>
               <input style={input} value="IDR" readOnly disabled />
             </div>
+            {bondMode && (
+              <BondFields
+                value={terms}
+                onChange={setTerms}
+                nominal={parseFloat(quantity) || 0}
+                accounts={coupAccounts}
+              />
+            )}
             {assetType === "crypto" && (
               <div style={{ gridColumn: "1 / -1" }}>
                 <label style={label}>CoinGecko id (optional)</label>
@@ -235,7 +298,7 @@ export default function HoldingOverrideModal({
                   placeholder="bittensor"
                   onChange={(e) => setCoingeckoId(e.target.value)}
                 />
-                <p style={{ ...label, fontSize: 11, marginTop: 4 }}>
+                <p style={{ ...label, fontSize: "var(--fs-xs, 11px)", marginTop: 4 }}>
                   Disambiguates tickers that map to multiple coins (e.g. TAO). Find
                   the coin&apos;s API id on{" "}
                   <a
@@ -244,8 +307,8 @@ export default function HoldingOverrideModal({
                     rel="noopener noreferrer"
                   >
                     coingecko.com
-                  </a>{" "}
-                  — the URL slug, e.g. <code>bittensor</code>. Leave blank to use
+                  </a>
+                  : the URL slug, e.g. <code>bittensor</code>. Leave blank to use
                   the default ticker mapping.
                 </p>
               </div>
@@ -260,20 +323,24 @@ export default function HoldingOverrideModal({
               onClick={onClose}
               style={{
                 background: "transparent",
-                color: "#8b8474",
+                color: "#716c5f",
                 border: "none",
                 padding: "8px 16px",
-                fontSize: 14,
+                fontSize: "var(--fs-body, 14px)",
                 cursor: "pointer",
               }}
             >
               Cancel
             </button>
-            <button style={btn} type="submit" disabled={saving || platforms.length === 0}>
+            <button
+              style={btn}
+              type="submit"
+              disabled={saving || platforms.length === 0 || (bondMode && !termsValid(terms))}
+            >
               {saving ? "Saving…" : isEdit ? "Save holding" : "Add holding directly"}
             </button>
             {error && (
-              <span style={{ color: "#b5503f", fontSize: 12 }}>{error}</span>
+              <span style={{ color: "#b5503f", fontSize: "var(--fs-xs, 12px)" }}>{error}</span>
             )}
           </div>
         </form>

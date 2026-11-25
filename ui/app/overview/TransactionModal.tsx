@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
+import useDialog from "../components/useDialog";
 
 import { tokens, card, input, btn, label } from "../styles";
 import { fmtRateCompare, impliedRate } from "../lib/money";
@@ -242,7 +243,7 @@ export default function TransactionModal({
     ? editingTx!.currency ?? "IDR"
     : acctOf(chipId)
     ? ccyOf(chipId)
-    : "—";
+    : "–";
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -371,8 +372,17 @@ export default function TransactionModal({
     }
   }
 
+  // Dialog keyboard behaviour (F002): focus inside, Escape closes, Tab wraps.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  useDialog(dialogRef, saving ? null : onClose);
+
   return (
     <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
       style={{
         position: "fixed",
         inset: 0,
@@ -388,7 +398,7 @@ export default function TransactionModal({
         style={{ ...card, maxWidth: 480, width: "100%", padding: 32, margin: 0 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 style={{ fontSize: 20, fontWeight: 600, margin: "0 0 16px" }}>
+        <h2 id={titleId} style={{ fontSize: 20, fontWeight: 600, margin: "0 0 16px" }}>
           {isEdit ? "Edit transaction" : "Add transaction"}
         </h2>
         <form onSubmit={handleSubmit}>
@@ -417,7 +427,8 @@ export default function TransactionModal({
                     border: "none",
                     borderRadius: 9,
                     padding: "8px 18px",
-                    fontSize: 14,
+                    minHeight: "var(--pill-h, auto)",
+                    fontSize: "var(--fs-pill, 14px)",
                     fontWeight: active ? 600 : 500,
                     cursor: locked ? "default" : "pointer",
                     color: active ? tokens.color.ink : tokens.color.muted,
@@ -426,7 +437,7 @@ export default function TransactionModal({
                       ? "0 1px 2px rgba(40,34,24,.12)"
                       : "none",
                     opacity: locked ? 0.5 : 1,
-                    transition: "all .2s ease",
+                    transition: "background-color .2s ease, color .2s ease, box-shadow .2s ease",
                   }}
                 >
                   {s[0].toUpperCase() + s.slice(1)}
@@ -437,18 +448,19 @@ export default function TransactionModal({
           {locked && (
             <div
               style={{
-                fontSize: 13,
+                fontSize: "var(--fs-body, 13px)",
                 color: tokens.color.muted,
                 marginTop: -10,
                 marginBottom: 14,
               }}
             >
-              This is one leg of a transfer — full pair editing isn&apos;t
+              This is one leg of a transfer. Full pair editing isn&apos;t
               available yet.
             </div>
           )}
 
           <div
+            className="form-grid"
             style={{
               display: "grid",
               gridTemplateColumns: "1fr 1fr",
@@ -492,7 +504,7 @@ export default function TransactionModal({
                     display: "flex",
                     alignItems: "center",
                     background: tokens.color.sidebar,
-                    fontSize: 14,
+                    fontSize: "var(--fs-body, 14px)",
                     fontWeight: 600,
                     color: tokens.color.muted3,
                     flexShrink: 0,
@@ -553,7 +565,7 @@ export default function TransactionModal({
                     To account
                   </label>
                   {noToAccount ? (
-                    <div style={{ fontSize: 12, color: tokens.color.terracottaText }}>
+                    <div style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.terracottaText }}>
                       No other account to transfer to.
                     </div>
                   ) : (
@@ -595,7 +607,7 @@ export default function TransactionModal({
                             display: "flex",
                             alignItems: "center",
                             background: tokens.color.sidebar,
-                            fontSize: 14,
+                            fontSize: "var(--fs-body, 14px)",
                             fontWeight: 600,
                             color: tokens.color.muted3,
                             flexShrink: 0,
@@ -606,7 +618,7 @@ export default function TransactionModal({
                       </div>
                       <div
                         aria-live="polite"
-                        style={{ marginTop: 4, fontSize: 12, color: tokens.color.muted3 }}
+                        style={{ marginTop: 4, fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3 }}
                       >
                         {implied !== null &&
                           fmtRateCompare(implied, ecb.rate, ecb.rateDate, ecb.status)}
@@ -677,7 +689,7 @@ export default function TransactionModal({
                 color: "#9aa0a6",
                 border: "none",
                 padding: "8px 16px",
-                fontSize: 14,
+                fontSize: "var(--fs-body, 14px)",
                 cursor: "pointer",
               }}
             >
@@ -712,7 +724,7 @@ export default function TransactionModal({
               </button>
             )}
             {error && (
-              <span style={{ color: "#f87171", fontSize: 12 }}>{error}</span>
+              <span style={{ color: "#f87171", fontSize: "var(--fs-xs, 12px)" }}>{error}</span>
             )}
           </div>
         </form>

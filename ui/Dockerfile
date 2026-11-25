@@ -2,7 +2,14 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# A slow connection made npm ci die with EIDLETIMEOUT at npm's 5-minute
+# default: wait up to 15 minutes per request and retry more before failing.
+ENV NPM_CONFIG_FETCH_TIMEOUT=900000 \
+    NPM_CONFIG_FETCH_RETRIES=5 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000
+# Keep npm's download cache between builds (BuildKit cache mount), so a failed
+# install on a flaky connection resumes from what it already fetched.
+RUN --mount=type=cache,target=/root/.npm npm ci
 COPY . .
 RUN npm run build
 

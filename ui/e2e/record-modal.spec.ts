@@ -1,4 +1,4 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect, type Page, type Route } from "@playwright/test";
 
 // ---------------------------------------------------------------------------
 // Phase 16 Plan 01 (Wave 0) — record-modal.spec.ts (REC-04).
@@ -15,81 +15,56 @@ import { test, expect, type Page } from "@playwright/test";
 // lock yet) — that is the intended Wave 0 baseline (16-01-PLAN.md).
 // ---------------------------------------------------------------------------
 
-function summaryFixture() {
-  return {
-    totals: { income: 5_000_000, expense: 2_000_000, net: 3_000_000 },
-    by_category: [
-      ["Food & Drinks", 1_200_000],
-      ["Transport", 500_000],
-    ],
-    accounts: [
-      { id: 1, name: "Cash", current_balance: 4_000_000, period_net: 1_500_000 },
-      { id: 2, name: "Bank", current_balance: 8_000_000, period_net: 1_500_000 },
-    ],
-    trend: [
-      { month: "2026-02", income: 4_000_000, expense: 2_000_000, net: 2_000_000 },
-      { month: "2026-03", income: 4_500_000, expense: 2_200_000, net: 2_300_000 },
-      { month: "2026-04", income: 4_800_000, expense: 2_100_000, net: 2_700_000 },
-      { month: "2026-05", income: 5_100_000, expense: 1_900_000, net: 3_200_000 },
-      { month: "2026-06", income: 4_900_000, expense: 2_050_000, net: 2_850_000 },
-      { month: "2026-07", income: 5_000_000, expense: 2_000_000, net: 3_000_000 },
-    ],
-  };
-}
+// The modal opens from Records ("+ Add record", or a row's options menu →
+// Edit); every GET it needs is mocked so nothing reaches a live backend.
+// Noon on the local day, so the row lands in "Today" at any hour of the run.
+const TODAY = (() => {
+  const d = new Date();
+  d.setHours(12, 0, 0, 0);
+  return d.toISOString();
+})();
 
 function txFixture(overrides: Partial<Record<string, unknown>> = {}) {
   return [
     {
       id: 101,
-      date: "2026-07-01T10:00:00Z",
+      date: TODAY,
       amount: -25000,
       category: "Food & Drinks",
       merchant: "warung sate",
       account_id: 1,
       notes: null,
       is_transfer: false,
+      transfer_pair_id: null,
       ...overrides,
     },
   ];
 }
 
-async function mockDashboard(page: Page, txOverrides: Partial<Record<string, unknown>> = {}) {
-  await page.route("**/api/cashflow/summary**", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(summaryFixture()),
-    });
-  });
-  await page.route("**/api/transactions?limit=10", async (route) => {
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify(txFixture(txOverrides)),
-    });
-  });
-  await page.route("**/api/categories", async (route) => {
-    if (route.request().method() !== "GET") {
-      await route.fallback();
-      return;
-    }
-    await route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ categories: ["Food & Drinks", "Transport"] }),
-    });
-  });
+async function mockRecords(page: Page, txOverrides: Partial<Record<string, unknown>> = {}) {
+  const json = (body: unknown) => (route: Route) =>
+    route.request().method() === "GET" ? route.fulfill({ json: body as object }) : route.fallback();
+  await page.route("**/api/accounts", json([{ id: 1, name: "Cash" }, { id: 2, name: "Bank" }]));
+  await page.route(
+    "**/api/categories",
+    json([
+      { id: 1, name: "Food & Drinks", is_system: false, children: [] },
+      { id: 2, name: "Transport", is_system: false, children: [] },
+    ])
+  );
+  await page.route("**/api/transactions?*", json(txFixture(txOverrides)));
 }
 
 async function openCreateModal(page: Page) {
-  await page.goto("/cashflow");
-  await page.getByRole("button", { name: "+ Add transaction", exact: true }).click();
+  await page.goto("/records");
+  await page.getByRole("button", { name: "+ Add record", exact: true }).click();
   await expect(page.getByText("Add transaction").first()).toBeVisible();
 }
 
 async function openEditModal(page: Page) {
-  await page.goto("/cashflow");
-  await page.getByText("Edit", { exact: true }).first().click();
+  await page.goto("/records");
+  await page.getByRole("button", { name: /^Record options: warung sate on / }).click();
+  await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
   await expect(page.getByText("Edit transaction")).toBeVisible();
 }
 
@@ -97,7 +72,7 @@ test.describe("record-modal — Expense/Income segment (REC-04)", () => {
   test("default segment is Expense, options render Expense/Income/Transfer in order", async ({
     page,
   }) => {
-    await mockDashboard(page);
+    await mockRecords(page);
     await openCreateModal(page);
 
     const form = page.locator("form").filter({ hasText: "Add transaction" });
@@ -113,7 +88,7 @@ test.describe("record-modal — Expense/Income segment (REC-04)", () => {
   });
 
   test("Expense posts a negative signed amount and no currency", async ({ page }) => {
-    await mockDashboard(page);
+    await mockRecords(page);
     let postedBody: Record<string, unknown> | null = null;
     await page.route("**/api/transactions", async (route) => {
       if (route.request().method() === "POST") {
@@ -141,7 +116,7 @@ test.describe("record-modal — Expense/Income segment (REC-04)", () => {
   });
 
   test("Income posts a positive signed amount", async ({ page }) => {
-    await mockDashboard(page);
+    await mockRecords(page);
     let postedBody: Record<string, unknown> | null = null;
     await page.route("**/api/transactions", async (route) => {
       if (route.request().method() === "POST") {
@@ -170,7 +145,7 @@ test.describe("record-modal — Expense/Income segment (REC-04)", () => {
   test("Save & add another keeps the modal open and resets amount/category/notes", async ({
     page,
   }) => {
-    await mockDashboard(page);
+    await mockRecords(page);
     let postCount = 0;
     await page.route("**/api/transactions", async (route) => {
       if (route.request().method() === "POST") {
@@ -203,7 +178,7 @@ test.describe("record-modal — Expense/Income segment (REC-04)", () => {
   test("editing a non-transfer negative-amount row reverse-maps to Expense + absolute magnitude, saves via PUT", async ({
     page,
   }) => {
-    await mockDashboard(page, { amount: -25000, is_transfer: false });
+    await mockRecords(page, { amount: -25000, is_transfer: false });
     let putCalled = false;
     await page.route("**/api/transactions/101", async (route) => {
       if (route.request().method() === "PUT") {
@@ -231,11 +206,35 @@ test.describe("record-modal — Expense/Income segment (REC-04)", () => {
   });
 });
 
+test.describe("record-modal — category", () => {
+  test("choosing (no category) POSTs a null category", async ({ page }) => {
+    await mockRecords(page);
+    let posted: { category?: unknown; called?: boolean } = {};
+    await page.route("**/api/transactions", async (route) => {
+      if (route.request().method() === "POST") {
+        posted = { called: true, category: route.request().postDataJSON().category };
+        await route.fulfill({ status: 201, json: { ...txFixture()[0], id: 999, category: null } });
+        return;
+      }
+      await route.fallback();
+    });
+
+    await openCreateModal(page);
+    const form = page.locator("form").filter({ hasText: "Add transaction" });
+    await form.locator("select").filter({ hasText: "(no category)" }).selectOption("");
+    await form.getByLabel("Amount", { exact: true }).fill("10000");
+    await form.getByRole("button", { name: "Add transaction", exact: true }).click();
+
+    await expect.poll(() => posted.called).toBe(true);
+    expect(posted.category).toBeNull();
+  });
+});
+
 test.describe("record-modal — Transfer segment (REC-04)", () => {
   test("Transfer branch hides Category, shows From/To account selects, POSTs the whitelist body to /api/transactions/transfer", async ({
     page,
   }) => {
-    await mockDashboard(page);
+    await mockRecords(page);
     let transferPosted = false;
     let transactionsPosted = false;
     let postedBody: Record<string, unknown> | null = null;
@@ -295,36 +294,25 @@ test.describe("record-modal — Transfer segment (REC-04)", () => {
     expect(body.amount).toBe(50000);
   });
 
-  test("same-account guard blocks submit with an inline error and issues no request", async ({
-    page,
-  }) => {
-    await mockDashboard(page);
-    let transferPosted = false;
-    await page.route("**/api/transactions/transfer", async (route) => {
-      if (route.request().method() === "POST") transferPosted = true;
-      await route.fulfill({ status: 201, contentType: "application/json", body: "{}" });
-    });
-
+  test("To account never offers the From account", async ({ page }) => {
+    await mockRecords(page);
     await openCreateModal(page);
-    // Same reasoning as the previous test: no hasText filter, since the CTA
-    // switches to "Add transfer" for this segment.
+    // No hasText filter: the CTA switches to "Add transfer" for this segment.
     const form = page.locator("form");
     await form.getByRole("button", { name: "Transfer", exact: true }).click();
-    await form.getByLabel("From account", { exact: true }).selectOption({ label: "Cash" });
-    await form.getByLabel("To account", { exact: true }).selectOption({ label: "Cash" });
-    await form.getByLabel("Amount", { exact: true }).fill("50000");
-    await form.getByRole("button", { name: "Add transfer", exact: true }).click();
+    const from = form.getByLabel("From account", { exact: true });
+    const to = form.getByLabel("To account", { exact: true });
 
-    await expect(
-      page.getByText("From and To accounts must be different.")
-    ).toBeVisible();
-    expect(transferPosted).toBe(false);
+    await from.selectOption({ label: "Cash" });
+    expect(await to.locator("option").allTextContents()).toEqual(["Bank"]);
+    await from.selectOption({ label: "Bank" });
+    expect(await to.locator("option").allTextContents()).toEqual(["Cash"]);
   });
 
   test("editing a transfer-tinted row locks the segment, keeps legacy Account select, never routes to the pair endpoint", async ({
     page,
   }) => {
-    await mockDashboard(page, { is_transfer: true, amount: -25000 });
+    await mockRecords(page, { is_transfer: true, amount: -25000 });
     let putCalled = false;
     let transferPosted = false;
     await page.route("**/api/transactions/101", async (route) => {
@@ -361,7 +349,7 @@ test.describe("record-modal — Transfer segment (REC-04)", () => {
 
     await expect(
       page.getByText(
-        "This is one leg of a transfer — full pair editing isn't available yet."
+        "This is one leg of a transfer. Full pair editing isn't available yet."
       )
     ).toBeVisible();
     await expect(

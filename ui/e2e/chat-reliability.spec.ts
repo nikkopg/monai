@@ -347,7 +347,7 @@ test.describe("chat stream reliability (REL-01/02/03/05/06/09)", () => {
     await expect(
       page.getByLabel("Conversation").getByText("Stopped. No answer was kept. Proposals from this run were rejected.")
     ).toBeVisible();
-    await expect(page.getByText("Rejected — the run was stopped. No changes made.")).toBeVisible();
+    await expect(page.getByText("Rejected. The run was stopped. No changes made.")).toBeVisible();
     await expect(page.getByText("LATE-ANSWER-SYNTHETIC")).toHaveCount(0);
     await expect(alertBox(page)).toHaveCount(0);
     await expect(input(page)).toHaveValue(QUESTION);

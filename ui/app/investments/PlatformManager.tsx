@@ -2,14 +2,16 @@
 
 import { useState } from "react";
 
-import { card, input, btn, label } from "../styles";
+import { tokens, card, input, btn } from "../styles";
+import { sectionTitle } from "./sectionStyles";
 import RowMenu from "../components/RowMenu";
-import ConfirmDialog from "../cashflow/ConfirmDialog";
+import ConfirmDialog from "../overview/ConfirmDialog";
 import { extractDetail } from "../lib/api";
 
 // ---------------------------------------------------------------------------
 // PlatformManager — list platforms with inline edit + delete (D-12).
-// Direct structural mirror of ../cashflow/AccountManager.tsx; the only
+// Rendered on the Settings page (section id "platforms"), not on Investments.
+// Direct structural mirror of ../overview/AccountManager.tsx; the only
 // entity-shape difference is the optional `kind` label alongside `name`.
 // Delete flow:
 //   1. ConfirmDialog "Delete this platform? This can't be undone."
@@ -165,9 +167,9 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
       : "";
 
   return (
-    <section style={card}>
-      <label style={label}>Platforms</label>
-      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+    <section id="platforms" style={card}>
+      <h2 style={{ ...sectionTitle, marginBottom: 12 }}>Platforms</h2>
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "var(--fs-body, 13px)" }}>
         <tbody>
           {platforms.map((p) => (
             <tr key={p.id} style={{ borderTop: "1px solid #e7e1d5" }}>
@@ -200,7 +202,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
                   <>
                     {p.name}
                     {p.kind && (
-                      <span style={{ color: "#8b8474", fontSize: 12, marginLeft: 8 }}>
+                      <span style={{ color: tokens.color.muted3, fontSize: "var(--fs-xs, 12px)", marginLeft: 8 }}>
                         {p.kind}
                       </span>
                     )}
@@ -213,7 +215,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
                     <button
                       type="button"
                       onClick={() => saveEdit(p.id)}
-                      style={{ ...btn, padding: "4px 10px", fontSize: 12, marginRight: 6 }}
+                      style={{ ...btn, padding: "4px 10px", fontSize: "var(--fs-xs, 12px)", marginRight: 6 }}
                     >
                       Save platform
                     </button>
@@ -222,9 +224,9 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
                       onClick={() => setEditingId(null)}
                       style={{
                         background: "transparent",
-                        color: "#8b8474",
+                        color: tokens.color.muted3,
                         border: "none",
-                        fontSize: 12,
+                        fontSize: "var(--fs-xs, 12px)",
                         cursor: "pointer",
                       }}
                     >
@@ -259,9 +261,9 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
       </table>
 
       {platforms.length === 0 && !adding && (
-        <div style={{ color: "#8b8474", fontSize: 13, marginTop: 8 }}>
+        <div style={{ color: tokens.color.muted3, fontSize: "var(--fs-body, 13px)", marginTop: 8 }}>
           No platforms yet. Add a platform (e.g. your brokerage or crypto app) to
-          start grouping holdings — or log a holding first and assign a platform
+          start grouping holdings, or log a holding first and assign a platform
           later.
         </div>
       )}
@@ -292,7 +294,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
               <option value="IDR">IDR</option>
               <option value="USD">USD</option>
             </select>
-            <button style={btn} type="submit">
+            <button className="tap44" style={btn} type="submit">
               Add platform
             </button>
             <button
@@ -300,9 +302,9 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
               onClick={() => setAdding(false)}
               style={{
                 background: "transparent",
-                color: "#8b8474",
+                color: tokens.color.muted3,
                 border: "none",
-                fontSize: 12,
+                fontSize: "var(--fs-xs, 12px)",
                 cursor: "pointer",
               }}
             >
@@ -310,14 +312,14 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
             </button>
           </form>
         ) : (
-          <button type="button" style={btn} onClick={() => setAdding(true)}>
+          <button type="button" className="tap44" style={btn} onClick={() => setAdding(true)}>
             Add platform
           </button>
         )}
       </div>
 
       {error && (
-        <div style={{ color: "#b5503f", fontSize: 12, marginTop: 8 }}>{error}</div>
+        <div style={{ color: "#b5503f", fontSize: "var(--fs-xs, 12px)", marginTop: 8 }}>{error}</div>
       )}
 
       {deleteFlow.stage === "confirm" && (
@@ -331,7 +333,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
 
       {deleteFlow.stage === "reassign" && (
         <ConfirmDialog
-          message={`${deleteFlow.affectedCount} holdings use this platform — choose a destination platform to reassign them, or cancel.`}
+          message={`${deleteFlow.affectedCount} holdings use this platform. Choose a destination platform to reassign them, or cancel.`}
           confirmLabel="Reassign & delete"
           onCancel={() => setDeleteFlow({ stage: "idle" })}
           onConfirm={confirmReassignDelete}
@@ -352,7 +354,7 @@ export default function PlatformManager({ platforms, onChanged }: Props) {
               ))}
           </select>
           {reassignTargetName && (
-            <p style={{ color: "#8b8474", fontSize: 12, margin: "8px 0 0" }}>
+            <p style={{ color: tokens.color.muted3, fontSize: "var(--fs-xs, 12px)", margin: "8px 0 0" }}>
               Reassign {deleteFlow.affectedCount} holdings to &quot;{reassignTargetName}&quot;
               and delete &quot;{deleteFlow.platform.name}&quot;?
             </p>

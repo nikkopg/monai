@@ -142,7 +142,8 @@ async function open(page: Page, variant: "pdf" | "csv" | "image", title: string)
 
 test.describe("upload card", () => {
   test("pdf: source, file line, running-balance badge, duplicate flag kept", async ({ page }) => {
-    const { card } = await open(page, "pdf", "Add 3 transactions to Account A");
+    // Row 1 matches a ledger record, so it starts skipped (261121-kwu): 2 to add.
+    const { card } = await open(page, "pdf", "Add 2 transactions to Account A");
     await expect(card.getByText("Upload", { exact: true })).toBeVisible();
     await expect(card.getByTestId("inbox-upload-file")).toHaveText("march-statement.pdf");
     await expect(card).toContainText("PDF · 3 rows");
@@ -180,14 +181,16 @@ test.describe("upload card", () => {
     await expect(card.getByText("From the file: TOKO CONTOH 35.000")).toBeVisible();
   });
 
-  test("skip and approve behave as before", async ({ page }) => {
-    const { inbox, card } = await open(page, "pdf", "Add 3 transactions to Account A");
-    await card.getByRole("button", { name: "Skip row 1: Gaji Contoh, +50,000" }).click();
-    const after = page.getByRole("article", { name: "Add 2 transactions to Account A", exact: true }); // the title follows the skip
-    await expect(after.getByRole("button", { name: /^Approve/ })).toContainText("Add 2 transactions, 1 skipped");
-    await expect(after.getByText("Possible duplicate")).toBeVisible(); // a skipped row keeps its flags
+  test("the ledger duplicate starts skipped; include and approve behave as before", async ({ page }) => {
+    // 261121-kwu: row 1 matches a ledger record and the owner hasn't decided, so it starts skipped.
+    const { inbox, card } = await open(page, "pdf", "Add 2 transactions to Account A");
+    await expect(card.getByRole("button", { name: /^Approve/ })).toContainText("Add 2 transactions, 1 skipped");
+    await expect(card.getByText("Possible duplicate")).toBeVisible(); // a skipped row keeps its flags
+    await card.getByRole("button", { name: "Include row 1: Gaji Contoh, +50,000" }).click();
+    const after = page.getByRole("article", { name: "Add 3 transactions to Account A", exact: true }); // the title follows the choice
     await after.getByRole("button", { name: /^Approve/ }).click();
     await expect.poll(() => inbox.sent("POST", "/approve").length).toBe(1);
+    expect(inbox.sent("PATCH", "/rows/0").map((r) => r.body)).toEqual([{ skip: false }]);
   });
 
   test("a hostile filename stays text", async ({ page }) => {

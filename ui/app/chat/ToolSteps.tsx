@@ -20,7 +20,7 @@ const toggleBase: React.CSSProperties = {
   background: "transparent",
   border: "none",
   fontFamily: "inherit",
-  fontSize: 14,
+  fontSize: "var(--fs-body, 14px)",
   cursor: "pointer",
   textAlign: "left",
 };
@@ -39,7 +39,7 @@ const extBadge = (
     style={{
       marginLeft: 8,
       padding: "4px 8px",
-      fontSize: 12,
+      fontSize: "var(--fs-xs, 12px)",
       fontWeight: 600,
       background: tokens.color.tintWarm,
       color: tokens.color.ink,
@@ -191,7 +191,7 @@ export default function ToolSteps({
                     isOpen
                       ? {
                           padding: "4px 0 8px 24px",
-                          fontSize: 14,
+                          fontSize: "var(--fs-body, 14px)",
                           lineHeight: 1.5,
                           color: tokens.color.muted3,
                           whiteSpace: "pre-wrap",
@@ -228,7 +228,7 @@ export default function ToolSteps({
                             style={{
                               margin: 0,
                               padding: 8,
-                              fontSize: 12,
+                              fontSize: "var(--fs-xs, 12px)",
                               lineHeight: 1.5,
                               maxHeight: 160,
                               overflow: "auto",
@@ -296,11 +296,11 @@ export default function ToolSteps({
               >
                 {rows.map((r, j) => (
                   <div key={j} style={{ display: "contents" }}>
-                    <dt style={{ fontSize: 12, color: tokens.color.muted3 }}>{r.label}</dt>
+                    <dt style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3 }}>{r.label}</dt>
                     <dd
                       style={{
                         margin: 0,
-                        fontSize: 14,
+                        fontSize: "var(--fs-body, 14px)",
                         lineHeight: 1.5,
                         overflowWrap: "anywhere",
                         color: r.label ? tokens.color.ink : tokens.color.muted3,
@@ -311,7 +311,7 @@ export default function ToolSteps({
                   </div>
                 ))}
                 {ext && (
-                  <div style={{ gridColumn: "1 / -1", fontSize: 12, color: tokens.color.muted3 }}>
+                  <div style={{ gridColumn: "1 / -1", fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3 }}>
                     monai doesn&apos;t keep what the server sent back.
                   </div>
                 )}

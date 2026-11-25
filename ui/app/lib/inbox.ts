@@ -28,6 +28,8 @@ export type ProposalRow = {
   target_balance?: string;
   duplicates?: DuplicateFlag[];
   skip?: boolean;
+  /** Client-only: skipped because it matches a ledger record and the owner hasn't decided (261121-kwu). Never sent. */
+  skip_default?: boolean;
   /** Upload rows whose category came from the owner's merchant history; the owner's edit clears it. */
   category_suggested?: boolean;
 };
@@ -59,6 +61,9 @@ export type InboxProposal = {
   supersedes_id: string | null;
   failed_attempts: number;
   code?: string | null;
+  /** Chat provenance (261121-m17): the thread and request behind a chat proposal. */
+  thread_id?: string | null;
+  request?: string | null;
 };
 
 export type CardPhase =
@@ -70,6 +75,12 @@ export type CardPhase =
   | "expired"
   | "superseded"
   | "vanished";
+
+/**
+ * An account as the Inbox needs it to name what a proposal touches (261121-kwu):
+ * read from GET /cashflow/summary, the only endpoint that carries current_balance.
+ */
+export type InboxAccount = { id: number; name: string; currency: string; current_balance: number | null };
 
 export type HeldCard = { proposal: InboxProposal; phase: CardPhase; settledAt?: number };
 
@@ -83,13 +94,13 @@ export type ActionOutcome =
 // ---------------------------------------------------------------------------
 
 export const APPROVER_KEY_PAGE_MSG =
-  "Approvals aren't set up — the web server is missing a valid approver key. See the README approver-key step, then restart.";
+  "Approvals aren't set up: the web server is missing a valid approver key. See the README approver-key step, then restart.";
 export const APPROVER_KEY_ACTION_MSG =
-  "Approvals aren't set up — the web server is missing a valid approver key.";
+  "Approvals aren't set up: the web server is missing a valid approver key.";
 export const NETWORK_FAIL_MSG = "Couldn't reach monai. Try again.";
 export const LEDGER_CHANGED_MSG =
   "Ledger changed since you reviewed; reload to see the updated card.";
-export const ALL_SKIPPED_MSG = "Every row is skipped — reject this proposal instead";
+export const ALL_SKIPPED_MSG = "Every row is skipped. Reject this proposal instead";
 
 // ---------------------------------------------------------------------------
 // Display helpers
@@ -100,6 +111,14 @@ const included = (rows: ProposalRow[]) => rows.filter((r) => r.skip !== true).le
 const skippedCount = (rows: ProposalRow[]) => rows.length - included(rows);
 
 // Fixed (count-free) effect labels from the UI-SPEC "Approve Label Rules" table.
+/**
+ * Operations that change or remove something already in the ledger, rather
+ * than add to it (261121-kwu/m17): the card gets a "Changes existing data" chip.
+ */
+export function changesExisting(operation: string): boolean {
+  return /^(edit|delete|rename|merge)_/.test(operation) || operation === "add_balance_adjustment";
+}
+
 const FIXED_LABEL: Record<string, string> = {
   add_transfer: "Add 1 transfer",
   add_account: "Add account",
@@ -113,6 +132,7 @@ const FIXED_LABEL: Record<string, string> = {
   add_funded_buy: "Record funded buy",
   add_funded_sell: "Record funded sell",
   add_balance_adjustment: "Adjust balance",
+  add_coupon: "Record coupon",
 };
 
 // Counted verbs: "<Verb> N transaction(s)".
@@ -152,6 +172,10 @@ const accountOf = (r: ProposalRow): string | null => {
  */
 export function cardTitle(operation: string, rows: ProposalRow[]): string {
   const base = effectPhrase(operation, rows) ?? operation.replace(/_/g, " ");
+  if (operation === "add_coupon") {
+    const a = rows[0]?.after;
+    return `Coupon due ${fmtRowDate(a?.date)} · ${a?.ticker ?? ""}`;
+  }
   if (operation !== "add_transaction") return base;
   const accounts: string[] = [];
   for (const r of rows) {
@@ -202,6 +226,8 @@ export function expirySentence(expiresMs: number, nowMs: number): string | null 
 }
 
 export function pendingStatus(expiresMs: number, nowMs: number): string {
+  // Schedule proposals live ~10 years by design (261117-rw1), so a countdown would be noise.
+  if (expiresMs - nowMs > 365 * 86_400_000) return "Waiting for you";
   const s = expirySentence(expiresMs, nowMs);
   return s === null ? "Expired · ask again to redo this" : `Waiting for you · ${s}`;
 }
@@ -214,7 +240,7 @@ const enGbFull = new Intl.DateTimeFormat("en-GB", {
 
 /** "7 Oct 2026" from YYYY-MM-DD (built from parts: ISO strings shift by timezone). */
 export function fmtRowDate(value: unknown): string {
-  if (value === null || value === undefined) return "—";
+  if (value === null || value === undefined) return "–";
   const s = String(value);
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s.slice(0, 10));
   if (!m) return s; // chat dates are unvalidated
@@ -229,21 +255,21 @@ const missing = (v: unknown) =>
 
 /** "-35,000" / "+250,000"; the raw value when not numeric. */
 export function fmtSigned(value: unknown): string {
-  if (missing(value)) return "—";
+  if (missing(value)) return "–";
   const n = Number(value);
   return Number.isFinite(n) ? signedFmt.format(Math.round(n)) : String(value);
 }
 
 /** An absolute amount, minus kept, no "+": "-250,000" / "5,000,000"; the raw value when not numeric. */
 export function fmtAbsolute(value: unknown): string {
-  if (missing(value)) return "—";
+  if (missing(value)) return "–";
   const n = Number(value);
   return Number.isFinite(n) ? fmtPlain(n) : String(value);
 }
 
 /** "50,000" (sign dropped); the raw value when not numeric. */
 export function fmtUnsigned(value: unknown): string {
-  if (missing(value)) return "—";
+  if (missing(value)) return "–";
   const n = Number(value);
   return Number.isFinite(n) ? fmtPlain(Math.abs(n)) : String(value);
 }
@@ -254,7 +280,7 @@ export function fmtUnsigned(value: unknown): string {
  * ("1,234.56 USD"), so the approval line matches the applied amount (WR-08).
  */
 export function fmtMoney(value: unknown, currency: unknown): string {
-  if (missing(value)) return "—";
+  if (missing(value)) return "–";
   const n = Number(value);
   if (!Number.isFinite(n)) return String(value);
   return new Intl.NumberFormat("en-US", {
@@ -276,7 +302,7 @@ export function hhmm(ms: number): string {
 
 /** Sidebar badge text; null hides it. Offline shows an em dash. */
 export function badgeText(pending: number | null, offline: boolean): string | null {
-  if (offline) return "—";
+  if (offline) return "–";
   if (pending === null || pending <= 0) return null;
   return pending > 99 ? "99+" : String(pending);
 }
@@ -341,13 +367,32 @@ export function serverOffset(dateHeader: string | null, localNowMs: number): num
 }
 
 /**
+ * Inbox default (261121-kwu): an add_transaction row that matches an existing
+ * ledger record, and that the owner has not decided on, starts skipped. Flags
+ * against other proposals stay advisory. `skip_default` marks the rows Approve
+ * must save as skipped first, so the server writes exactly what the card shows.
+ */
+export function defaultSkipLedgerDuplicates(p: InboxProposal): InboxProposal {
+  if (p.operation !== "add_transaction") return p;
+  const rows = p.payload.rows ?? [];
+  const undecidedLedgerDup = (r: ProposalRow) =>
+    r.skip == null && (r.duplicates ?? []).some((f) => f.kind === "transaction");
+  if (!rows.some(undecidedLedgerDup)) return p;
+  return {
+    ...p,
+    payload: { ...p.payload, rows: rows.map((r) => (undecidedLedgerDup(r) ? { ...r, skip: true, skip_default: true } : r)) },
+  };
+}
+
+/**
  * Copy only the boolean `skip` flag from a PATCH response onto the held rows.
  * The response carries no `duplicates`, so replacing rows would drop the chips.
  */
 export function mergeSkip(held: ProposalRow[], resp: ProposalRow[]): ProposalRow[] {
   return held.map((row, i) => {
     const skip = resp[i]?.skip;
-    return typeof skip === "boolean" ? { ...row, skip } : row;
+    // A saved choice replaces the default, so drop the client-only marker.
+    return typeof skip === "boolean" ? { ...row, skip, skip_default: undefined } : row;
   });
 }
 
@@ -428,7 +473,7 @@ export function visibleRowIndices(rows: ProposalRow[], expanded: boolean): numbe
 // ---------------------------------------------------------------------------
 
 export const sourceLabel = (channel: string): string =>
-  channel === "mcp" ? "Claude" : channel === "chat" ? "monai chat" : channel === "upload" ? "Upload" : channel;
+  channel === "mcp" ? "Claude" : channel === "chat" ? "monai chat" : channel === "upload" ? "Upload" : channel === "schedule" ? "Scheduled" : channel;
 
 export const KIND_LABEL: Record<string, string> = {
   csv: "CSV",
@@ -502,4 +547,48 @@ export const uploadFlaggedCount = (rows: ProposalRow[]): number => rows.filter(i
 export function sourceLine(row: ProposalRow): string | null {
   const raw = row.after?.raw_line;
   return isUploadRowFlagged(row) && typeof raw === "string" && raw !== "" ? `From the file: ${raw}` : null;
+}
+
+/**
+ * Where an approved proposal's rows land in Records (261121-kwu): one account
+ * when every row touches the same known account, and the rows' date range.
+ * Unknown accounts or dates widen the link rather than guess.
+ */
+export function recordsHref(p: InboxProposal, accounts: ReadonlyMap<number, InboxAccount>): string {
+  const byName = new Map(Array.from(accounts.values()).map((a) => [a.name, a.id] as [string, number]));
+  const ids = new Set<number | null>();
+  const days: string[] = [];
+  const addDay = (v: unknown) => {
+    const d = String(v ?? "").slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) days.push(d);
+  };
+  const addAccount = (v: unknown) =>
+    ids.add(typeof v === "number" ? v : typeof v === "string" ? byName.get(v) ?? null : null);
+  for (const r of p.payload.rows ?? []) {
+    if (p.operation === "add_transaction") {
+      if (r.skip) continue;
+      addAccount(r.after?.account);
+      addDay(r.after?.date);
+    } else if (p.operation === "add_transfer") {
+      const legs = r.after as { leg_a?: Record<string, unknown>; leg_b?: Record<string, unknown> } | null;
+      addAccount(legs?.leg_a?.account);
+      addAccount(legs?.leg_b?.account);
+      addDay(legs?.leg_a?.date);
+    } else if (p.operation === "edit_transaction" || p.operation === "delete_transaction") {
+      addAccount(r.before?.account_id);
+      addDay(r.before?.date);
+    } else if (p.operation === "add_balance_adjustment") {
+      addAccount(r.account_id);
+    }
+  }
+  const q = new URLSearchParams();
+  const only = ids.size === 1 ? Array.from(ids)[0] : null;
+  if (only != null) q.set("account_id", String(only));
+  if (days.length > 0) {
+    days.sort();
+    q.set("date_from", days[0]);
+    q.set("date_to", days[days.length - 1]);
+  }
+  const s = q.toString();
+  return s ? `/records?${s}` : "/records";
 }

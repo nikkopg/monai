@@ -25,6 +25,8 @@ chmod 600 .env
 - `MONAI_UI_PASSWORD` is your browser login (username `monai`).
 - `MONAI_API_KEY` lets other AI apps connect to monai.
 - `MONAI_APPROVER_KEY` is what approves changes. **Never give it to another app**, so no app can approve its own changes.
+- `MONAI_TRUSTED_HOSTS` (optional) lists other hostnames you open monai at, comma-separated, such as your tailnet name when you use `tailscale serve`. Without it, uploads and Inbox approvals only work at `127.0.0.1` or `localhost`.
+- `MONAI_VISION_MAX_SIDE` (optional, default 1024) is the longest side of an image sent to the model. Raise it if your GPU handles larger images; on a small iGPU a larger image can crash Ollama.
 
 **2. Start it:**
 
@@ -34,7 +36,7 @@ docker compose up -d --build
 
 Open http://127.0.0.1:3001. monai can only be reached from the computer it runs on; from another computer, use `ssh -L 3001:127.0.0.1:3001 you@your-server`.
 
-The assistant uses [Ollama](https://ollama.com) on your computer by default. You can switch to Claude or OpenAI in Settings.
+The assistant uses [Ollama](https://ollama.com), on your computer or Ollama Cloud. Pick the model in Settings.
 
 **3. Optional: connect another AI app.** In Claude Desktop (through `mcp-remote`) or Claude Code, add `http://127.0.0.1:8001/mcp` with your `MONAI_API_KEY`.
 

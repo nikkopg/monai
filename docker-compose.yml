@@ -29,7 +29,6 @@ services:
     network_mode: host
     environment:
       DATABASE_URL: postgresql+psycopg://monai:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set - add it to .env}@127.0.0.1:5434/monai
-      LLM_PROVIDER: ollama
       OLLAMA_BASE_URL: http://127.0.0.1:11434
       OLLAMA_MODEL: gemma4:31b-cloud
       OLLAMA_EMBED_MODEL: gemma4:31b-cloud
@@ -43,6 +42,8 @@ services:
       # allowlisted proxy injection used by the Inbox.
       MONAI_APPROVER_KEY: ${MONAI_APPROVER_KEY:-}
       MONAI_SKILLS_DIR: /app/skills
+      # Longest image side sent to the vision model (default 1024; the Vega 8 iGPU crashes at 1536).
+      MONAI_VISION_MAX_SIDE: ${MONAI_VISION_MAX_SIDE:-1024}
     volumes:
       # The owner's SKILL.md packs, read-only (Phase 40). Gitignored; the folder is kept via skills/.gitkeep.
       - ./skills:/app/skills:ro
@@ -68,6 +69,10 @@ services:
       # Inbox list, approve, reject and row-skip requests and nothing else; it is never
       # exposed to the browser. Empty means Inbox actions answer with the approver-key message.
       MONAI_APPROVER_KEY: ${MONAI_APPROVER_KEY:-}
+      # Optional. Comma-separated exact hostnames (besides loopback) that uploads, Inbox
+      # actions and MCP-server changes may come from, e.g. the tailnet name behind
+      # `tailscale serve`. Empty: loopback only.
+      MONAI_TRUSTED_HOSTS: ${MONAI_TRUSTED_HOSTS:-}
       # Read only by ui/middleware.ts for HTTP Basic sign-in (user monai). Must differ from
       # both keys, or the UI answers 503. Never give it the client-inlined public prefix.
       MONAI_UI_PASSWORD: ${MONAI_UI_PASSWORD:?MONAI_UI_PASSWORD must be set - add it to .env}

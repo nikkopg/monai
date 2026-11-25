@@ -3,15 +3,17 @@
 import { Suspense, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
-import { tokens, card, input, btn, btnDark, dangerBtn } from "../styles";
+import { tokens, card, input, btn, btnDark, btnGhost, dangerBtn } from "../styles";
 import TransactionModal, {
   type Tx as ModalTx,
   type AccountOption,
-} from "../cashflow/TransactionModal";
-import ConfirmDialog from "../cashflow/ConfirmDialog";
+} from "../overview/TransactionModal";
+import ConfirmDialog from "../overview/ConfirmDialog";
 import RowMenu from "../components/RowMenu";
+import Skeleton, { Bone } from "../components/Skeleton";
 import { formatDateRange } from "../chat/labels";
 import { fmtAmount, fmtAmountSigned, fmtRateCompare, impliedRate, rateHover, sumIdr } from "../lib/money";
+import { fmtRowDate } from "../lib/inbox";
 
 // ---------------------------------------------------------------------------
 // Records ledger (REC-01/02/03/05) — date-grouped transaction history with a
@@ -141,6 +143,7 @@ function LedgerRowShell({
   amountColor,
   checked,
   onToggle,
+  selectable,
   onEdit,
   onDelete,
 }: {
@@ -155,11 +158,14 @@ function LedgerRowShell({
   amountColor: string;
   checked: boolean;
   onToggle: () => void;
+  /** Select mode (261121-m17): the checkbox shows only while selecting. */
+  selectable: boolean;
   onEdit: () => void;
   onDelete: () => void;
 }) {
   return (
     <div
+      className="rec-row"
       style={{
         display: "flex",
         alignItems: "center",
@@ -168,9 +174,12 @@ function LedgerRowShell({
         borderTop: `1px solid ${tokens.color.borderInner}`,
       }}
     >
-      <span style={{ width: 28, flexShrink: 0 }}>
-        <input type="checkbox" checked={checked} onChange={onToggle} />
-      </span>
+      {/* The label carries the 44px tap area (a checkbox cannot take ::before). */}
+      {selectable && (
+        <label className="tap44" style={{ width: 28, flexShrink: 0 }}>
+          <input type="checkbox" aria-label={`Select ${name}`} checked={checked} onChange={onToggle} />
+        </label>
+      )}
       <span
         style={{
           width: 38,
@@ -180,7 +189,7 @@ function LedgerRowShell({
           display: "inline-flex",
           alignItems: "center",
           justifyContent: "center",
-          fontSize: 13,
+          fontSize: "var(--fs-body, 13px)",
           fontWeight: 600,
           color: tokens.color.muted3,
           flexShrink: 0,
@@ -192,11 +201,14 @@ function LedgerRowShell({
           by records.spec.ts to locate a specific row via .first()/.last())
           matches every ANCESTOR div wrapping the text too; keeping the outer
           row above as the ONLY div in this subtree makes it the sole match. */}
-      <span style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}>
+      <span
+        className="rec-text"
+        style={{ display: "flex", flexDirection: "column", flex: 1, minWidth: 0 }}
+      >
         <span
           style={{
             display: "block",
-            fontSize: 14,
+            fontSize: "var(--fs-body, 14px)",
             fontWeight: 500,
             whiteSpace: "nowrap",
             overflow: "hidden",
@@ -205,14 +217,15 @@ function LedgerRowShell({
         >
           {primary}
         </span>
-        <span style={{ display: "block", fontSize: 12, color: tokens.color.muted2 }}>
+        <span style={{ display: "block", fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted2 }}>
           {meta}
         </span>
       </span>
       <div
+        className="rec-amt"
         title={amountTitle}
         style={{
-          fontSize: 14,
+          fontSize: "var(--fs-body, 14px)",
           fontWeight: 600,
           fontVariantNumeric: "tabular-nums",
           color: amountColor,
@@ -226,7 +239,7 @@ function LedgerRowShell({
               display: "block",
               textAlign: "right",
               marginTop: 4,
-              fontSize: 12,
+              fontSize: "var(--fs-xs, 12px)",
               fontWeight: 400,
               color: tokens.color.muted3,
             }}
@@ -300,6 +313,9 @@ function RecordsInner() {
   const [amountMin, setAmountMin] = useState("");
   const [amountMax, setAmountMax] = useState("");
   const [showTransfers, setShowTransfers] = useState(true);
+  // Phone only: filters other than search sit behind a toggle (F005).
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const activeFilters = [accountId, category, type, amountMin, amountMax].filter(Boolean).length + (showTransfers ? 0 : 1);
 
   const [txs, setTxs] = useState<Tx[]>([]);
   const [offset, setOffset] = useState(0);
@@ -314,6 +330,16 @@ function RecordsInner() {
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  // Select mode (261121-m17): checkboxes and the bulk bar show only while selecting.
+  const [selectMode, setSelectMode] = useState(false);
+  const allSelected = txs.length > 0 && txs.every((t) => selectedIds.has(t.id));
+  // The category list shows only after Recategorize is pressed (fast 2026-11-21).
+  const [recatOpen, setRecatOpen] = useState(false);
+  function endSelectMode() {
+    setSelectMode(false);
+    setRecatOpen(false);
+    setSelectedIds(new Set());
+  }
   const [recatCategory, setRecatCategory] = useState("");
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [bulkError, setBulkError] = useState<string | null>(null);
@@ -365,7 +391,7 @@ function RecordsInner() {
       setHasMore(rows.length === 100);
     } catch {
       setError(
-        "Couldn't load your records — check the backend is running and reload the page."
+        "Couldn't load your records. Check the backend is running and reload the page."
       );
     } finally {
       setLoading(false);
@@ -452,12 +478,12 @@ function RecordsInner() {
       });
       if (r.ok) {
         const body = await r.json();
-        setSelectedIds(new Set());
+        endSelectMode();
         if (body.skipped?.length) {
           setSkipNote(
             `${body.recategorized?.length ?? 0} recategorized. ${
               body.skipped.length
-            } transfer legs skipped — transfers are categorized automatically.`
+            } transfer legs skipped. Transfers are categorized automatically.`
           );
         }
         await refresh();
@@ -489,7 +515,7 @@ function RecordsInner() {
         body: JSON.stringify({ ids: Array.from(selectedIds) }),
       });
       if (r.ok) {
-        setSelectedIds(new Set());
+        endSelectMode();
         setBulkDeleteOpen(false);
         await refresh();
       } else {
@@ -523,15 +549,16 @@ function RecordsInner() {
       return (
         <LedgerRowShell
           key={tx.id}
-          name={`${tx.merchant || tx.category || "Transaction"} on ${tx.date.slice(0, 10)}`}
+          name={`${tx.merchant || tx.category || "Transaction"} on ${fmtRowDate(tx.date)}`}
           tint={tint}
           glyph={(tx.category || tx.merchant || "?").slice(0, 1).toUpperCase()}
           primary={tx.merchant || tx.category || "Transaction"}
-          meta={`${(tx.category || "Uncategorized") + (tx.is_transfer ? " · transfer" : "")} · ${tx.date.slice(0, 10)}`}
+          meta={`${(tx.category || "Uncategorized") + (tx.is_transfer ? " · transfer" : "")} · ${fmtRowDate(tx.date)}`}
           amountText={fmtAmountSigned(tx.amount, tx.currency)}
           {...usdSecondary(tx.currency, tx.amount_idr, tx.fx_rate, tx.fx_rate_date)}
           amountColor={tx.amount < 0 ? tokens.color.terracotta : tokens.color.green}
           checked={selectedIds.has(tx.id)}
+          selectable={selectMode}
           onToggle={() => toggleSelection([tx.id])}
           onEdit={() => {
             setEditingTx(tx);
@@ -554,12 +581,12 @@ function RecordsInner() {
       const idrLeg = [legA, legB].find((l) => (l.currency ?? "IDR") === "IDR");
       const crossPair = usdLeg && idrLeg && usdLeg !== idrLeg;
       const implied = crossPair ? impliedRate(idrLeg.amount, usdLeg.amount) : null;
-      const baseMeta = legA.date.slice(0, 10);
+      const baseMeta = fmtRowDate(legA.date);
       const rateState = usdLeg?.fx_rate != null && usdLeg.fx_rate_date ? "ok" : "none";
       return (
         <LedgerRowShell
           key={legA.id}
-          name={`Transfer: ${accountName(outgoing.account_id)} → ${accountName(incoming.account_id)} on ${legA.date.slice(0, 10)}`}
+          name={`Transfer: ${accountName(outgoing.account_id)} → ${accountName(incoming.account_id)} on ${fmtRowDate(legA.date)}`}
           tint={tokens.color.tintNeutral}
           glyph="⇄"
           primary={`Transfer: ${accountName(outgoing.account_id)} → ${accountName(
@@ -585,6 +612,7 @@ function RecordsInner() {
               ))}
           amountColor={tokens.color.ink}
           checked={selectedIds.has(legA.id) && selectedIds.has(legB.id)}
+          selectable={selectMode}
           onToggle={() => toggleSelection([legA.id, legB.id])}
           onEdit={() => {
             setEditingTx(legA);
@@ -608,22 +636,23 @@ function RecordsInner() {
     return (
       <LedgerRowShell
         key={legA.id}
-        name={`${legA.merchant || legA.category || "Transaction"} (transfer) on ${legA.date.slice(0, 10)}`}
+        name={`${legA.merchant || legA.category || "Transaction"} (transfer) on ${fmtRowDate(legA.date)}`}
         tint={tint}
         glyph={(legA.category || legA.merchant || "?").slice(0, 1).toUpperCase()}
         primary={
           <>
             {legA.merchant || legA.category || "Transaction"}
-            <span style={{ fontSize: 12, color: tokens.color.muted, fontWeight: 400 }}>
+            <span style={{ fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted, fontWeight: 400 }}>
               {" "}(transfer)
             </span>
           </>
         }
-        meta={`${legA.category || "Uncategorized"} · ${legA.date.slice(0, 10)}`}
+        meta={`${legA.category || "Uncategorized"} · ${fmtRowDate(legA.date)}`}
         amountText={fmtAmountSigned(legA.amount, legA.currency)}
         {...usdSecondary(legA.currency, legA.amount_idr, legA.fx_rate, legA.fx_rate_date)}
         amountColor={legA.amount < 0 ? tokens.color.terracotta : tokens.color.green}
         checked={selectedIds.has(legA.id)}
+        selectable={selectMode}
         onToggle={() => toggleSelection([legA.id])}
         onEdit={() => {
           setEditingTx(legA);
@@ -668,7 +697,7 @@ function RecordsInner() {
     gap: 4,
     minHeight: 32,
     padding: "0 4px 0 12px",
-    fontSize: 14,
+    fontSize: "var(--fs-body, 14px)",
     color: tokens.color.ink,
     background: tokens.color.tintNeutral,
     border: `1px solid ${tokens.color.border2}`,
@@ -699,22 +728,11 @@ function RecordsInner() {
         }}
       >
         <div>
-          <div
-            style={{
-              fontSize: 12,
-              letterSpacing: ".12em",
-              textTransform: "uppercase",
-              color: tokens.color.muted2,
-              marginBottom: 6,
-            }}
-          >
-            Ledger
-          </div>
           <h1
             style={{
               fontFamily: tokens.font.serif,
               fontWeight: 400,
-              fontSize: 40,
+              fontSize: "var(--fs-title, 40px)",
               margin: 0,
               letterSpacing: "-.5px",
             }}
@@ -722,16 +740,24 @@ function RecordsInner() {
             Records
           </h1>
         </div>
-        <button
-          type="button"
-          style={btnDark}
-          onClick={() => {
-            setEditingTx(null);
-            setModalOpen(true);
-          }}
-        >
-          + Add record
-        </button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {!selectMode && (
+            <button type="button" className="tap44" style={btnGhost} onClick={() => setSelectMode(true)}>
+              Select
+            </button>
+          )}
+          <button
+            type="button"
+            className="tap44"
+            style={btnDark}
+            onClick={() => {
+              setEditingTx(null);
+              setModalOpen(true);
+            }}
+          >
+            + Add record
+          </button>
+        </div>
       </div>
 
       {error && (
@@ -739,9 +765,11 @@ function RecordsInner() {
       )}
 
       {!error && (
-        <section style={{ ...card, marginBottom: 18 }}>
-          {selectedIds.size === 0 ? (
+        <section className="card-tight" style={{ ...card, marginBottom: "var(--stack, 18px)" }}>
+          {!selectMode ? (
             <div
+              className="rec-filters"
+              data-open={filtersOpen}
               style={{
                 display: "flex",
                 flexWrap: "wrap",
@@ -752,14 +780,30 @@ function RecordsInner() {
                 marginBottom: tokens.space.md,
               }}
             >
+              {/* Visually hidden labels: the filters show placeholders and option text only. */}
+              {/* Mid widths: the selects wrap at 150px rather than shrink until their text is cut. */}
+              <label htmlFor="rec-q" className="sr-only">Search records</label>
               <input
+                id="rec-q"
                 style={{ ...input, flex: 2, minWidth: 180 }}
                 placeholder="Search merchant or notes…"
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
               />
+              <button
+                type="button"
+                className="rec-filter-toggle tap44"
+                aria-expanded={filtersOpen}
+                aria-controls="rec-account"
+                onClick={() => setFiltersOpen((o) => !o)}
+                style={{ ...input, display: "none", width: "auto", alignItems: "center", cursor: "pointer" }}
+              >
+                {activeFilters ? `Filters (${activeFilters})` : "Filters"}
+              </button>
+              <label htmlFor="rec-account" className="sr-only">Filter by account</label>
               <select
-                style={{ ...input, flex: 1 }}
+                id="rec-account"
+                style={{ ...input, flex: 1, minWidth: 150 }}
                 value={accountId}
                 onChange={(e) => setAccountId(e.target.value)}
               >
@@ -770,8 +814,10 @@ function RecordsInner() {
                   </option>
                 ))}
               </select>
+              <label htmlFor="rec-category" className="sr-only">Filter by category</label>
               <select
-                style={{ ...input, flex: 1 }}
+                id="rec-category"
+                style={{ ...input, flex: 1, minWidth: 150 }}
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
               >
@@ -785,8 +831,10 @@ function RecordsInner() {
                   </option>
                 ))}
               </select>
+              <label htmlFor="rec-type" className="sr-only">Filter by type</label>
               <select
-                style={{ ...input, flex: 1 }}
+                id="rec-type"
+                style={{ ...input, flex: 1, minWidth: 150 }}
                 value={type}
                 onChange={(e) => setType(e.target.value)}
               >
@@ -795,27 +843,32 @@ function RecordsInner() {
                 <option value="income">Income</option>
                 <option value="transfer">Transfer</option>
               </select>
+              <label htmlFor="rec-min" className="sr-only">Minimum amount</label>
               <input
-                style={{ ...input, width: 110 }}
+                id="rec-min"
+                style={{ ...input, width: 120, flexShrink: 0 }}
                 type="number"
                 placeholder="Min amount"
                 value={amountMin}
                 onChange={(e) => setAmountMin(e.target.value)}
               />
+              <label htmlFor="rec-max" className="sr-only">Maximum amount</label>
               <input
-                style={{ ...input, width: 110 }}
+                id="rec-max"
+                style={{ ...input, width: 120, flexShrink: 0 }}
                 type="number"
                 placeholder="Max amount"
                 value={amountMax}
                 onChange={(e) => setAmountMax(e.target.value)}
               />
               <label
+                className="tap44"
                 style={{
                   display: "flex",
                   alignItems: "center",
                   gap: 6,
                   flexShrink: 0,
-                  fontSize: 13,
+                  fontSize: "var(--fs-body, 13px)",
                   color: tokens.color.muted3,
                 }}
               >
@@ -829,8 +882,10 @@ function RecordsInner() {
             </div>
           ) : (
             <div
+              className="rec-bulk"
               style={{
                 display: "flex",
+                flexWrap: "wrap",
                 alignItems: "center",
                 gap: tokens.space.sm,
                 background: tokens.color.sidebar,
@@ -839,46 +894,74 @@ function RecordsInner() {
                 marginBottom: tokens.space.md,
               }}
             >
-              <span style={{ fontSize: 12, fontWeight: 600 }}>
+              <button
+                type="button"
+                className="tap44"
+                style={btnGhost}
+                onClick={() => setSelectedIds(allSelected ? new Set() : new Set(txs.map((t) => t.id)))}
+              >
+                {allSelected ? "Unselect all" : "Select all"}
+              </button>
+              <span role="status" style={{ fontSize: "var(--fs-xs, 12px)", fontWeight: 600 }}>
                 {selectedIds.size} selected
               </span>
-              <div
-                style={{
-                  marginLeft: "auto",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: tokens.space.sm,
-                }}
-              >
-                <select
-                  style={{ ...input, width: 160 }}
-                  value={recatCategory}
-                  onChange={(e) => setRecatCategory(e.target.value)}
-                >
-                  {categoryOptions.map((o) => (
-                    <option key={o.name} value={o.name}>
-                      {`${"  ".repeat(o.depth)}${o.name}`}
-                    </option>
-                  ))}
-                </select>
-                <button type="button" style={btn} onClick={doBulkRecategorize}>
-                  Recategorize
-                </button>
+{recatOpen ? (
+                <>
+                  <label htmlFor="rec-recat" className="sr-only">Category for the selected records</label>
+                  <select
+                    id="rec-recat"
+                    className="rec-bulk-select"
+                    style={{ ...input, width: 160, marginLeft: "auto" }}
+                    value={recatCategory}
+                    onChange={(e) => setRecatCategory(e.target.value)}
+                    autoFocus
+                  >
+                    {categoryOptions.map((o) => (
+                      <option key={o.name} value={o.name}>
+                        {`${"  ".repeat(o.depth)}${o.name}`}
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    type="button"
+                    className="tap44"
+                    style={selectedIds.size === 0 ? { ...btn, opacity: 0.5, cursor: "not-allowed" } : btn}
+                    disabled={selectedIds.size === 0}
+                    onClick={doBulkRecategorize}
+                  >
+                    Apply
+                  </button>
+                  <button type="button" className="tap44" style={btnGhost} onClick={() => setRecatOpen(false)}>
+                    Cancel
+                  </button>
+                </>
+              ) : (
                 <button
                   type="button"
-                  style={dangerBtn}
-                  onClick={() => setBulkDeleteOpen(true)}
+                  className="tap44"
+                  style={
+                    selectedIds.size === 0
+                      ? { ...btn, opacity: 0.5, cursor: "not-allowed", marginLeft: "auto" }
+                      : { ...btn, marginLeft: "auto" }
+                  }
+                  disabled={selectedIds.size === 0}
+                  onClick={() => setRecatOpen(true)}
                 >
-                  Delete
+                  Recategorize
                 </button>
-                <span
-                  role="button"
-                  onClick={() => setSelectedIds(new Set())}
-                  style={{ color: tokens.color.muted, cursor: "pointer", fontSize: 12 }}
-                >
-                  Cancel selection
-                </span>
-              </div>
+              )}
+              <button
+                type="button"
+                className="tap44"
+                style={selectedIds.size === 0 ? { ...dangerBtn, opacity: 0.5, cursor: "not-allowed" } : dangerBtn}
+                disabled={selectedIds.size === 0}
+                onClick={() => setBulkDeleteOpen(true)}
+              >
+                Delete
+              </button>
+              <button type="button" className="tap44" style={btnGhost} onClick={endSelectMode}>
+                Done
+              </button>
             </div>
           )}
 
@@ -927,33 +1010,57 @@ function RecordsInner() {
           )}
 
           {bulkError && (
-            <div style={{ color: tokens.color.terracotta, fontSize: 12, marginBottom: tokens.space.sm }}>
+            <div style={{ color: tokens.color.terracotta, fontSize: "var(--fs-xs, 12px)", marginBottom: tokens.space.sm }}>
               {bulkError}
             </div>
           )}
           {skipNote && (
-            <div style={{ color: tokens.color.muted, fontSize: 12, marginBottom: tokens.space.sm }}>
+            <div style={{ color: tokens.color.muted, fontSize: "var(--fs-xs, 12px)", marginBottom: tokens.space.sm }}>
               {skipNote}
             </div>
           )}
 
           {loading && txs.length === 0 ? (
-            <div style={{ fontSize: 14, color: tokens.color.muted, paddingTop: 10 }}>
-              Loading your records…
-            </div>
+            <Skeleton label="Loading your records" style={{ paddingTop: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", padding: "10px 0 6px" }}>
+                <Bone w={90} h={12} />
+                <Bone w={80} h={12} />
+              </div>
+              {[0, 1, 2, 3, 4, 5].map((i) => (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 12,
+                    padding: "10px 0",
+                    borderTop: `1px solid ${tokens.color.borderInner}`,
+                  }}
+                >
+                  <Bone w={32} h={32} r={10} />
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <Bone w={110 + i * 12} h={12} />
+                    <Bone w={80} h={10} />
+                  </div>
+                  <div style={{ marginLeft: "auto" }}>
+                    <Bone w={80} h={12} />
+                  </div>
+                </div>
+              ))}
+            </Skeleton>
           ) : txs.length === 0 ? (
             <div style={{ paddingTop: 10 }}>
               <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
                 {filtersActive ? "No records match these filters." : "No records yet."}
               </div>
-              <div style={{ color: tokens.color.muted, fontSize: 14 }}>
+              <div style={{ color: tokens.color.muted, fontSize: "var(--fs-body, 14px)" }}>
                 {filtersActive
                   ? "Try widening your search or clearing a filter."
                   : "Add your first record to start building your history."}
               </div>
             </div>
           ) : (
-            <>
+            <div className="fade-in">
               {groups.map((g, idx) => {
                 const dayRows = g.rows.filter((r) => r.transfer_pair_id == null);
                 const { total: net, unconverted } = sumIdr(dayRows);
@@ -967,18 +1074,18 @@ function RecordsInner() {
                         borderTop: idx === 0 ? "none" : `1px solid ${tokens.color.border}`,
                       }}
                     >
-                      <span style={{ fontSize: 12, fontWeight: 600 }}>{g.label}</span>
+                      <span style={{ fontSize: "var(--fs-xs, 12px)", fontWeight: 600 }}>{g.label}</span>
                       <span
                         style={{
-                          fontSize: 12,
+                          fontSize: "var(--fs-xs, 12px)",
                           fontWeight: 600,
                           fontVariantNumeric: "tabular-nums",
                           color: net >= 0 ? tokens.color.green : tokens.color.terracotta,
                         }}
                       >
-                        Net {unconverted > 0 && unconverted === dayRows.length ? "—" : fmtAmountSigned(net, "IDR")}
+                        Net {unconverted > 0 && unconverted === dayRows.length ? "–" : fmtAmountSigned(net, "IDR")}
                         {unconverted > 0 && (
-                          <span style={{ fontSize: 12, fontWeight: 400, color: tokens.color.terracottaText }}>
+                          <span style={{ fontSize: "var(--fs-xs, 12px)", fontWeight: 400, color: tokens.color.terracottaText }}>
                             {" · "}
                             {unconverted} unconverted
                           </span>
@@ -991,12 +1098,12 @@ function RecordsInner() {
               })}
               {hasMore && (
                 <div style={{ textAlign: "center", marginTop: 14 }}>
-                  <button type="button" style={btn} onClick={() => load(false)}>
+                  <button type="button" className="tap44" style={btn} onClick={() => load(false)}>
                     Load 100 more
                   </button>
                 </div>
               )}
-            </>
+            </div>
           )}
         </section>
       )}
@@ -1026,7 +1133,7 @@ function RecordsInner() {
         />
       )}
       {deleteError && (
-        <div style={{ color: tokens.color.terracotta, fontSize: 12, marginTop: 8 }}>
+        <div style={{ color: tokens.color.terracotta, fontSize: "var(--fs-xs, 12px)", marginTop: 8 }}>
           {deleteError}
         </div>
       )}

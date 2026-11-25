@@ -22,16 +22,16 @@ import {
 // ---------------------------------------------------------------------------
 
 const eyebrow: React.CSSProperties = {
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   fontWeight: 600,
   textTransform: "uppercase",
   letterSpacing: ".12em",
   color: tokens.color.muted3,
 };
-const blockLabel: React.CSSProperties = { fontSize: 12, fontWeight: 600, color: tokens.color.muted3 };
-const caption: React.CSSProperties = { fontSize: 12, color: tokens.color.muted3 };
-const body14: React.CSSProperties = { fontSize: 14, lineHeight: 1.5, color: tokens.color.ink, margin: 0 };
-const action: React.CSSProperties = { fontSize: 14, padding: "8px 16px", minHeight: 36, fontFamily: "inherit" };
+const blockLabel: React.CSSProperties = { fontSize: "var(--fs-xs, 12px)", fontWeight: 600, color: tokens.color.muted3 };
+const caption: React.CSSProperties = { fontSize: "var(--fs-xs, 12px)", color: tokens.color.muted3 };
+const body14: React.CSSProperties = { fontSize: "var(--fs-body, 14px)", lineHeight: 1.5, color: tokens.color.ink, margin: 0 };
+const action: React.CSSProperties = { fontSize: "var(--fs-body, 14px)", padding: "8px 16px", minHeight: 36, fontFamily: "inherit" };
 const pre: React.CSSProperties = {
   margin: 0,
   padding: "8px 16px",
@@ -39,7 +39,7 @@ const pre: React.CSSProperties = {
   border: `1px solid ${tokens.color.border2}`,
   borderRadius: tokens.radius.sm,
   color: tokens.color.ink,
-  fontSize: 14,
+  fontSize: "var(--fs-body, 14px)",
   lineHeight: 1.5,
   fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
   whiteSpace: "pre-wrap",
@@ -314,7 +314,7 @@ export default function ExtApprovalCard({
               data-testid="ext-countdown"
               style={{
                 marginLeft: "auto",
-                fontSize: 12,
+                fontSize: "var(--fs-xs, 12px)",
                 fontVariantNumeric: "tabular-nums",
                 fontWeight: isLastMinute(msLeft) ? 600 : 400,
                 color: isLastMinute(msLeft) ? tokens.color.ink : tokens.color.muted3,

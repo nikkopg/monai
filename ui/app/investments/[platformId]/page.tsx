@@ -6,9 +6,12 @@ import { useParams } from "next/navigation";
 
 import { tokens, card, btnDark } from "../../styles";
 import HoldingModal from "../HoldingModal";
+import { BondLine, CouponSchedule } from "../BondLine";
+import type { BondInfo } from "../../lib/bond";
 import { extractDetail } from "../../lib/api";
 import { fmtAmount, fmtAmountSigned, fmtUsdPrice, rateHover } from "../../lib/money";
 import RowMenu from "../../components/RowMenu";
+import Skeleton, { Bone } from "../../components/Skeleton";
 import type { PlatformOption } from "../page";
 
 // ---------------------------------------------------------------------------
@@ -32,6 +35,7 @@ type PlatformDetailHolding = {
   current_value: number | null;
   unrealized_pnl: number | null;
   realized_pnl: number;
+  bond?: BondInfo | null; // asset_type 'bond' only (quick 261117-rw1)
   // USD positions only (quick 261108-d2c); all null when no USD rate exists.
   usd_avg_cost?: number | null;
   usd_current_price?: number | null;
@@ -94,12 +98,15 @@ function fmtQty(n: number, assetType: string | null): string {
 
 // Deterministic badge color per ticker — copied verbatim from
 // investments/page.tsx's badgeColor().
-const BADGE_COLORS = ["#d8b26a", "#5a8f73", "#2f6f4f", "#8fae9c", "#b5503f"];
+// Sage lightened from #5a8f73 (ink 4.34:1) to #6fa287 (ink 5.56:1); every fill + text pair is >= 4.5:1.
+const BADGE_COLORS = ["#d8b26a", "#6fa287", "#2f6f4f", "#8fae9c", "#b5503f"];
 const badgeColor = (t: string) => {
   let h = 0;
   for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) >>> 0;
   return BADGE_COLORS[h % BADGE_COLORS.length];
 };
+// Fills where ink text out-contrasts white.
+const BADGE_INK = new Set<string>([tokens.color.gold, "#6fa287", tokens.color.sageLight]);
 
 // event_type -> Title-cased label + Color-table-mapped hue (green
 // buy/deposit, terracotta sell/withdrawal, ink otherwise).
@@ -123,13 +130,13 @@ function sideColor(eventType: string): string {
   return tokens.color.ink;
 }
 
-const muted = tokens.color.muted;
+const muted = tokens.color.muted3;
 
 // USD figure on top, the IDR figure in small muted text underneath.
 const withIdr = (primary: string, idrText: string, title?: string) => (
   <>
     <span style={{ display: "block" }}>{primary}</span>
-    <span style={{ display: "block", fontSize: 11, color: muted }} title={title}>
+    <span style={{ display: "block", fontSize: "var(--fs-xs, 12px)", color: muted }} title={title}>
       {idrText}
     </span>
   </>
@@ -159,7 +166,7 @@ export default function PlatformDetailPage() {
   // superseded by an onSaved refetch) fails isStale() and never touches state.
   const loadSeq = useRef(0);
 
-  // silent: skip the full-page "Loading platform…" swap (WR-07) — used by the
+  // silent: skip the full-page loading skeleton swap (WR-07) — used by the
   // post-write onSaved refetch so a successful save doesn't blank the page and
   // unmount the modal mid-flight.
   async function deleteEvent(e: PortfolioEvent) {
@@ -197,7 +204,7 @@ export default function PlatformDetailPage() {
     } catch {
       if (!isStale())
         setError(
-          "Couldn't load this platform — check the backend is running and reload the page."
+          "Couldn't load this platform. Check the backend is running and reload the page."
         );
     } finally {
       if (!isStale() && !opts?.silent) setLoading(false);
@@ -228,6 +235,12 @@ export default function PlatformDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [platformId]);
 
+  // The layout's "Investments · monai" names every platform tab alike (F009).
+  const platformName = detail?.platform_name;
+  useEffect(() => {
+    if (platformName) document.title = `${platformName} · monai`;
+  }, [platformName]);
+
   // Platform-wide totals — sum of each holding's own realized/unrealized.
   const totalRealized =
     (detail?.holdings.reduce((a, h) => a + h.realized_pnl, 0) ?? 0) +
@@ -238,9 +251,10 @@ export default function PlatformDetailPage() {
   const backLink = (
     <Link
       href="/investments"
+      className="tap44"
       style={{
-        fontSize: 12,
-        color: tokens.color.muted2,
+        fontSize: "var(--fs-xs, 12px)",
+        color: tokens.color.muted3,
         marginBottom: 12,
         display: "inline-block",
         textDecoration: "none",
@@ -255,11 +269,47 @@ export default function PlatformDetailPage() {
       {backLink}
 
       {loading ? (
-        <div style={card}>
-          <p style={{ color: muted, fontSize: 14, margin: 0 }}>
-            Loading platform…
-          </p>
-        </div>
+        <Skeleton label="Loading platform">
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 16,
+              marginBottom: 28,
+            }}
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <Bone w={70} h={12} />
+              <Bone w={220} h={40} />
+            </div>
+            <Bone w={110} h={36} r={999} />
+          </div>
+          <div style={{ marginBottom: "var(--stack, 18px)" }}>
+            <Bone w={280} h={44} r={12} />
+          </div>
+          <div style={card}>
+            <Bone w="100%" h={12} />
+            {[0, 1, 2, 3].map((i) => (
+              <div
+                key={i}
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  padding: "12px 0",
+                  borderTop: `1px solid ${tokens.color.borderInner}`,
+                }}
+              >
+                <Bone w={90} h={14} />
+                <div style={{ display: "flex", gap: 14 }}>
+                  <Bone w={60} h={12} />
+                  <Bone w={80} h={12} />
+                  <Bone w={70} h={12} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </Skeleton>
       ) : notFound ? (
         <div style={{ ...card, color: tokens.color.terracotta }}>
           Platform not found. It may have been deleted.
@@ -267,10 +317,10 @@ export default function PlatformDetailPage() {
       ) : error || !detail ? (
         <div style={{ ...card, color: tokens.color.terracotta }}>
           {error ??
-            "Couldn't load this platform — check the backend is running and reload the page."}
+            "Couldn't load this platform. Check the backend is running and reload the page."}
         </div>
       ) : (
-        <>
+        <div className="fade-in">
           <div
             style={{
               display: "flex",
@@ -281,50 +331,42 @@ export default function PlatformDetailPage() {
             }}
           >
             <div>
-              <div
-                style={{
-                  fontSize: 12,
-                  letterSpacing: ".12em",
-                  textTransform: "uppercase",
-                  color: tokens.color.muted2,
-                  marginBottom: 6,
-                }}
-              >
-                Platform
-              </div>
-              <h1
-                style={{
-                  fontFamily: tokens.font.serif,
-                  fontWeight: 400,
-                  fontSize: 40,
-                  margin: 0,
-                  letterSpacing: "-.5px",
-                }}
-              >
-                {detail.platform_name}
+              {/* The kind sits beside the h1, not inside it, so the heading reads as the name alone (F008). */}
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
+                <h1
+                  style={{
+                    fontFamily: tokens.font.serif,
+                    fontWeight: 400,
+                    fontSize: "var(--fs-title, 40px)",
+                    margin: 0,
+                    letterSpacing: "-.5px",
+                  }}
+                >
+                  {detail.platform_name}
+                </h1>
                 {detail.kind && (
                   <span
                     style={{
-                      fontSize: 12,
+                      fontSize: "var(--fs-xs, 12px)",
                       color: muted,
-                      marginLeft: 8,
                       fontFamily: tokens.font.sans,
                     }}
                   >
                     {detail.kind}
                   </span>
                 )}
-              </h1>
+              </div>
             </div>
           </div>
 
           <div
+            className="plat-stats"
             style={{
               display: "grid",
               gridTemplateColumns:
                 "repeat(auto-fit, minmax(min(100%, 200px), 1fr))",
               gap: 18,
-              marginBottom: 18,
+              marginBottom: "var(--stack, 18px)",
             }}
           >
             <div style={statCard}>
@@ -346,15 +388,17 @@ export default function PlatformDetailPage() {
           </div>
 
           {/* Segmented control (Component 10) — copied verbatim from
-              TransactionModal.tsx's segmented control markup. */}
+              TransactionModal.tsx's segmented control markup. Phone size comes
+              from the shared .pill-track/.pill-btn, like Settings' provider toggle. */}
           <div
+            className="pill-track"
             style={{
               display: "inline-flex",
               background: tokens.color.sidebar,
               border: `1px solid ${tokens.color.border2}`,
               borderRadius: 12,
               padding: 4,
-              marginBottom: 18,
+              marginBottom: "var(--stack, 18px)",
             }}
           >
             {TABS.map((t) => {
@@ -363,18 +407,21 @@ export default function PlatformDetailPage() {
                 <button
                   key={t.key}
                   type="button"
+                  className="pill-btn"
+                  aria-pressed={active}
                   onClick={() => setTab(t.key)}
                   style={{
                     border: "none",
                     borderRadius: 9,
                     padding: "8px 18px",
-                    fontSize: 14,
+                    fontSize: "var(--fs-pill, 14px)",
+                    minHeight: "var(--pill-h, 0px)",
                     fontWeight: active ? 600 : 500,
                     cursor: "pointer",
-                    color: active ? tokens.color.ink : tokens.color.muted,
+                    color: active ? tokens.color.ink : tokens.color.muted3,
                     background: active ? "#fff" : "transparent",
                     boxShadow: active ? "0 1px 2px rgba(40,34,24,.12)" : "none",
-                    transition: "all .2s ease",
+                    transition: "background-color .2s ease, color .2s ease, box-shadow .2s ease",
                   }}
                 >
                   {t.label}
@@ -387,6 +434,7 @@ export default function PlatformDetailPage() {
             <div style={{ marginBottom: 14 }}>
               <button
                 type="button"
+                className="tap44"
                 style={btnDark}
                 onClick={() => setShowLogEvent(true)}
               >
@@ -395,15 +443,15 @@ export default function PlatformDetailPage() {
             </div>
           )}
 
-          <div style={card}>
+          <div className="plat-table card-tight" style={card}>
             {tab === "pnl" ? (
               detail.holdings.length === 0 ? (
-                <p style={{ fontSize: 14, color: muted, margin: 0 }}>
+                <p style={{ fontSize: "var(--fs-body, 14px)", color: muted, margin: 0 }}>
                   No holdings on this platform yet.
                 </p>
               ) : (
                 <>
-                  <div style={tableHeaderRow}>
+                  <div className="plat-head" style={tableHeaderRow}>
                     <span style={{ flex: 1.4 }}>Ticker</span>
                     <span style={{ flex: 1, textAlign: "right" }}>Qty</span>
                     <span style={{ flex: 1.2, textAlign: "right" }}>
@@ -419,7 +467,7 @@ export default function PlatformDetailPage() {
                     </span>
                   </div>
                   {detail.holdings.map((h) => (
-                    <div key={h.id} style={tableRow}>
+                    <div key={h.id} className="plat-row" style={tableRow}>
                       <span
                         style={{
                           flex: 1.4,
@@ -435,11 +483,11 @@ export default function PlatformDetailPage() {
                             height: 32,
                             borderRadius: 9,
                             background: badgeColor(h.ticker),
-                            color: "#fff",
+                            color: BADGE_INK.has(badgeColor(h.ticker)) ? tokens.color.ink : "#fff",
                             display: "inline-flex",
                             alignItems: "center",
                             justifyContent: "center",
-                            fontSize: 11,
+                            fontSize: "var(--fs-xs, 12px)",
                             fontWeight: 700,
                             flexShrink: 0,
                           }}
@@ -448,8 +496,9 @@ export default function PlatformDetailPage() {
                         </span>
                         <span style={{ minWidth: 0 }}>
                           <span style={{ fontWeight: 500, display: "block" }}>{h.ticker}</span>
+                          {h.asset_type === "bond" && h.bond && <BondLine bond={h.bond} />}
                           {h.currency === "USD" && h.usd_rate == null && (
-                            <span style={{ display: "block", fontSize: 11, color: muted }}>
+                            <span style={{ display: "block", fontSize: "var(--fs-xs, 12px)", color: muted }}>
                               No USD rate, shown in IDR
                             </span>
                           )}
@@ -493,7 +542,7 @@ export default function PlatformDetailPage() {
                             )
                           : h.current_price != null
                             ? fmtPlain(h.current_price)
-                            : "—"}
+                            : "–"}
                       </span>
                       <span
                         style={{
@@ -511,7 +560,7 @@ export default function PlatformDetailPage() {
                             )
                           : h.current_value != null
                             ? fmtPlain(h.current_value)
-                            : "—"}
+                            : "–"}
                       </span>
                       <span
                         style={{
@@ -543,19 +592,31 @@ export default function PlatformDetailPage() {
                             )
                           : h.unrealized_pnl != null
                             ? fmtSigned(h.unrealized_pnl)
-                            : "—"}
+                            : "–"}
+                      </span>
+                      <span
+                        className="plat-sub"
+                        style={{
+                          fontSize: "var(--fs-xs, 12px)",
+                          color: muted,
+                          fontVariantNumeric: "tabular-nums",
+                          flexBasis: "100%",
+                        }}
+                      >
+                        {fmtQty(h.quantity, h.asset_type)} ×{" "}
+                        {h.usd_avg_cost != null ? fmtUsdPrice(h.usd_avg_cost, 8) : fmtPlain(h.avg_cost)}
                       </span>
                     </div>
                   ))}
                 </>
               )
             ) : events.length === 0 ? (
-              <p style={{ fontSize: 14, color: muted, margin: 0 }}>
+              <p style={{ fontSize: "var(--fs-body, 14px)", color: muted, margin: 0 }}>
                 No buy/sell history on this platform yet.
               </p>
             ) : (
               <>
-                <div style={tableHeaderRow}>
+                <div className="plat-head" style={tableHeaderRow}>
                   <span style={{ flex: 1.2 }}>Date</span>
                   <span style={{ flex: 1 }}>Ticker</span>
                   <span style={{ flex: 1 }}>Side</span>
@@ -564,7 +625,7 @@ export default function PlatformDetailPage() {
                   <span style={{ flex: 1.2, textAlign: "right" }} />
                 </div>
                 {events.map((e) => (
-                  <div key={e.id} style={tableRow}>
+                  <div key={e.id} className="plat-ev" style={tableRow}>
                     <span
                       style={{
                         flex: 1.2,
@@ -582,12 +643,13 @@ export default function PlatformDetailPage() {
                       }}
                     >
                       <span
+                        aria-hidden="true"
                         style={{
                           width: 24,
                           height: 24,
                           borderRadius: 7,
                           background: badgeColor(e.ticker),
-                          color: "#fff",
+                          color: BADGE_INK.has(badgeColor(e.ticker)) ? tokens.color.ink : "#fff",
                           display: "inline-flex",
                           alignItems: "center",
                           justifyContent: "center",
@@ -615,7 +677,7 @@ export default function PlatformDetailPage() {
                     >
                       {fmtQty(e.quantity, null)}
                       {e.fee ? (
-                        <span style={{ display: "block", fontSize: 11 }}>
+                        <span style={{ display: "block", fontSize: "var(--fs-xs, 12px)" }}>
                           {e.fee_kind === "coin"
                             ? `fee ${fmtQty(e.fee, "crypto")} ${e.ticker}`
                             : `fee ${e.currency === "USD" ? fmtUsdPrice(e.fee) : `${fmtAmount(e.fee)} IDR`}`}
@@ -654,6 +716,18 @@ export default function PlatformDetailPage() {
               </>
             )}
           </div>
+
+          {detail.holdings
+            .filter((h) => h.asset_type === "bond" && h.bond?.rate != null)
+            .map((h) => (
+              <CouponSchedule
+                key={h.id}
+                ticker={h.ticker}
+                bond={h.bond as BondInfo}
+                quantity={h.quantity}
+                events={events}
+              />
+            ))}
 
           {editingEvent && (
             <HoldingModal
@@ -701,7 +775,7 @@ export default function PlatformDetailPage() {
               onSaved={() => load({ silent: true })}
             />
           )}
-        </>
+        </div>
       )}
     </div>
   );
@@ -714,8 +788,8 @@ const statCard: React.CSSProperties = {
   padding: "20px 22px",
 };
 const statLabel: React.CSSProperties = {
-  fontSize: 13,
-  color: tokens.color.muted,
+  fontSize: "var(--fs-body, 13px)",
+  color: tokens.color.muted3,
   marginBottom: 8,
 };
 const statValue: React.CSSProperties = {
@@ -725,15 +799,15 @@ const statValue: React.CSSProperties = {
 };
 const tableHeaderRow: React.CSSProperties = {
   display: "flex",
-  fontSize: 12,
-  color: tokens.color.muted2,
+  fontSize: "var(--fs-xs, 12px)",
+  color: tokens.color.muted3,
   padding: "8px 0",
   borderBottom: `1px solid ${tokens.color.borderInner}`,
 };
 const tableRow: React.CSSProperties = {
   display: "flex",
   alignItems: "center",
-  fontSize: 14,
+  fontSize: "var(--fs-body, 14px)",
   padding: "13px 0",
   borderTop: `1px solid ${tokens.color.borderInner}`,
 };

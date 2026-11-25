@@ -33,7 +33,7 @@ const textBtn: CSSProperties = {
   background: "transparent",
   border: "none",
   cursor: "pointer",
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   fontWeight: 400,
   color: tokens.color.muted3,
   padding: 8,
@@ -87,6 +87,7 @@ export default function RowMenu({ label, items, id, className }: Props) {
         ref={btnRef}
         type="button"
         id={btnId}
+        className="coarse-tap tap44"
         style={{ ...textBtn, fontSize: 16, lineHeight: 1, padding: "8px 10px" }}
         aria-label={label}
         aria-haspopup="menu"
@@ -145,7 +146,7 @@ export default function RowMenu({ label, items, id, className }: Props) {
                 display: "block",
                 width: "100%",
                 textAlign: "left",
-                fontSize: 14,
+                fontSize: "var(--fs-body, 14px)",
                 borderRadius: tokens.radius.sm,
                 color: it.disabled
                   ? tokens.color.muted2

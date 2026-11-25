@@ -68,7 +68,7 @@ import uuid
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 
-from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastmcp.utilities.lifespan import combine_lifespans
@@ -87,6 +87,7 @@ from backend.mcp_server import build_mcp
 from backend.db import get_session, get_session_sync
 from backend.importer import import_csv_text
 from backend.mcp_writes import _load_refs, duplicate_flags
+from backend.scheduler import refresh_today_snapshot_job
 from backend.models import (
     Account, AuditLog, Category, ClosedPosition, Holding, Platform, PortfolioEvent, Proposal, Transaction,
 )
@@ -99,6 +100,7 @@ from backend.writes import (
     apply_add_account,
     apply_add_balance_adjustment,
     apply_add_category,
+    apply_add_coupon,
     apply_add_funded_buy,
     apply_add_funded_sell,
     apply_delete_closed_position,
@@ -187,8 +189,6 @@ from backend.tools import (
     _spending_by_category,
 )
 from backend.settings import (
-    KEY_ANTHROPIC_API_KEY,
-    KEY_OPENAI_API_KEY,
     get_effective_settings,
     mask_key,
     upsert_settings,
@@ -632,7 +632,7 @@ def list_portfolio_events(platform_id: int, db: Session = Depends(get_session)):
 
 
 @app.put("/portfolio-events/{event_id}", response_model=PortfolioEventOut, dependencies=[Depends(require_api_key)])
-def update_portfolio_event(event_id: int, payload: PortfolioEventUpdate, db: Session = Depends(get_session)):
+def update_portfolio_event(event_id: int, payload: PortfolioEventUpdate, background: BackgroundTasks, db: Session = Depends(get_session)):
     """Partial-update a buy/sell/dividend event; its linked cash leg and the holding follow."""
     ev = db.get(PortfolioEvent, event_id)
     if ev is None:
@@ -648,11 +648,12 @@ def update_portfolio_event(event_id: int, payload: PortfolioEventUpdate, db: Ses
     db.commit()
     from backend.query import reset_engine
     reset_engine()
+    background.add_task(refresh_today_snapshot_job)
     return out
 
 
 @app.delete("/portfolio-events/{event_id}", dependencies=[Depends(require_api_key)])
-def delete_portfolio_event(event_id: int, db: Session = Depends(get_session)):
+def delete_portfolio_event(event_id: int, background: BackgroundTasks, db: Session = Depends(get_session)):
     """Delete a buy/sell/dividend/deposit event (and its linked cash leg); non-deposit deletes recompute the holding."""
     ev = db.get(PortfolioEvent, event_id)
     if ev is None:
@@ -666,11 +667,12 @@ def delete_portfolio_event(event_id: int, db: Session = Depends(get_session)):
     db.commit()
     from backend.query import reset_engine
     reset_engine()
+    background.add_task(refresh_today_snapshot_job)
     return {"status": "deleted", "id": event_id, "deleted_transaction_id": deleted_tx_id}
 
 
 @app.post("/portfolio-events/funded-buy", status_code=201, dependencies=[Depends(require_api_key)])
-def create_funded_buy(payload: FundedBuyCreate, db: Session = Depends(get_session)):
+def create_funded_buy(payload: FundedBuyCreate, background: BackgroundTasks, db: Session = Depends(get_session)):
     """Direct (non-agent) funded 'buy' — cash leg + portfolio event (CHAT-09/XFER-03).
 
     Coerces quantity/price/cash_amount to float before calling apply_add_funded_buy
@@ -690,6 +692,8 @@ def create_funded_buy(payload: FundedBuyCreate, db: Session = Depends(get_sessio
         "event_currency": payload.event_currency, "date": payload.date,
         "notes": payload.notes, "asset_type": payload.asset_type,
         "fee": float(payload.fee) if payload.fee else None, "fee_kind": payload.fee_kind,
+        # mode="json" turns Decimal and date into strings, which AuditLog can serialize
+        "bond": payload.bond.model_dump(mode="json") if payload.bond else None,
     }
     try:
         result = apply_add_funded_buy(db, after)
@@ -700,11 +704,12 @@ def create_funded_buy(payload: FundedBuyCreate, db: Session = Depends(get_sessio
     db.refresh(result["portfolio_event"])
     from backend.query import reset_engine
     reset_engine()
+    background.add_task(refresh_today_snapshot_job)
     return {"transaction_id": result["transaction"].id, "portfolio_event_id": result["portfolio_event"].id}
 
 
 @app.post("/portfolio-events/funded-sell", status_code=201, dependencies=[Depends(require_api_key)])
-def create_funded_sell(payload: FundedSellCreate, db: Session = Depends(get_session)):
+def create_funded_sell(payload: FundedSellCreate, background: BackgroundTasks, db: Session = Depends(get_session)):
     """Direct (non-agent) funded 'sell' — cash leg + portfolio event (CHAT-09/XFER-03)."""
     # LOAD-BEARING: float, not Decimal — see create_funded_buy's comment above.
     after = {
@@ -726,6 +731,7 @@ def create_funded_sell(payload: FundedSellCreate, db: Session = Depends(get_sess
         db.refresh(result["portfolio_event"])
     from backend.query import reset_engine
     reset_engine()
+    background.add_task(refresh_today_snapshot_job)
     return {
         "transaction_id": result["transaction"].id,
         "portfolio_event_id": None if closed is not None else result["portfolio_event"].id,
@@ -831,6 +837,12 @@ def update_holding(holding_id: int, payload: HoldingUpdate, db: Session = Depend
         "id": holding.id, "ticker": holding.ticker,
         "quantity": str(holding.quantity), "avg_cost": str(holding.avg_cost),
         "asset_type": holding.asset_type, "platform_id": holding.platform_id,
+        "bond": None if holding.coupon_rate is None else {
+            "rate": str(holding.coupon_rate), "floating": holding.coupon_floating,
+            "pay_day": holding.coupon_day,
+            "maturity_date": holding.maturity_date.isoformat() if holding.maturity_date else None,
+            "tax_pct": str(holding.coupon_tax_pct), "coupon_account_id": holding.coupon_account_id,
+        },
     }
     try:
         apply_edit_holding(db, holding_id, payload.model_dump(mode="json", exclude_none=True), before)
@@ -1626,6 +1638,35 @@ def read_settings(db: Session = Depends(get_session)):
     return get_effective_settings(db)
 
 
+@app.get("/settings/ollama-models", dependencies=[Depends(require_api_key)])
+def ollama_models():
+    """Models installed in Ollama at OLLAMA_BASE_URL, for the Settings picker (261122-omp).
+
+    502 when Ollama doesn't answer; the UI then falls back to a typed name.
+    """
+    import os
+
+    import ollama
+
+    base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    try:
+        listed = ollama.Client(host=base_url, timeout=5).list()
+    except Exception as e:
+        logger.warning("ollama model list failed: %s", type(e).__name__)
+        raise HTTPException(status_code=502, detail="Couldn't reach Ollama.")
+    return sorted(
+        (
+            {
+                "name": m.model,
+                "size": m.size,
+                "parameter_size": m.details.parameter_size if m.details else None,
+            }
+            for m in listed.models
+        ),
+        key=lambda m: m["name"],
+    )
+
+
 @app.put("/settings", response_model=SettingsOut, dependencies=[Depends(require_api_key)])
 def write_settings(patch: SettingsUpdate, db: Session = Depends(get_session)):
     """Partial-update settings (auth-protected). Blank/absent key fields keep the
@@ -1636,15 +1677,7 @@ def write_settings(patch: SettingsUpdate, db: Session = Depends(get_session)):
     # settings change with no audit trail.
     changed_llm = upsert_settings(db, patch.model_dump(exclude_none=True), commit=False)
 
-    # Audit trail: masked-only, never the raw key values (T-03-14). A blank
-    # key field means "keep existing" (upsert skips it), so omit it from the
-    # audit rather than record a misleading mask_key("") -> null.
     audit_after = patch.model_dump(exclude_none=True)
-    for key_field in (KEY_ANTHROPIC_API_KEY, KEY_OPENAI_API_KEY):
-        if audit_after.get(key_field):
-            audit_after[key_field] = mask_key(audit_after[key_field])
-        else:
-            audit_after.pop(key_field, None)
     db.add(AuditLog(entity="settings", entity_id=None, operation="update",
                     before=None, after=audit_after))
     db.commit()
@@ -1652,7 +1685,7 @@ def write_settings(patch: SettingsUpdate, db: Session = Depends(get_session)):
     if changed_llm:
         from backend.config import configure_llm
         from backend.query import reset_engine
-        configure_llm(overrides=get_effective_settings(db, raw_keys=True))
+        configure_llm(overrides=get_effective_settings(db))
         reset_engine()
 
     return get_effective_settings(db)
@@ -1931,7 +1964,7 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
 
         elif operation in (
             "add_transfer", "add_funded_buy",
-            "add_funded_sell", "add_balance_adjustment",
+            "add_funded_sell", "add_balance_adjustment", "add_coupon",
         ):
             # Malformed/mismatched payload keys must surface as a clean 422,
             # never an unhandled KeyError -> 500 (Pitfall 3, autonomous
@@ -1948,6 +1981,9 @@ def _execute_proposal_payload(db: Session, proposal: Proposal) -> None:
 
                 elif operation == "add_balance_adjustment":
                     apply_add_balance_adjustment(db, row["account_id"], row["target_balance"])
+
+                elif operation == "add_coupon":
+                    apply_add_coupon(db, after)
             except (KeyError, TypeError) as e:
                 raise ValueError(f"malformed payload for {operation!r}: {e}")
 
@@ -1987,6 +2023,7 @@ def list_proposals(
         else ProposalOut.model_validate(p)
         for p in rows
     ]
+    _attach_chat_provenance(db, rows, items)
     if status == "pending":
         flags = duplicate_flags(db, rows)
         for item in items:
@@ -1995,6 +2032,32 @@ def list_proposals(
                 for row, row_flags in zip(item.payload.get("rows") or [], flags[item.id]):
                     row["duplicates"] = row_flags
     return items
+
+
+def _attach_chat_provenance(db: Session, rows: list, items: list) -> None:
+    """Set thread_id and request on items whose proposal came from a chat turn (261121-m17).
+
+    request is the closest user message before the proposal's assistant message
+    in the same thread, cut to 200 characters. One query per linked proposal;
+    the Inbox holds a handful.
+    """
+    from backend.models import Message
+
+    for proposal, item in zip(rows, items):
+        if proposal.message_id is None:
+            continue
+        msg = db.get(Message, proposal.message_id)
+        if msg is None:
+            continue
+        ask = (
+            db.query(Message.content)
+            .filter(Message.thread_id == msg.thread_id, Message.seq < msg.seq, Message.role == "user")
+            .order_by(desc(Message.seq))
+            .limit(1)
+            .scalar()
+        )
+        item.thread_id = msg.thread_id
+        item.request = ask[:200] if ask else None
 
 
 # Must stay above any GET route with a path parameter under /proposals so the
@@ -2029,9 +2092,20 @@ def skip_proposal_row(
     if proposal is None:
         raise HTTPException(status_code=404, detail="Proposal not found")
     _require_pending(proposal)
+    rows = proposal.payload.get("rows", [])
+    if proposal.payload.get("operation") == "add_coupon":  # 261117-rw1: Edit amount, nothing else
+        if req.skip is not None or "category" in req.model_fields_set or req.amount is None:
+            raise HTTPException(status_code=422, detail="A coupon row only takes an amount")
+        if index != 0 or len(rows) != 1:
+            raise HTTPException(status_code=422, detail="Row index out of range")
+        rows[0]["after"]["amount"] = str(req.amount)
+        flag_modified(proposal, "payload")
+        db.commit()
+        return proposal
+    if req.amount is not None:
+        raise HTTPException(status_code=422, detail="Only a coupon's amount can be edited")
     if proposal.payload.get("operation") != "add_transaction":
         raise HTTPException(status_code=422, detail="Only transaction batches have skippable rows")
-    rows = proposal.payload.get("rows", [])
     if not 0 <= index < len(rows):
         raise HTTPException(status_code=422, detail="Row index out of range")
     if req.skip is None and "category" not in req.model_fields_set:
@@ -2133,6 +2207,7 @@ def _apply_proposal(db: Session, proposal_id: uuid.UUID, token: str | None) -> P
 def confirm_proposal(
     proposal_id: uuid.UUID,
     req: ConfirmRequest,
+    background: BackgroundTasks,
     db: Session = Depends(get_session),
 ):
     """Apply a pending chat proposal by token. Requires API key + valid token.
@@ -2141,7 +2216,9 @@ def confirm_proposal(
     status 409 (expired 410) -> expiry 410 -> token 401 -> execute. A non-chat
     proposal is never token-confirmable; use /approve with the approver key.
     """
-    return _apply_proposal(db, proposal_id, req.token)
+    out = _apply_proposal(db, proposal_id, req.token)
+    background.add_task(refresh_today_snapshot_job)
+    return out
 
 
 @app.post(
@@ -2149,10 +2226,12 @@ def confirm_proposal(
     response_model=ProposalOut,
     dependencies=[Depends(require_approver_key)],
 )
-def approve_proposal(proposal_id: uuid.UUID, db: Session = Depends(get_session)):
+def approve_proposal(proposal_id: uuid.UUID, background: BackgroundTasks, db: Session = Depends(get_session)):
     """Apply a pending proposal of any channel. Approver key only, no token
     (APPR-01, D-16); same lock/check/execute core as /confirm."""
-    return _apply_proposal(db, proposal_id, None)
+    out = _apply_proposal(db, proposal_id, None)
+    background.add_task(refresh_today_snapshot_job)
+    return out
 
 
 @app.post("/proposals/{proposal_id}/reject", response_model=ProposalOut)

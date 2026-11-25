@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
+import useDialog from "../components/useDialog";
 
 import { card, input, btn, label, tokens } from "../styles";
 import { extractDetail } from "../lib/api";
@@ -76,8 +77,17 @@ export default function AdjustBalanceModal({ account, onClose, onChanged }: Prop
     }
   }
 
+  // Dialog keyboard behaviour (F002): focus inside, Escape closes, Tab wraps.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  useDialog(dialogRef, saving ? null : onClose);
+
   return (
     <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
       style={{
         position: "fixed",
         inset: 0,
@@ -93,8 +103,8 @@ export default function AdjustBalanceModal({ account, onClose, onChanged }: Prop
         style={{ ...card, maxWidth: 480, width: "100%", padding: 32, margin: 0 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 style={{ fontSize: 20, fontWeight: 600, margin: "0 0 16px" }}>
-          Adjust balance — {account.name}
+        <h2 id={titleId} style={{ fontSize: 20, fontWeight: 600, margin: "0 0 16px" }}>
+          Adjust balance: {account.name}
         </h2>
         <form onSubmit={handleSubmit}>
           <div>
@@ -111,7 +121,7 @@ export default function AdjustBalanceModal({ account, onClose, onChanged }: Prop
 
           <p
             style={{
-              fontSize: 13,
+              fontSize: "var(--fs-body, 13px)",
               marginTop: 10,
               color:
                 shown > 0
@@ -122,7 +132,7 @@ export default function AdjustBalanceModal({ account, onClose, onChanged }: Prop
             }}
           >
             {shown === 0
-              ? "No change — target equals current balance."
+              ? "No change: target equals current balance."
               : `Adjustment: ${shown > 0 ? "+" : "−"}${isUsd ? "" : "Rp "}${fmtAmount(
                   Math.abs(shown),
                   isUsd ? "USD" : "IDR"
@@ -137,10 +147,10 @@ export default function AdjustBalanceModal({ account, onClose, onChanged }: Prop
               onClick={saving ? undefined : onClose}
               style={{
                 background: "transparent",
-                color: "#8b8474",
+                color: "#716c5f",
                 border: "none",
                 padding: "8px 16px",
-                fontSize: 14,
+                fontSize: "var(--fs-body, 14px)",
                 cursor: saving ? "default" : "pointer",
               }}
             >
@@ -150,7 +160,7 @@ export default function AdjustBalanceModal({ account, onClose, onChanged }: Prop
               {saving ? "Saving…" : "Save adjustment"}
             </button>
             {error && (
-              <span style={{ color: "#b5503f", fontSize: 12 }}>{error}</span>
+              <span style={{ color: "#b5503f", fontSize: "var(--fs-xs, 12px)" }}>{error}</span>
             )}
           </div>
         </form>

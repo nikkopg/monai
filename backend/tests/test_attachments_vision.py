@@ -37,7 +37,8 @@ def test_jpeg_webp_png_accepted(fmt):
 
 def test_large_image_downscaled_keeping_aspect():
     (out,) = att.prepare_images(fx.receipt_png(size=(3000, 1000)), "image")
-    assert _open(out).size == (2000, 667)
+    # 1024 (261122-vis): a 1536 px image crashed the Vega 8 iGPU runner.
+    assert _open(out).size == (1024, 341)
 
 
 def test_pixel_cap_refuses_bomb(monkeypatch):
@@ -121,12 +122,84 @@ def test_fenced_reading_becomes_one_flagged_row(llm):
     assert p.text.startswith("{") and "```" not in p.text
 
 
+@pytest.mark.parametrize("dated", [{"date": None}, {"date": " "}, {}])
+def test_missing_date_uses_the_upload_date_flagged(llm, monkeypatch, dated):
+    """261122-rdt (owner decision): no date read -> today's date and an assumption, not a refusal."""
+    import datetime
+
+    monkeypatch.setattr("backend.query._today", lambda: datetime.date(2026, 4, 2))
+    reading = {k: v for k, v in READING.items() if k != "date"} | dated
+    p = read(llm, reading)
+    assert p.status == "llm_read"
+    (row,) = p.rows
+    assert (row["date"], row["amount"]) == ("2026-04-02", "-50500")
+    assert row["assumptions"] == ["Date not read from the receipt; used the upload date. Check it."]
+    assert row["llm_read"] is True
+
+
+AMBIGUOUS = "The date could be day/month or month/day; read day first. Check it."
+
+
+@pytest.mark.parametrize("printed, day, flagged", [
+    ("14/03/2026", "2026-03-14", False),
+    ("14-03-2026 18:05", "2026-03-14", False),
+    ("14.3.2026", "2026-03-14", False),
+    ("03/14/2026", "2026-03-14", False),  # only a month-first date fits
+    ("2026/03/14", "2026-03-14", False),
+    ("05/05/2026", "2026-05-05", False),  # the same either way
+    ("05/03/2026", "2026-03-05", True),
+])
+def test_day_month_year_dates_follow_the_csv_rules(llm, printed, day, flagged):
+    """261125-rdf (owner decision)."""
+    p = read(llm, {**READING, "date": printed})
+    (row,) = p.rows
+    assert (p.status, row["date"]) == ("llm_read", day)
+    assert row["assumptions"] == ([AMBIGUOUS] if flagged else [])
+
+
 def test_items_that_dont_add_up_are_advisory(llm):
     bad = {**READING, "items": [{"name": "ZZ tea", "amount": "20.500"}, {"name": "ZZ rice", "amount": "19.500"}]}
     p = read(llm, bad)
     assert p.status == "llm_read" and p.meta["invariant"] == "none"
     assert p.rows[0]["assumptions"] == ["The line items don't add up to the total."]
     assert p.meta["items_sum_matches"] is False
+
+
+COMMAS = {**READING, "currency": None, "total": "45,480", "merchant": "ZZ Mart",
+          "items": [{"name": "ZZ a", "amount": "17,500"}, {"name": "ZZ b", "amount": "27,980"}]}
+
+
+def test_comma_thousands_rupiah_receipt(llm):
+    """261125-amt: 45,480 was read as 45.48."""
+    p = read(llm, COMMAS)
+    assert p.status == "llm_read" and p.rows[0]["amount"] == "-45480" and p.meta["items_sum_matches"] is True
+    p = read(llm, {**COMMAS, "paid": "50,000", "change": "4,520"})
+    assert p.status == "llm_read" and p.rows[0]["amount"] == "-45480"
+
+
+@pytest.mark.parametrize("wrong, note", [
+    ({"total": "50,000", "paid": "50,000", "change": "4,520"}, "cash paid"),
+    ({"total": "50,000", "change": "4,520"}, "cash paid"),  # items + change
+    ({"total": "250,000"}, "too far apart"),
+    ({"total": "4,520"}, "too far apart"),
+])
+def test_a_total_that_is_not_the_amount_due_is_refused(llm, wrong, note):
+    p = read(llm, {**COMMAS, **wrong})
+    assert p.status == "refused" and p.rows == [] and note in p.note and p.text
+
+
+@pytest.mark.parametrize("ok", [
+    {"total": "50,483"},                                          # 11% tax
+    {"total": "45,480", "paid": "45,480", "change": "0"},         # exact cash
+    {"total": "45,480", "paid": "45,480", "change": None},        # card
+    {"total": "90,000", "items": [{"name": "ZZ a", "amount": "17,500"}]},  # one price proves nothing
+    {"total": "90,000", "items": []},
+    {"paid": "50,000", "change": "4,520", "items": COMMAS["items"] + [{"name": "0.5X 90,000", "amount": "90,000"}]},  # paid - change
+    {"items": COMMAS["items"] + [{"name": "TOTAL:", "amount": "45,480"}, {"name": "Tunai", "amount": "50,000"},
+                                 {"name": "CHANGE", "amount": "4,520"}]},  # not prices
+])
+def test_ordinary_differences_still_propose(llm, ok):
+    assert read(llm, {**COMMAS, **ok}).status == "llm_read"
 
 
 def test_currency_missing_is_assumed_idr_and_foreign_is_refused(llm):
@@ -149,7 +222,11 @@ def test_json_number_total_never_goes_through_binary_float(llm):
     [
         ("I can't read this image.", False),
         ('{"date": "2026-03-14", "items": []}', True),                      # no total
-        ({**READING, "date": "14/03/2026"}, True),                          # not ISO
+        ({**READING, "date": "31/02/2026"}, True),                          # not a real day
+        ({**READING, "date": "14/13/2026"}, True),                          # no such month either way
+        ({**READING, "date": "14/03/26"}, True),                            # two-digit year: could be yy/mm/dd
+        ({**READING, "date": "2026-03-145"}, True),                         # trailing digit
+        ({**READING, "date": "14 Maret"}, True),
         ({**READING, "date": "2026-02-30"}, True),                          # not a real day
         ({**READING, "total": "abc"}, True),
         ({**READING, "total": "0"}, True),
@@ -158,7 +235,7 @@ def test_json_number_total_never_goes_through_binary_float(llm):
 def test_invalid_reading_refused_with_fixed_note(llm, content, keeps_text):
     p = read(llm, content)
     assert p.status == "refused" and p.rows == [] and p.note
-    assert "abc" not in p.note and "14/03" not in p.note
+    assert "abc" not in p.note and "/" not in p.note
     assert bool(p.text) is keeps_text
 
 
@@ -217,11 +294,6 @@ def test_vision_capable_probes_ollama_show(monkeypatch):
         httpx, "post", lambda *a, **k: httpx.Response(200, json={"capabilities": ["completion"]}, request=httpx.Request("POST", "http://x"))
     )
     assert att.vision_capable("ollama", "m", "http://h:1") is False
-
-
-def test_vision_capable_cloud_providers_need_no_call(monkeypatch):
-    monkeypatch.setattr(httpx, "post", lambda *a, **k: pytest.fail("no call expected"))
-    assert att.vision_capable("claude", "m", "") is True and att.vision_capable("openai", "m", "") is True
 
 
 def test_vision_capable_connection_error_false_and_logs_class_only(monkeypatch, caplog):
@@ -287,3 +359,4 @@ def test_idr_receipt_currency_rules(llm):
 def test_refused_receipt_made_exactly_one_vision_call(llm):
     p = read(llm, {**USD_READING, "currency": "$"}, currency="USD")
     assert p.status == "refused" and p.rows == [] and len(llm.calls) == 1
+

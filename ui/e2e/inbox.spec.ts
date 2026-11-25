@@ -6,6 +6,7 @@ import {
   LEDGER_CHANGED_MSG,
   NETWORK_FAIL_MSG,
   hhmm,
+  recordsHref,
   type InboxProposal,
   type ProposalRow,
 } from "../app/lib/inbox";
@@ -55,9 +56,12 @@ const batch3 = (o: Partial<InboxProposal> = {}) =>
       operation: "add_transaction",
       rows: [
         txRow({ after: { notes: "Synthetic note" } }),
+        // Decided: the owner chose to include it, so the 261121-kwu ledger-duplicate
+        // default (start skipped) does not apply and these tests keep checking rendering.
         txRow({
           after: { merchant: "Toko Contoh", amount: "-120000.00", category: "Groceries" },
           duplicates: [{ ...flagTx }],
+          skip: false,
         }),
         txRow({
           after: { merchant: "Gaji Contoh", amount: "250000.00" },
@@ -108,8 +112,8 @@ test.describe("nav badge", () => {
     const inbox = await host(page, { counts: 0 });
     await expect.poll(() => inbox.hits.counts).toBeGreaterThan(0);
     await page.waitForTimeout(300);
-    const texts = (await page.locator("nav a").allTextContents()).map((t) => t.trim());
-    expect(texts).toEqual(["Cashflow", "Records", "Inbox", "Chat", "Investments", "Settings"]);
+    const texts = (await page.locator(".app-sidebar nav a").allTextContents()).map((t) => t.trim());
+    expect(texts).toEqual(["Overview", "Records", "Inbox", "Chat", "Investments", "Settings"]);
     await expect(link(page, "Inbox")).toBeVisible();
     await expect(page.locator(".nav-badge")).toHaveCount(0);
   });
@@ -131,7 +135,7 @@ test.describe("nav badge", () => {
     await expect.poll(() => inbox.hits.counts).toBeGreaterThan(0);
     await expect(link(page, "Inbox")).toBeVisible();
     await expect(page.locator(".nav-badge")).toHaveCount(0);
-    await expect(page.getByText("—", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("–", { exact: true })).toHaveCount(0);
   });
 
   test("em dash after two failed counts", async ({ page }) => {
@@ -142,7 +146,7 @@ test.describe("nav badge", () => {
     await page.waitForTimeout(300);
     await expect(page.locator(".nav-badge")).toHaveCount(0);
     await page.clock.runFor(60_000);
-    await expect(page.locator(".nav-badge")).toHaveText("—");
+    await expect(page.locator(".nav-badge")).toHaveText("–");
     await expect(link(page, "Inbox, pending count unavailable")).toBeVisible();
   });
 
@@ -158,8 +162,8 @@ test.describe("nav badge", () => {
     await page.setViewportSize({ width: 500, height: 800 });
     await host(page, { counts: 3 });
     await expect(link(page, "Inbox, 3 pending")).toBeVisible();
-    await expect(page.locator(".nav-badge")).toBeVisible();
-    await expect(page.locator(".nav-badge")).toHaveText("3");
+    await expect(page.locator(".dock-badge")).toBeVisible();
+    await expect(page.locator(".dock-badge")).toHaveText("3");
   });
 });
 
@@ -238,7 +242,7 @@ test.describe("card rows", () => {
     await openInbox(page);
     const card = art(page, T3);
     await expect(card).toBeVisible();
-    await expect(card.locator("caption")).toHaveText("Rows in this proposal");
+    await expect(card.locator("caption")).toHaveText("Proposed · not saved yet");
     await expect(card.getByRole("columnheader")).toHaveText([
       "#",
       "Date",
@@ -286,6 +290,8 @@ test.describe("card rows", () => {
       txRow({
         after: { merchant: `Toko Contoh ${i + 1}` },
         duplicates: i === 9 ? [{ ...flagTx }] : [],
+        // Decided, so the title stays "Add 12" (the 261121-kwu default skips undecided ledger duplicates).
+        skip: i === 9 ? false : undefined,
       })
     );
     await mockInbox(page, {
@@ -516,8 +522,8 @@ test.describe("code chip", () => {
     await expect(code).toHaveText(/^[0-9A-HJKMNP-TV-Z]{6}$/);
     await expect(art(page, "Add 1 transaction to Account B").getByRole("code")).toHaveCount(0);
     await expect(
-      page.getByText("Tell Claude this code to approve it there. You don't need it to approve here.")
-    ).toBeVisible();
+      page.getByText("A proposal from Claude carries a code. Tell Claude the code to approve it there; you don't need it to approve here.")
+    ).toHaveCount(1);
 
     const copy = page.getByRole("button", { name: "Copy confirm code" });
     await expect(copy).toHaveText("Copy code");
@@ -714,10 +720,12 @@ test.describe("approve", () => {
     const release = inbox.hold("approve");
     await approveBtn(card).click();
     await expect(statusOf(page, ids.a)).toHaveText("Applying…");
-    await expect(approveBtn(card)).toContainText("…");
+    await expect(approveBtn(card)).toContainText("Applying…"); // 261121-m17: says what it's doing
+    await expect(card.locator(".inbox-footer")).toHaveAttribute("aria-busy", "true");
     await expect(rejectBtn(card)).toHaveAttribute("aria-disabled", "true");
     release();
-    await expect(statusOf(page, ids.a)).toHaveText("✓ Approved · " + hhmm(NOW));
+    // 261121-kwu T3 adds the Records link to the settled status.
+    await expect(statusOf(page, ids.a)).toHaveText("✓ Approved · " + hhmm(NOW) + " · View in Records");
     await expect(card.getByText("3 added", { exact: true })).toBeVisible();
     await expect(statusOf(page, ids.a)).toBeFocused();
     await expect(live(page)).toHaveText("Proposal approved: Add 3 transactions");
@@ -789,7 +797,7 @@ test.describe("states", () => {
   test("loading", async ({ page }) => {
     await mockInbox(page, { listMode: "hang" });
     await openInbox(page);
-    await expect(page.getByRole("status").filter({ hasText: "Loading your inbox…" })).toBeVisible();
+    await expect(page.getByRole("status", { name: "Loading your inbox" })).toBeVisible();
   });
 
   test("empty", async ({ page }) => {
@@ -807,7 +815,7 @@ test.describe("states", () => {
     await openInbox(page);
     const alert = page
       .getByRole("alert")
-      .filter({ hasText: "Couldn't load your inbox — check the backend is running and try again." });
+      .filter({ hasText: "Couldn't load your inbox. Check the backend is running and try again." });
     await expect(alert).toBeVisible();
     inbox.listMode = "ok";
     inbox.list = [oneRow()];
@@ -1208,7 +1216,7 @@ test.describe("offline", () => {
     await expect(
       page.getByRole("link", { name: "Inbox, pending count unavailable", exact: true })
     ).toBeVisible();
-    await expect(page.locator(".nav-badge")).toHaveText("—");
+    await expect(page.locator(".nav-badge")).toHaveText("–");
     await expect(live(page)).toHaveText("Can't reach monai. Retrying.");
 
     inbox.listMode = "ok";
@@ -1277,7 +1285,7 @@ test.describe("keyboard", () => {
       if (next === skip1) {
         expect(await css(next, "outline-width")).toBe("2px");
         expect(await css(next, "outline-style")).toBe("solid");
-        expect(await css(next, "outline-color")).toBe(RGB.green);
+        expect(await css(next, "outline-color")).toBe("rgb(61, 140, 99)"); // #3d8c63 focus ring (261120-r0k T1)
         expect(await css(next, "outline-offset")).toBe("2px");
       }
     }
@@ -1319,7 +1327,7 @@ test.describe("a11y structure", () => {
   test("one persistent polite atomic live region, from the loading state on", async ({ page }) => {
     const inbox = await mockInbox(page, { listMode: "hang" });
     await openInbox(page);
-    await expect(page.getByRole("status").filter({ hasText: "Loading your inbox…" })).toBeVisible();
+    await expect(page.getByRole("status", { name: "Loading your inbox" })).toBeVisible();
     await expect(page.locator(LIVE)).toHaveCount(1);
     inbox.listMode = "ok";
     inbox.list = [oneRow()];
@@ -1356,7 +1364,7 @@ test.describe("a11y structure", () => {
     }
 
     const table = byId(page, ids.a).locator("table");
-    await expect(table.locator("caption")).toHaveText("Rows in this proposal");
+    await expect(table.locator("caption")).toHaveText("Proposed · not saved yet");
     await expect(table.locator('th[scope="col"]')).toHaveCount(7);
   });
 
@@ -1378,7 +1386,8 @@ test.describe("a11y structure", () => {
     const card = byId(page, ids.a);
     await expect(card).toBeVisible();
 
-    expect(await css(card.getByText(/^Proposed /), "color")).toBe(RGB.muted3);
+    // The age line, not the 261121-m17 table caption "Proposed · not saved yet".
+    expect(await css(card.getByText(/^Proposed (?!·)/), "color")).toBe(RGB.muted3);
     const chip = card.getByText("Claude", { exact: true });
     expect(await css(chip, "color")).toBe(RGB.muted3);
     expect(await css(chip, "background-color")).toBe(RGB.tintNeutral);
@@ -1510,7 +1519,7 @@ test.describe("chat card", () => {
   test("Reject still says nothing changed", async ({ page }) => {
     const { posts } = await chatSetup(page);
     await page.getByRole("button", { name: "Reject", exact: true }).click();
-    await expect(page.getByText("Rejected — no changes made.")).toBeVisible();
+    await expect(page.getByText("Rejected. No changes made.")).toBeVisible();
     expect(posts.map((p) => p.path)).toEqual([`/api/proposals/${pid}/reject`]);
   });
 });
@@ -1624,5 +1633,195 @@ test.describe("suggested category", () => {
     expect(inbox.sent("POST", "/approve")).toHaveLength(1);
     expect(patches).toHaveLength(0);
     await expect(card.getByText("Suggested", { exact: true })).toHaveCount(0);
+  });
+});
+
+// ===========================================================================
+// 261121-kwu: Inbox review fixes. Synthetic accounts and proposals only.
+// ===========================================================================
+const ACCOUNTS = [
+  { id: 3, name: "Cash Contoh", currency: "IDR", current_balance: 1250000 }, // pii-ok synthetic
+  { id: 4, name: "Bank Contoh", currency: "IDR", current_balance: 5000000 }, // pii-ok synthetic
+];
+async function mockAccounts(page: Page) {
+  await page.route("**/api/cashflow/summary**", (route) => route.fulfill({ json: { accounts: ACCOUNTS } }));
+}
+
+test.describe("261121-kwu T1: cards say what they replace", () => {
+  test("balance adjustment names the account, its balance now and the change", async ({ page }) => {
+    await mockInbox(page, { list: [balanceAdjustmentProposal()] });
+    await mockAccounts(page);
+    await openInbox(page);
+    const card = art(page, "Adjust balance");
+    await expect(card.getByText("Set Cash Contoh balance to -250,000")).toBeVisible();
+    await expect(card.getByText("Now 1,250,000 · change -1,500,000")).toBeVisible();
+    await expect(card).not.toContainText("account #");
+  });
+
+  test("edit card shows the transaction it changes", async ({ page }) => {
+    const before = { id: 7, date: "2026-10-06", amount: "-35000.00", currency: "IDR", merchant: "Kopi Contoh", category: "Food", account_id: 3 }; // pii-ok synthetic
+    await mockInbox(page, {
+      list: [editProposal({ payload: { operation: "edit_transaction", rows: [{ id: 7, before, after: { ...before, merchant: "Warung Contoh" } }] } })],
+    });
+    await mockAccounts(page);
+    await openInbox(page);
+    const card = art(page, "Edit 1 transaction");
+    await expect(card.getByText("Transaction:")).toBeVisible();
+    await expect(card).toContainText("6 Oct 2026 · Kopi Contoh · Cash Contoh · -35,000");
+  });
+});
+
+test.describe("261121-kwu T2: ledger duplicates start skipped in the Inbox", () => {
+  const flagged = () =>
+    proposal({
+      payload: {
+        operation: "add_transaction",
+        rows: [txRow(), txRow({ after: { merchant: "Toko Contoh", amount: "-120000.00" }, duplicates: [{ ...flagTx }] })],
+      },
+    });
+
+  test("an undecided ledger duplicate shows skipped, says why, and Approve saves the skip first", async ({ page }) => {
+    const mock = await mockInbox(page, { list: [flagged()] });
+    await openInbox(page);
+    const card = art(page, "Add 1 transaction to Account A");
+    await expect(card.getByText("Skipped by default because it matches an existing record. Include it if it's new.")).toBeVisible();
+    await expect(card.getByRole("button", { name: "Include row 2: Toko Contoh, -120,000" })).toBeVisible();
+    await approveBtn(card).click();
+    await expect.poll(() => mock.sent("POST", "/approve").length).toBe(1);
+    const patches = mock.sent("PATCH", "/rows/1");
+    expect(patches.map((r) => r.body)).toEqual([{ skip: true }]);
+  });
+
+  test("Include sends an explicit choice and clears the default note", async ({ page }) => {
+    const mock = await mockInbox(page, { list: [flagged()] });
+    await openInbox(page);
+    const card = art(page, "Add 1 transaction to Account A");
+    await card.getByRole("button", { name: "Include row 2: Toko Contoh, -120,000" }).click();
+    await expect.poll(() => mock.sent("PATCH", "/rows/1").map((r) => r.body)).toEqual([{ skip: false }]);
+    await expect(card.getByText("Skipped by default")).toHaveCount(0);
+  });
+
+  test("Reject on a default skip goes straight through", async ({ page }) => {
+    const mock = await mockInbox(page, { list: [flagged()] });
+    await openInbox(page);
+    const card = art(page, "Add 1 transaction to Account A");
+    await rejectBtn(card).click();
+    await expect.poll(() => mock.sent("POST", "/reject").length).toBe(1);
+  });
+});
+
+test.describe("261121-kwu T3: approved cards link to Records", () => {
+  test("approving shows View in Records, scoped to the account and the rows' dates", async ({ page }) => {
+    await mockInbox(page, { list: [oneRow()] });
+    await page.route("**/api/cashflow/summary**", (route) =>
+      route.fulfill({ json: { accounts: [{ id: 3, name: "Account A", currency: "IDR", current_balance: 0 }] } }) // pii-ok synthetic
+    );
+    await openInbox(page);
+    const card = byId(page, ids.c);
+    await approveBtn(card).click();
+    const link = card.getByRole("link", { name: "View in Records" });
+    await expect(link).toHaveAttribute("href", "/records?account_id=3&date_from=2026-10-07&date_to=2026-10-07");
+  });
+
+  test("a transfer between two accounts links to its date only; a row with no known account or date links to /records", () => {
+    const accounts = new Map([
+      [3, { id: 3, name: "Account A", currency: "IDR", current_balance: 0 }],
+      [4, { id: 4, name: "Account B", currency: "IDR", current_balance: 0 }],
+    ]);
+    expect(recordsHref(transferProposal(), accounts)).toBe("/records?date_from=2026-10-07&date_to=2026-10-07");
+    // A balance adjustment carries the account id itself, so it needs no lookup.
+    expect(recordsHref(balanceAdjustmentProposal(), new Map())).toBe("/records?account_id=3");
+    // A row naming an account the list doesn't have, with no usable date, can't be scoped.
+    const unknown = proposal({ payload: { operation: "add_transaction", rows: [txRow({ after: { account: "Nowhere", date: null } })] } });
+    expect(recordsHref(unknown, accounts)).toBe("/records");
+  });
+});
+
+test.describe("261121-m17: Inbox next findings", () => {
+  test("a slow reject says Rejecting…", async ({ page }) => {
+    const inbox = await mockInbox(page, { list: [oneRow()] });
+    await openInbox(page);
+    const card = byId(page, ids.c);
+    const release = inbox.hold("reject");
+    await rejectBtn(card).click();
+    await expect(card.getByRole("button", { name: "Rejecting…" })).toBeVisible();
+    await expect(card.locator(".inbox-footer")).toHaveAttribute("aria-busy", "true");
+    release();
+    await expect(statusOf(page, ids.c)).toHaveText("Rejected · nothing changed");
+  });
+});
+
+test.describe("261121-m17 T3: overwrite and proposal cues", () => {
+  test("edits and balance adjustments carry Changes existing data; additions don't; expiry is explained", async ({ page }) => {
+    await mockInbox(page, { list: [balanceAdjustmentProposal(), editProposal({ id: ids.c }), oneRow({ id: ids.b })] });
+    await openInbox(page);
+    await expect(art(page, "Adjust balance").getByText("Changes existing data")).toBeVisible();
+    await expect(art(page, "Edit 1 transaction").getByText("Changes existing data")).toBeVisible();
+    await expect(byId(page, ids.b).getByText("Changes existing data")).toHaveCount(0);
+    await expect(byId(page, ids.b).locator("caption")).toHaveText("Proposed · not saved yet");
+    await expect(page.getByText("Chat proposals expire after 15 minutes, Claude's and uploads after 48 hours.", { exact: false })).toBeVisible();
+  });
+});
+
+test.describe("261121-m17 T4: chat provenance", () => {
+  test("a chat proposal quotes its request and links to the chat", async ({ page }) => {
+    const thread = "bbbbbbbb-0000-4000-8000-000000000001";
+    await mockInbox(page, { list: [chatTx({ id: ids.b, thread_id: thread, request: "ZZ add coffee 25000 to Cash" })] });
+    await openInbox(page);
+    const card = byId(page, ids.b);
+    await expect(card.getByText("From your chat:")).toBeVisible();
+    await expect(card).toContainText("“ZZ add coffee 25000 to Cash”");
+    await expect(card.getByRole("link", { name: "View chat" })).toHaveAttribute("href", `/chat?thread=${thread}`);
+  });
+
+  test("no provenance line without a thread or request", async ({ page }) => {
+    await mockInbox(page, { list: [chatTx({ id: ids.b })] });
+    await openInbox(page);
+    await expect(byId(page, ids.b)).toBeVisible();
+    await expect(byId(page, ids.b).getByText("From your chat:")).toHaveCount(0);
+    await expect(byId(page, ids.b).getByRole("link", { name: "View chat" })).toHaveCount(0);
+  });
+});
+
+// ===========================================================================
+// 261121-q4n: the remaining review findings. Synthetic accounts and proposals only.
+// ===========================================================================
+test.describe("261121-q4n: remaining Inbox findings", () => {
+  test("a transfer shows each account's balance now and after", async ({ page }) => {
+    const x = transferProposal();
+    x.payload.rows[0].after = {
+      leg_a: { account: "Bank Contoh", amount: "-50000.00", date: "2026-10-07" },
+      leg_b: { account: "Cash Contoh", amount: "50000.00" },
+    };
+    await mockInbox(page, { list: [x] });
+    await mockAccounts(page);
+    await openInbox(page);
+    await expect(art(page, "Add 1 transfer").getByTestId("inbox-transfer-balances")).toHaveText(
+      "Bank Contoh 5,000,000 → 4,950,000 · Cash Contoh 1,250,000 → 1,300,000"
+    );
+  });
+
+  test("a ledger-duplicate flag links to Records on that day; the status shows once", async ({ page }) => {
+    await mockInbox(page, { list: [batch3(), other()] });
+    await openInbox(page);
+    const card = art(page, T3);
+    await expect(card.getByRole("link", { name: "View in Records" })).toHaveAttribute(
+      "href",
+      "/records?date_from=2026-10-06&date_to=2026-10-06"
+    );
+    await expect(card.getByText(/^Waiting for you/)).toHaveCount(1);
+    // Reject sits at the far end of the footer, away from Approve.
+    const footer = await card.locator(".inbox-footer").boundingBox();
+    const reject = await rejectBtn(card).boundingBox();
+    expect((reject as { x: number; width: number }).x + (reject as { width: number }).width).toBeGreaterThan(
+      (footer as { x: number; width: number }).x + (footer as { width: number }).width - 2
+    );
+  });
+
+  test("the code note is in the intro only while a Claude proposal waits", async ({ page }) => {
+    await mockInbox(page, { list: [transferProposal({ channel: "chat", code: undefined })] });
+    await openInbox(page);
+    await expect(art(page, "Add 1 transfer")).toBeVisible();
+    await expect(page.getByText(/A proposal from Claude carries a code/)).toHaveCount(0);
   });
 });

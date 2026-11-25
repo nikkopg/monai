@@ -1,18 +1,27 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
-import { tokens, card, btn, btnDark } from "../styles";
-import PlatformManager, { type Platform } from "./PlatformManager";
+import { tokens, card, btnDark, notice } from "../styles";
+import { sectionTitle, columnHeader, groupRow } from "./sectionStyles";
+import { type Platform } from "./PlatformManager";
 import ClosedPositions, { type ClosedPosition } from "./ClosedPositions";
 import { extractDetail } from "../lib/api";
 import { fmtAmount, fmtUsdPrice, rateHover } from "../lib/money";
+import { GOLDS, assetLabel, fmtShort } from "../overview/holdings";
 import HoldingModal from "./HoldingModal";
 import HoldingOverrideModal from "./HoldingOverrideModal";
+import type { BondInfo } from "../lib/bond";
 import PriceOverrideDialog from "./PriceOverrideDialog";
+import Pills from "../components/Pills";
+import RollingNumber from "../components/RollingNumber";
+import { HideAmountsButton } from "../components/HideAmounts";
+import Skeleton, { Bone, DrawLine } from "../components/Skeleton";
 import RowMenu from "../components/RowMenu";
 import StalenessBadge from "./StalenessBadge";
+import { BondLine } from "./BondLine";
 import ValueHistoryChart, { type HistoryPoint } from "./ValueHistoryChart";
 import AllocationPieChart, { type AllocationSlice } from "./AllocationPieChart";
 
@@ -20,8 +29,10 @@ import AllocationPieChart, { type AllocationSlice } from "./AllocationPieChart";
 // Investments page — v1.1 "paper" redesign of the keystone portfolio view.
 // Same data (GET /api/platforms + /api/investments/summary + /history) and the
 // full feature set (price refresh, P&L, allocation asset-type/platform toggle,
-// value history, platform-grouped holdings, set-price/edit/delete, modals,
-// PlatformManager). Only presentation changed.
+// set-price/edit/delete, modals). Layout (quick 261115-bi5): a dark hero that
+// holds the value history, Allocation, a rate/stale note strip, and one
+// Holdings card (Open/Closed views, grouped by the grouping shared with
+// Allocation). The PlatformManager now lives on Settings (#platforms).
 // ---------------------------------------------------------------------------
 
 export type PlatformOption = { id: number; name: string; currency?: string };
@@ -49,6 +60,7 @@ export type HoldingRow = {
   price_source: string | null;
   price_fetched_at: string | null;
   is_stale: boolean;
+  bond?: BondInfo | null; // asset_type 'bond' only (quick 261117-rw1)
 };
 
 type Group = {
@@ -58,6 +70,57 @@ type Group = {
   subtotal: number;
   holdings: HoldingRow[];
 };
+
+type GroupBy = "platform" | "asset_type";
+const GROUP_OPTIONS: { value: GroupBy; label: string }[] = [
+  { value: "platform", label: "Platform" },
+  { value: "asset_type", label: "Asset type" },
+];
+const VIEW_OPTIONS: { value: "open" | "closed"; label: string }[] = [
+  { value: "open", label: "Open" },
+  { value: "closed", label: "Closed" },
+];
+
+// One group row of the Holdings table plus the holding rows under it.
+type TableGroup = {
+  key: string;
+  name: string;
+  platformId: number | null; // set only for platform groups (the "Open ›" link)
+  subtotal: number;
+  rows: { h: HoldingRow; platformName: string }[];
+};
+
+function tableGroupsOf(groups: Group[], by: GroupBy): TableGroup[] {
+  const platformName = (g: Group) =>
+    g.platform_id === null ? "Unassigned" : g.platform_name;
+  if (by === "platform") {
+    return groups.map((g) => ({
+      key: String(g.platform_id),
+      name: platformName(g),
+      platformId: g.platform_id,
+      subtotal: Number(g.subtotal),
+      rows: g.holdings.map((h) => ({ h, platformName: platformName(g) })),
+    }));
+  }
+  const byType = new Map<string, TableGroup>();
+  for (const g of groups) {
+    for (const h of g.holdings) {
+      const key = String(h.asset_type);
+      const tg = byType.get(key) ?? {
+        key,
+        name: assetLabel(h.asset_type),
+        platformId: null,
+        subtotal: 0,
+        rows: [],
+      };
+      // The same IDR figure the row shows; an unpriced row counts 0.
+      tg.subtotal += h.current_value ?? 0;
+      tg.rows.push({ h, platformName: platformName(g) });
+      byType.set(key, tg);
+    }
+  }
+  return Array.from(byType.values()).sort((a, b) => b.subtotal - a.subtotal);
+}
 
 type AssetTypeGroup = { asset_type: string | null; total_value: number };
 
@@ -77,7 +140,7 @@ const fmtSigned = (n: number) =>
     Math.round(n)
   );
 const pct = (n: number, base: number) =>
-  base > 0 ? `${n >= 0 ? "+" : ""}${((n / base) * 100).toFixed(1)}%` : "—";
+  base > 0 ? `${n >= 0 ? "+" : ""}${((n / base) * 100).toFixed(1)}%` : "–";
 
 // Green for gains, terracotta for losses (paired with the +/- sign — WCAG 1.4.1).
 const pnlColor = (n: number) =>
@@ -92,27 +155,38 @@ function fmtQty(n: number, assetType: string | null): string {
 }
 
 // Deterministic badge color per ticker, from the paper categorical palette.
-const BADGE_COLORS = ["#d8b26a", "#5a8f73", "#2f6f4f", "#8fae9c", "#b5503f"];
+// Sage lightened from #5a8f73 (ink 4.34:1) to #6fa287 (ink 5.56:1); every fill + text pair is >= 4.5:1.
+const BADGE_COLORS = ["#d8b26a", "#6fa287", "#2f6f4f", "#8fae9c", "#b5503f"];
 const badgeColor = (t: string) => {
   let h = 0;
   for (let i = 0; i < t.length; i++) h = (h * 31 + t.charCodeAt(i)) >>> 0;
   return BADGE_COLORS[h % BADGE_COLORS.length];
 };
+// Fills where ink text out-contrasts white.
+const BADGE_INK = new Set<string>([tokens.color.gold, "#6fa287", tokens.color.sageLight]);
 
-const muted = tokens.color.muted;
+const muted = tokens.color.muted3;
+
+// Hero P&L figure: bold, red-tinted below zero, on-ink green otherwise.
+const heroFigure = (n: number): React.CSSProperties => ({
+  fontWeight: 600,
+  fontVariantNumeric: "tabular-nums",
+  color: n < 0 ? "#e6a99c" : tokens.color.chipGreenText,
+});
 
 // USD figure on top, the IDR figure in small muted text underneath (copied
 // from the platform page, like the other helpers above).
 const withIdr = (primary: string, idrText: string, title?: string) => (
   <>
     <span style={{ display: "block" }}>{primary}</span>
-    <span style={{ display: "block", fontSize: 11, color: muted }} title={title}>
+    <span style={{ display: "block", fontSize: "var(--fs-xs, 12px)", color: muted }} title={title}>
       {idrText}
     </span>
   </>
 );
 
 export default function InvestmentsPage() {
+  const router = useRouter();
   const [platforms, setPlatforms] = useState<Platform[]>([]);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [closed, setClosed] = useState<ClosedPosition[]>([]);
@@ -120,12 +194,12 @@ export default function InvestmentsPage() {
   const [error, setError] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
-  const [historyRange, setHistoryRange] = useState<"1M" | "3M" | "6M" | "All">(
+  const [historyRange, setHistoryRange] = useState<"1M" | "3M" | "All">(
     "3M"
   );
-  const [allocationGroupBy, setAllocationGroupBy] = useState<
-    "asset_type" | "platform"
-  >("asset_type");
+  // One grouping for the Allocation card and the Holdings table.
+  const [groupBy, setGroupBy] = useState<GroupBy>("platform");
+  const [view, setView] = useState<"open" | "closed">("open");
 
   const [showEvent, setShowEvent] = useState(false);
   const [overrideOpen, setOverrideOpen] = useState(false);
@@ -152,7 +226,7 @@ export default function InvestmentsPage() {
       }
     } catch {
       setError(
-        "Couldn't load your portfolio — check the backend is running and reload the page."
+        "Couldn't load your portfolio. Check the backend is running and reload the page."
       );
     } finally {
       setLoading(false);
@@ -163,7 +237,7 @@ export default function InvestmentsPage() {
     load();
   }, [load]);
 
-  const loadHistory = useCallback(async (range: "1M" | "3M" | "6M" | "All") => {
+  const loadHistory = useCallback(async (range: "1M" | "3M" | "All") => {
     try {
       const res = await fetch(`/api/investments/history?range=${range}`);
       if (!res.ok) throw new Error("fetch failed");
@@ -206,11 +280,14 @@ export default function InvestmentsPage() {
       .filter((g) => g.holdings.length > 0 || g.platform_id !== null) ?? [];
 
   const hasAnyHolding = activeGroups.some((g) => g.holdings.length > 0);
+  const tableGroups = tableGroupsOf(activeGroups, groupBy);
 
-  const allocationData: AllocationSlice[] =
-    allocationGroupBy === "asset_type"
+  // Largest first, like finish(..., GOLDS, true) on the Cashflow Holdings card,
+  // so a group gets the same colour on both pages.
+  const allocationData: AllocationSlice[] = (
+    groupBy === "asset_type"
       ? (summary?.asset_type_groups ?? []).map((g) => ({
-          label: g.asset_type ?? "Other",
+          label: assetLabel(g.asset_type),
           value: Number(g.total_value),
         }))
       : activeGroups
@@ -218,7 +295,20 @@ export default function InvestmentsPage() {
           .map((g) => ({
             label: g.platform_id === null ? "Unassigned" : g.platform_name,
             value: Number(g.subtotal),
-          }));
+          }))
+  ).sort((a, b) => b.value - a.value);
+
+  // Note strip under the top row: the one USD rate (every USD holding carries
+  // the same one per summary) and how many held prices are stale.
+  const heldRows = activeGroups.flatMap((g) => g.holdings);
+  const rated = heldRows.find((h) => h.usd_rate != null);
+  const rateText = rated && rateHover(rated.usd_rate, rated.usd_rate_date);
+  const staleCount = heldRows.filter((h) => h.is_stale).length;
+  const noteParts = [
+    rateText && `USD positions converted at ${rateText}`,
+    staleCount > 0 &&
+      (staleCount === 1 ? "1 price is stale" : `${staleCount} prices are stale`),
+  ].filter(Boolean) as string[];
 
   const costBasis = summary
     ? summary.total_value - summary.total_unrealized_pnl
@@ -227,22 +317,11 @@ export default function InvestmentsPage() {
   return (
     <div className="tab-in" style={{ padding: "40px 44px 60px" }}>
       <div style={{ marginBottom: 28 }}>
-        <div
-          style={{
-            fontSize: 12,
-            letterSpacing: ".12em",
-            textTransform: "uppercase",
-            color: tokens.color.muted2,
-            marginBottom: 6,
-          }}
-        >
-          Portfolio
-        </div>
         <h1
           style={{
             fontFamily: tokens.font.serif,
             fontWeight: 400,
-            fontSize: 40,
+            fontSize: "var(--fs-title, 40px)",
             margin: 0,
             letterSpacing: "-.5px",
           }}
@@ -252,95 +331,245 @@ export default function InvestmentsPage() {
       </div>
 
       {loading ? (
-        <div style={card}>
-          <p style={{ color: muted, fontSize: 14, margin: 0 }}>
-            Loading your portfolio…
-          </p>
-        </div>
+        <Skeleton pulse label="Loading your portfolio">
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--stack, 18px)", marginBottom: "var(--stack, 18px)" }}>
+            <div
+              className="bone-dark"
+              style={{
+                flex: "2 1 560px",
+                minWidth: 0,
+                boxSizing: "border-box",
+                background: tokens.color.ink,
+                borderRadius: 18,
+                padding: "22px 28px 18px",
+                display: "flex",
+                flexDirection: "column",
+                gap: 12,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <Bone w={80} h={12} />
+                  <Bone w={260} h={46} />
+                  <Bone w={220} h={12} />
+                </div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Bone w={150} h={32} r={999} />
+                  <Bone w={96} h={32} r={999} />
+                </div>
+              </div>
+              <DrawLine height={130} />
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <Bone w={170} h={12} />
+                <Bone w={110} h={32} r={999} />
+              </div>
+            </div>
+            <div
+              style={{
+                ...card,
+                marginBottom: 0,
+                flex: "1 1 280px",
+                minWidth: 0,
+                boxSizing: "border-box",
+                display: "flex",
+                flexDirection: "column",
+                gap: 14,
+              }}
+            >
+              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                <Bone w={80} h={14} />
+                <Bone w={150} h={32} r={999} />
+              </div>
+              <div
+                className="bone"
+                style={{
+                  width: 170,
+                  height: 170,
+                  borderRadius: "50%",
+                  margin: "6px auto",
+                  background: "none",
+                  border: `26px solid ${tokens.color.borderInner}`,
+                }}
+              />
+              {[
+                [70, 70],
+                [90, 60],
+                [60, 66],
+              ].map(([lw, vw], i) => (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 14,
+                    padding: "10px 0",
+                    borderTop: i === 0 ? "none" : `1px solid ${tokens.color.borderInner}`,
+                  }}
+                >
+                  <Bone w={10} h={10} />
+                  <Bone w={lw} h={12} />
+                  <div style={{ marginLeft: "auto" }}>
+                    <Bone w={vw} h={12} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div style={{ marginBottom: "var(--stack, 18px)" }}>
+            <Bone w="100%" h={36} r={12} />
+          </div>
+          <div
+            style={{
+              ...card,
+              marginBottom: "var(--stack, 18px)",
+              display: "flex",
+              flexDirection: "column",
+              gap: 14,
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+              <Bone w={80} h={14} />
+              <div style={{ display: "flex", gap: 8 }}>
+                <Bone w={120} h={32} r={999} />
+                <Bone w={150} h={32} r={999} />
+                <Bone w={110} h={32} r={999} />
+              </div>
+            </div>
+            {[0, 1, 2, 3, 4, 5].map((i) =>
+              i % 3 === 0 ? (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    background: tokens.color.inputBg,
+                    padding: "12px 8px",
+                    borderRadius: 6,
+                  }}
+                >
+                  <Bone w={70 + i * 6} h={13} />
+                  <Bone w={90} h={13} />
+                </div>
+              ) : (
+                <div
+                  key={i}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 14,
+                    padding: "10px 0",
+                    borderTop: `1px solid ${tokens.color.borderInner}`,
+                  }}
+                >
+                  <Bone w={30} h={30} />
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    <Bone w={60 + i * 9} h={12} />
+                    <Bone w={150} h={10} />
+                  </div>
+                  <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14 }}>
+                    <Bone w={70} h={12} />
+                    <Bone w={52} h={12} />
+                    <Bone w={18} h={12} />
+                  </div>
+                </div>
+              ),
+            )}
+          </div>
+        </Skeleton>
       ) : error ? (
         <div style={{ ...card, color: tokens.color.terracotta }}>{error}</div>
       ) : (
         summary && (
-          <>
-            {/* Hero: total value + allocation */}
+          <div className="fade-in">
+            {/* Hero (total, P&L, history chart, price footer) + Allocation */}
             <div
               style={{
-                display: "grid",
-                gridTemplateColumns:
-                  "repeat(auto-fit, minmax(min(100%, 300px), 1fr))",
-                gap: 18,
-                marginBottom: 18,
+                display: "flex",
+                flexWrap: "wrap",
+                gap: "var(--stack, 18px)",
+                marginBottom: "var(--stack, 18px)",
               }}
             >
-              <div
+              <section
+                aria-label="Portfolio value"
                 style={{
+                  flex: "2 1 560px",
+                  minWidth: 0,
+                  boxSizing: "border-box",
                   background: tokens.color.ink,
                   color: tokens.color.inkText,
                   borderRadius: 18,
-                  padding: "26px 28px",
+                  padding: "22px 28px 18px",
+                  display: "flex",
+                  flexDirection: "column",
                 }}
               >
-                <div
-                  style={{
-                    fontSize: 13,
-                    color: tokens.color.inkTextMuted,
-                    marginBottom: 10,
-                  }}
-                >
-                  Total value
-                </div>
-                <div
-                  style={{
-                    fontFamily: tokens.font.serif,
-                    fontSize: 52,
-                    lineHeight: 1,
-                    letterSpacing: "-1px",
-                    fontVariantNumeric: "tabular-nums",
-                  }}
-                >
-                  {fmtPlain(summary.total_value)}
-                </div>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    marginTop: 22,
-                  }}
-                >
-                  <span
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 5,
-                      background: tokens.color.chipGreenBg,
-                      color:
-                        summary.total_unrealized_pnl < 0
-                          ? "#e6a99c"
-                          : tokens.color.chipGreenText,
-                      fontSize: 13,
-                      fontWeight: 600,
-                      padding: "4px 10px",
-                      borderRadius: 999,
-                      fontVariantNumeric: "tabular-nums",
-                    }}
-                  >
-                    {summary.total_unrealized_pnl < 0 ? "▼" : "▲"}{" "}
-                    {fmtSigned(summary.total_unrealized_pnl)}
-                  </span>
-                  <span
-                    style={{ fontSize: 13, color: tokens.color.inkTextMuted }}
-                  >
-                    unrealized ({pct(summary.total_unrealized_pnl, costBasis)})
-                  </span>
-                </div>
+                <ValueHistoryChart
+                  data={history}
+                  range={historyRange}
+                  onRangeChange={setHistoryRange}
+                  header={(change) => (
+                    <div>
+                      <div
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 6,
+                          fontSize: "var(--fs-body, 13px)",
+                          color: tokens.color.inkTextMuted,
+                          marginBottom: 10,
+                        }}
+                      >
+                        Total value
+                        <HideAmountsButton />
+                      </div>
+                      <div
+                        style={{
+                          fontFamily: tokens.font.serif,
+                          fontSize: "var(--fs-hero, clamp(28px, 8vw, 52px))",
+                          lineHeight: 1,
+                          letterSpacing: "-1px",
+                          fontVariantNumeric: "tabular-nums",
+                        }}
+                      >
+                        <RollingNumber hideable value={summary.total_value} format={fmtPlain} />
+                      </div>
+                      {change}
+                      <div
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: 14,
+                          marginTop: 8,
+                          fontSize: "var(--fs-body, 13px)",
+                          color: tokens.color.inkTextMuted,
+                        }}
+                      >
+                        <span>
+                          Unrealized{" "}
+                          <b style={heroFigure(summary.total_unrealized_pnl)}>
+                            <RollingNumber hideable value={summary.total_unrealized_pnl} format={fmtSigned} />
+                          </b>{" "}
+                          ({pct(summary.total_unrealized_pnl, costBasis)})
+                        </span>
+                        <span>
+                          Realized{" "}
+                          <b style={heroFigure(summary.total_realized_pnl)}>
+                            <RollingNumber hideable value={summary.total_realized_pnl} format={fmtSigned} />
+                          </b>
+                        </span>
+                      </div>
+                    </div>
+                  )}
+                />
                 <div
                   style={{
                     display: "flex",
                     justifyContent: "space-between",
                     alignItems: "center",
-                    marginTop: 20,
-                    fontSize: 12,
+                    paddingTop: 10,
+                    fontSize: "var(--fs-xs, 12px)",
                     color: tokens.color.inkTextMuted,
                   }}
                 >
@@ -349,13 +578,15 @@ export default function InvestmentsPage() {
                     type="button"
                     onClick={refreshPrices}
                     disabled={refreshing}
+                    className="coarse-tap"
                     style={{
+                      minHeight: 32,
                       background: "rgba(242,239,232,.1)",
                       color: tokens.color.inkText,
                       border: "none",
                       borderRadius: 999,
                       padding: "5px 12px",
-                      fontSize: 12,
+                      fontSize: "var(--fs-xs, 12px)",
                       fontWeight: 600,
                       cursor: refreshing ? "not-allowed" : "pointer",
                     }}
@@ -363,64 +594,51 @@ export default function InvestmentsPage() {
                     {refreshing ? "Refreshing…" : "Refresh prices"}
                   </button>
                 </div>
-              </div>
+              </section>
 
-              <div style={{ ...card, marginBottom: 0 }}>
+              <section
+                className="card-tight"
+                aria-labelledby="allocation-title"
+                style={{
+                  ...card,
+                  marginBottom: 0,
+                  flex: "1 1 280px",
+                  minWidth: 0,
+                  boxSizing: "border-box",
+                }}
+              >
                 <div
                   style={{
                     display: "flex",
                     justifyContent: "space-between",
                     alignItems: "center",
+                    flexWrap: "wrap",
+                    gap: 8,
                     marginBottom: 14,
                   }}
                 >
-                  <div style={{ fontSize: 14, fontWeight: 600 }}>Allocation</div>
-                  <div
-                    style={{
-                      display: "flex",
-                      gap: 4,
-                      background: "#efece4",
-                      border: `1px solid ${tokens.color.border2}`,
-                      borderRadius: 999,
-                      padding: 3,
-                    }}
-                  >
-                    {(
-                      [
-                        { key: "asset_type", label: "Asset type" },
-                        { key: "platform", label: "Platform" },
-                      ] as const
-                    ).map((opt) => {
-                      const active = allocationGroupBy === opt.key;
-                      return (
-                        <button
-                          key={opt.key}
-                          type="button"
-                          onClick={() => setAllocationGroupBy(opt.key)}
-                          style={{
-                            padding: "5px 12px",
-                            borderRadius: 999,
-                            fontSize: 12,
-                            fontWeight: active ? 600 : 500,
-                            border: "none",
-                            cursor: "pointer",
-                            background: active ? tokens.color.ink : "transparent",
-                            color: active
-                              ? tokens.color.inkText
-                              : tokens.color.muted,
-                          }}
-                        >
-                          {opt.label}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <h2 id="allocation-title" style={sectionTitle}>
+                    Allocation
+                  </h2>
+                  <Pills
+                    small
+                    tap
+                    label="Allocation grouping"
+                    options={GROUP_OPTIONS}
+                    value={groupBy}
+                    onChange={setGroupBy}
+                  />
                 </div>
-                <div style={{ display: "flex", alignItems: "center", gap: 22 }}>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 14,
+                  }}
+                >
                   <AllocationPieChart data={allocationData} />
                   <div
                     style={{
-                      flex: 1,
                       display: "flex",
                       flexDirection: "column",
                       gap: 10,
@@ -438,7 +656,7 @@ export default function InvestmentsPage() {
                             display: "flex",
                             alignItems: "center",
                             gap: 10,
-                            fontSize: 13,
+                            fontSize: "var(--fs-body, 13px)",
                           }}
                         >
                           <span
@@ -446,109 +664,38 @@ export default function InvestmentsPage() {
                               width: 9,
                               height: 9,
                               borderRadius: 3,
-                              background: BADGE_COLORS[i % BADGE_COLORS.length],
+                              background: GOLDS[i % GOLDS.length],
                               flexShrink: 0,
                             }}
                           />
-                          <span style={{ flex: 1, fontWeight: 500 }}>
+                          <span
+                            style={{
+                              flex: 1,
+                              fontWeight: 500,
+                              whiteSpace: "nowrap",
+                            }}
+                          >
                             {s.label}
+                          </span>
+                          <span style={{ fontVariantNumeric: "tabular-nums" }}>
+                            {fmtShort(s.value, "IDR")}
                           </span>
                           <span style={{ color: muted }}>
                             {total > 0
                               ? `${Math.round((s.value / total) * 100)}%`
-                              : "—"}
+                              : "–"}
                           </span>
                         </div>
                       );
                     })}
                   </div>
                 </div>
-              </div>
+              </section>
             </div>
 
-            {/* Unrealized / Realized P&L */}
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns:
-                  "repeat(auto-fit, minmax(min(100%, 220px), 1fr))",
-                gap: 18,
-                marginBottom: 18,
-              }}
-            >
-              <div style={statCard}>
-                <div style={statLabel}>Unrealized P&amp;L</div>
-                <div
-                  style={{
-                    ...statValue,
-                    color: pnlColor(summary.total_unrealized_pnl),
-                  }}
-                >
-                  {fmtSigned(summary.total_unrealized_pnl)}
-                </div>
-              </div>
-              <div style={statCard}>
-                <div style={statLabel}>Realized P&amp;L</div>
-                <div
-                  style={{
-                    ...statValue,
-                    color: pnlColor(summary.total_realized_pnl),
-                  }}
-                >
-                  {fmtSigned(summary.total_realized_pnl)}
-                </div>
-              </div>
-            </div>
-
-            <div style={{ ...card, marginBottom: 18 }}>
-              <ValueHistoryChart
-                data={history}
-                range={historyRange}
-                onRangeChange={setHistoryRange}
-              />
-            </div>
-
-            {/* CTAs */}
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 14,
-                marginBottom: 18,
-              }}
-            >
-              <button style={btnDark} type="button" onClick={() => setShowEvent(true)}>
-                + Log event
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setEditingHolding(null);
-                  setOverrideOpen(true);
-                }}
-                style={{
-                  background: "transparent",
-                  color: muted,
-                  border: "none",
-                  fontSize: 13,
-                  cursor: "pointer",
-                  textDecoration: "underline",
-                  padding: 0,
-                }}
-              >
-                Add holding directly
-              </button>
-            </div>
-
-            {!hasAnyHolding && (
-              <div style={card}>
-                <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
-                  No holdings yet.
-                </div>
-                <p style={{ fontSize: 14, color: muted, margin: 0 }}>
-                  Log your first buy to start tracking a position, or add a
-                  platform first if you hold assets across more than one app.
-                </p>
+            {noteParts.length > 0 && (
+              <div style={{ ...notice, marginBottom: "var(--stack, 18px)", color: tokens.color.muted3 }}>
+                {noteParts.join(" · ")}
               </div>
             )}
 
@@ -569,7 +716,7 @@ export default function InvestmentsPage() {
                   display: "flex",
                   alignItems: "flex-start",
                   gap: 12,
-                  fontSize: 14,
+                  fontSize: "var(--fs-body, 14px)",
                   color: tokens.color.terracotta,
                 }}
               >
@@ -584,276 +731,384 @@ export default function InvestmentsPage() {
               </div>
             )}
 
-            {/* Platform-grouped holdings */}
-            {activeGroups.map((g) => {
-              const isUnassigned = g.platform_id === null;
-              return (
-                <div key={String(g.platform_id)} style={{ ...card, marginBottom: 18 }}>
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "baseline",
-                      marginBottom: 8,
-                    }}
+            {/* One Holdings card: Open / Closed views, grouped by the shared grouping */}
+            <section
+              className="inv-holdings card-tight"
+              aria-labelledby="holdings-title"
+              style={{ ...card, marginBottom: "var(--stack, 18px)" }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                  gap: 8,
+                  marginBottom: 10,
+                }}
+              >
+                <h2 id="holdings-title" style={sectionTitle}>
+                  Holdings
+                </h2>
+                <div
+                  style={{
+                    display: "flex",
+                    flexWrap: "wrap",
+                    alignItems: "center",
+                    gap: 8,
+                  }}
+                >
+                  <Pills
+                    small
+                    tap
+                    label="Holdings view"
+                    options={VIEW_OPTIONS}
+                    value={view}
+                    onChange={setView}
+                  />
+                  {/* Closed records carry no asset type, so grouping only applies to Open. */}
+                  {view === "open" && (
+                    <Pills
+                      small
+                      tap
+                      label="Holdings grouping"
+                      options={GROUP_OPTIONS}
+                      value={groupBy}
+                      onChange={setGroupBy}
+                    />
+                  )}
+                  <button
+                    className="tap44"
+                    style={btnDark}
+                    type="button"
+                    onClick={() => setShowEvent(true)}
                   >
-                    <div>
-                      {isUnassigned ? (
-                        <span
-                          style={{
-                            fontSize: 14,
-                            fontWeight: 600,
-                            color: muted,
-                          }}
-                        >
-                          Unassigned
-                        </span>
-                      ) : (
-                        <Link
-                          href={`/investments/${g.platform_id}`}
-                          style={{
-                            fontSize: 14,
-                            fontWeight: 600,
-                            color: tokens.color.ink,
-                            cursor: "pointer",
-                            textDecoration: "none",
-                          }}
-                          onMouseEnter={(e) =>
-                            (e.currentTarget.style.textDecoration = "underline")
-                          }
-                          onMouseLeave={(e) =>
-                            (e.currentTarget.style.textDecoration = "none")
-                          }
-                        >
-                          {g.platform_name}
-                        </Link>
-                      )}
-                      {g.kind && (
-                        <span
-                          style={{ fontSize: 12, color: muted, marginLeft: 8 }}
-                        >
-                          {g.kind}
-                        </span>
-                      )}
-                    </div>
-                    <span
-                      style={{
-                        fontSize: 14,
-                        fontWeight: 600,
-                        fontVariantNumeric: "tabular-nums",
-                      }}
-                    >
-                      {fmtPlain(g.subtotal)}
-                    </span>
-                  </div>
+                    + Log event
+                  </button>
+                  <RowMenu
+                    label="Holdings options"
+                    items={[
+                      {
+                        label: "Add holding directly",
+                        onSelect: () => {
+                          setEditingHolding(null);
+                          setOverrideOpen(true);
+                        },
+                      },
+                      {
+                        label: "Manage platforms",
+                        onSelect: () => router.push("/settings#platforms"),
+                      },
+                    ]}
+                  />
+                </div>
+              </div>
 
-                  {g.holdings.length === 0 ? (
-                    <p style={{ fontSize: 14, color: muted, margin: 0 }}>
-                      No holdings in this platform yet.
-                    </p>
-                  ) : (
-                    <>
+              {view === "closed" ? (
+                <ClosedPositions rows={closed} load={load} />
+              ) : !hasAnyHolding ? (
+                <div>
+                  <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 6 }}>
+                    No holdings yet.
+                  </div>
+                  <p style={{ fontSize: "var(--fs-body, 14px)", color: muted, margin: 0 }}>
+                    Log your first buy to start tracking a position, or add a
+                    platform in Settings first if you hold assets across more than one app.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div
+                    className="inv-head"
+                    style={{ display: "flex", ...columnHeader }}
+                  >
+                    <span style={{ flex: 2 }}>Asset</span>
+                    <span className="inv-wide" style={{ flex: 1, textAlign: "right" }}>Units</span>
+                    <span className="inv-wide" style={{ flex: 1.2, textAlign: "right" }}>Price</span>
+                    <span style={{ flex: 1.2, textAlign: "right" }}>Value</span>
+                    <span style={{ flex: 1.2, textAlign: "right" }}>Return</span>
+                    <span style={{ flex: 1.4, textAlign: "right" }} />
+                  </div>
+                  {tableGroups.map((tg) => (
+                    <Fragment key={tg.key}>
                       <div
                         style={{
                           display: "flex",
-                          fontSize: 12,
-                          color: tokens.color.muted2,
-                          padding: "8px 0",
-                          borderBottom: `1px solid ${tokens.color.borderInner}`,
+                          alignItems: "center",
+                          ...groupRow,
+                          padding: "6px 8px",
+                          borderTop: `1px solid ${tokens.color.borderInner}`,
                         }}
                       >
-                        <span style={{ flex: 2 }}>Asset</span>
-                        <span style={{ flex: 1, textAlign: "right" }}>Units</span>
-                        <span style={{ flex: 1.2, textAlign: "right" }}>Price</span>
-                        <span style={{ flex: 1.2, textAlign: "right" }}>Value</span>
-                        <span style={{ flex: 1.2, textAlign: "right" }}>Return</span>
-                        <span style={{ flex: 1.4, textAlign: "right" }} />
+                        <span
+                          style={{
+                            flex: 4.2,
+                            minWidth: 0,
+                            display: "flex",
+                            flexWrap: "wrap",
+                            alignItems: "center",
+                            columnGap: 8,
+                          }}
+                        >
+                          <span>{tg.name}</span>
+                          <span style={{ fontSize: "var(--fs-xs, 12px)", fontWeight: 400, color: muted }}>
+                            {tg.rows.length} {tg.rows.length === 1 ? "position" : "positions"}
+                          </span>
+                          {groupBy === "platform" && tg.platformId !== null && (
+                            <Link
+                              href={`/investments/${tg.platformId}`}
+                              aria-label={`Open ${tg.name}`}
+                              className="coarse-tap tap44"
+                              style={{
+                                minHeight: 32,
+                                display: "inline-flex",
+                                alignItems: "center",
+                                fontSize: "var(--fs-xs, 12px)",
+                                fontWeight: 500,
+                                color: muted,
+                                textDecoration: "none",
+                              }}
+                            >
+                              Open ›
+                            </Link>
+                          )}
+                        </span>
+                        <span style={{ flex: 1.2, textAlign: "right", whiteSpace: "nowrap" }}>
+                          {fmtPlain(tg.subtotal)}
+                        </span>
+                        <span className="inv-wide" style={{ flex: 2.6 }} />
                       </div>
-                      {g.holdings.map((h) => {
-                        const upnl = h.unrealized_pnl;
-                        const basis = h.avg_cost * h.quantity;
-                        return (
-                          <div
-                            key={h.id}
+                      {tg.rows.map(({ h, platformName }) => {
+                      const upnl = h.unrealized_pnl;
+                      const basis = h.avg_cost * h.quantity;
+                      return (
+                        <div
+                          key={h.id}
+                          className="inv-row"
+                          style={{
+                            display: "flex",
+                            alignItems: "center",
+                            fontSize: "var(--fs-body, 14px)",
+                            padding: "13px 0",
+                            borderTop: `1px solid ${tokens.color.borderInner}`,
+                          }}
+                        >
+                          <span
                             style={{
+                              flex: 2,
                               display: "flex",
                               alignItems: "center",
-                              fontSize: 14,
-                              padding: "13px 0",
-                              borderTop: `1px solid ${tokens.color.borderInner}`,
+                              gap: 11,
+                              minWidth: 0,
                             }}
                           >
                             <span
+                              className="inv-wide"
                               style={{
-                                flex: 2,
-                                display: "flex",
+                                width: 32,
+                                height: 32,
+                                borderRadius: 9,
+                                background: badgeColor(h.ticker),
+                                color: BADGE_INK.has(badgeColor(h.ticker)) ? tokens.color.ink : "#fff",
+                                display: "inline-flex",
                                 alignItems: "center",
-                                gap: 11,
-                                minWidth: 0,
+                                justifyContent: "center",
+                                fontSize: "var(--fs-xs, 12px)",
+                                fontWeight: 700,
+                                flexShrink: 0,
                               }}
                             >
+                              {h.ticker.slice(0, 4)}
+                            </span>
+                            <span style={{ minWidth: 0 }}>
                               <span
                                 style={{
-                                  width: 32,
-                                  height: 32,
-                                  borderRadius: 9,
-                                  background: badgeColor(h.ticker),
-                                  color: "#fff",
-                                  display: "inline-flex",
-                                  alignItems: "center",
-                                  justifyContent: "center",
-                                  fontSize: 11,
-                                  fontWeight: 700,
-                                  flexShrink: 0,
+                                  fontWeight: 500,
+                                  display: "block",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                  whiteSpace: "nowrap",
                                 }}
                               >
-                                {h.ticker.slice(0, 4)}
+                                {h.ticker}
                               </span>
-                              <span style={{ minWidth: 0 }}>
-                                <span
-                                  style={{ fontWeight: 500, display: "block" }}
-                                >
-                                  {h.ticker}
+                              {groupBy === "asset_type" && (
+                                <span style={{ display: "block", fontSize: "var(--fs-xs, 12px)", color: muted }}>
+                                  {platformName}
                                 </span>
+                              )}
+                              {h.asset_type === "bond" ? (
+                                <BondLine
+                                  bond={
+                                    h.bond ?? {
+                                      rate: null, floating: null, pay_day: null, maturity_date: null,
+                                      tax_pct: null, coupon_account_id: null, coupon_account_name: null,
+                                      gross: null, tax: null, net: null, next_coupon_date: null, upcoming: [],
+                                    }
+                                  }
+                                />
+                              ) : (
                                 <StalenessBadge
                                   fetchedAt={h.price_fetched_at}
                                   source={h.price_source}
                                   isStale={h.is_stale}
                                 />
-                                {h.currency === "USD" && h.usd_rate == null && (
-                                  <span style={{ display: "block", fontSize: 11, color: muted }}>
-                                    No USD rate, shown in IDR
-                                  </span>
-                                )}
-                              </span>
+                              )}
+                              {h.currency === "USD" && h.usd_rate == null && (
+                                <span style={{ display: "block", fontSize: "var(--fs-xs, 12px)", color: muted }}>
+                                  No USD rate, shown in IDR
+                                </span>
+                              )}
                             </span>
-                            <span
-                              style={{
-                                flex: 1,
-                                textAlign: "right",
-                                fontVariantNumeric: "tabular-nums",
-                                color: tokens.color.muted3,
-                              }}
-                            >
-                              {fmtQty(h.quantity, h.asset_type)}
-                            </span>
-                            <span
-                              style={{
-                                flex: 1.2,
-                                textAlign: "right",
-                                fontVariantNumeric: "tabular-nums",
-                                color: tokens.color.muted3,
-                              }}
-                            >
-                              {h.usd_current_price != null
-                                ? withIdr(
-                                    fmtUsdPrice(h.usd_current_price, 8),
-                                    `${fmtPlain(h.current_price ?? 0)} IDR`,
-                                    rateHover(h.usd_rate, h.usd_rate_date)
-                                  )
+                          </span>
+                          <span
+                            className="inv-wide"
+                            style={{
+                              flex: 1,
+                              textAlign: "right",
+                              fontVariantNumeric: "tabular-nums",
+                              color: tokens.color.muted3,
+                            }}
+                          >
+                            {fmtQty(h.quantity, h.asset_type)}
+                          </span>
+                          <span
+                            className="inv-wide"
+                            style={{
+                              flex: 1.2,
+                              textAlign: "right",
+                              fontVariantNumeric: "tabular-nums",
+                              color: tokens.color.muted3,
+                            }}
+                          >
+                            {h.asset_type === "bond"
+                              ? "–"
+                              : h.usd_current_price != null
+                              ? withIdr(
+                                  fmtUsdPrice(h.usd_current_price, 8),
+                                  `${fmtPlain(h.current_price ?? 0)} IDR`,
+                                  rateHover(h.usd_rate, h.usd_rate_date)
+                                )
+                              : h.current_price != null
+                                ? fmtPlain(h.current_price)
+                                : "–"}
+                          </span>
+                          <span
+                            style={{
+                              flex: 1.2,
+                              textAlign: "right",
+                              fontVariantNumeric: "tabular-nums",
+                              fontWeight: 600,
+                            }}
+                          >
+                            {h.usd_current_value != null
+                              ? withIdr(
+                                  fmtAmount(h.usd_current_value, "USD"),
+                                  `${fmtPlain(h.current_value ?? 0)} IDR`,
+                                  rateHover(h.usd_rate, h.usd_rate_date)
+                                )
+                              : h.current_value != null
+                                ? fmtPlain(h.current_value)
+                                : "–"}
+                          </span>
+                          <span
+                            style={{
+                              flex: 1.2,
+                              textAlign: "right",
+                              fontVariantNumeric: "tabular-nums",
+                              fontWeight: 600,
+                              color: upnl != null ? pnlColor(upnl) : muted,
+                            }}
+                          >
+                            {upnl != null && h.usd_unrealized_pnl != null && h.usd_avg_cost != null
+                              ? withIdr(
+                                  `${pct(h.usd_unrealized_pnl, h.usd_avg_cost * h.quantity)} USD`,
+                                  `${pct(upnl, basis)} IDR`
+                                )
+                              : upnl != null
+                                ? pct(upnl, basis)
+                                : "–"}
+                          </span>
+                          <span
+                            style={{
+                              flex: 1.4,
+                              display: "flex",
+                              gap: 10,
+                              justifyContent: "flex-end",
+                              fontSize: "var(--fs-xs, 12px)",
+                            }}
+                          >
+                            <RowMenu
+                              label={`Holding options: ${h.ticker}`}
+                              items={[
+                                ...(h.asset_type === "bond"
+                                  ? []
+                                  : [{ label: "Set price", onSelect: () => setPriceHolding(h) }]),
+                                {
+                                  label: "Edit",
+                                  onSelect: () => {
+                                    setEditingHolding(h);
+                                    setOverrideOpen(true);
+                                  },
+                                },
+                                {
+                                  label: "Delete",
+                                  destructive: true,
+                                  onSelect: async () => {
+                                    if (
+                                      !confirm(
+                                        `Delete holding ${h.ticker}? Holdings with buy/sell history can't be deleted. Record a sell to close them instead.`
+                                      )
+                                    )
+                                      return;
+                                    setDeleteError(null);
+                                    try {
+                                      const r = await fetch(`/api/holdings/${h.id}`, {
+                                        method: "DELETE",
+                                      });
+                                      if (r.ok) load();
+                                      else
+                                        setDeleteError(
+                                          `Couldn't delete ${h.ticker}: ${await extractDetail(r)}`
+                                        );
+                                    } catch (e) {
+                                      setDeleteError(
+                                        `Couldn't delete ${h.ticker}: ${e instanceof Error ? e.message : "Network error"}`
+                                      );
+                                    }
+                                  },
+                                },
+                              ]}
+                            />
+                          </span>
+                          <span
+                            className="inv-sub"
+                            style={{
+                              flexBasis: "100%",
+                              fontSize: "var(--fs-xs, 12px)",
+                              color: muted,
+                              fontVariantNumeric: "tabular-nums",
+                            }}
+                          >
+                            {h.asset_type === "bond"
+                              ? fmtQty(h.quantity, h.asset_type)
+                              : `${fmtQty(h.quantity, h.asset_type)} × ${
+                              h.usd_current_price != null
+                                ? fmtUsdPrice(h.usd_current_price, 8)
                                 : h.current_price != null
                                   ? fmtPlain(h.current_price)
-                                  : "—"}
-                            </span>
-                            <span
-                              style={{
-                                flex: 1.2,
-                                textAlign: "right",
-                                fontVariantNumeric: "tabular-nums",
-                                fontWeight: 600,
-                              }}
-                            >
-                              {h.usd_current_value != null
-                                ? withIdr(
-                                    fmtAmount(h.usd_current_value, "USD"),
-                                    `${fmtPlain(h.current_value ?? 0)} IDR`,
-                                    rateHover(h.usd_rate, h.usd_rate_date)
-                                  )
-                                : h.current_value != null
-                                  ? fmtPlain(h.current_value)
-                                  : "—"}
-                            </span>
-                            <span
-                              style={{
-                                flex: 1.2,
-                                textAlign: "right",
-                                fontVariantNumeric: "tabular-nums",
-                                fontWeight: 600,
-                                color: upnl != null ? pnlColor(upnl) : muted,
-                              }}
-                            >
-                              {upnl != null && h.usd_unrealized_pnl != null && h.usd_avg_cost != null
-                                ? withIdr(
-                                    `${pct(h.usd_unrealized_pnl, h.usd_avg_cost * h.quantity)} USD`,
-                                    `${pct(upnl, basis)} IDR`
-                                  )
-                                : upnl != null
-                                  ? pct(upnl, basis)
-                                  : "—"}
-                            </span>
-                            <span
-                              style={{
-                                flex: 1.4,
-                                display: "flex",
-                                gap: 10,
-                                justifyContent: "flex-end",
-                                fontSize: 12,
-                              }}
-                            >
-                              <RowMenu
-                                label={`Holding options: ${h.ticker}`}
-                                items={[
-                                  { label: "Set price", onSelect: () => setPriceHolding(h) },
-                                  {
-                                    label: "Edit",
-                                    onSelect: () => {
-                                      setEditingHolding(h);
-                                      setOverrideOpen(true);
-                                    },
-                                  },
-                                  {
-                                    label: "Delete",
-                                    destructive: true,
-                                    onSelect: async () => {
-                                      if (
-                                        !confirm(
-                                          `Delete holding ${h.ticker}? Holdings with buy/sell history can't be deleted — record a sell to close them instead.`
-                                        )
-                                      )
-                                        return;
-                                      setDeleteError(null);
-                                      try {
-                                        const r = await fetch(`/api/holdings/${h.id}`, {
-                                          method: "DELETE",
-                                        });
-                                        if (r.ok) load();
-                                        else
-                                          setDeleteError(
-                                            `Couldn't delete ${h.ticker}: ${await extractDetail(r)}`
-                                          );
-                                      } catch (e) {
-                                        setDeleteError(
-                                          `Couldn't delete ${h.ticker}: ${e instanceof Error ? e.message : "Network error"}`
-                                        );
-                                      }
-                                    },
-                                  },
-                                ]}
-                              />
-                            </span>
-                          </div>
-                        );
+                                  : "–"
+                            }`}
+                          </span>
+                        </div>
+                      );
                       })}
-                    </>
-                  )}
-                </div>
-              );
-            })}
-
-            <ClosedPositions rows={closed} load={load} />
-
-            <PlatformManager platforms={platforms} onChanged={load} />
-          </>
+                    </Fragment>
+                  ))}
+                </>
+              )}
+            </section>
+          </div>
         )
       )}
 
@@ -893,27 +1148,11 @@ export default function InvestmentsPage() {
   );
 }
 
-const statCard: React.CSSProperties = {
-  background: tokens.color.card,
-  border: `1px solid ${tokens.color.border}`,
-  borderRadius: 16,
-  padding: "20px 22px",
-};
-const statLabel: React.CSSProperties = {
-  fontSize: 13,
-  color: tokens.color.muted,
-  marginBottom: 8,
-};
-const statValue: React.CSSProperties = {
-  fontSize: 24,
-  fontWeight: 600,
-  fontVariantNumeric: "tabular-nums",
-};
 const rowAction: React.CSSProperties = {
   background: "transparent",
-  color: tokens.color.muted2,
+  color: tokens.color.muted3,
   border: "none",
   cursor: "pointer",
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   padding: 0,
 };

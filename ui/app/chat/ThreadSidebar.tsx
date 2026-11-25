@@ -7,8 +7,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { tokens, input } from "../styles";
-import ConfirmDialog from "../cashflow/ConfirmDialog";
+import ConfirmDialog from "../overview/ConfirmDialog";
 import RowMenu from "../components/RowMenu";
+import Skeleton, { Bone } from "../components/Skeleton";
 
 // ---------------------------------------------------------------------------
 // ThreadSidebar (Phase 36, THRD-02, D-18/D-20, 36-UI-SPEC section 1).
@@ -61,7 +62,7 @@ function truncate(s: string, n: number): string {
 }
 
 const rowErrStyle: CSSProperties = {
-  fontSize: 12,
+  fontSize: "var(--fs-xs, 12px)",
   color: tokens.color.terracottaText,
   margin: "0 12px 8px",
   lineHeight: 1.5,
@@ -186,7 +187,7 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
   for (const t of threads ?? []) buckets[groupIndex(t.updated_at, now)].push(t);
 
   const errorLine = status === "error" && (
-    <div role="status" style={{ fontSize: 14, color: tokens.color.muted3, marginBottom: 16, lineHeight: 1.5 }}>
+    <div role="status" style={{ fontSize: "var(--fs-body, 14px)", color: tokens.color.muted3, marginBottom: 16, lineHeight: 1.5 }}>
       Couldn&apos;t load your chats.{" "}
       <button
         type="button"
@@ -195,7 +196,7 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
           background: "transparent",
           border: "none",
           cursor: "pointer",
-          fontSize: 14,
+          fontSize: "var(--fs-body, 14px)",
           color: tokens.color.ink,
           textDecoration: "underline",
           minHeight: 36,
@@ -227,7 +228,6 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
         fontFamily: tokens.font.sans,
       }}
     >
-      <h2 className="sr-only">Chats</h2>
       <button
         ref={newRef}
         type="button"
@@ -240,7 +240,7 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
           border: `1px solid ${tokens.color.border2}`,
           borderRadius: tokens.radius.pill,
           color: tokens.color.ink,
-          fontSize: 14,
+          fontSize: "var(--fs-body, 14px)",
           fontWeight: 600,
           cursor: "pointer",
           marginBottom: 16,
@@ -252,27 +252,14 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
       <nav aria-label="Chat threads" aria-busy={status === "loading" && threads === null ? true : undefined}>
         {errorLine}
         {status === "loading" && threads === null && (
-          <div>
-            <span className="sr-only" role="status">
-              Loading chats…
-            </span>
+          <Skeleton label="Loading chats" style={{ display: "grid", gap: 12 }}>
             {["80%", "64%", "72%"].map((w) => (
-              <div
-                key={w}
-                aria-hidden="true"
-                style={{
-                  height: 16,
-                  width: w,
-                  background: tokens.color.borderInner,
-                  borderRadius: tokens.radius.sm,
-                  marginBottom: 12,
-                }}
-              />
+              <Bone key={w} w={w} h={16} r={tokens.radius.sm} />
             ))}
-          </div>
+          </Skeleton>
         )}
         {threads !== null && threads.length === 0 && status === "ok" && (
-          <p style={{ fontSize: 14, color: tokens.color.muted3, margin: 0, lineHeight: 1.5 }}>
+          <p style={{ fontSize: "var(--fs-body, 14px)", color: tokens.color.muted3, margin: 0, lineHeight: 1.5 }}>
             No chats yet.
             <br />
             Your conversations will show up here after your first question.
@@ -284,10 +271,12 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
           const hid = `${uid}-g${gi}`;
           return (
             <div key={name} style={{ marginBottom: 24 }}>
-              <h3
+              {/* Not a heading: the sidebar comes before the page h1, and the nav and each list are already named (F008). */}
+              <div
                 id={hid}
+                className="thread-group"
                 style={{
-                  fontSize: 12,
+                  fontSize: "var(--fs-xs, 12px)",
                   fontWeight: 600,
                   textTransform: "uppercase",
                   letterSpacing: ".12em",
@@ -297,7 +286,7 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
                 }}
               >
                 {name}
-              </h3>
+              </div>
               <ul
                 aria-labelledby={hid}
                 style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 4 }}
@@ -360,7 +349,7 @@ export default function ThreadSidebar({ activeId, refreshKey, open, onClose }: P
                               overflow: "hidden",
                               textOverflow: "ellipsis",
                               whiteSpace: "nowrap",
-                              fontSize: 14,
+                              fontSize: "var(--fs-body, 14px)",
                               fontWeight: active ? 600 : 400,
                               color: tokens.color.ink,
                               textDecoration: "none",

@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
+import useDialog from "../components/useDialog";
 
 import { card, input, btn, label } from "../styles";
 import type { HoldingRow } from "./page";
@@ -18,7 +19,7 @@ type Props = {
   onSaved: () => void;
 };
 
-const muted = "#8b8474";
+const muted = "#716c5f";
 
 export default function PriceOverrideDialog({ holding, onClose, onSaved }: Props) {
   const [price, setPrice] = useState("");
@@ -59,8 +60,17 @@ export default function PriceOverrideDialog({ holding, onClose, onSaved }: Props
     }
   }
 
+  // Dialog keyboard behaviour (F002): focus inside, Escape closes, Tab wraps.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  useDialog(dialogRef, saving ? null : onClose);
+
   return (
     <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby={titleId}
       style={{
         position: "fixed",
         inset: 0,
@@ -76,14 +86,14 @@ export default function PriceOverrideDialog({ holding, onClose, onSaved }: Props
         style={{ ...card, maxWidth: 360, width: "100%", padding: 24, margin: 0 }}
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 style={{ fontSize: 18, fontWeight: 600, margin: "0 0 4px" }}>
+        <h2 id={titleId} style={{ fontSize: 18, fontWeight: 600, margin: "0 0 4px" }}>
           Set price · {holding.ticker}
         </h2>
-        <p style={{ fontSize: 12, color: muted, margin: "0 0 16px" }}>
+        <p style={{ fontSize: "var(--fs-xs, 12px)", color: muted, margin: "0 0 16px" }}>
           Current:{" "}
           {holding.current_price != null
             ? new Intl.NumberFormat("en-US").format(holding.current_price)
-            : "—"}
+            : "–"}
           {holding.price_source ? ` · ${holding.price_source}` : ""}
         </p>
         <form onSubmit={handleSubmit}>
@@ -97,7 +107,7 @@ export default function PriceOverrideDialog({ holding, onClose, onSaved }: Props
             value={price}
             onChange={(e) => setPrice(e.target.value)}
           />
-          <p style={{ fontSize: 11, color: muted, margin: "8px 0 0" }}>
+          <p style={{ fontSize: "var(--fs-xs, 11px)", color: muted, margin: "8px 0 0" }}>
             A manual price is used until the next successful live fetch replaces
             it.
           </p>
@@ -112,7 +122,7 @@ export default function PriceOverrideDialog({ holding, onClose, onSaved }: Props
                 color: muted,
                 border: "none",
                 padding: "8px 16px",
-                fontSize: 14,
+                fontSize: "var(--fs-body, 14px)",
                 cursor: "pointer",
               }}
             >
@@ -122,7 +132,7 @@ export default function PriceOverrideDialog({ holding, onClose, onSaved }: Props
               {saving ? "Saving…" : "Set price"}
             </button>
             {error && (
-              <span style={{ color: "#b5503f", fontSize: 12 }}>{error}</span>
+              <span style={{ color: "#b5503f", fontSize: "var(--fs-xs, 12px)" }}>{error}</span>
             )}
           </div>
         </form>

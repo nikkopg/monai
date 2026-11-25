@@ -2,12 +2,13 @@
 In-process daily scheduler (D-13/D-14, Phase 39 D-07).
 
 The stack's first always-on background component: an `AsyncIOScheduler` started
-in the FastAPI lifespan (backend/main.py). Three daily jobs: the FX warm job
+in the FastAPI lifespan (backend/main.py). Four daily jobs: the FX warm job
 (00:30, before the snapshot) caches yesterday's USD->IDR rate in one range
 call (Phase 42 D-23); the snapshot job refreshes all prices then writes one
 `portfolio_value_history` row per holding (history cannot be backfilled, D-13,
 so collection must start now); the attachment purge clears raw upload bytes
-older than 7 days.
+older than 7 days. A fourth job (06:00, plus one run at boot) turns each due SBN coupon and
+maturity into a pending Inbox proposal; it never writes the ledger itself (quick 261117-rw1).
 
 APScheduler hardening (T-05-06-DOS, 05-RESEARCH.md Pattern 3 + Pitfall 3):
 `misfire_grace_time=3600` + `coalesce=True` avoid a thundering catch-up after
@@ -16,6 +17,8 @@ keeps startup idempotent. Timezone is Asia/Jakarta.
 """
 
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -40,6 +43,31 @@ def daily_portfolio_snapshot_job() -> None:
         refresh_all_prices(db, force=True)
         snapshot_all_holdings(db)
         db.commit()
+
+
+def refresh_today_snapshot_job() -> None:
+    """After a trade or an approved proposal: rewrite today's snapshot rows from
+    current holdings and cached prices, so a new or changed position counts today
+    instead of after the next 01:00 run. No price fetch (a ticker with no cached
+    price yet stays out until the next refresh). One transaction: a failure keeps
+    the old rows. Never raises.
+    """
+    from datetime import date
+
+    from sqlalchemy import delete
+
+    from backend.db import get_session_sync
+    from backend.models import PortfolioValueHistory
+    from backend.portfolio import snapshot_all_holdings
+
+    try:
+        with get_session_sync() as db:
+            # same date.today() as snapshot_all_holdings
+            db.execute(delete(PortfolioValueHistory).where(PortfolioValueHistory.snapshot_date == date.today()))
+            snapshot_all_holdings(db)
+            db.commit()
+    except Exception:
+        logger.exception("today's snapshot refresh failed; the earlier rows stay")
 
 
 def daily_fx_warm_job() -> None:
@@ -68,8 +96,26 @@ def daily_attachment_purge_job() -> None:
     logger.info("attachment purge: %d raw file(s) cleared", n)
 
 
+def daily_bond_proposals_job() -> None:
+    """Sync job: propose the due SBN coupons and maturities (pending only, nothing applied).
+
+    Never raises: an error or a race on the unique schedule key rolls back and the next run retries.
+    """
+    from backend import fx
+    from backend.bonds import propose_due
+    from backend.db import get_session_sync
+
+    try:
+        with get_session_sync() as db:
+            n = propose_due(db, fx._jakarta_today())
+            db.commit()
+        logger.info("bond proposals: %d created", n)
+    except Exception:
+        logger.exception("bond proposals failed")
+
+
 def build_scheduler() -> AsyncIOScheduler:
-    """Build the AsyncIOScheduler with the daily FX warm, snapshot and purge jobs registered.
+    """Build the AsyncIOScheduler with the daily FX warm, snapshot, purge and bond-proposal jobs registered.
 
     Returns an un-started scheduler; the caller (the FastAPI lifespan) owns
     start()/shutdown(). 01:00 Asia/Jakarta is a low-traffic window (D-14 leaves
@@ -93,6 +139,9 @@ def build_scheduler() -> AsyncIOScheduler:
         misfire_grace_time=3600,
         coalesce=True,
         max_instances=1,
+        # One run at boot: the app is often off at 01:00, and a skipped day is
+        # never backfilled. Rows already written today are skipped, not doubled.
+        next_run_time=datetime.now(ZoneInfo("Asia/Jakarta")),
     )
     scheduler.add_job(
         daily_attachment_purge_job,
@@ -102,5 +151,16 @@ def build_scheduler() -> AsyncIOScheduler:
         misfire_grace_time=3600,
         coalesce=True,
         max_instances=1,
+    )
+    # next_run_time=now adds one run at boot, so a day the server was down at 06:00 still proposes.
+    scheduler.add_job(
+        daily_bond_proposals_job,
+        trigger=CronTrigger(hour=6, minute=0, timezone="Asia/Jakarta"),
+        id="daily_bond_proposals",
+        replace_existing=True,
+        misfire_grace_time=3600,
+        coalesce=True,
+        max_instances=1,
+        next_run_time=datetime.now(ZoneInfo("Asia/Jakarta")),
     )
     return scheduler
